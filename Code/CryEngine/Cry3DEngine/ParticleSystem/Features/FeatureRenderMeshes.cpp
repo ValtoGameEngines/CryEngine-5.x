@@ -1,18 +1,17 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include <CrySerialization/Decorators/Resources.h>
 #include <CrySerialization/Math.h>
-#include "ParticleSystem/ParticleFeature.h"
-
-CRY_PFX2_DBG
+#include "ParticleSystem/ParticleSystem.h"
 
 namespace pfx2
 {
 
-EParticleDataType PDT(EPDT_MeshGeometry, IMeshObj*);
+MakeDataType(EPDT_MeshGeometry, IMeshObj*, EDataFlags::BNeedsClear); // Submesh pointers must be cleared on edit to avoid referencing freed parent mesh
 
-extern EParticleDataType EPDT_Alpha, EPDT_Color;
+extern TDataType<float> EPDT_Alpha;
+extern TDataType<UCol>  EPDT_Color;
 
 
 SERIALIZATION_ENUM_DEFINE(ESizeMode, : uint8,
@@ -65,11 +64,16 @@ public:
 
 	virtual void         AddToComponent(CParticleComponent* pComponent, SComponentParams* pParams) override
 	{
-		pParams->m_pMesh = m_pStaticObject = Get3DEngine()->LoadStatObj(m_meshName.c_str(), NULL, NULL, true);
+		if (!(m_pStaticObject = Get3DEngine()->FindStatObjectByFilename(m_meshName)))
+		{
+			GetPSystem()->CheckFileAccess(m_meshName);
+			m_pStaticObject = Get3DEngine()->LoadStatObj(m_meshName, NULL, NULL, m_piecesMode == EPiecesMode::Whole);
+		}
+		pParams->m_pMesh = m_pStaticObject;
 		pParams->m_meshCentered = m_originMode == EOriginMode::Center;
 		if (m_pStaticObject)
 		{
-			pComponent->AddToUpdateList(EUL_RenderDeferred, this);
+			pComponent->RenderDeferred.add(this);
 			pComponent->AddParticleData(EPVF_Position);
 			pComponent->AddParticleData(EPQF_Orientation);
 
@@ -81,14 +85,18 @@ public:
 				{
 					if (IStatObj::SSubObject* pSub = m_pStaticObject->GetSubObject(i))
 						if (pSub->nType == STATIC_SUB_OBJECT_MESH && pSub->pStatObj && pSub->pStatObj->GetRenderMesh())
+						{
+							if (string(pSub->name).Right(5) == "_main")
+								continue;
 							m_aSubObjects.push_back(pSub);
+						}
 				}
 
 				if (m_aSubObjects.size() > 0)
 				{
 					// Require per-particle sub-objects
 					assert(m_aSubObjects.size() < 256);
-					pComponent->AddToUpdateList(EUL_InitUpdate, this);
+					pComponent->InitParticles.add(this);
 					pComponent->AddParticleData(EPDT_MeshGeometry);
 					if (m_piecesMode == EPiecesMode::AllPieces)
 					{
@@ -105,14 +113,15 @@ public:
 		CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
 
 		CParticleContainer& container = context.m_container;
-		TIOStream<IMeshObj*> meshes = container.GetTIOStream<IMeshObj*>(EPDT_MeshGeometry);
-		TIStream<uint> spawnIds = container.GetTIStream<uint>(EPDT_SpawnId);
+		TIOStream<IMeshObj*> meshes = container.IOStream(EPDT_MeshGeometry);
+		TIStream<uint> spawnIds = container.IStream(EPDT_SpawnId);
 		IOVec3Stream positions = container.GetIOVec3Stream(EPVF_Position);
 		IOQuatStream orientations = container.GetIOQuatStream(EPQF_Orientation);
+		IFStream sizes = container.GetIFStream(EPDT_Size, 1.0f);
 		uint pieceCount = m_aSubObjects.size();
 		Vec3 center = m_pStaticObject->GetAABB().GetCenter();
 
-		CRY_PFX2_FOR_SPAWNED_PARTICLES(context)
+		for (auto particleId : context.GetSpawnedRange())
 		{
 			uint piece;
 			if (m_piecesMode == EPiecesMode::RandomPiece)
@@ -132,33 +141,33 @@ public:
 			{
 				Vec3 position = positions.Load(particleId);
 				Quat orientation = orientations.Load(particleId);
+				const float size = sizes.Load(particleId);
 
 				if (m_piecePlacement == EPiecePlacement::CenteredSubPlacement)
 				{
 					// Offset by main object center
-					position -= orientation * center;
+					position -= orientation * center * size;
 				}
 
 				// Place pieces according to sub-transforms; scale is ignored
 				Matrix34 const& localTM = m_aSubObjects[piece]->localTM;
 
-				position += orientation * localTM.GetTranslation();
+				position += orientation * localTM.GetTranslation() * size;
 				orientation = orientation * Quat(localTM);
 
-				if (m_originMode == EOriginMode::Center)
+				if (context.m_params.m_meshCentered)
 				{
 					Vec3 subCenter = m_aSubObjects[piece]->pStatObj->GetAABB().GetCenter();
-					position += orientation * subCenter;
+					position += orientation * subCenter * size;
 				}
 
 				positions.Store(particleId, position);
 				orientations.Store(particleId, orientation);
 			}
 		}
-		CRY_PFX2_FOR_END;
 	}
 
-	virtual void Render(CParticleEmitter* pEmitter, ICommonParticleComponentRuntime* pCommonComponentRuntime, CParticleComponent* pComponent, const SRenderContext& renderContext) override
+	virtual void RenderDeferred(CParticleEmitter* pEmitter, CParticleComponentRuntime* pCommonComponentRuntime, CParticleComponent* pComponent, const SRenderContext& renderContext) override
 	{
 		CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
 
@@ -174,7 +183,7 @@ public:
 		const IQuatStream orientations = container.GetIQuatStream(EPQF_Orientation);
 		const IFStream alphas = container.GetIFStream(EPDT_Alpha, 1.0f);
 		const IFStream sizes = container.GetIFStream(EPDT_Size, 1.0f);
-		const TIStream<IMeshObj*> meshes = container.GetTIStream<IMeshObj*>(EPDT_MeshGeometry);
+		const TIStream<IMeshObj*> meshes = container.IStream(EPDT_MeshGeometry);
 		const Vec3 camPosition = passInfo.GetCamera().GetPosition();
 		const bool hasAlphas = container.HasData(EPDT_Alpha);
 		const bool hasPieces = container.HasData(EPDT_MeshGeometry);
@@ -183,11 +192,11 @@ public:
 
 		const AABB bBox = m_pStaticObject->GetAABB();
 		const float invObjectSize = (m_sizeMode == ESizeMode::Size) ? rsqrt_fast(bBox.GetRadiusSqr()) : 1.0f;
-		Vec3 offset = (m_originMode == EOriginMode::Center) ? -bBox.GetCenter() : Vec3(ZERO);
+		Vec3 offset = -bBox.GetCenter();
 
 		renderParams.dwFObjFlags |= FOB_TRANS_MASK;
 
-		CRY_PFX2_FOR_ACTIVE_PARTICLES(context)
+		for (auto particleId : context.GetUpdateRange())
 		{
 			const Vec3 position = positions.Load(particleId);
 			const Quat orientation = orientations.Load(particleId);
@@ -204,7 +213,7 @@ public:
 				offset = -pMeshObj->GetAABB().GetCenter();
 			}
 
-			if (m_originMode == EOriginMode::Center)
+			if (context.m_params.m_meshCentered)
 				wsMatrix.SetTranslation(wsMatrix * offset);
 
 			renderParams.fAlpha = alphas.SafeLoad(particleId);
@@ -218,7 +227,16 @@ public:
 			renderParams.pInstance = &non_const(*this);
 			pMeshObj->Render(renderParams, passInfo);
 		}
-		CRY_PFX2_FOR_END;
+	}
+
+	virtual uint GetNumResources() const override
+	{
+		return m_meshName.empty() ? 0 : 1;
+	}
+
+	virtual const char* GetResourceName(uint resourceId) const override
+	{
+		return m_meshName.c_str();
 	}
 
 private:

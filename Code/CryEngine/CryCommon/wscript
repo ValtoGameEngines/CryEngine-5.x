@@ -1,4 +1,5 @@
-# Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+# Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
 
 def build(bld):
 
@@ -6,6 +7,8 @@ def build(bld):
 		target     = 'CryCommon', 
 		vs_filter  = 'Common',
 		file_list  = ['crycommon.waf_files'],
+		
+		includes = [ '3rdParty' ],
 
 		win_file_list      = ['crycommon_win32.waf_files', 'crycommon_windows.waf_files'],
 		durango_file_list  = ['crycommon_win32.waf_files', 'crycommon_durango.waf_files'],

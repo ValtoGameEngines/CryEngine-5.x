@@ -1,97 +1,107 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "SoundEngine.h"
 #include "SoundEngineUtil.h"
+#include "GlobalData.h"
+#include <CryAudio/IAudioSystem.h>
+#include <Logger.h>
 #include <CrySystem/File/CryFile.h>
 #include <CryString/CryPath.h>
 
 #include <SDL.h>
 #include <SDL_mixer.h>
 
-#define SDL_MIXER_NUM_CHANNELS 512
-#define SDL_MIXER_PROJECT_PATH AUDIO_SYSTEM_DATA_ROOT CRY_NATIVE_PATH_SEPSTR "sdlmixer" CRY_NATIVE_PATH_SEPSTR
-
-using namespace CryAudio::Impl::SDL_mixer;
-
-static const int g_nSupportedFormats = MIX_INIT_OGG | MIX_INIT_MP3;
-static const int g_nNumMixChannels = SDL_MIXER_NUM_CHANNELS;
-
-static const SampleId SDL_MIXER_INVALID_SAMPLE_ID = 0;
-const int g_sampleRate = 48000;
-const int g_bufferSize = 4096;
+namespace CryAudio
+{
+namespace Impl
+{
+namespace SDL_mixer
+{
+static string const s_projectPath = string(AUDIO_SYSTEM_DATA_ROOT) + "/" + s_szImplFolderName + "/" + s_szAssetsFolderName + "/";
+static constexpr int s_supportedFormats = MIX_INIT_OGG | MIX_INIT_MP3;
+static constexpr int s_numMixChannels = 512;
+static constexpr SampleId s_invalidSampleId = 0;
+static constexpr int s_sampleRate = 48000;
+static constexpr int s_bufferSize = 4096;
 
 // Samples
 string g_sampleDataRootDir;
-typedef std::unordered_map<SampleId, Mix_Chunk*> SampleDataMap;
+using SampleDataMap = std::unordered_map<SampleId, Mix_Chunk*>;
 SampleDataMap g_sampleData;
 
-typedef std::unordered_map<SampleId, string> SampleNameMap;
+using SampleNameMap = std::unordered_map<SampleId, string>;
 SampleNameMap g_samplePaths;
 
-typedef std::unordered_map<SampleId, int> SampleIdUsageCounterMap;
+using SampleIdUsageCounterMap = std::unordered_map<SampleId, int>;
 SampleIdUsageCounterMap g_usageCounters;
 
 // Channels
 struct SChannelData
 {
-	SAudioObject* pAudioObject;
+	CObject* pObject;
 };
 
-SChannelData g_channels[SDL_MIXER_NUM_CHANNELS];
+SChannelData g_channels[s_numMixChannels];
 
-typedef std::queue<int> TChannelQueue;
+using TChannelQueue = std::queue<int>;
 TChannelQueue g_freeChannels;
 
-enum EChannelFinishedRequestQueueId
+enum class EChannelFinishedRequestQueueId : EnumFlagsType
 {
-	eChannelFinishedRequestQueueId_One = 0,
-	eChannelFinishedRequestQueueId_Two = 1,
-	eChannelFinishedRequestQueueId_Count
+	One,
+	Two,
+	Count
 };
+CRY_CREATE_ENUM_FLAG_OPERATORS(EChannelFinishedRequestQueueId);
 
-typedef std::deque<int, STLSoundAllocator<int>> ChannelFinishedRequests;
-ChannelFinishedRequests g_channelFinishedRequests[eChannelFinishedRequestQueueId_Count];
+using ChannelFinishedRequests = std::deque<int>;
+ChannelFinishedRequests g_channelFinishedRequests[IntegralValue(EChannelFinishedRequestQueueId::Count)];
 CryCriticalSection g_channelFinishedCriticalSection;
 
 // Audio Objects
-typedef std::vector<SAudioObject*, STLSoundAllocator<SAudioObject*>> AudioObjectList;
-AudioObjectList g_audioObjects;
+using Objects = std::vector<CObject*>;
+Objects g_objects;
 
 // Listeners
-CAudioObjectTransformation g_listenerPosition;
+CObjectTransformation g_listenerTransformation;
 bool g_bListenerPosChanged;
 bool g_bMuted;
 
 SoundEngine::FnEventCallback g_fnEventFinishedCallback;
 SoundEngine::FnStandaloneFileCallback g_fnStandaloneFileFinishedCallback;
 
+//////////////////////////////////////////////////////////////////////////
 void SoundEngine::RegisterEventFinishedCallback(FnEventCallback pCallbackFunction)
 {
 	g_fnEventFinishedCallback = pCallbackFunction;
 }
 
+//////////////////////////////////////////////////////////////////////////
 void SoundEngine::RegisterStandaloneFileFinishedCallback(FnStandaloneFileCallback pCallbackFunction)
 {
 	g_fnStandaloneFileFinishedCallback = pCallbackFunction;
 }
 
-void EventFinishedPlaying(AudioEventId nEventID)
+//////////////////////////////////////////////////////////////////////////
+void EventFinishedPlaying(CATLEvent& audioEvent)
 {
 	if (g_fnEventFinishedCallback)
 	{
-		g_fnEventFinishedCallback(nEventID);
+		g_fnEventFinishedCallback(audioEvent);
 	}
 }
 
-void StandaloneFileFinishedPlaying(AudioStandaloneFileId const fileInstanceId, char const* szFileName)
+//////////////////////////////////////////////////////////////////////////
+void StandaloneFileFinishedPlaying(CATLStandaloneFile& standaloneFile, char const* const szFileName)
 {
 	if (g_fnStandaloneFileFinishedCallback)
 	{
-		g_fnStandaloneFileFinishedCallback(fileInstanceId, szFileName);
+		g_fnStandaloneFileFinishedCallback(standaloneFile, szFileName);
 	}
 }
 
+//////////////////////////////////////////////////////////////////////////
 void SoundEngine::UnloadSample(const SampleId nID)
 {
 	Mix_Chunk* pSample = stl::find_in_map(g_sampleData, nID, nullptr);
@@ -102,69 +112,70 @@ void SoundEngine::UnloadSample(const SampleId nID)
 	}
 	else
 	{
-		g_audioImplLogger.Log(eAudioLogType_Error, "Could not find sample with id %d", nID);
+		Cry::Audio::Log(ELogType::Error, "Could not find sample with id %d", nID);
 	}
 }
 
+//////////////////////////////////////////////////////////////////////////
 void ProcessChannelFinishedRequests(ChannelFinishedRequests& queue)
 {
 	if (!queue.empty())
 	{
 		for (const int finishedChannelId : queue)
 		{
-			SAudioObject* pAudioObject = g_channels[finishedChannelId].pAudioObject;
+			CObject* pAudioObject = g_channels[finishedChannelId].pObject;
 			if (pAudioObject)
 			{
-				EventInstanceList::iterator eventsEnd = pAudioObject->events.end();
-				for (EventInstanceList::iterator eventsIt = pAudioObject->events.begin(); eventsIt != eventsEnd; )
+				EventInstanceList::iterator eventsEnd = pAudioObject->m_events.end();
+				for (EventInstanceList::iterator eventsIt = pAudioObject->m_events.begin(); eventsIt != eventsEnd; )
 				{
-					SAudioEvent* pEventInstance = *eventsIt;
+					CEvent* pEventInstance = *eventsIt;
 					EventInstanceList::iterator eventsCurrent = eventsIt;
 					++eventsIt;
 					if (pEventInstance)
 					{
-						const ChannelList::iterator channelsEnd = pEventInstance->channels.end();
-						for (ChannelList::iterator channelIt = pEventInstance->channels.begin(); channelIt != channelsEnd; ++channelIt)
+						const ChannelList::iterator channelsEnd = pEventInstance->m_channels.end();
+						for (ChannelList::iterator channelIt = pEventInstance->m_channels.begin(); channelIt != channelsEnd; ++channelIt)
 						{
 							if (*channelIt == finishedChannelId)
 							{
-								pEventInstance->channels.erase(channelIt);
-								if (pEventInstance->channels.empty())
+								pEventInstance->m_channels.erase(channelIt);
+								if (pEventInstance->m_channels.empty())
 								{
-									eventsIt = pAudioObject->events.erase(eventsCurrent);
-									eventsEnd = pAudioObject->events.end();
-									EventFinishedPlaying(pEventInstance->eventId);
+									eventsIt = pAudioObject->m_events.erase(eventsCurrent);
+									eventsEnd = pAudioObject->m_events.end();
+									EventFinishedPlaying(pEventInstance->m_event);
 								}
 								break;
 							}
 						}
 					}
 				}
-				StandAloneFileInstanceList::iterator standaloneFilesEnd = pAudioObject->standaloneFiles.end();
-				for (StandAloneFileInstanceList::iterator standaloneFilesIt = pAudioObject->standaloneFiles.begin(); standaloneFilesIt != standaloneFilesEnd; )
+				StandAloneFileInstanceList::iterator standaloneFilesEnd = pAudioObject->m_standaloneFiles.end();
+				for (StandAloneFileInstanceList::iterator standaloneFilesIt = pAudioObject->m_standaloneFiles.begin(); standaloneFilesIt != standaloneFilesEnd; )
 				{
-					CAudioStandaloneFile* pStandaloneFileInstance = *standaloneFilesIt;
+					CStandaloneFile* pStandaloneFileInstance = *standaloneFilesIt;
 					StandAloneFileInstanceList::iterator standaloneFilesCurrent = standaloneFilesIt;
 					++standaloneFilesIt;
 					if (pStandaloneFileInstance)
 					{
-						const ChannelList::iterator channelsEnd = pStandaloneFileInstance->channels.end();
-						for (ChannelList::iterator channelIt = pStandaloneFileInstance->channels.begin(); channelIt != channelsEnd; ++channelIt)
+						const ChannelList::iterator channelsEnd = pStandaloneFileInstance->m_channels.end();
+						for (ChannelList::iterator channelIt = pStandaloneFileInstance->m_channels.begin(); channelIt != channelsEnd; ++channelIt)
 						{
 							if (*channelIt == finishedChannelId)
 							{
-								pStandaloneFileInstance->channels.erase(channelIt);
-								if (pStandaloneFileInstance->channels.empty())
+								pStandaloneFileInstance->m_channels.erase(channelIt);
+								if (pStandaloneFileInstance->m_channels.empty())
 								{
-									standaloneFilesIt = pAudioObject->standaloneFiles.erase(standaloneFilesCurrent);
-									standaloneFilesEnd = pAudioObject->standaloneFiles.end();
-									StandaloneFileFinishedPlaying(pStandaloneFileInstance->fileInstanceId, pStandaloneFileInstance->fileName.c_str());
+									standaloneFilesIt = pAudioObject->m_standaloneFiles.erase(standaloneFilesCurrent);
+									standaloneFilesEnd = pAudioObject->m_standaloneFiles.end();
+									StandaloneFileFinishedPlaying(pStandaloneFileInstance->m_atlFile, pStandaloneFileInstance->m_name.c_str());
 
-									SampleIdUsageCounterMap::iterator it = g_usageCounters.find(pStandaloneFileInstance->fileId);
+									SampleIdUsageCounterMap::iterator it = g_usageCounters.find(pStandaloneFileInstance->m_sampleId);
 									CRY_ASSERT(it != g_usageCounters.end() && it->second > 0);
 									if (--it->second == 0)
 									{
-										SoundEngine::UnloadSample(pStandaloneFileInstance->fileInstanceId);
+										SoundEngine::UnloadSample(pStandaloneFileInstance->m_sampleId);
 									}
 								}
 								break;
@@ -172,7 +183,7 @@ void ProcessChannelFinishedRequests(ChannelFinishedRequests& queue)
 						}
 					}
 				}
-				g_channels[finishedChannelId].pAudioObject = nullptr;
+				g_channels[finishedChannelId].pObject = nullptr;
 			}
 			g_freeChannels.push(finishedChannelId);
 		}
@@ -180,15 +191,17 @@ void ProcessChannelFinishedRequests(ChannelFinishedRequests& queue)
 	}
 }
 
+//////////////////////////////////////////////////////////////////////////
 void ChannelFinishedPlaying(int nChannel)
 {
-	if (nChannel >= 0 && nChannel < g_nNumMixChannels)
+	if (nChannel >= 0 && nChannel < s_numMixChannels)
 	{
 		CryAutoLock<CryCriticalSection> autoLock(g_channelFinishedCriticalSection);
-		g_channelFinishedRequests[eChannelFinishedRequestQueueId_One].push_back(nChannel);
+		g_channelFinishedRequests[IntegralValue(EChannelFinishedRequestQueueId::One)].push_back(nChannel);
 	}
 }
 
+//////////////////////////////////////////////////////////////////////////
 void LoadMetadata(const string& path)
 {
 	_finddata_t fd;
@@ -203,7 +216,7 @@ void LoadMetadata(const string& path)
 			{
 				if (fd.attrib & _A_SUBDIR)
 				{
-					LoadMetadata(path + name + CRY_NATIVE_PATH_SEPSTR);
+					LoadMetadata(path + name + "/");
 				}
 				else
 				{
@@ -229,50 +242,52 @@ void LoadMetadata(const string& path)
 	}
 }
 
+//////////////////////////////////////////////////////////////////////////
 bool SoundEngine::Init()
 {
 	if (SDL_Init(SDL_INIT_AUDIO) < 0)
 	{
-		g_audioImplLogger.Log(eAudioLogType_Error, "SDL::SDL_Init() returned: %s", SDL_GetError());
+		Cry::Audio::Log(ELogType::Error, "SDL::SDL_Init() returned: %s", SDL_GetError());
 		return false;
 	}
 
-	int loadedFormats = Mix_Init(g_nSupportedFormats);
-	if ((loadedFormats & g_nSupportedFormats) != g_nSupportedFormats)
+	int loadedFormats = Mix_Init(s_supportedFormats);
+	if ((loadedFormats & s_supportedFormats) != s_supportedFormats)
 	{
-		g_audioImplLogger.Log(eAudioLogType_Error, "SDLMixer::Mix_Init() failed to init support for format flags %d with error \"%s\"", g_nSupportedFormats, Mix_GetError());
+		Cry::Audio::Log(ELogType::Error, R"(SDLMixer::Mix_Init() failed to init support for format flags %d with error "%s")", s_supportedFormats, Mix_GetError());
 		return false;
 	}
 
-	if (Mix_OpenAudio(g_sampleRate, MIX_DEFAULT_FORMAT, 2, g_bufferSize) < 0)
+	if (Mix_OpenAudio(s_sampleRate, MIX_DEFAULT_FORMAT, 2, s_bufferSize) < 0)
 	{
-		g_audioImplLogger.Log(eAudioLogType_Error, "SDLMixer::Mix_OpenAudio() failed to init the SDL Mixer API with error \"%s\"", Mix_GetError());
+		Cry::Audio::Log(ELogType::Error, R"(SDLMixer::Mix_OpenAudio() failed to init the SDL Mixer API with error "%s")", Mix_GetError());
 		return false;
 	}
 
-	Mix_AllocateChannels(g_nNumMixChannels);
+	Mix_AllocateChannels(s_numMixChannels);
 
 	g_bMuted = false;
 	Mix_Volume(-1, SDL_MIX_MAXVOLUME);
-	for (int i = 0; i < SDL_MIXER_NUM_CHANNELS; ++i)
+	for (int i = 0; i < s_numMixChannels; ++i)
 	{
 		g_freeChannels.push(i);
 	}
 
 	Mix_ChannelFinished(ChannelFinishedPlaying);
 
-	g_sampleDataRootDir = PathUtil::GetPathWithoutFilename(PathUtil::GetGameFolder() + CRY_NATIVE_PATH_SEPSTR SDL_MIXER_PROJECT_PATH);
+	g_sampleDataRootDir = PathUtil::GetPathWithoutFilename(s_projectPath);
 	LoadMetadata("");
 	g_bListenerPosChanged = false;
 
 	// need to reinit as the global variable might have been initialized with wrong values
-	g_listenerPosition = CAudioObjectTransformation();
+	g_listenerTransformation = CObjectTransformation();
 
-	g_audioObjects.reserve(128);
+	g_objects.reserve(128);
 
 	return true;
 }
 
+//////////////////////////////////////////////////////////////////////////
 void FreeAllSampleData()
 {
 	Mix_HaltChannel(-1);
@@ -285,22 +300,25 @@ void FreeAllSampleData()
 	g_sampleData.clear();
 }
 
+//////////////////////////////////////////////////////////////////////////
 void SoundEngine::Release()
 {
 	FreeAllSampleData();
-	g_audioObjects.clear();
-	g_audioObjects.shrink_to_fit();
+	g_objects.clear();
+	g_objects.shrink_to_fit();
 	Mix_Quit();
 	Mix_CloseAudio();
 	SDL_Quit();
 }
 
+//////////////////////////////////////////////////////////////////////////
 void SoundEngine::Refresh()
 {
 	FreeAllSampleData();
-	LoadMetadata(PathUtil::GetGameFolder() + CRY_NATIVE_PATH_SEPSTR SDL_MIXER_PROJECT_PATH);
+	LoadMetadata(s_projectPath);
 }
 
+//////////////////////////////////////////////////////////////////////////
 const SampleId SoundEngine::LoadSampleFromMemory(void* pMemory, const size_t size, const string& samplePath, const SampleId overrideId)
 {
 	const SampleId id = (overrideId != 0) ? overrideId : GetIDFromString(samplePath);
@@ -308,7 +326,7 @@ const SampleId SoundEngine::LoadSampleFromMemory(void* pMemory, const size_t siz
 	if (pSample != nullptr)
 	{
 		Mix_FreeChunk(pSample);
-		g_audioImplLogger.Log(eAudioLogType_Warning, "Loading sample %s which had already been loaded", samplePath.c_str());
+		Cry::Audio::Log(ELogType::Warning, "Loading sample %s which had already been loaded", samplePath.c_str());
 	}
 	SDL_RWops* pData = SDL_RWFromMem(pMemory, size);
 	if (pData)
@@ -322,16 +340,17 @@ const SampleId SoundEngine::LoadSampleFromMemory(void* pMemory, const size_t siz
 		}
 		else
 		{
-			g_audioImplLogger.Log(eAudioLogType_Error, "SDL Mixer failed to load sample. Error: \"%s\"", Mix_GetError());
+			Cry::Audio::Log(ELogType::Error, R"(SDL Mixer failed to load sample. Error: "%s")", Mix_GetError());
 		}
 	}
 	else
 	{
-		g_audioImplLogger.Log(eAudioLogType_Error, "SDL Mixer failed to transform the audio data. Error: \"%s\"", SDL_GetError());
+		Cry::Audio::Log(ELogType::Error, R"(SDL Mixer failed to transform the audio data. Error: "%s")", SDL_GetError());
 	}
-	return SDL_MIXER_INVALID_SAMPLE_ID;
+	return s_invalidSampleId;
 }
 
+//////////////////////////////////////////////////////////////////////////
 bool LoadSampleImpl(const SampleId id, const string& samplePath)
 {
 	bool bSuccess = true;
@@ -342,11 +361,11 @@ bool LoadSampleImpl(const SampleId id, const string& samplePath)
 		SampleNameMap::const_iterator it = g_samplePaths.find(id);
 		if (it != g_samplePaths.end() && it->second != samplePath)
 		{
-			g_audioImplLogger.Log(eAudioLogType_Error, "Loaded a Sample with the already existing ID %u, but from a different path source path '%s' <-> '%s'.", static_cast<uint>(id), it->second.c_str(), samplePath.c_str());
+			Cry::Audio::Log(ELogType::Error, "Loaded a Sample with the already existing ID %u, but from a different path source path '%s' <-> '%s'.", static_cast<uint>(id), it->second.c_str(), samplePath.c_str());
 		}
 		if (stl::find_in_map(g_sampleData, id, nullptr) != nullptr)
 		{
-			g_audioImplLogger.Log(eAudioLogType_Error, "Loading sample '%s' which had already been loaded", samplePath.c_str());
+			Cry::Audio::Log(ELogType::Error, "Loading sample '%s' which had already been loaded", samplePath.c_str());
 		}
 #endif
 		g_sampleData[id] = pSample;
@@ -355,24 +374,25 @@ bool LoadSampleImpl(const SampleId id, const string& samplePath)
 	else
 	{
 		// Sample could be inside a pak file so we need to open it manually and load it from the raw file
-		const size_t nFileSize = gEnv->pCryPak->FGetSize(samplePath);
+		const size_t fileSize = gEnv->pCryPak->FGetSize(samplePath);
 		FILE* const pFile = gEnv->pCryPak->FOpen(samplePath, "rbx", ICryPak::FOPEN_HINT_DIRECT_OPERATION);
-		if (pFile && nFileSize > 0)
+		if (pFile && fileSize > 0)
 		{
-			void* const pData = AUDIO_ALLOCATOR_MEMORY_POOL.AllocateRaw(nFileSize, AUDIO_MEMORY_ALIGNMENT, "SDLMixerSample");
-			gEnv->pCryPak->FReadRawAll(pData, nFileSize, pFile);
-			const SampleId nNewID = SoundEngine::LoadSampleFromMemory(pData, nFileSize, samplePath, id);
-			if (nNewID == SDL_MIXER_INVALID_SAMPLE_ID)
+			void* const pData = CryModuleMalloc(fileSize);
+			gEnv->pCryPak->FReadRawAll(pData, fileSize, pFile);
+			const SampleId newId = SoundEngine::LoadSampleFromMemory(pData, fileSize, samplePath, id);
+			if (newId == s_invalidSampleId)
 			{
-				g_audioImplLogger.Log(eAudioLogType_Error, "SDL Mixer failed to load sample %s. Error: \"%s\"", samplePath.c_str(), Mix_GetError());
+				Cry::Audio::Log(ELogType::Error, R"(SDL Mixer failed to load sample %s. Error: "%s")", samplePath.c_str(), Mix_GetError());
 				bSuccess = false;
 			}
-			AUDIO_ALLOCATOR_MEMORY_POOL.Free(pData);
+			CryModuleFree(pData);
 		}
 	}
 	return bSuccess;
 }
 
+//////////////////////////////////////////////////////////////////////////
 const SampleId SoundEngine::LoadSample(const string& sampleFilePath, bool bOnlyMetadata)
 {
 	const SampleId id = GetIDFromString(sampleFilePath);
@@ -384,72 +404,94 @@ const SampleId SoundEngine::LoadSample(const string& sampleFilePath, bool bOnlyM
 		}
 		else if (!LoadSampleImpl(id, sampleFilePath))
 		{
-			return SDL_MIXER_INVALID_SAMPLE_ID;
+			return s_invalidSampleId;
 		}
 	}
 	return id;
 }
 
+//////////////////////////////////////////////////////////////////////////
 void SoundEngine::Pause()
 {
 	Mix_Pause(-1);
 	Mix_PauseMusic();
 }
 
+//////////////////////////////////////////////////////////////////////////
 void SoundEngine::Resume()
 {
 	Mix_Resume(-1);
 	Mix_ResumeMusic();
 }
 
+//////////////////////////////////////////////////////////////////////////
 void SoundEngine::Stop()
 {
 	Mix_HaltChannel(-1);
 }
 
+//////////////////////////////////////////////////////////////////////////
 void SoundEngine::Mute()
 {
 	Mix_Volume(-1, 0);
 	g_bMuted = true;
 }
 
+//////////////////////////////////////////////////////////////////////////
 void SoundEngine::UnMute()
 {
-	AudioObjectList::const_iterator audioObjectIt = g_audioObjects.begin();
-	const AudioObjectList::const_iterator audioObjectEnd = g_audioObjects.end();
+	Objects::const_iterator audioObjectIt = g_objects.begin();
+	Objects::const_iterator const audioObjectEnd = g_objects.end();
+
 	for (; audioObjectIt != audioObjectEnd; ++audioObjectIt)
 	{
-		SAudioObject* pAudioObject = *audioObjectIt;
-		if (pAudioObject)
+		CObject* const pAudioObject = *audioObjectIt;
+
+		if (pAudioObject != nullptr)
 		{
-			EventInstanceList::const_iterator eventIt = pAudioObject->events.begin();
-			const EventInstanceList::const_iterator eventEnd = pAudioObject->events.end();
+			EventInstanceList::const_iterator eventIt = pAudioObject->m_events.begin();
+			EventInstanceList::const_iterator const eventEnd = pAudioObject->m_events.end();
+
 			for (; eventIt != eventEnd; ++eventIt)
 			{
-				SAudioEvent* pEventInstance = *eventIt;
-				if (pEventInstance)
+				CEvent* const pEventInstance = *eventIt;
+
+				if (pEventInstance != nullptr)
 				{
-					ChannelList::const_iterator channelIt = pEventInstance->channels.begin();
-					ChannelList::const_iterator channelEnd = pEventInstance->channels.end();
-					for (; channelIt != channelEnd; ++channelIt)
+					auto const pTrigger = pEventInstance->m_pTrigger;
+
+					if (pTrigger != nullptr)
 					{
-						Mix_Volume(*channelIt, pEventInstance->pStaticData->volume);
+						float const volumeMultiplier = GetVolumeMultiplier(pAudioObject, pTrigger->GetSampleId());
+						int const mixVolume = GetAbsoluteVolume(pTrigger->GetVolume(), volumeMultiplier);
+
+						ChannelList::const_iterator channelIt = pEventInstance->m_channels.begin();
+						ChannelList::const_iterator const channelEnd = pEventInstance->m_channels.end();
+
+						for (; channelIt != channelEnd; ++channelIt)
+						{
+							Mix_Volume(*channelIt, mixVolume);
+						}
 					}
 				}
 			}
 		}
 	}
+
 	g_bMuted = false;
 }
 
-void SetChannelPosition(const SAudioTrigger* pStaticData, const int channelID, const float distance, const float angle)
+//////////////////////////////////////////////////////////////////////////
+void SetChannelPosition(const CTrigger* pStaticData, const int channelID, const float distance, const float angle)
 {
 	static const uint8 sdlMaxDistance = 255;
-	const float min = pStaticData->attenuationMinDistance;
-	const float max = pStaticData->attenuationMaxDistance;
+	const float min = pStaticData->GetAttenuationMinDistance();
+	const float max = pStaticData->GetAttenuationMaxDistance();
+
 	if (min <= max)
 	{
 		uint8 nDistance = 0;
+
 		if (max >= 0.0f && distance > min)
 		{
 			if (min != max)
@@ -466,7 +508,7 @@ void SetChannelPosition(const SAudioTrigger* pStaticData, const int channelID, c
 		//Temp code, to be reviewed during the SetChannelPosition rewrite:
 		Mix_SetDistance(channelID, nDistance);
 
-		if (pStaticData->bPanningEnabled)
+		if (pStaticData->IsPanningEnabled())
 		{
 			//Temp code, to be reviewed during the SetChannelPosition rewrite:
 			float const absAngle = fabs(angle);
@@ -480,128 +522,243 @@ void SetChannelPosition(const SAudioTrigger* pStaticData, const int channelID, c
 	}
 	else
 	{
-		g_audioImplLogger.Log(eAudioLogType_Error, "The minimum attenuation distance value is higher than the maximum");
+		Cry::Audio::Log(ELogType::Error, "The minimum attenuation distance value is higher than the maximum");
 	}
 }
 
-bool SoundEngine::StopEvent(SAudioEvent const* const pEventInstance)
+//////////////////////////////////////////////////////////////////////////
+bool SoundEngine::StopEvent(CEvent const* const pEvent)
 {
-	if (pEventInstance)
+	if (pEvent != nullptr)
 	{
 		// need to make a copy because the callback
 		// registered with Mix_ChannelFinished can edit the list
-		ChannelList channels = pEventInstance->channels;
-		for (int channel : channels)
+		ChannelList const channels = pEvent->m_channels;
+		int const fadeOutTime = pEvent->m_pTrigger->GetFadeOutTime();
+
+		for (int const channel : channels)
 		{
-			Mix_HaltChannel(channel);
+			if (fadeOutTime == 0)
+			{
+				Mix_HaltChannel(channel);
+			}
+			else
+			{
+				Mix_FadeOutChannel(channel, fadeOutTime);
+			}
 		}
+
+		return true;
+	}
+
+	return false;
+}
+
+//////////////////////////////////////////////////////////////////////////
+bool SoundEngine::PauseEvent(CEvent const* const pEvent)
+{
+	if (pEvent != nullptr)
+	{
+		// need to make a copy because the callback
+		// registered with Mix_ChannelFinished can edit the list
+		ChannelList const channels = pEvent->m_channels;
+
+		for (int const channel : channels)
+		{
+			Mix_Pause(channel);
+		}
+
 		return true;
 	}
 	return false;
 }
 
-bool SoundEngine::ExecuteEvent(SAudioObject* const pAudioObject, SAudioTrigger const* const pEventStaticData, SAudioEvent* const pEventInstance)
+//////////////////////////////////////////////////////////////////////////
+bool SoundEngine::ResumeEvent(CEvent const* const pEvent)
 {
-	bool bSuccess = false;
-
-	if (pAudioObject && pEventStaticData && pEventInstance)
+	if (pEvent != nullptr)
 	{
-		if (pEventStaticData->bStartEvent)
-		{
-			// start playing samples
-			pEventInstance->pStaticData = pEventStaticData;
+		// need to make a copy because the callback
+		// registered with Mix_ChannelFinished can edit the list
+		ChannelList channels = pEvent->m_channels;
 
-			Mix_Chunk* pSample = stl::find_in_map(g_sampleData, pEventStaticData->sampleId, nullptr);
+		for (int const channel : channels)
+		{
+			Mix_Resume(channel);
+		}
+
+		return true;
+	}
+	return false;
+}
+
+//////////////////////////////////////////////////////////////////////////
+ERequestStatus SoundEngine::ExecuteEvent(CObject* const pObject, CTrigger const* const pTrigger, CEvent* const pEvent)
+{
+	ERequestStatus requestStatus = ERequestStatus::Failure;
+
+	if ((pObject != nullptr) && (pTrigger != nullptr) && (pEvent != nullptr))
+	{
+		EEventType const type = pTrigger->GetType();
+		SampleId const sampleId = pTrigger->GetSampleId();
+
+		if (type == EEventType::Start)
+		{
+			// Start playing samples
+			pEvent->m_pTrigger = pTrigger;
+			Mix_Chunk* pSample = stl::find_in_map(g_sampleData, sampleId, nullptr);
+
 			if (pSample == nullptr)
 			{
 				// Trying to play sample that hasn't been loaded yet, load it in place
 				// NOTE: This should be avoided as it can cause lag in audio playback
-				const string& samplePath = g_samplePaths[pEventStaticData->sampleId];
-				if (LoadSampleImpl(pEventStaticData->sampleId, samplePath))
+				string const& samplePath = g_samplePaths[sampleId];
+
+				if (LoadSampleImpl(sampleId, samplePath))
 				{
-					pSample = stl::find_in_map(g_sampleData, pEventStaticData->sampleId, nullptr);
+					pSample = stl::find_in_map(g_sampleData, sampleId, nullptr);
 				}
+
 				if (pSample == nullptr)
 				{
-					return false;
+					return ERequestStatus::Failure;
 				}
-			}
-
-			int loopCount = pEventStaticData->loopCount;
-			if (loopCount > 0)
-			{
-				// For SDL Mixer 0 loops means play only once, 1 loop play twice, etc ...
-				--loopCount;
 			}
 
 			if (!g_freeChannels.empty())
 			{
-				int channelID = Mix_PlayChannel(g_freeChannels.front(), pSample, loopCount);
+				int const channelID = g_freeChannels.front();
+
 				if (channelID >= 0)
 				{
 					g_freeChannels.pop();
-					Mix_Volume(channelID, g_bMuted ? 0 : pEventStaticData->volume);
+
+					float const volumeMultiplier = GetVolumeMultiplier(pObject, sampleId);
+					int const mixVolume = GetAbsoluteVolume(pTrigger->GetVolume(), volumeMultiplier);
+					Mix_Volume(channelID, g_bMuted ? 0 : mixVolume);
+
+					int const fadeInTime = pTrigger->GetFadeInTime();
+					int const loopCount = pTrigger->GetNumLoops();
+
+					if (fadeInTime > 0)
+					{
+						Mix_FadeInChannel(channelID, pSample, loopCount, fadeInTime);
+					}
+					else
+					{
+						Mix_PlayChannel(channelID, pSample, loopCount);
+					}
 
 					// Get distance and angle from the listener to the audio object
 					float distance = 0.0f;
 					float angle = 0.0f;
-					GetDistanceAngleToObject(g_listenerPosition, pAudioObject->position, distance, angle);
-					SetChannelPosition(pEventInstance->pStaticData, channelID, distance, angle);
+					GetDistanceAngleToObject(g_listenerTransformation, pObject->m_transformation, distance, angle);
+					SetChannelPosition(pEvent->m_pTrigger, channelID, distance, angle);
 
-					g_channels[channelID].pAudioObject = pAudioObject;
-					pEventInstance->channels.push_back(channelID);
+					g_channels[channelID].pObject = pObject;
+					pEvent->m_channels.push_back(channelID);
 				}
 				else
 				{
-					g_audioImplLogger.Log(eAudioLogType_Error, "Could not play sample. Error: %s", Mix_GetError());
+					Cry::Audio::Log(ELogType::Error, "Could not play sample. Error: %s", Mix_GetError());
 				}
 			}
 			else
 			{
-				g_audioImplLogger.Log(eAudioLogType_Error, "Ran out of free audio channels. Are you trying to play more than %d samples?", SDL_MIXER_NUM_CHANNELS);
+				Cry::Audio::Log(ELogType::Error, "Ran out of free audio channels. Are you trying to play more than %d samples?", s_numMixChannels);
 			}
 
-			if (!pEventInstance->channels.empty())
+			if (!pEvent->m_channels.empty())
 			{
-				// if any sample was added then add the event to the audio object
-				pAudioObject->events.push_back(pEventInstance);
-				bSuccess = true;
+				// If any sample was added then add the event to the audio object
+				pObject->m_events.push_back(pEvent);
+				requestStatus = ERequestStatus::Success;
 			}
 		}
 		else
 		{
-			// stop event in audio object
-			const SampleId id = pEventStaticData->sampleId;
-			for (SAudioEvent* pEvent : pAudioObject->events)
+			for (auto const pEventToProcess : pObject->m_events)
 			{
-				if (pEvent && (id == pEvent->pStaticData->sampleId))
+				if (pEventToProcess->m_pTrigger->GetSampleId() == sampleId)
 				{
-					SoundEngine::StopEvent(pEvent);
+					switch (type)
+					{
+					case EEventType::Stop:
+						SoundEngine::StopEvent(pEventToProcess);
+						break;
+					case EEventType::Pause:
+						SoundEngine::PauseEvent(pEventToProcess);
+						break;
+					case EEventType::Resume:
+						SoundEngine::ResumeEvent(pEventToProcess);
+						break;
+					}
+				}
+			}
+
+			requestStatus = ERequestStatus::SuccessDoNotTrack;
+		}
+	}
+
+	return requestStatus;
+}
+
+//////////////////////////////////////////////////////////////////////////
+ERequestStatus SoundEngine::SetVolume(CObject* const pObject, SampleId const sampleId)
+{
+	if (!g_bMuted)
+	{
+		float const volumeMultiplier = GetVolumeMultiplier(pObject, sampleId);
+
+		for (auto const pEvent : pObject->m_events)
+		{
+			auto const pTrigger = pEvent->m_pTrigger;
+
+			if ((pTrigger != nullptr) && (pTrigger->GetSampleId() == sampleId))
+			{
+				int const mixVolume = GetAbsoluteVolume(pTrigger->GetVolume(), volumeMultiplier);
+
+				for (auto const channel : pEvent->m_channels)
+				{
+					Mix_Volume(channel, mixVolume);
 				}
 			}
 		}
 	}
 
-	return bSuccess;
+	return ERequestStatus::Success;
 }
 
-bool SoundEngine::PlayFile(
-  SAudioObject* const pAudioObject,
-  CAudioStandaloneFile* const pEventInstance,
-  const SAudioTrigger* const pUsedTrigger,
-  const char* const szFilePath)
+//////////////////////////////////////////////////////////////////////////
+float SoundEngine::GetVolumeMultiplier(CObject* const pObject, SampleId const sampleId)
 {
-	if (!pUsedTrigger)
+	float volumeMultiplier = 1.0f;
+	auto const volumeMultiplierPair = pObject->m_volumeMultipliers.find(sampleId);
+
+	if (volumeMultiplierPair != pObject->m_volumeMultipliers.end())
 	{
-		return false;
+		volumeMultiplier = volumeMultiplierPair->second;
 	}
 
-	SampleId idForThisFile = pEventInstance->fileId;
+	return volumeMultiplier;
+}
+
+//////////////////////////////////////////////////////////////////////////
+int SoundEngine::GetAbsoluteVolume(int const triggerVolume, float const multiplier)
+{
+	int absoluteVolume = static_cast<int>(static_cast<float>(triggerVolume) * multiplier);
+	absoluteVolume = crymath::clamp(absoluteVolume, 0, 128);
+	return absoluteVolume;
+}
+//////////////////////////////////////////////////////////////////////////
+bool SoundEngine::PlayFile(CObject* const pObject, CStandaloneFile* const pStandaloneFile)
+{
+	SampleId idForThisFile = pStandaloneFile->m_sampleId;
 	Mix_Chunk* pSample = stl::find_in_map(g_sampleData, idForThisFile, nullptr);
 
 	if (!pSample)
 	{
-		if (LoadSampleImpl(idForThisFile, szFilePath))
+		if (LoadSampleImpl(idForThisFile, pStandaloneFile->m_name.c_str()))
 		{
 			pSample = stl::find_in_map(g_sampleData, idForThisFile, nullptr);
 		}
@@ -623,59 +780,64 @@ bool SoundEngine::PlayFile(
 
 	if (!g_freeChannels.empty())
 	{
-		int loopCount = pUsedTrigger->loopCount;
-		if (loopCount > 0)
-		{
-			// For SDL Mixer 0 loops means play only once, 1 loop play twice, etc ...
-			--loopCount;
-		}
-
-		int channelId = Mix_PlayChannel(g_freeChannels.front(), pSample, loopCount);
+		int channelId = Mix_PlayChannel(g_freeChannels.front(), pSample, 1);
 		if (channelId >= 0)
 		{
 			g_freeChannels.pop();
-			Mix_Volume(channelId, g_bMuted ? 0 : pUsedTrigger->volume);
+			Mix_Volume(channelId, g_bMuted ? 0 : 128);
 
 			// Get distance and angle from the listener to the audio object
 			float distance = 0.0f;
 			float angle = 0.0f;
-			GetDistanceAngleToObject(g_listenerPosition, pAudioObject->position, distance, angle);
-			SetChannelPosition(pUsedTrigger, channelId, distance, angle);
+			GetDistanceAngleToObject(g_listenerTransformation, pObject->m_transformation, distance, angle);
 
-			g_channels[channelId].pAudioObject = pAudioObject;
-			pEventInstance->channels.push_back(channelId);
+			// Assuming a max distance of 100.0
+			uint8 sldMixerDistance = static_cast<uint8>((std::min((distance / 100.0f), 1.0f) * 255) + 0.5f);
+
+			Mix_SetDistance(channelId, sldMixerDistance);
+
+			float const absAngle = fabs(angle);
+			float const frontAngle = (angle > 0.0f ? 1.0f : -1.0f) * (absAngle > 90.0f ? 180.f - absAngle : absAngle);
+			float const rightVolume = (frontAngle + 90.0f) / 180.0f;
+			float const leftVolume = 1.0f - rightVolume;
+			Mix_SetPanning(channelId, static_cast<uint8>(255.0f * leftVolume), static_cast<uint8>(255.0f * rightVolume));
+
+			g_channels[channelId].pObject = pObject;
+			pStandaloneFile->m_channels.push_back(channelId);
 		}
 		else
 		{
-			g_audioImplLogger.Log(eAudioLogType_Error, "Could not play sample. Error: %s", Mix_GetError());
+			Cry::Audio::Log(ELogType::Error, "Could not play sample. Error: %s", Mix_GetError());
 		}
 	}
 	else
 	{
-		g_audioImplLogger.Log(eAudioLogType_Error, "Ran out of free audio channels. Are you trying to play more than %d samples?", SDL_MIXER_NUM_CHANNELS);
+		Cry::Audio::Log(ELogType::Error, "Ran out of free audio channels. Are you trying to play more than %d samples?", s_numMixChannels);
 	}
 
-	if (!pEventInstance->channels.empty())
+	if (!pStandaloneFile->m_channels.empty())
 	{
 		// if any sample was added then add the event to the audio object
-		pAudioObject->standaloneFiles.push_back(pEventInstance);
+		pObject->m_standaloneFiles.push_back(pStandaloneFile);
 	}
 
 	return true;
 }
 
-bool SoundEngine::StopFile(SAudioObject* const pAudioObject, AudioStandaloneFileId const fileInstanceID)
+//////////////////////////////////////////////////////////////////////////
+bool SoundEngine::StopFile(CObject* const pObject, CStandaloneFile* const pStandaloneFile)
 {
 	bool bResult = false;
-	if (pAudioObject)
+
+	if (pObject != nullptr)
 	{
-		for (CAudioStandaloneFile* const standaloneFileEvent : pAudioObject->standaloneFiles)
+		for (CStandaloneFile* const pTempStandaloneFile : pObject->m_standaloneFiles)
 		{
-			if (standaloneFileEvent->fileInstanceId = fileInstanceID)
+			if (pTempStandaloneFile == pStandaloneFile)
 			{
 				// need to make a copy because the callback
 				// registered with Mix_ChannelFinished can edit the list
-				ChannelList channels = standaloneFileEvent->channels;
+				ChannelList channels = pStandaloneFile->m_channels;
 				for (int channel : channels)
 				{
 					Mix_HaltChannel(channel);
@@ -687,112 +849,107 @@ bool SoundEngine::StopFile(SAudioObject* const pAudioObject, AudioStandaloneFile
 	return bResult;
 }
 
-bool SoundEngine::SetListenerPosition(const ListenerId listenerId, const CAudioObjectTransformation& position)
+//////////////////////////////////////////////////////////////////////////
+bool SoundEngine::SetListenerPosition(ListenerId const listenerId, CObjectTransformation const& transformation)
 {
-	g_listenerPosition = position;
+	g_listenerTransformation = transformation;
 	g_bListenerPosChanged = true;
 	return true;
 }
 
-bool SoundEngine::RegisterAudioObject(SAudioObject* pAudioObjectData)
+//////////////////////////////////////////////////////////////////////////
+bool SoundEngine::RegisterObject(CObject* const pObject)
 {
-	if (pAudioObjectData)
+	if (pObject != nullptr)
 	{
-		g_audioObjects.push_back(pAudioObjectData);
+		g_objects.push_back(pObject);
 		return true;
 	}
 	return false;
 }
 
-bool SoundEngine::UnregisterAudioObject(SAudioObject* pAudioObjectData)
+//////////////////////////////////////////////////////////////////////////
+bool SoundEngine::UnregisterObject(CObject const* const pObject)
 {
-	if (pAudioObjectData)
+	if (pObject != nullptr)
 	{
-		stl::find_and_erase(g_audioObjects, pAudioObjectData);
+		stl::find_and_erase(g_objects, pObject);
 		return true;
 	}
 	return false;
 }
 
-bool SoundEngine::SetAudioObjectPosition(SAudioObject* pAudioObjectData, const CAudioObjectTransformation& position)
+//////////////////////////////////////////////////////////////////////////
+bool SoundEngine::SetObjectTransformation(CObject* const pObject, CObjectTransformation const& transformation)
 {
-	if (pAudioObjectData)
+	if (pObject != nullptr)
 	{
-		pAudioObjectData->position = position;
-		pAudioObjectData->bPositionChanged = true;
+		pObject->m_transformation = transformation;
+		pObject->m_bPositionChanged = true;
 		return true;
 	}
 	return false;
 }
 
-bool SoundEngine::StopTrigger(SAudioTrigger const* const pEventData)
+//////////////////////////////////////////////////////////////////////////
+bool SoundEngine::StopTrigger(CTrigger const* const pTrigger)
 {
 	bool bResult = false;
-	AudioObjectList::const_iterator audioObjectIt = g_audioObjects.begin();
-	const AudioObjectList::const_iterator audioObjectEnd = g_audioObjects.end();
-	for (; audioObjectIt != audioObjectEnd; ++audioObjectIt)
+
+	for (auto const pObject : g_objects)
 	{
-		SAudioObject* pAudioObject = *audioObjectIt;
-		if (pAudioObject)
+		if (pObject != nullptr)
 		{
-			EventInstanceList::const_iterator eventIt = pAudioObject->events.begin();
-			const EventInstanceList::const_iterator eventEnd = pAudioObject->events.end();
-			for (; eventIt != eventEnd; ++eventIt)
+			for (auto const pEvent : pObject->m_events)
 			{
-				SAudioEvent* pEventInstance = *eventIt;
-				if (pEventInstance && pEventInstance->pStaticData == pEventData)
+				if (pEvent != nullptr && pEvent->m_pTrigger == pTrigger)
 				{
-					SoundEngine::StopEvent(pEventInstance);
+					SoundEngine::StopEvent(pEvent);
 					bResult = true;
 				}
 			}
 		}
 	}
+
 	return bResult;
 }
 
-SAudioTrigger* SoundEngine::CreateEventData()
-{
-	SAudioTrigger* pNewTriggerImpl = nullptr;
-	POOL_NEW(SAudioTrigger, pNewTriggerImpl)();
-	return pNewTriggerImpl;
-}
-
+//////////////////////////////////////////////////////////////////////////
 void SoundEngine::Update()
 {
-	ProcessChannelFinishedRequests(g_channelFinishedRequests[eChannelFinishedRequestQueueId_Two]);
 	{
-		CryAutoLock<CryCriticalSection> oAutoLock(g_channelFinishedCriticalSection);
-		g_channelFinishedRequests[eChannelFinishedRequestQueueId_One].swap(g_channelFinishedRequests[eChannelFinishedRequestQueueId_Two]);
+		CryAutoLock<CryCriticalSection> lock(g_channelFinishedCriticalSection);
+		g_channelFinishedRequests[IntegralValue(EChannelFinishedRequestQueueId::One)].swap(g_channelFinishedRequests[IntegralValue(EChannelFinishedRequestQueueId::Two)]);
 	}
 
-	AudioObjectList::const_iterator audioObjectIt = g_audioObjects.begin();
-	const AudioObjectList::const_iterator audioObjectEnd = g_audioObjects.end();
-	for (; audioObjectIt != audioObjectEnd; ++audioObjectIt)
+	ProcessChannelFinishedRequests(g_channelFinishedRequests[IntegralValue(EChannelFinishedRequestQueueId::Two)]);
+
+	for (auto const pObject : g_objects)
 	{
-		SAudioObject* pAudioObject = *audioObjectIt;
-		if (pAudioObject && (pAudioObject->bPositionChanged || g_bListenerPosChanged))
+		if (pObject != nullptr)
 		{
 			// Get distance and angle from the listener to the audio object
 			float distance = 0.0f;
 			float angle = 0.0f;
-			GetDistanceAngleToObject(g_listenerPosition, pAudioObject->position, distance, angle);
+			GetDistanceAngleToObject(g_listenerTransformation, pObject->m_transformation, distance, angle);
 
-			EventInstanceList::const_iterator eventIt = pAudioObject->events.begin();
-			const EventInstanceList::const_iterator eventEnd = pAudioObject->events.end();
-			for (; eventIt != eventEnd; ++eventIt)
+			for (auto const pEvent : pObject->m_events)
 			{
-				SAudioEvent* pEventInstance = *eventIt;
-				if (pEventInstance && pEventInstance->pStaticData)
+				if (pEvent != nullptr && pEvent->m_pTrigger != nullptr)
 				{
-					for (int channelIndex : pEventInstance->channels)
+					for (auto const channelIndex : pEvent->m_channels)
 					{
-						SetChannelPosition(pEventInstance->pStaticData, channelIndex, distance, angle);
+						SetChannelPosition(pEvent->m_pTrigger, channelIndex, distance, angle);
 					}
 				}
+
+				pObject->m_bPositionChanged = false;
 			}
-			pAudioObject->bPositionChanged = false;
 		}
 	}
+
 	g_bListenerPosChanged = false;
 }
+} // namespace SDL_mixer
+} // namespace Impl
+} // namespace CryAudio

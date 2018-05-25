@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -701,10 +701,10 @@ bool CSpectatorFollowCameraMode::UpdateView( const CPlayer& clientPlayer, SViewP
 				float raiseDist = minHeightDiff - (worldOffset_Len*worldOffset_Norm.z) - sphere.r;
 				if(newHitDist != 0)
 				{
-					raiseDist = MIN(minHeightDiff, newHitDist);
+					raiseDist = std::min(minHeightDiff, newHitDist);
 				}
 
-				raiseDist = MAX(0.0f, raiseDist);
+				raiseDist = std::max(0.0f, raiseDist);
 
 				targetWorldExtra.z += raiseDist*0.8f;
 			}
@@ -1390,7 +1390,7 @@ void CDeathCameraModeSinglePlayer::Init(const CPlayer* subject, const EntityId k
 
 bool CDeathCameraModeSinglePlayer::UpdateView(const CPlayer& clientPlayer, SViewParams& viewParams, float frameTime)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	m_fUpdateCounter -= frameTime;
 
@@ -1413,7 +1413,7 @@ bool CDeathCameraModeSinglePlayer::UpdateView(const CPlayer& clientPlayer, SView
 				pKilEnt->GetLocalBounds(localBounds);
 				m_fKillerHeightOffset = localBounds.GetCenter().z;
 
-				m_bIsKillerInFrustrum = gEnv->pRenderer->GetCamera().IsPointVisible(vKillerPos);
+				m_bIsKillerInFrustrum = GetISystem()->GetViewCamera().IsPointVisible(vKillerPos);
 			}
 
 			CPlayerVisTable::SVisibilityParams queryTargetParams(m_killerEid);

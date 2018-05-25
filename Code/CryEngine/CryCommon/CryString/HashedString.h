@@ -1,13 +1,18 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /************************************************************************
    This class initiates from a given string, and stores the hashed Representation of that string
    Plus: It can store a copy of the original string for debug purposes
-   /************************************************************************/
+************************************************************************/
+
+//! \cond INTERNAL
 
 #pragma once
 
 #include <CryCore/CryCrc32.h>
+#include <CrySerialization/Forward.h>
+#include <CrySerialization/IArchive.h>
+#include <CrySerialization/STL.h>
 
 #if !defined(_RELEASE)
 	#define HASHEDSTRING_STORES_SOURCE_STRING      //!< For debug purposes, it is often interesting to see from which string the hash was created.
@@ -25,6 +30,7 @@ public:
 	}
 
 	CHashedString() : m_hash(INVALID_HASH) {}
+	CHashedString(const CHashedString& other);
 	explicit CHashedString(const uint32 hash);
 	CHashedString(const char* szText); //!< Remark: If the string starts with '0x' then we assume it is already a string representation of a hash, we wont rehash this string, but instead just convert it into a hash.
 	CHashedString(const string& text); //!< Remark: If the string starts with '0x' then we assume it is already a string representation of a hash, we wont rehash this string, but instead just convert it into a hash.
@@ -81,6 +87,15 @@ inline CHashedString::CHashedString(const string& text)
 #if defined(HASHEDSTRING_STORES_SOURCE_STRING)
 	if (m_hash != INVALID_HASH)
 		m_textCopy = text;
+#endif
+}
+
+//////////////////////////////////////////////////////////////////////////
+inline CHashedString::CHashedString(const CHashedString& other)
+{
+	m_hash = other.m_hash;
+#if defined(HASHEDSTRING_STORES_SOURCE_STRING)
+	m_textCopy = other.m_textCopy;
 #endif
 }
 
@@ -239,3 +254,5 @@ inline bool Serialize(Serialization::IArchive& ar, CHashedString& str, const cha
 #endif
 	return true;
 }
+
+//! \endcond

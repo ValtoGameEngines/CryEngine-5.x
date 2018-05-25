@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   AIEnvironment.h
@@ -16,11 +16,11 @@
 
 #pragma once
 
+#include <CryAISystem/IAISystem.h>
+
 #include "Configuration.h"
 #include "AIConsoleVariables.h"
 #include "AISignalCRCs.h"
-#include <CryPhysics/RayCastQueue.h>
-#include <CryPhysics/IntersectionTestQueue.h>
 
 //////////////////////////////////////////////////////////////////////////
 // AI system environment.
@@ -31,15 +31,11 @@
 class ActorLookUp;
 struct IGoalOpFactory;
 class CObjectContainer;
-class CCodeCoverageTracker;
-class CCodeCoverageManager;
-class CCodeCoverageGUI;
 class CStatsManager;
 class CTacticalPointSystem;
 class CTargetTrackManager;
 struct IAIDebugRenderer;
 class CPipeManager;
-class CGraph;
 namespace MNM
 {
 class PathfinderNavigationSystemUser;
@@ -51,23 +47,27 @@ class CSmartObjectManager;
 class CPerceptionManager;
 class CCommunicationManager;
 class CCoverSystem;
-class CSelectionTreeManager;
 namespace BehaviorTree
 {
 class BehaviorTreeManager;
 class GraftManager;
 }
+namespace Perception
+{
+	class CAuditionMap;
+}
 class CVisionMap;
 class CFactionMap;
+class CFactionSystem;
 class CGroupManager;
-class CollisionAvoidanceSystem;
+class CCollisionAvoidanceSystem;
 class CAIObjectManager;
-class WalkabilityCacheManager;
 class NavigationSystem;
 namespace AIActionSequence {
 class SequenceManager;
 }
 class ClusterDetector;
+class CFormationManager;
 
 #ifdef CRYAISYSTEM_DEBUG
 class CAIRecorder;
@@ -82,53 +82,42 @@ struct SAIEnvironment
 	SConfiguration           configuration;
 
 	ActorLookUp*             pActorLookUp;
-	WalkabilityCacheManager* pWalkabilityCacheManager;
 	IGoalOpFactory*          pGoalOpFactory;
 	CObjectContainer*        pObjectContainer;
-
-#if !defined(_RELEASE)
-	CCodeCoverageTracker* pCodeCoverageTracker;
-	CCodeCoverageManager* pCodeCoverageManager;
-	CCodeCoverageGUI*     pCodeCoverageGUI;
-#endif
 
 	CStatsManager*                       pStatsManager;
 	CTacticalPointSystem*                pTacticalPointSystem;
 	CTargetTrackManager*                 pTargetTrackManager;
 	CAIObjectManager*                    pAIObjectManager;
 	CPipeManager*                        pPipeManager;
-	CGraph*                              pGraph; // superseded by NavigationSystem - remove when all links are cut
 	MNM::PathfinderNavigationSystemUser* pPathfinderNavigationSystemUser;
 	CMNMPathfinder*                      pMNMPathfinder; // superseded by NavigationSystem - remove when all links are cut
 	CNavigation*                         pNavigation;    // superseded by NavigationSystem - remove when all links are cut
 	CAIActionManager*                    pAIActionManager;
 	CSmartObjectManager*                 pSmartObjectManager;
 
-	CPerceptionManager*                  pPerceptionManager;
-
 	CCommunicationManager*               pCommunicationManager;
 	CCoverSystem*                        pCoverSystem;
 	NavigationSystem*                    pNavigationSystem;
-	CSelectionTreeManager*               pSelectionTreeManager;
 	BehaviorTree::BehaviorTreeManager*   pBehaviorTreeManager;
 	BehaviorTree::GraftManager*          pGraftManager;
+	Perception::CAuditionMap*            pAuditionMap;
 	CVisionMap*                          pVisionMap;
 	CFactionMap*                         pFactionMap;
+	CFactionSystem*                      pFactionSystem;
 	CGroupManager*                       pGroupManager;
-	CollisionAvoidanceSystem*            pCollisionAvoidanceSystem;
+	CCollisionAvoidanceSystem*           pCollisionAvoidanceSystem;
 	struct IMovementSystem*              pMovementSystem;
 	AIActionSequence::SequenceManager*   pSequenceManager;
 	ClusterDetector*                     pClusterDetector;
+	CFormationManager*                   pFormationManager;
 
 #ifdef CRYAISYSTEM_DEBUG
 	IAIBubblesSystem* pBubblesSystem;
 #endif
 
-	typedef RayCastQueue<41> GlobalRayCaster;
-	GlobalRayCaster* pRayCaster;
-
-	typedef IntersectionTestQueue<43> GlobalIntersectionTester;
-	GlobalIntersectionTester* pIntersectionTester;
+	IAISystem::GlobalRayCaster*          pRayCaster;
+	IAISystem::GlobalIntersectionTester* pIntersectionTester;
 
 	//more cache friendly
 	IPhysicalWorld* pWorld;//TODO use this more, or eliminate it.

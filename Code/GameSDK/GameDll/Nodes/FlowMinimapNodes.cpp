@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -201,7 +201,7 @@ public:
 		return new CFlowMiniMapEntityPosInfo(pActInfo);
 	}
 
-	virtual void OnEntityEvent(IEntity* pEntity, SEntityEvent& event)
+	virtual void OnEntityEvent(IEntity* pEntity, const SEntityEvent& event)
 	{
 		if (event.event == ENTITY_EVENT_XFORM)
 		{
@@ -230,12 +230,16 @@ protected:
 private:
 	void RegisterEntity(EntityId entityId)
 	{
-		auto insertResult = m_entityIds.insert(entityId);
-
-		// ensure to subscribe to given entity only once
-		if (insertResult.second)
+		//Check if the entity actual exists so the listener can be added
+		if (gEnv->pEntitySystem->GetEntity(entityId) != nullptr)
 		{
-			gEnv->pEntitySystem->AddEntityEventListener(entityId, ENTITY_EVENT_XFORM, this);
+			auto insertResult = m_entityIds.insert(entityId);
+
+			// ensure to subscribe to given entity only once
+			if (insertResult.second)
+			{
+				gEnv->pEntitySystem->AddEntityEventListener(entityId, ENTITY_EVENT_XFORM, this);
+			}
 		}
 	}
 

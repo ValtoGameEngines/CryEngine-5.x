@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -230,6 +230,7 @@ public:
 	// IConsoleVarSink
 	virtual bool OnBeforeVarChange( ICVar *pVar,const char *sNewValue ) { return true; }
 	virtual void OnAfterVarChange( ICVar *pVar );
+	virtual void OnVarUnregister(ICVar* pVar) {}
 	// ~IConsoleVarSink
 
 	CPlaylistManager();

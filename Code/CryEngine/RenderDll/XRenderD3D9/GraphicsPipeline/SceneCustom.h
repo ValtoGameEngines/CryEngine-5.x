@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -13,50 +13,69 @@ class CSceneCustomStage : public CGraphicsPipelineStage
 {
 	enum EPerPassTexture
 	{
-		ePerPassTexture_SceneDepthBuffer = 25,
-		ePerPassTexture_TerrainElevMap = 26,
+		ePerPassTexture_PerlinNoiseMap = 25,
+		ePerPassTexture_TerrainElevMap,
 		ePerPassTexture_WindGrid,
 		ePerPassTexture_TerrainNormMap,
 		ePerPassTexture_TerrainBaseMap,
 		ePerPassTexture_NormalsFitting,
 		ePerPassTexture_DissolveNoise,
+		ePerPassTexture_SceneLinearDepth,
+		ePerPassTexture_PaletteTexelsPerMeter,
 
 		ePerPassTexture_Count
 	};
-
-	// NOTE: DXOrbis only supports 32 shader slots at this time, don't use t32 or higher if DXOrbis support is desired!
-	static_assert(ePerPassTexture_Count <= 32, "Bind slot too high for DXOrbis");
 	
+public:
 	enum EPass
 	{
 		ePass_DebugViewSolid = 0,
 		ePass_DebugViewWireframe,
+		ePass_DebugViewDrawModes,
 		ePass_SelectionIDs, // draw highlighted objects from editor
+		ePass_Silhouette,
 	};
 
 public:
-	virtual void Init() override;
+	CSceneCustomStage();
+
+	static bool DoDebugRendering();
+	static bool DoDebugOverlay();
+
+	void Init() final;
+	void Update() final;
+	void Prepare();
+
+	bool IsStageActive(EShaderRenderingFlags flags) const final
+	{
+		if (flags & EShaderRenderingFlags::SHDF_FORWARD_MINIMAL)
+			return false;
+
+		return true;
+	}
 
 	void Execute();
+	void ExecuteSilhouettePass();
+	void ExecuteHelpers();
+	void ExecuteDebugger();
+	void ExecuteDebugOverlay();
+	void ExecuteSelectionHighlight();
 
 	bool CreatePipelineStates(DevicePipelineStatesArray* pStateArray, const SGraphicsPipelineStateDescription& stateDesc, CGraphicsPipelineStateLocalCache* pStateCache);
-
-private:
 	bool CreatePipelineState(const SGraphicsPipelineStateDescription& desc, EPass passID, CDeviceGraphicsPSOPtr& outPSO);
-	bool PreparePerPassResources(bool bOnInit);
 
 private:
-	CDeviceResourceSetPtr    m_pPerPassResources;
+	bool SetAndBuildPerPassResources(bool bOnInit);
+
+private:
+	CDeviceResourceSetDesc   m_perPassResources;
+	CDeviceResourceSetPtr    m_pPerPassResourceSet;
 	CDeviceResourceLayoutPtr m_pResourceLayout;
 	CConstantBufferPtr       m_pPerPassConstantBuffer;
 	
 	CSceneRenderPass         m_debugViewPass;
-
 	CSceneRenderPass         m_selectionIDPass;
 	CFullscreenPass          m_highlightPass;
 
-	SDepthTexture            m_depthTarget;
-
-	int                      m_samplerPoint;
-	int                      m_samplerLinear;
+	CSceneRenderPass         m_silhouetteMaskPass;
 };

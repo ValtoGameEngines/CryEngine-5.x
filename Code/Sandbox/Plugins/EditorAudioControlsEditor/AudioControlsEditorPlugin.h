@@ -1,56 +1,74 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
-#include <IEditor.h>
 #include <IPlugin.h>
-#include "ATLControlsModel.h"
-#include "QATLControlsTreeModel.h"
-#include <IAudioSystemEditor.h>
-#include <CryAudio/IAudioInterfacesCommonData.h>
+#include <IEditor.h>
 
-#include <QStandardItem>
+#include "AssetsManager.h"
 
-struct IAudioProxy;
+namespace CryAudio
+{
+struct IObject;
+} // namespace CryAudio
+
+namespace ACE
+{
 class CImplementationManager;
+extern CAssetsManager g_assetsManager;
+extern CImplementationManager g_implementationManager;
+extern Platforms g_platforms;
 
-//------------------------------------------------------------------
-class CAudioControlsEditorPlugin : public IPlugin, public ISystemEventListener
+enum class EReloadFlags
+{
+	None                 = 0,
+	ReloadSystemControls = BIT(0),
+	ReloadImplData       = BIT(1),
+	ReloadScopes         = BIT(2),
+	SendSignals          = BIT(3),
+	SetPlatforms         = BIT(4),
+	BackupConnections    = BIT(5),
+};
+CRY_CREATE_ENUM_FLAG_OPERATORS(EReloadFlags);
+
+class CAudioControlsEditorPlugin final : public IPlugin, public ISystemEventListener
 {
 public:
-	explicit CAudioControlsEditorPlugin(IEditor* editor);
 
-	void                            Release() override;
-	void                            ShowAbout() override                                 {}
-	const char*                     GetPluginGUID() override                             { return "{DFA4AFF7-2C70-4B29-B736-GRH00040314}"; }
-	DWORD                           GetPluginVersion() override                          { return 1; }
-	const char*                     GetPluginName() override                             { return "AudioControlsEditor"; }
-	bool                            CanExitNow() override                                { return true; }
-	void                            OnEditorNotify(EEditorNotifyEvent aEventId) override {}
+	explicit CAudioControlsEditorPlugin();
+	virtual ~CAudioControlsEditorPlugin() override;
 
-	static void                     SaveModels();
-	static void                     ReloadModels(bool bReloadImplementation);
-	static void                     ReloadScopes();
-	static ACE::CATLControlsModel*  GetATLModel();
-	static ACE::QATLTreeModel*      GetControlsTree();
-	static CImplementationManager*  GetImplementationManger();
-	static ACE::IAudioSystemEditor* GetAudioSystemEditorImpl();
-	static void                     ExecuteTrigger(const string& sTriggerName);
-	static void                     StopTriggerExecution();
-	static uint                     GetLoadingErrorMask() { return ms_loadingErrorMask; }
+	// IPlugin
+	virtual int32       GetPluginVersion() override     { return 1; }
+	virtual char const* GetPluginName() override        { return "Audio Controls Editor"; }
+	virtual char const* GetPluginDescription() override { return "The Audio Controls Editor enables browsing and configuring audio events exposed from the audio middleware"; }
+	// ~IPlugin
+
+	static void       SaveData();
+	static void       ReloadData(EReloadFlags const flags);
+	static void       ExecuteTrigger(string const& sTriggerName);
+	static void       StopTriggerExecution();
+	static EErrorCode GetLoadingErrorMask() { return s_loadingErrorMask; }
+
+	static CCrySignal<void()> SignalAboutToLoad;
+	static CCrySignal<void()> SignalLoaded;
+	static CCrySignal<void()> SignalAboutToSave;
+	static CCrySignal<void()> SignalSaved;
 
 private:
-	///////////////////////////////////////////////////////////////////////////
+
 	// ISystemEventListener
-	virtual void OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR lparam);
-	///////////////////////////////////////////////////////////////////////////
+	virtual void OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR lparam) override;
+	// ~ISystemEventListener
 
-	static ACE::CATLControlsModel ms_ATLModel;
-	static ACE::QATLTreeModel     ms_layoutModel;
-	static std::set<string>       ms_currentFilenames;
-	static IAudioProxy*           ms_pIAudioProxy;
-	static AudioControlId         ms_nAudioTriggerID;
+	void        InitPlatforms();
+	static void ReloadImplData(EReloadFlags const flags);
 
-	static CImplementationManager ms_implementationManager;
-	static uint                   ms_loadingErrorMask;
+	static FileNames           s_currentFilenames;
+	static CryAudio::IObject*  s_pIAudioObject;
+	static CryAudio::ControlId s_audioTriggerId;
+
+	static EErrorCode          s_loadingErrorMask;
 };
+} // namespace ACE
+

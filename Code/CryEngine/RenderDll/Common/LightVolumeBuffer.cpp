@@ -1,9 +1,8 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "LightVolumeBuffer.h"
 #include "DriverD3D.h"
-#include "Include_HLSL_CPP_Shared.h"
 
 namespace
 {
@@ -25,11 +24,11 @@ void CLightVolumeBuffer::Create()
 	// NOTE: Buffers have a 256-byte alignment requirement, which is enforced when allocating the buffer
 	m_lightInfosBuffer.Create(
 	  maxNumLightInfos, sizeof(SLightVolumeInfo),
-	  DXGI_FORMAT_UNKNOWN, DX11BUF_BIND_SRV | DX11BUF_DYNAMIC | DX11BUF_STRUCTURED,
+	  DXGI_FORMAT_UNKNOWN, CDeviceObjectFactory::BIND_SHADER_RESOURCE | CDeviceObjectFactory::USAGE_CPU_WRITE | CDeviceObjectFactory::USAGE_STRUCTURED,
 	  nullptr);
 	m_lightRangesBuffer.Create(
 	  maxNumVolumes, sizeof(SLightVolumeRange),
-	  DXGI_FORMAT_UNKNOWN, DX11BUF_BIND_SRV | DX11BUF_DYNAMIC | DX11BUF_STRUCTURED,
+	  DXGI_FORMAT_UNKNOWN, CDeviceObjectFactory::BIND_SHADER_RESOURCE | CDeviceObjectFactory::USAGE_CPU_WRITE | CDeviceObjectFactory::USAGE_STRUCTURED,
 	  nullptr);
 }
 
@@ -44,15 +43,15 @@ void CLightVolumeBuffer::UpdateContent()
 	PROFILE_FRAME(DLightsInfo_UpdateSRV);
 
 	CD3D9Renderer* pRenderer = gcpRendD3D;
-	SRenderPipeline& RESTRICT_REFERENCE rp = gRenDev->m_RP;
 
 	struct SLightVolume* pLightVols;
 	uint32 numVols;
-	gEnv->p3DEngine->GetLightVolumes(rp.m_nProcessThreadID, pLightVols, numVols);
+	gEnv->p3DEngine->GetLightVolumes(gRenDev->GetRenderThreadID(), pLightVols, numVols);
 
 	// NOTE: Get aligned stack-space (pointer and size aligned to manager's alignment requirement)
 	CryStackAllocWithSizeVectorCleared(SLightVolumeInfo, maxNumLightInfos, gpuStageInfos, CDeviceBufferManager::AlignBufferSizeForStreaming);
-	CryStackAllocWithSizeVectorCleared(SLightVolumeRange, maxNumVolumes, gpuStageRanges, CDeviceBufferManager::AlignBufferSizeForStreaming);
+	m_lightVolumeRanges.reserve(maxNumLightInfos);
+	m_lightVolumeRanges.clear();
 
 	SLightVolumeRange currentRange;
 	currentRange.begin = currentRange.end = 0;
@@ -76,7 +75,7 @@ void CLightVolumeBuffer::UpdateContent()
 			gpuLightInfo.wProjectorDirection = cpuLightData.projectorDirection;
 			gpuLightInfo.projectorCosAngle = cpuLightData.projectorCosAngle;
 		}
-		gpuStageRanges[rangeId] = currentRange;
+		m_lightVolumeRanges.push_back(currentRange);
 		currentRange.begin = currentRange.end;
 	}
 
@@ -85,20 +84,7 @@ void CLightVolumeBuffer::UpdateContent()
 	const size_t gpuStageRangesUploadSize = CDeviceBufferManager::AlignBufferSizeForStreaming(sizeof(SLightVolumeRange) * maxNumVolumes); // TODO: Update smaller range: actualNumRanges
 
 	m_lightInfosBuffer.UpdateBufferContent(gpuStageInfos, gpuStageInfosUploadSize);
-	m_lightRangesBuffer.UpdateBufferContent(gpuStageRanges, gpuStageRangesUploadSize);
+	m_lightRangesBuffer.UpdateBufferContent(m_lightVolumeRanges.data(), gpuStageRangesUploadSize);
 
 	m_numVolumes = actualNumRanges;
-}
-
-void CLightVolumeBuffer::BindSRVs()
-{
-	const uint firstSlot = 5;
-	const uint numSlots = 2;
-	ID3D11ShaderResourceView* views[numSlots] =
-	{
-		m_lightInfosBuffer.GetSRV(),
-		m_lightRangesBuffer.GetSRV()
-	};
-	gcpRendD3D->m_DevMan.BindSRV(CDeviceManager::TYPE_VS, views, firstSlot, numSlots);
-	gcpRendD3D->m_DevMan.BindSRV(CDeviceManager::TYPE_DS, views, firstSlot, numSlots);
 }

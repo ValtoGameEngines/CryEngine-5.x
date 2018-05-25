@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -17,8 +17,10 @@ History:
 #include "WeaponSystem.h"
 #include "UI/HUD/HUDEventDispatcher.h"
 #include "C4.h"
-#include <IVehicleSystem.h>
 #include "PersistantStats.h"
+
+#include <IVehicleSystem.h>
+#include <IPerceptionManager.h>
 
 CC4Projectile::CC4Projectile():
 m_armed(false),
@@ -127,7 +129,8 @@ void CC4Projectile::HandleEvent(const SGameObjectEvent &event)
 			}
 
 			// Notify AI system about the C4.
-			if (gEnv->pAISystem)
+			IPerceptionManager* perceptionManager = IPerceptionManager::GetInstance();
+			if (perceptionManager)
 			{
 				// Associate event with vehicle if the shooter is in a vehicle (tank cannon shot, etc)
 				EntityId ownerId = m_ownerId;
@@ -137,11 +140,11 @@ void CC4Projectile::HandleEvent(const SGameObjectEvent &event)
 
 				SAIStimulus stim(AISTIM_EXPLOSION, 0, ownerId, GetEntityId(),
 					GetEntity()->GetWorldPos(), ZERO, 12.0f, AISTIMPROC_ONLY_IF_VISIBLE);
-				gEnv->pAISystem->RegisterStimulus(stim);
+				perceptionManager->RegisterStimulus(stim);
 
 				SAIStimulus soundStim(AISTIM_SOUND, AISOUND_COLLISION, ownerId, GetEntityId(),
 					GetEntity()->GetWorldPos(), ZERO, 8.0f);
-				gEnv->pAISystem->RegisterStimulus(soundStim);
+				perceptionManager->RegisterStimulus(soundStim);
 			}
 		}
 
@@ -152,7 +155,7 @@ void CC4Projectile::HandleEvent(const SGameObjectEvent &event)
 }
 
 //--------------------------------------------
-void CC4Projectile::ProcessEvent(SEntityEvent &event)
+void CC4Projectile::ProcessEvent(const SEntityEvent& event)
 {
 	BaseClass::ProcessEvent(event);
 
@@ -493,12 +496,12 @@ void CC4Projectile::SetLightParams()
 {
 	SC4ExplosiveParams* pExplosiveParams = m_pAmmoParams->pC4ExplosiveParams;
 
-	CDLight lightParams;
+	SRenderLight lightParams;
 	//Members of the same team see armed status - enemies always see red
+	lightParams.m_Flags |= DLF_POINT;
 	lightParams.SetLightColor(m_armed && m_OnSameTeam ? pExplosiveParams->armedLightColour : pExplosiveParams->disarmedLightColour);
 	lightParams.SetSpecularMult(pExplosiveParams->specularMultiplier);
-	lightParams.m_fRadius = pExplosiveParams->lightRadius;
-	lightParams.m_Flags |= DLF_POINT;
+	lightParams.SetRadius(pExplosiveParams->lightRadius);
 	lightParams.m_sName = "C4 Projectile Light";
 
 	m_pLightSource->SetLightProperties(lightParams);
@@ -524,12 +527,12 @@ void CC4Projectile::UpdateLight(float fFrameTime, bool forceColorChange)
 		finalMult += pExplosiveParams->pulseMinColorMultiplier;
 		m_pulseTimer = fNewPulseTimer;
 		
-		CDLight& light = m_pLightSource->GetLightProperties();
+		SRenderLight& light = m_pLightSource->GetLightProperties();
 		light.SetLightColor(ColorF(m_armed && m_OnSameTeam ? pExplosiveParams->armedLightColour * finalMult : pExplosiveParams->disarmedLightColour * finalMult));
 	}
 	else if(forceColorChange)
 	{
-		CDLight& light = m_pLightSource->GetLightProperties();
+		SRenderLight& light = m_pLightSource->GetLightProperties();
 		light.SetLightColor(ColorF(m_armed && m_OnSameTeam ? pExplosiveParams->armedLightColour : pExplosiveParams->disarmedLightColour));
 	}
 }

@@ -1,13 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
-class CREMeshImpl : public CREMesh
+class CREMeshImpl final : public CREMesh
 {
 public:
 
-	// Constant buffer used for tessellation. It has just one constant which tells the hull shader how it needs to offset iPrimitiveID that comes from HW.
-	CGpuBuffer m_tessCB;        // TODO: remove this buffer once everything works with new pipeline
 	uint       m_nPatchIDOffset;
 
 	CREMeshImpl()
@@ -18,42 +16,38 @@ public:
 	{}
 
 public:
-	virtual struct CRenderChunk* mfGetMatInfo() override;
-	virtual TRenderChunkArray*   mfGetMatInfoList() override;
-	virtual int                  mfGetMatId() override;
-	virtual bool                 mfPreDraw(SShaderPass* sl) override;
-	virtual bool                 mfIsHWSkinned() override
+	struct CRenderChunk* mfGetMatInfo();
+	TRenderChunkArray*   mfGetMatInfoList();
+	int                  mfGetMatId();
+
+	bool                 mfIsHWSkinned()
 	{
 		return (m_Flags & FCEF_SKINNED) != 0;
 	}
-	virtual void  mfGetPlane(Plane& pl) override;
-	virtual void  mfPrepare(bool bCheckOverflow) override;
-	virtual void  mfReset() override;
-	virtual void  mfCenter(Vec3& Pos, CRenderObject* pObj) override;
-	virtual bool  mfDraw(CShader* ef, SShaderPass* sfm) override;
-	virtual void* mfGetPointer(ESrcPointer ePT, int* Stride, EParamType Type, ESrcPointer Dst, int Flags) override;
-	virtual bool  mfUpdate(EVertexFormat eVertFormat, int Flags, bool bTessellation = false) override;
-	virtual void  mfGetBBox(Vec3& vMins, Vec3& vMaxs) override;
-	virtual void  mfPrecache(const SShaderItem& SH) override;
-	virtual int   Size() override
+	void  mfGetPlane(Plane& pl);
+
+	void  mfCenter(Vec3& Pos, CRenderObject* pObj, const SRenderingPassInfo& passInfo);
+
+	void* mfGetPointer(ESrcPointer ePT, int* Stride, EParamType Type, ESrcPointer Dst, int Flags);
+	bool  mfUpdate(InputLayoutHandle eVertFormat, int Flags, bool bTessellation = false);
+	void  mfGetBBox(Vec3& vMins, Vec3& vMaxs);
+
+	int   Size()
 	{
 		int nSize = sizeof(*this);
 		return nSize;
 	}
-	virtual void GetMemoryUsage(ICrySizer* pSizer) const override
+	void GetMemoryUsage(ICrySizer* pSizer) const
 	{
 		pSizer->AddObject(this, sizeof(*this));
 	}
 
-	bool        BindRemappedSkinningData(uint32 guid);
-#if !defined(_RELEASE)
-	inline bool ValidateDraw(EShaderType shaderType);
-#endif
+	bool          BindRemappedSkinningData(uint32 guid);
 
-	virtual bool          GetGeometryInfo(SGeometryInfo& geomInfo, bool bSupportTessellation = false) final;
-	virtual EVertexFormat GetVertexFormat() const final;
-	virtual bool          Compile(CRenderObject* pObj) final;
-	virtual void          DrawToCommandList(CRenderObject* pObj, const SGraphicsPipelinePassContext& ctx) final;
+	bool          GetGeometryInfo(SGeometryInfo& geomInfo, bool bSupportTessellation = false);
+	InputLayoutHandle GetVertexFormat() const;
+	bool          Compile(CRenderObject* pObj,CRenderView *pRenderView, bool updateInstanceDataOnly);
+	void          DrawToCommandList(CRenderObject* pObj, const SGraphicsPipelinePassContext& ctx);
 
 	//protected:
 	//	CREMeshImpl(CREMeshImpl&);

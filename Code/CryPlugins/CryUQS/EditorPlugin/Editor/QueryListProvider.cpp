@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "QueryListProvider.h"
@@ -88,7 +88,7 @@ CQueryListProvider::~CQueryListProvider()
 	RemoveAllNeverSavedQueries();
 }
 
-struct SListQueriesVisitor : public uqs::datasource::IEditorLibraryProvider::IListQueriesVisitor
+struct SListQueriesVisitor : public UQS::DataSource::IEditorLibraryProvider::IListQueriesVisitor
 {
 	SListQueriesVisitor(Explorer::CEntryList<SUqsQueryEntry>& entries)
 		: m_entries(entries)
@@ -109,9 +109,9 @@ void CQueryListProvider::Populate()
 {
 	m_queries.Clear();
 
-	if (uqs::core::IHub* pHub = uqs::core::IHubPlugin::GetHubPtr())
+	if (UQS::Core::IHub* pHub = UQS::Core::IHubPlugin::GetHubPtr())
 	{
-		if (uqs::datasource::IEditorLibraryProvider* pProvider = pHub->GetEditorLibraryProvider())
+		if (UQS::DataSource::IEditorLibraryProvider* pProvider = pHub->GetEditorLibraryProvider())
 		{
 			SListQueriesVisitor visitor(m_queries);
 			pProvider->GetQueriesList(visitor);
@@ -197,7 +197,7 @@ void CQueryListProvider::GetEntryActions(std::vector<Explorer::ExplorerAction>* 
 
 		pActions->push_back(Explorer::ExplorerAction("Delete", 0,
 		                                             [=](Explorer::ActionContext& x) { ActionDeleteQuery(x); },
-		                                             "General/Element_Remove.ico",
+		                                             "icons:General/Element_Remove.ico",
 		                                             "Remove query"));
 
 		pActions->push_back(Explorer::ExplorerAction("Show in Explorer", Explorer::ACTION_NOT_STACKABLE,

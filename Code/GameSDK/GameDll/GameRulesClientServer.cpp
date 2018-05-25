@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -63,7 +63,6 @@ History:
 #include "HitDeathReactions.h"
 #include "PersistantStats.h"
 #include "AI/GameAISystem.h"
-#include "AI/GameAIEnv.h"
 
 #include "UI/WarningsManager.h"
 #include "LagOMeter.h"
@@ -87,6 +86,8 @@ static const int sSimulateExplosionMaxEntitiesToSkip = 20;
 #include "SkillKill.h"
 #include "EnvironmentalWeapon.h"
 
+#include <IPerceptionManager.h>
+
 //------------------------------------------------------------------------
 // Our local client has hit something locally
 void CGameRules::ClientHit(const HitInfo &hitInfo)
@@ -98,7 +99,7 @@ void CGameRules::ClientHit(const HitInfo &hitInfo)
 	// [*DavidR | 1/Jun/2010] ToDo: This method would need a queue to handle concurrent calls like ServerHit does
 	// (ProcessClientHit would be perfect name for this method in that pipeline)
 
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	const IActor *pClientActor = g_pGame->GetIGameFramework()->GetClientActor();
 	const IEntity *pTarget = m_pEntitySystem->GetEntity(hitInfo.targetId);
@@ -258,13 +259,6 @@ void CGameRules::ClientHit(const HitInfo &hitInfo)
 			if (pLagOMeter)
 			{
 				pLagOMeter->OnClientRequestHit(hitToSend);
-			}
-#endif
-#ifdef SEG_WORLD
-			ISegmentsManager *pSM = gEnv->p3DEngine->GetSegmentsManager();
-			if(pSM)
-			{
-				hitToSend.pos = pSM->LocalToAbsolutePosition(hitToSend.pos);
 			}
 #endif
 			GetGameObject()->InvokeRMI(SvRequestHit(), hitToSend, eRMI_ToServer);
@@ -842,7 +836,8 @@ void CGameRules::ClientExplosion(SExplosionContainer &explosionContainer)
 		m_pExplosionGameEffect->Explode(explosionContainer);
 	}
 
-	if (gEnv->pAISystem && !gEnv->bMultiplayer)
+	IPerceptionManager* pPerceptionManager = IPerceptionManager::GetInstance();
+	if (pPerceptionManager && !gEnv->bMultiplayer)
 	{
 		if (explosionInfo.damage > 0.0f)
 		{
@@ -854,7 +849,7 @@ void CGameRules::ClientExplosion(SExplosionContainer &explosionContainer)
 
 			SAIStimulus stim(AISTIM_EXPLOSION, 0, sourceId, 0,
 				explosionInfo.pos, ZERO, explosionInfo.radius);
-			gEnv->pAISystem->RegisterStimulus(stim);
+			pPerceptionManager->RegisterStimulus(stim);
 
 			float fSoundRadius = explosionInfo.soundRadius;
 			if (fSoundRadius <= FLT_EPSILON)
@@ -864,7 +859,7 @@ void CGameRules::ClientExplosion(SExplosionContainer &explosionContainer)
 
 			SAIStimulus stimSound(AISTIM_SOUND, AISOUND_EXPLOSION, sourceId, 0,
 				explosionInfo.pos, ZERO, fSoundRadius, AISTIMPROC_FILTER_LINK_WITH_PREVIOUS);
-			gEnv->pAISystem->RegisterStimulus(stimSound);
+			pPerceptionManager->RegisterStimulus(stimSound);
 		}
 	}
 }

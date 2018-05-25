@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "VariableItem.h"
@@ -6,21 +6,22 @@
 #include "ObjectModel.h"
 #include "StateItem.h"
 
-#include <Schematyc/Script/Elements/IScriptVariable.h>
-#include <Schematyc/SerializationUtils/ISerializationContext.h>
+#include <CrySchematyc/Script/Elements/IScriptVariable.h>
+#include <CrySchematyc/SerializationUtils/ISerializationContext.h>
 
 #include <QtUtil.h>
 #include <QObject>
 
 namespace CrySchematycEditor {
 
-CVariableItem::CVariableItem(Schematyc::IScriptVariable& scriptVariable, CStateItem& state)
-	: CAbstractVariablesModelItem(static_cast<CAbstractVariablesModel&>(state))
-	, m_scriptVariable(scriptVariable)
-	, m_owner(EOwner::State)
-{
+/*
+   CVariableItem::CVariableItem(Schematyc::IScriptVariable& scriptVariable, CStateItem& state)
+   : CAbstractVariablesModelItem(static_cast<CAbstractVariablesModelItem&>(state))
+   , m_scriptVariable(scriptVariable)
+   , m_owner(EOwner::State)
+   {
 
-}
+   }*/
 
 CVariableItem::CVariableItem(Schematyc::IScriptVariable& scriptVariable, CObjectModel& object)
 	: CAbstractVariablesModelItem(static_cast<CAbstractVariablesModel&>(object))
@@ -62,9 +63,10 @@ void CVariableItem::Serialize(Serialization::IArchive& archive)
 	m_scriptVariable.Serialize(archive);
 }
 
-Schematyc::SGUID CVariableItem::GetGUID() const
+CryGUID CVariableItem::GetGUID() const
 {
 	return m_scriptVariable.GetGUID();
 }
 
 }
+

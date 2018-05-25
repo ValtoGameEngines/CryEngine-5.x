@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __ENVIRONMENTALWEAPON_H
 #define __ENVIRONMENTALWEAPON_H
@@ -52,10 +52,9 @@ public:
 	virtual void PostUpdate(float frameTime) {}
 	virtual void PostRemoteSpawn() {}
 	virtual void HandleEvent(const SGameObjectEvent& event);
-	
-	virtual void ProcessEvent(SEntityEvent& event);
+	virtual uint64 GetEventMask() const;
+	virtual void ProcessEvent(const SEntityEvent& event);
 	virtual void SetChannelId(uint16 id) {}
-	virtual void SetAuthority(bool auth) {}
 	virtual void GetMemoryUsage(ICrySizer *pSizer) const;
 	virtual bool ReloadExtension( IGameObject * pGameObject, const SEntitySpawnParams &params );
 	virtual void PostReloadExtension( IGameObject * pGameObject, const SEntitySpawnParams &params ) {};

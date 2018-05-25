@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -9,18 +9,18 @@
 #include <ISourceControl.h>
 #include <CryEntitySystem/IEntityClass.h>
 #include <CryEntitySystem/IEntitySystem.h>
+#include <Cry3DEngine/I3DEngine.h>
+#include <CryGame/IGameFramework.h>
 #include <CryString/CryStringUtils.h>
-#include <Schematyc/Utils/Assert.h>
+#include <CrySchematyc/Utils/Assert.h>
 
 #include <Controls/DictionaryWidget.h>
 #include <Controls/QPopupWidget.h>
 
 #include <QtUtil.h>
-#include <QPointer>
 #include <QClipboard>
 #include <QMimeData>
 #include <QApplication>
-#include <CryGame/IGameFramework.h>
 
 namespace CrySchematycEditor {
 
@@ -151,12 +151,12 @@ dll_string EntityClassNameSelector(const SResourceSelectorContext& context, cons
 	}
 
 	CrySchematycEditor::CStringListDictionary dict(names);
-	QPointer<CModalPopupDictionary> pDictionary = new CModalPopupDictionary("Entity Class", dict);
+	CModalPopupDictionary dictionary("Entity Class", dict);
 
 	const QPoint pos = QCursor::pos();
-	pDictionary->ExecAt(pos, QPopupWidget::TopRight);
+	dictionary.ExecAt(pos);
 
-	CrySchematycEditor::CStringListDictionaryEntry* pEntry = static_cast<CrySchematycEditor::CStringListDictionaryEntry*>(pDictionary->GetResult());
+	CrySchematycEditor::CStringListDictionaryEntry* pEntry = static_cast<CrySchematycEditor::CStringListDictionaryEntry*>(dictionary.GetResult());
 	if (pEntry)
 	{
 		return QtUtil::ToString(pEntry->GetName()).c_str();
@@ -180,12 +180,12 @@ dll_string ActionMapNameSelector(const SResourceSelectorContext& context, const 
 	}
 
 	CrySchematycEditor::CStringListDictionary dict(names);
-	QPointer<CModalPopupDictionary> pDictionary = new CModalPopupDictionary("Action Map", dict);
+	CModalPopupDictionary dictionary("Action Map", dict);
 
 	const QPoint pos = QCursor::pos();
-	pDictionary->ExecAt(pos, QPopupWidget::TopRight);
+	dictionary.ExecAt(pos);
 
-	CrySchematycEditor::CStringListDictionaryEntry* pEntry = static_cast<CrySchematycEditor::CStringListDictionaryEntry*>(pDictionary->GetResult());
+	CrySchematycEditor::CStringListDictionaryEntry* pEntry = static_cast<CrySchematycEditor::CStringListDictionaryEntry*>(dictionary.GetResult());
 	if (pEntry)
 	{
 		return QtUtil::ToString(pEntry->GetName()).c_str();
@@ -199,12 +199,12 @@ dll_string ActionMapActionNameSelector(const SResourceSelectorContext& context, 
 	CrySchematycEditor::CActionMapActionQuickSearchOptions quickSearchOptions;
 
 	CrySchematycEditor::CStringListDictionary dict(quickSearchOptions.GetNames());
-	QPointer<CModalPopupDictionary> pDictionary = new CModalPopupDictionary("Action Map Action", dict);
+	CModalPopupDictionary dictionary("Action Map Action", dict);
 
 	const QPoint pos = QCursor::pos();
-	pDictionary->ExecAt(pos, QPopupWidget::TopRight);
+	dictionary.ExecAt(pos);
 
-	CrySchematycEditor::CStringListDictionaryEntry* pEntry = static_cast<CrySchematycEditor::CStringListDictionaryEntry*>(pDictionary->GetResult());
+	CrySchematycEditor::CStringListDictionaryEntry* pEntry = static_cast<CrySchematycEditor::CStringListDictionaryEntry*>(dictionary.GetResult());
 	if (pEntry)
 	{
 		return QtUtil::ToString(pEntry->GetName()).c_str();
@@ -213,9 +213,100 @@ dll_string ActionMapActionNameSelector(const SResourceSelectorContext& context, 
 	return "";
 }
 
-REGISTER_RESOURCE_SELECTOR("EntityClassName", EntityClassNameSelector, "")
-REGISTER_RESOURCE_SELECTOR("ActionMapName", ActionMapNameSelector, "")
-REGISTER_RESOURCE_SELECTOR("ActionMapActionName", ActionMapActionNameSelector, "")
+dll_string SurfaceTypeNameSelector(const SResourceSelectorContext& context, const char* szPreviousValue, Serialization::StringListValue* pStringListValue)
+{
+	Serialization::StringListStatic names;
+
+	ISurfaceTypeEnumerator* pEnumerator = gEnv->p3DEngine->GetMaterialManager()->GetSurfaceTypeManager()->GetEnumerator();
+	for (ISurfaceType* pSurfaceType = pEnumerator->GetFirst(); pSurfaceType != nullptr; pSurfaceType = pEnumerator->GetNext())
+	{
+		cstr name = pSurfaceType->GetName();
+		if (strlen(name) >= 4 && !strncmp(name, "mat_", 4))
+			name += 4;
+		names.push_back(name);
+	}
+
+	CrySchematycEditor::CStringListDictionary dict(names);
+	CModalPopupDictionary dictionary("Surface Type", dict);
+
+	const QPoint pos = QCursor::pos();
+	dictionary.ExecAt(pos);
+
+	CrySchematycEditor::CStringListDictionaryEntry* pEntry = static_cast<CrySchematycEditor::CStringListDictionaryEntry*>(dictionary.GetResult());
+	if (pEntry)
+	{
+		return QtUtil::ToString(pEntry->GetName()).c_str();
+	}
+
+	return "";
+}
+
+static dll_string MannequinScopeContextName(const SResourceSelectorContext& context, const char* szPreviousValue, Serialization::StringListValue* pStringListValue)
+{
+	if (std::shared_ptr<Serialization::SMannequinControllerDefResourceParams> pParams = std::static_pointer_cast<Serialization::SMannequinControllerDefResourceParams>(context.pCustomParams))
+	{
+		if (pParams->pControllerDef != nullptr)
+		{
+			Serialization::StringListStatic names;
+
+			for (int i = 0, n = pParams->pControllerDef->m_scopeContexts.GetNum(); i < n; ++i)
+			{
+				names.push_back(pParams->pControllerDef->m_scopeContexts.GetTagName(i));
+			}
+
+			CrySchematycEditor::CStringListDictionary dict(names);
+			CModalPopupDictionary dictionary("Mannequin Scope Context", dict);
+
+			const QPoint pos = QCursor::pos();
+			dictionary.ExecAt(pos);
+
+			CrySchematycEditor::CStringListDictionaryEntry* pEntry = static_cast<CrySchematycEditor::CStringListDictionaryEntry*>(dictionary.GetResult());
+			if (pEntry)
+			{
+				return QtUtil::ToString(pEntry->GetName()).c_str();
+			}
+		}
+	}
+
+	return "";
+}
+
+static dll_string MannequinFragmentName(const SResourceSelectorContext& context, const char* szPreviousValue, Serialization::StringListValue* pStringListValue)
+{
+	if (std::shared_ptr<Serialization::SMannequinControllerDefResourceParams> pParams = std::static_pointer_cast<Serialization::SMannequinControllerDefResourceParams>(context.pCustomParams))
+	{
+		if (pParams->pControllerDef != nullptr)
+		{
+			Serialization::StringListStatic names;
+
+			for (int i = 0, n = pParams->pControllerDef->m_fragmentIDs.GetNum(); i < n; ++i)
+			{
+				names.push_back(pParams->pControllerDef->m_fragmentIDs.GetTagName(i));
+			}
+
+			CrySchematycEditor::CStringListDictionary dict(names);
+			CModalPopupDictionary dictionary("Mannequin Fragment", dict);
+
+			const QPoint pos = QCursor::pos();
+			dictionary.ExecAt(pos);
+
+			CrySchematycEditor::CStringListDictionaryEntry* pEntry = static_cast<CrySchematycEditor::CStringListDictionaryEntry*>(dictionary.GetResult());
+			if (pEntry)
+			{
+				return QtUtil::ToString(pEntry->GetName()).c_str();
+			}
+		}
+	}
+
+	return "";
+}
+
+REGISTER_RESOURCE_SELECTOR("EntityClass", EntityClassNameSelector, "")
+REGISTER_RESOURCE_SELECTOR("ActionMap", ActionMapNameSelector, "")
+REGISTER_RESOURCE_SELECTOR("ActionMapAction", ActionMapActionNameSelector, "")
+REGISTER_RESOURCE_SELECTOR("SurfaceTypeName", SurfaceTypeNameSelector, "")
+REGISTER_RESOURCE_SELECTOR("MannequinScopeContextName", MannequinScopeContextName, "")
+REGISTER_RESOURCE_SELECTOR("MannequinFragmentName", MannequinFragmentName, "")
 }
 
 namespace CrySchematycEditor {
@@ -299,3 +390,4 @@ bool ValidateClipboardContents(const char* szPrefix)
 
 }
 }
+

@@ -1,6 +1,7 @@
 %include "CryEngine.swig"
 
 %import "CryCommon.i"
+%import "CryAudio.i"
 
 %{
 #include <CrySystem/IStreamEngine.h>
@@ -15,6 +16,7 @@
 #include <CryEntitySystem/IEntity.h>
 #include <Cry3DEngine/ITimeOfDay.h>
 %}
+%ignore I3DEngineModule;
 %ignore ITimeOfDay::NetSerialize;
 %ignore I3DEngine::SerializeState;
 %ignore I3DEngine::SaveStatObj;
@@ -24,6 +26,12 @@
 %template(IStatObjPtr) _smart_ptr<IStatObj>;
 %template(IReadStreamPtr) _smart_ptr<IReadStream>;
 %template(IRenderMeshPtr) _smart_ptr<IRenderMesh>;
+
+%ignore CryRWLock;
+%ignore SRenderNodeTempData;
+%ignore IRenderNode::m_pTempData;
+%ignore IRenderNode::m_manipulationFrame;
+%ignore IRenderNode::m_manipulationLock;
 
 %typemap(cscode) IParticleEffect
 %{
@@ -62,3 +70,32 @@
 %include "../../../../CryEngine/CryCommon/CrySystem/IProcess.h"
 %include "../../../../CryEngine/CryCommon/Cry3DEngine/IStatObj.h"
 %include "../../../../CryEngine/CryCommon/Cry3DEngine/IGeomCache.h"
+
+%extend IMaterial
+{
+	void SetMaterialParamFloat(const char* sParamName, float v)
+	{
+		$self->SetGetMaterialParamFloat(sParamName,v,false);
+	}
+
+	float GetMaterialParamFloat(const char* sParamName)
+	{
+		float v = 0.0f;
+		$self->SetGetMaterialParamFloat(sParamName,v,true);
+
+		return v;
+	}
+
+	void SetMaterialParamVec3(const char* sParamName, Vec3 v)
+	{
+		$self->SetGetMaterialParamVec3(sParamName,v,false);
+	}
+
+	Vec3 GetMaterialParamVec3(const char* sParamName)
+	{
+		Vec3 v(0.0f,0.0f,0.0f);
+		$self->SetGetMaterialParamVec3(sParamName,v,true);
+
+		return v;
+	}
+}

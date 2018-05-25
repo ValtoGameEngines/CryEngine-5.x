@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef IAttachment_h
 #define IAttachment_h
@@ -44,6 +44,8 @@ enum AttachmentFlags
 	FLAGS_ATTACH_COMPUTE_SKINNING           = BIT(6),  //!< Already stored in CDF, so don't change this.
 	FLAGS_ATTACH_COMPUTE_SKINNING_PREMORPHS = BIT(7),  //!< Already stored in CDF, so don't change this.
 	FLAGS_ATTACH_COMPUTE_SKINNING_TANGENTS  = BIT(8),  //!< Already stored in CDF, so don't change this.
+
+	FLAGS_ATTACH_EXCLUDE_FROM_NEAREST	    = BIT(9), //!< Already stored in CDF, so don't change this.
 
 	// Dynamic Flags.
 	FLAGS_ATTACH_VISIBLE            = BIT(13),    //!< We set this flag if we can render the object.
@@ -115,6 +117,7 @@ struct SVClothParams
 	string simMeshName;
 	string simBinding;
 	string material;
+	string materialLods[g_nMaxGeomLodLevels];
 	float  debugDrawVerticesRadius;
 	int    debugDrawCloth;
 	int    debugDrawLRA;       //!< Debug long range attachments (LRA).
@@ -129,7 +132,8 @@ public:
 	SVClothParams() :
 
 		// Animation Control
-		forceSkinning(false)
+		hide(false)
+		, forceSkinning(false)
 		, forceSkinningFpsThreshold(25.0f)
 		, forceSkinningTranslateThreshold(1.0f)
 		, checkAnimationRewind(true)
@@ -188,9 +192,24 @@ public:
 		, debugPrint(0)
 
 		, weights(nullptr)
-		, hide(false)
 		, disableSimulation(false)
 	{}
+};
+
+
+struct SVClothAttachmentParams
+{
+	SVClothAttachmentParams(const char* attachmentName, const SVClothParams& vclothParams, int skinLoadingFlags, int flags)
+		: attachmentName(attachmentName)
+		, skinLoadingFlags(skinLoadingFlags)
+		, flags(flags)
+		, vclothParams(vclothParams)
+	{}
+
+	const string attachmentName;
+	const SVClothParams& vclothParams;
+	const int flags;
+	const int skinLoadingFlags;
 };
 
 struct SimulationParams
@@ -332,6 +351,7 @@ struct RowSimulationParams
 	};
 };
 
+//! Interface for a character instance's attachment manager, responsible for keeping track of the various object attachments tied to a character
 struct IAttachmentManager
 {
 	// <interfuscator:shuffle>
@@ -339,6 +359,7 @@ struct IAttachmentManager
 	virtual uint32              LoadAttachmentList(const char* pathname) = 0;
 
 	virtual IAttachment*        CreateAttachment(const char* szName, uint32 type, const char* szJointName = 0, bool bCallProject = true) = 0;
+	virtual IAttachment*        CreateVClothAttachment(const SVClothAttachmentParams& params) = 0;
 
 	virtual int32               RemoveAttachmentByInterface(const IAttachment* pAttachment, uint32 loadingFlags = 0) = 0;
 	virtual int32               RemoveAttachmentByName(const char* szName, uint32 loadingFlags = 0) = 0;
@@ -375,6 +396,7 @@ struct IAttachmentManager
 	// </interfuscator:shuffle>
 };
 
+//! Represents an attachment attached to a character, usually loaded from the .CDF file - but can also be created at run-time
 struct IAttachment
 {
 	// <interfuscator:shuffle>
@@ -488,7 +510,7 @@ struct IAttachmentSkin
 	virtual ISkin*            GetISkin() = 0;
 	virtual IVertexAnimation* GetIVertexAnimation() = 0;
 	virtual float             GetExtent(EGeomForm eForm) = 0;
-	virtual void              GetRandomPos(PosNorm& ran, CRndGen& seed, EGeomForm eForm) const = 0;
+	virtual void              GetRandomPoints(Array<PosNorm> points, CRndGen& seed, EGeomForm eForm) const = 0;
 	virtual void              GetMemoryUsage(class ICrySizer* pSizer) const = 0;
 	virtual SMeshLodInfo      ComputeGeometricMean() const = 0;
 	virtual ~IAttachmentSkin(){}
@@ -500,7 +522,7 @@ struct IAttachmentSkin
 #endif
 };
 
-//! This interface define a way to allow an object to be bound to a character.
+//! Represents an instance of an attachment on a character, managing the updating of the contained object (for example an IStatObj).
 struct IAttachmentObject
 {
 	enum EType
@@ -577,6 +599,7 @@ struct IAttachmentMerger
 
 //
 
+//! Represents a static (IStatObj) object instance tied to a character
 struct CCGFAttachment : public IAttachmentObject
 {
 	virtual EType GetAttachmentType() override                          { return eAttachment_StatObj; };
@@ -618,6 +641,7 @@ inline IMaterial* CCGFAttachment::GetBaseMaterial(uint32 nLOD) const
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
+//! Represents a skeleton (.skel, .chr) attached to a character
 struct CSKELAttachment : public IAttachmentObject
 {
 	CSKELAttachment()
@@ -631,7 +655,7 @@ struct CSKELAttachment : public IAttachmentObject
 		rParams.pMaterial = (IMaterial*)(m_pCharInstance ? m_pCharInstance->GetIMaterial() : 0);
 		if (m_pReplacementMaterial)
 			rParams.pMaterial = m_pReplacementMaterial;
-		m_pCharInstance->Render(rParams, QuatTS(IDENTITY), passInfo);
+		m_pCharInstance->Render(rParams, passInfo);
 		rParams.pMaterial = pPrev;
 	};
 	virtual void        ProcessAttachment(IAttachment* pIAttachment)  override {}
@@ -667,6 +691,7 @@ inline IMaterial* CSKELAttachment::GetBaseMaterial(uint32 nLOD) const
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
+//! Represents a skin file (.skin) attached to a character
 struct CSKINAttachment : public IAttachmentObject
 {
 	CSKINAttachment()
@@ -700,6 +725,7 @@ inline IMaterial* CSKINAttachment::GetBaseMaterial(uint32 nLOD) const
 	return m_pReplacementMaterial[nLOD] ? m_pReplacementMaterial[nLOD].get() : (m_pIAttachmentSkin ? m_pIAttachmentSkin->GetISkin()->GetIMaterial(nLOD) : NULL);
 }
 
+//! Used for attaching entities to attachment slots on a character, continuously overriding the child entities transformation in the scene to match the animated joint
 struct CEntityAttachment : public IAttachmentObject
 {
 public:
@@ -761,6 +787,7 @@ inline IMaterial* CEntityAttachment::GetBaseMaterial(uint32 nLOD) const
 	return 0;
 }
 
+//! Allows for attaching a light source to a character
 struct CLightAttachment : public IAttachmentObject
 {
 public:
@@ -776,7 +803,7 @@ public:
 
 	virtual EType GetAttachmentType() override { return eAttachment_Light; }
 
-	void          LoadLight(const CDLight& light)
+	void          LoadLight(const SRenderLight& light)
 	{
 		m_pLightSource = gEnv->p3DEngine->CreateLightSource();
 		if (m_pLightSource)
@@ -789,7 +816,7 @@ public:
 	{
 		if (m_pLightSource)
 		{
-			CDLight& light = m_pLightSource->GetLightProperties();
+			SRenderLight& light = m_pLightSource->GetLightProperties();
 			Matrix34 worldMatrix = Matrix34(pIAttachment->GetAttWorldAbsolute());
 			Vec3 origin = worldMatrix.GetTranslation();
 			light.SetPosition(origin);
@@ -825,8 +852,17 @@ inline IMaterial* CLightAttachment::GetBaseMaterial(uint32 nLOD) const
 	return 0;
 }
 
+//! Allows for attaching particle effects to characters
 struct CEffectAttachment : public IAttachmentObject
 {
+	struct SParameter
+	{
+		SParameter() : name(), value(0) { }
+		SParameter(const string& name, const IParticleAttributes::TValue& value) : name(name), value(value) { }
+		string name;
+		IParticleAttributes::TValue value;
+	};
+
 public:
 
 	virtual EType GetAttachmentType() override { return eAttachment_Effect; }
@@ -864,13 +900,19 @@ public:
 				SpawnParams sp;
 				sp.bPrime = m_bPrime;
 				m_pEmitter = m_pEffect->Spawn(loc, sp);
+				ApplyAttribsToEmitter(m_pEmitter);
+				FreeAttribs(); // just to conserve some memory, attributes are not needed any more
 			}
 			else if (m_pEmitter)
 				m_pEmitter->SetLocation(loc);
 		}
 		else
 		{
-			m_pEmitter = 0;
+			if (m_pEmitter)
+			{
+				m_pEmitter->Activate(false);
+				m_pEmitter = 0;
+			}
 		}
 	}
 
@@ -914,11 +956,34 @@ public:
 			m_pEmitter->SetSpawnParams(params);
 	}
 
+	void ClearParticleAttributes() { m_particleAttribs.clear(); }
+	void AppendParticleAttribute(const string& name, const IParticleAttributes::TValue& value) { m_particleAttribs.emplace_back(name, value); }
+
+private:
+	void FreeAttribs()
+	{
+		m_particleAttribs.clear();
+		m_particleAttribs.shrink_to_fit();
+	}
+
+	void ApplyAttribsToEmitter(IParticleEmitter* pEmitter) const
+	{
+		if (!pEmitter)
+			return;
+
+		IParticleAttributes& particleAttributes = pEmitter->GetAttributes();
+		for (const SParameter& param : m_particleAttribs)
+		{
+			particleAttributes.SetValue(param.name.c_str(), param.value);
+		}
+	}
+
 private:
 	_smart_ptr<IParticleEmitter> m_pEmitter;
 	_smart_ptr<IParticleEffect>  m_pEffect;
 	QuatTS                       m_loc;
 	bool                         m_bPrime;
+	std::vector<SParameter>      m_particleAttribs;
 };
 
 inline IMaterial* CEffectAttachment::GetBaseMaterial(uint32 nLOD) const

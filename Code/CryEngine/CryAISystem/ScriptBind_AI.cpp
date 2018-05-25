@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    -------------------------------------------------------------------------
@@ -26,7 +26,6 @@
 #include "GoalOpFactory.h"
 #include "Puppet.h"
 #include "AIVehicle.h"
-#include "CodeCoverageTracker.h"
 #include <CryString/StringUtils.h>
 
 #include "GameSpecific/GoalOp_Crysis2.h"
@@ -38,7 +37,6 @@
 #include <CryAISystem/IInterestSystem.h>
 #include "TacticalPointSystem/TacticalPointSystem.h"
 #include "Communication/CommunicationManager.h"
-#include "SelectionTree/SelectionTreeManager.h"
 #include "Group/GroupManager.h"
 #include "TargetSelection/TargetTrackManager.h"
 #include "AIBubblesSystem/AIBubblesSystem.h"
@@ -61,6 +59,7 @@
 #include <CryAISystem/MovementRequest.h>
 
 #include "BehaviorTree/BehaviorTreeManager.h"
+#include "Formation/FormationManager.h"
 
 //#pragma optimize("", off)
 //#pragma inline_depth(0)
@@ -391,14 +390,6 @@ void InitLookUp()
 }
 
 //====================================================================
-// ReloadLookUpXML
-//====================================================================
-void ReloadLookUpXML(IConsoleCmdArgs* /* pArgs */)
-{
-	InitLookUp();
-}
-
-//====================================================================
 // CScriptBind_AI
 //====================================================================
 CScriptBind_AI::CScriptBind_AI() :
@@ -499,7 +490,6 @@ CScriptBind_AI::CScriptBind_AI() :
 	SCRIPT_REG_FUNC(SetCharacter);
 #endif
 	SCRIPT_REG_FUNC(GetDirectAnchorPos);
-	SCRIPT_REG_FUNC(GetNearestHidespot);
 	SCRIPT_REG_FUNC(GetEnclosingGenericShapeOfType);
 	SCRIPT_REG_FUNC(IsPointInsideGenericShape);
 	SCRIPT_REG_FUNC(DistanceToGenericShape);
@@ -518,6 +508,8 @@ CScriptBind_AI::CScriptBind_AI() :
 	SCRIPT_REG_FUNC(IsPointInWaterRegion);
 	SCRIPT_REG_FUNC(GetEnclosingSpace);
 	SCRIPT_REG_FUNC(Event);
+
+	// Formation
 	SCRIPT_REG_FUNC(CreateFormation);
 	SCRIPT_REG_FUNC(AddFormationPoint);
 	SCRIPT_REG_FUNC(AddFormationPointFixed);
@@ -527,6 +519,8 @@ CScriptBind_AI::CScriptBind_AI() :
 	SCRIPT_REG_FUNC(ScaleFormation);
 	SCRIPT_REG_FUNC(SetFormationUpdate);
 	SCRIPT_REG_FUNC(SetFormationUpdateSight);
+	// !Formation
+
 	SCRIPT_REG_FUNC(GetLeader);
 	SCRIPT_REG_FUNC(SetLeader);
 	SCRIPT_REG_FUNC(UpTargetPriority);
@@ -553,7 +547,6 @@ CScriptBind_AI::CScriptBind_AI() :
 	SCRIPT_REG_FUNC(GetHeliAdvancePoint);
 	SCRIPT_REG_FUNC(CheckVehicleColision);
 	SCRIPT_REG_FUNC(GetFlyingVehicleFlockingPos);
-	SCRIPT_REG_FUNC(SetPFBlockerRadius);
 	SCRIPT_REG_FUNC(AssignPFPropertiesToPathType);
 	SCRIPT_REG_FUNC(AssignPathTypeToSOUser);
 	SCRIPT_REG_FUNC(SetPFProperties);
@@ -625,7 +618,6 @@ CScriptBind_AI::CScriptBind_AI() :
 	SCRIPT_REG_FUNC(IsPunchableObjectValid);
 
 	SCRIPT_REG_FUNC(ProcessBalancedDamage);
-	SCRIPT_REG_FUNC(CanMoveStraightToPoint);
 
 	SCRIPT_REG_FUNC(CanMelee);
 	SCRIPT_REG_FUNC(CheckMeleeDamage);
@@ -685,7 +677,6 @@ CScriptBind_AI::CScriptBind_AI() :
 	SCRIPT_REG_TEMPLFUNC(CheckForFriendlyAgentsAroundPoint, "entityID, point, radius");
 
 	SCRIPT_REG_TEMPLFUNC(EnableUpdateLookTarget, "entityID, bEnable");
-	SCRIPT_REG_TEMPLFUNC(SetBehaviorTreeEvaluationEnabled, "entityID, enabled");
 
 	SCRIPT_REG_TEMPLFUNC(UpdateGlobalPerceptionScale, "visualScale, audioScale, [filterType], [faction]");
 	SCRIPT_REG_TEMPLFUNC(QueueBubbleMessage, "entityID, message");
@@ -897,8 +888,6 @@ CScriptBind_AI::CScriptBind_AI() :
 
 	SCRIPT_REG_GLOBAL(AI_LOOKAT_CONTINUOUS);
 	SCRIPT_REG_GLOBAL(AI_LOOKAT_USE_BODYDIR);
-
-	SCRIPT_REG_GLOBAL(AISYSEVENT_DISABLEMODIFIER);
 
 	SCRIPT_REG_GLOBAL(AILASTOPRES_LOOKAT);
 	SCRIPT_REG_GLOBAL(AILASTOPRES_USE);
@@ -1170,15 +1159,6 @@ CScriptBind_AI::CScriptBind_AI() :
 	SCRIPT_REG_GLOBAL(AIPATH_TROOPER);
 	SCRIPT_REG_GLOBAL(AIPATH_HUNTER);
 
-	SCRIPT_REG_GLOBAL(PFB_NONE);
-	SCRIPT_REG_GLOBAL(PFB_ATT_TARGET);
-	SCRIPT_REG_GLOBAL(PFB_REF_POINT);
-	SCRIPT_REG_GLOBAL(PFB_BEACON);
-	SCRIPT_REG_GLOBAL(PFB_DEAD_BODIES);
-	SCRIPT_REG_GLOBAL(PFB_EXPLOSIVES);
-	SCRIPT_REG_GLOBAL(PFB_PLAYER);
-	SCRIPT_REG_GLOBAL(PFB_BETWEEN_NAV_TARGET);
-
 	SCRIPT_REG_GLOBAL(COVER_UNHIDE);
 	SCRIPT_REG_GLOBAL(COVER_HIDE);
 
@@ -1259,7 +1239,6 @@ CScriptBind_AI::CScriptBind_AI() :
 
 	SCRIPT_REG_TEMPLFUNC(SetLastOpResult, "entityID, targetEntityId");
 
-	RunStartupScript();
 	InitLookUp();
 }
 
@@ -1273,9 +1252,9 @@ CScriptBind_AI::~CScriptBind_AI(void)
 //====================================================================
 // RunStartupScript
 //====================================================================
-void CScriptBind_AI::RunStartupScript()
+bool CScriptBind_AI::RunStartupScript(bool reload)
 {
-	m_pSS->ExecuteFile("scripts/ai/aiconfig.lua", true);
+	return m_pSS->ExecuteFile("scripts/ai/aiconfig.lua", true, reload);
 }
 
 //====================================================================
@@ -1566,7 +1545,7 @@ int CScriptBind_AI::ModifySmartObjectStates(IFunctionHandler* pH)
 //-----------------------------------------------------------------------------------------------------------
 int CScriptBind_AI::SmartObjectEvent(IFunctionHandler* pH)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	int id = 0;
 
@@ -3146,19 +3125,7 @@ int CScriptBind_AI::RemoveCoverEntity(IFunctionHandler* pH, ScriptHandle entityI
 //-----------------------------------------------------------------------------------------------------------
 int CScriptBind_AI::SetAssesmentMultiplier(IFunctionHandler* pH)
 {
-	int type;
-	float fMultiplier;
-
-	pH->GetParams(type, fMultiplier);
-
-	if (type < 0)
-	{
-		AIWarningID("<CScriptBind_AI> ", "Tried to set assesment multiplier to a negative type. Not allowed.");
-		return pH->EndFunction();
-	}
-
-	GetAISystem()->SetAssesmentMultiplier((unsigned short)type, fMultiplier);
-
+	pH->GetIScriptSystem()->RaiseError("AI.SetAssesmentMultiplier is deprecated.");
 	return pH->EndFunction();
 }
 
@@ -3664,14 +3631,33 @@ int CScriptBind_AI::SoundEvent(IFunctionHandler* pH)
 	float radius = 0;
 	Vec3 pos(0, 0, 0);
 	ScriptHandle hdl(0);
-	pH->GetParams(pos, radius, type);
-	// can be called from scripts without owner
-	if (pH->GetParamCount() > 3)
-		pH->GetParam(4, hdl);
+	
+	IEntity* pEntity = GetEntityFromParam(pH, 1);
+	IAIObject* pAI = pEntity ? pEntity->GetAI() : nullptr;
+	if (!pAI)
+	{
+		AIWarningID("<CScriptBind_AI> ", "AI.SoundEvent(): wrong type of parameter 1");
+		return pH->EndFunction(0);
+	}
 
-	// cerate AI sound for AI objects and for non-entities (explosions, etc)
-	SAIStimulus stim(AISTIM_SOUND, type, (EntityId)hdl.n, 0, pos, ZERO, radius);
-	gEnv->pAISystem->RegisterStimulus(stim);
+	if (!pH->GetParam(2, pos) || !pH->GetParam(3, radius) || !pH->GetParam(4, type))
+	{
+		AIWarningID("<CScriptBind_AI> ", "AI.SoundEvent(): wrong type of parameter 2, 3 or 4");
+		return pH->EndFunction(0);
+	}
+
+	// can be called from scripts without owner
+	if (pH->GetParamCount() > 4)
+		pH->GetParam(5, hdl);
+
+	// Send event.
+	SAIEVENT event;
+	event.vPosition = pos;
+	event.fThreat = radius;
+	event.nType = type;
+	event.nFlags = 0;
+	event.sourceId = (EntityId)hdl.n;
+	pAI->Event(AIEVENT_ONSOUNDEVENT, &event);
 
 	return pH->EndFunction();
 }
@@ -4132,12 +4118,11 @@ int CScriptBind_AI::SetRefPointPosition(IFunctionHandler* pH)
 
 	if (paramType2 == svtString)
 	{
-		CAISystem* pAISystem = GetAISystem();
 		const char* szTargetName;
 		pH->GetParam(2, szTargetName);
 		if (!strcmp(szTargetName, "formation"))
 		{
-			if (IAIObject* pFormationPoint = pAISystem->GetFormationPoint(pAIObject))
+			if (IAIObject* pFormationPoint = gAIEnv.pFormationManager->GetFormationPoint(pAIObject))
 			{
 				pPipeUser->SetRefPointPos(pFormationPoint->GetPos());
 				return pH->EndFunction(1);
@@ -4264,7 +4249,7 @@ int CScriptBind_AI::GetFormationPointPosition(IFunctionHandler* pH)
 	if (pEntity && pEntity->GetAI())
 	{
 		IAIObject* pObject = pEntity->GetAI();
-		IAIObject* pFormationPoint = GetAISystem()->GetFormationPoint(pObject);
+		IAIObject* pFormationPoint = gAIEnv.pFormationManager->GetFormationPoint(pObject);
 		if (pFormationPoint)
 		{
 			Vec3 pos = pFormationPoint->GetPos();
@@ -5445,11 +5430,11 @@ int CScriptBind_AI::CreateFormation(IFunctionHandler* pH)
 	if (pH->GetParam(1, name))
 	{
 		FormationNode nodeDescr;
-		GetAISystem()->CreateFormationDescriptor(name);
+		gAIEnv.pFormationManager->CreateFormationDescriptor(name);
 		if (pH->GetParamCount() > 1)
 			pH->GetParam(2, nodeDescr.eClass);
 		// create the owner's node at 0,0,0
-		GetAISystem()->AddFormationPoint(name, nodeDescr);
+		gAIEnv.pFormationManager->AddFormationPoint(name, nodeDescr);
 	}
 	return pH->EndFunction();
 }
@@ -5473,7 +5458,7 @@ int CScriptBind_AI::AddFormationPointFixed(IFunctionHandler* pH)
 	nodeDescr.vSightDirection = m * Vec3(0, 60, 0); //put the sight target far away in order to not make change
 	// head orientation too much while approaching
 
-	GetAISystem()->AddFormationPoint(name, nodeDescr);
+	gAIEnv.pFormationManager->AddFormationPoint(name, nodeDescr);
 
 	return pH->EndFunction();
 
@@ -5512,7 +5497,7 @@ int CScriptBind_AI::AddFormationPoint(IFunctionHandler* pH)
 	nodeDescr.vSightDirection = m * Vec3(0, 60, 0); //put the sight target far away in order to not make change
 	// head orientation too much while approaching
 
-	GetAISystem()->AddFormationPoint(name, nodeDescr);
+	gAIEnv.pFormationManager->AddFormationPoint(name, nodeDescr);
 
 	return pH->EndFunction();
 }
@@ -5527,7 +5512,7 @@ int CScriptBind_AI::GetFormationPointClass(IFunctionHandler* pH)
 	if (!pH->GetParams(name, pos))
 		return pH->EndFunction(-1);
 
-	return pH->EndFunction(GetAISystem()->GetFormationPointClass(name, pos));
+	return pH->EndFunction(gAIEnv.pFormationManager->GetFormationPointClass(name, pos));
 
 }
 
@@ -5958,14 +5943,7 @@ int CScriptBind_AI::GetUnitCount(IFunctionHandler* pH)
 
 int CScriptBind_AI::SetFactionThreatMultiplier(IFunctionHandler* pH)
 {
-	SCRIPT_CHECK_PARAMETERS(2);
-	int factionID;
-	float fMultiplier;
-	if (pH->GetParams(factionID, fMultiplier))
-	{
-		GetAISystem()->SetFactionThreatMultiplier(factionID, fMultiplier);
-	}
-
+	pH->GetIScriptSystem()->RaiseError("AI.SetFactionThreatMultiplier function is deprecated");
 	return pH->EndFunction();
 }
 
@@ -6243,7 +6221,7 @@ int CScriptBind_AI::ChangeFormation(IFunctionHandler* pH)
 	if (pH->GetParamCount() > 2)
 		pH->GetParam(3, fScale);
 
-	bool bSuccessful = GetAISystem()->ChangeFormation(pAIObject /*->GetParameters().m_nGroup*/, szDescriptor, fScale);
+	bool bSuccessful = gAIEnv.pFormationManager->ChangeFormation(pAIObject /*->GetParameters().m_nGroup*/, szDescriptor, fScale);
 
 	return pH->EndFunction(bSuccessful);
 
@@ -6264,7 +6242,7 @@ int CScriptBind_AI::ScaleFormation(IFunctionHandler* pH)
 	if (pH->GetParamCount() > 1)
 		pH->GetParam(2, fScale);
 
-	bool bSuccessful = GetAISystem()->ScaleFormation(pAIObject, fScale);
+	bool bSuccessful = gAIEnv.pFormationManager->ScaleFormation(pAIObject, fScale);
 
 	return pH->EndFunction(bSuccessful);
 
@@ -6283,7 +6261,7 @@ int CScriptBind_AI::SetFormationUpdate(IFunctionHandler* pH)
 	bool bUpdate;
 	pH->GetParam(2, bUpdate);
 
-	bool bSuccessful = GetAISystem()->SetFormationUpdate(pAIObject, bUpdate);
+	bool bSuccessful = gAIEnv.pFormationManager->SetFormationUpdate(pAIObject, bUpdate);
 
 	return pH->EndFunction(bSuccessful);
 
@@ -6824,70 +6802,9 @@ int CScriptBind_AI::GetNavigationType(IFunctionHandler* pH)
 }
 
 //-----------------------------------------------------------------------------------------------------------
-int CScriptBind_AI::GetNearestHidespot(IFunctionHandler* pH)
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	//	SCRIPT_CHECK_PARAMETERS(3);
-	GET_ENTITY(1);
-
-	float rangeMin = 0;
-	float rangeMax = 5;
-	bool useCenter = false;
-	Vec3 center(0, 0, 0);
-
-	if (!pH->GetParam(2, rangeMin))
-	{
-		AIWarningID("<CScriptBind_AI> ", "AI.GetNearestHidespot(): wrong type of parameter 2");
-		return pH->EndFunction();
-	}
-	if (!pH->GetParam(3, rangeMax))
-	{
-		AIWarningID("<CScriptBind_AI> ", "AI.GetNearestHidespot(): wrong type of parameter 2");
-		return pH->EndFunction();
-	}
-	if (pH->GetParamCount() > 3)
-	{
-		if (!pH->GetParam(4, center))
-		{
-			AIWarningID("<CScriptBind_AI> ", "AI.GetNearestHidespot(): wrong type of parameter 3");
-			return pH->EndFunction();
-		}
-		useCenter = true;
-	}
-
-	IAISystem* pAISystem = gEnv->pSystem->GetAISystem();
-
-	IAIObject* pAI = pEntity->GetAI();
-	IAIActor* pAIActor = CastToIAIActorSafe(pAI);
-	if (!pAIActor)
-		return pH->EndFunction();
-
-	IAIObject* pTarget = pAIActor->GetAttentionTarget();
-	IAIObject* pBeacon = pAISystem->GetBeacon(pAI->GetGroupId());
-
-	if (!useCenter)
-		center = pAI->GetPos();
-
-	Vec3 hideFrom;
-	if (pTarget)
-		hideFrom = pTarget->GetPos();
-	else if (pBeacon)
-		hideFrom = pBeacon->GetPos();
-	else
-		hideFrom = pAI->GetPos(); // Just in case there is nothing to hide from (not even beacon), at least try to hide.
-
-	Vec3 coverPos(0, 0, 0);
-	if (!pAISystem->GetHideSpotsInRange(pAI, center, hideFrom, rangeMin, rangeMax, true, true, 1, &coverPos, 0, 0, 0, 0))
-		return pH->EndFunction();
-
-	return pH->EndFunction(coverPos);
-}
-
-//-----------------------------------------------------------------------------------------------------------
 int CScriptBind_AI::GetDirectAnchorPos(IFunctionHandler* pH)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	//	SCRIPT_CHECK_PARAMETERS(3);
 	GET_ENTITY(1);
@@ -6958,7 +6875,7 @@ int CScriptBind_AI::EvalHidespot(IFunctionHandler* pH)
 	//  2 - blind cover
 	//  3 - high cover
 
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	//	SCRIPT_CHECK_PARAMETERS(4);
 	GET_ENTITY(1);
@@ -7024,7 +6941,7 @@ int CScriptBind_AI::EvalPeek(IFunctionHandler* pH)
 	//  2 - can peek from right
 	//  3 - can peek from left & right
 
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 	GET_ENTITY(1);
 
 	// Optimal Side will cause the function to return either left or right (not both, if both sides are
@@ -7330,34 +7247,6 @@ int CScriptBind_AI::GetGroupAveragePosition(IFunctionHandler* pH)
 
 	return pH->EndFunction();
 
-}
-
-//
-//-----------------------------------------------------------------------------------------------------------
-int CScriptBind_AI::SetPFBlockerRadius(IFunctionHandler* pH)
-{
-	SCRIPT_CHECK_PARAMETERS(3);
-	GET_ENTITY(1);
-	if (pEntity)
-	{
-
-		// todo: make it understand define/entity/pos for secont argument
-		//	if (pH->GetParamType(4) == svtString)
-		//	pH->GetParam(2,hdl);
-		//	nID = hdl.n;
-		//	IEntity* pBlockerEntity(gEnv->pEntitySystem->GetEntity(nID));
-		int blockerType(PFB_NONE);
-		pH->GetParam(2, blockerType);
-
-		float radius;
-		pH->GetParam(3, radius);
-		IAIObject* pObject = pEntity->GetAI();
-		if (pObject && pObject->CastToIAIActor())
-			pObject->CastToIAIActor()->SetPFBlockerRadius(blockerType, radius);
-		else
-			AIWarningID("<CScriptBind_AI::SetPFBlockerRadius> ", "WARNING: no AI for entity %s", pEntity->GetName());
-	}
-	return pH->EndFunction();
 }
 
 //
@@ -9664,41 +9553,6 @@ int CScriptBind_AI::UnregisterInterestedActor(IFunctionHandler* pH, ScriptHandle
 }
 
 //====================================================================
-// CanMoveStraightToPoint
-//====================================================================
-int CScriptBind_AI::CanMoveStraightToPoint(IFunctionHandler* pH)
-{
-	SCRIPT_CHECK_PARAMETERS(2);
-	Vec3 posFrom, posTo;
-	IAIObject* pAI;
-	GET_ENTITY(1);
-	if (pEntity && (pAI = pEntity->GetAI()))
-	{
-		IAIActor* pAIActor = pAI->CastToIAIActor();
-		if (pAIActor)
-		{
-			IAISystem::ENavigationType navTypeFrom;
-			IAISystem::tNavCapMask navCap = pAIActor->GetMovementAbility().pathfindingProperties.navCapMask;
-			const float passRadius = pAIActor->GetParameters().m_fPassRadius;
-			posFrom = pAI->GetPos();
-			if (pH->GetParam(2, posTo))
-			{
-				bool res = gAIEnv.pNavigation->IsSegmentValid(navCap, passRadius, posFrom, posTo, navTypeFrom);
-				return pH->EndFunction(res);
-			}
-			else
-				AIWarningID("<CScriptBind_AI> ", "CanMoveStraightToPoint(): wrong parameter 2 format");
-		}
-		else
-			AIWarningID("<CScriptBind_AI> ", "CanMoveStraightToPoint(): entity is not at AIActor");
-	}
-	else
-		AIWarningID("<CScriptBind_AI> ", "CanMoveStraightToPoint(): first parameter has no AI");
-
-	return pH->EndFunction();
-}
-
-//====================================================================
 // IsTakingCover
 //====================================================================
 int CScriptBind_AI::IsTakingCover(IFunctionHandler* pH)
@@ -10406,7 +10260,7 @@ int CScriptBind_AI::CreateQueryFromTacticalSpec(SmartScriptTable specTable)
 	IScriptTable::Iterator itO;
 	for (itO = specTable->BeginIteration(); specTable->MoveNext(itO); option++)
 	{
-		if (itO.value.type == ANY_TSTRING) continue;  // Skip the name field
+		if (itO.value.GetType() == EScriptAnyType::String) continue;  // Skip the name field
 
 		SmartScriptTable optionTable;
 		if (!itO.value.CopyTo(optionTable)) return false; // Scream and shout!
@@ -10419,14 +10273,14 @@ int CScriptBind_AI::CreateQueryFromTacticalSpec(SmartScriptTable specTable)
 			for (itS = subTable->BeginIteration(); subTable->MoveNext(itS); )
 			{
 				const char* querySpec = itS.sKey;
-				if (itS.value.type == ANY_TNUMBER)
+				if (itS.value.GetType() == EScriptAnyType::Number)
 				{
-					float fVal = itS.value.number;
+					float fVal = itS.value.GetNumber();
 					bOk &= pTPS->AddToParameters(queryID, querySpec, fVal, option);
 				}
-				else if (itS.value.type == ANY_TSTRING)
+				else if (itS.value.GetType() == EScriptAnyType::String)
 				{
-					const char* sVal = itS.value.str;
+					const char* sVal = itS.value.GetString();
 					bOk &= pTPS->AddToParameters(queryID, querySpec, sVal, option);
 				}
 				else
@@ -10446,14 +10300,14 @@ int CScriptBind_AI::CreateQueryFromTacticalSpec(SmartScriptTable specTable)
 			{
 				bAtLeastOneGenerationProvided = true;
 				const char* querySpec = itS.sKey;
-				if (itS.value.type == ANY_TNUMBER)
+				if (itS.value.GetType() == EScriptAnyType::Number)
 				{
-					float fVal = itS.value.number;
+					float fVal = itS.value.GetNumber();
 					bOk &= pTPS->AddToGeneration(queryID, querySpec, fVal, option);
 				}
-				else if (itS.value.type == ANY_TSTRING)
+				else if (itS.value.GetType() == EScriptAnyType::String)
 				{
-					const char* sVal = itS.value.str;
+					const char* sVal = itS.value.GetString();
 					bOk &= pTPS->AddToGeneration(queryID, querySpec, sVal, option);
 				}
 				else
@@ -10469,14 +10323,14 @@ int CScriptBind_AI::CreateQueryFromTacticalSpec(SmartScriptTable specTable)
 			for (itS = subTable->BeginIteration(); subTable->MoveNext(itS); )
 			{
 				const char* querySpec = itS.sKey;
-				if (itS.value.type == ANY_TNUMBER)
+				if (itS.value.GetType() == EScriptAnyType::Number)
 				{
-					float fVal = itS.value.number;
+					float fVal = itS.value.GetNumber();
 					bOk &= pTPS->AddToConditions(queryID, querySpec, fVal, option);
 				}
-				else if (itS.value.type == ANY_TBOOLEAN)
+				else if (itS.value.GetType() == EScriptAnyType::Boolean)
 				{
-					bool bVal = itS.value.b;
+					bool bVal = itS.value.GetBool();
 					bOk &= pTPS->AddToConditions(queryID, querySpec, bVal, option);
 				}
 				else
@@ -10494,9 +10348,9 @@ int CScriptBind_AI::CreateQueryFromTacticalSpec(SmartScriptTable specTable)
 			{
 				bAtLeastOneWeightProvided = true;
 				const char* querySpec = itS.sKey;
-				if (itS.value.type == ANY_TNUMBER)
+				if (itS.value.GetType() == EScriptAnyType::Number)
 				{
-					float fVal = itS.value.number;
+					float fVal = itS.value.GetNumber();
 					bOk &= pTPS->AddToWeights(queryID, querySpec, fVal, option);
 				}
 				else
@@ -11017,14 +10871,14 @@ struct BehaviorExplorer
 
 			while (globalBehaviors->MoveNext(it))
 			{
-				if (it.key.type != ANY_TSTRING)
+				if (it.key.GetType() != EScriptAnyType::String)
 					continue;
 
 				const char* behaviorName = 0;
 				it.key.CopyTo(behaviorName);
 
 				const char* baseName = 0;
-				if (it.value.type == ANY_TSTRING)
+				if (it.value.GetType() == EScriptAnyType::String)
 					it.value.CopyTo(baseName);
 
 				std::pair<Behaviors::iterator, bool> iresult = behaviors.insert(
@@ -11353,29 +11207,6 @@ int CScriptBind_AI::EnableUpdateLookTarget(IFunctionHandler* pH, ScriptHandle en
 			}
 		}
 	}
-
-	return pH->EndFunction();
-}
-
-int CScriptBind_AI::SetBehaviorTreeEvaluationEnabled(IFunctionHandler* pH, ScriptHandle entityID, bool enabled)
-{
-	if (IEntity* pEntity = gEnv->pEntitySystem->GetEntity(static_cast<EntityId>(entityID.n)))
-	{
-		if (IAIObject* pAIObject = pEntity->GetAI())
-		{
-			if (CAIActor* pAIActor = pAIObject->CastToCAIActor())
-			{
-				if (enabled)
-					pAIActor->SetBehaviorTreeEvaluationMode(CAIActor::EvaluateWhenVariablesChange);
-				else
-					pAIActor->SetBehaviorTreeEvaluationMode(CAIActor::EvaluationBlockedUntilBehaviorUnlocks);
-
-				return pH->EndFunction();
-			}
-		}
-	}
-
-	gEnv->pLog->LogError("SetBehaviorTreeEvaluationEnabled was called with either an unhealthy entity or a non-AI entity.");
 
 	return pH->EndFunction();
 }

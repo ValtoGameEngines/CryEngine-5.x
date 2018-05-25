@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   GameStateRecorder.h
@@ -18,9 +18,7 @@
 
 
 #include "TestSystem/IGameStateRecorder.h"
-//#include "ITestSystem.h"
 #include "Actor.h"
-#include <CrySystem/ITestSystem.h>
 
 #define MAX_FIRE_MODES 10
 #define TItemName const char*

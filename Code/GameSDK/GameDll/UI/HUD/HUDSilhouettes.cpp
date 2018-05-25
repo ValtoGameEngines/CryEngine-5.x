@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -66,13 +66,14 @@ void CHUDSilhouettes::SetVisionParams(EntityId uiEntityId,float r,float g,float 
 	IEntity *pEntity = gEnv->pEntitySystem->GetEntity(uiEntityId);
 	if(!pEntity)
 		return;
-
-	// Some actor accessories may not have render proxy
-	IEntityRender *pIEntityRender = pEntity->GetRenderInterface();
-	if(!pIEntityRender)
-		return;
-
-	//pIEntityRender->SetHUDSilhouettesParams(r,g,b,a);
+	
+	//BorisW: This will currently always and only render for the first RenderNode,
+	//it might sense to provide slot selection as a parameter in HUDSilhouette's interface
+	IRenderNode* pRenderNode = pEntity->GetRenderNode();
+	if (pRenderNode)
+	{
+		pRenderNode->m_nHUDSilhouettesParam = CHUDUtils::ConverToSilhouetteParamValue(r, g, b, a);
+	}
 }
 
 //-----------------------------------------------------------------------------------------------------
@@ -174,7 +175,7 @@ void CHUDSilhouettes::SetSilhouette(IEntity *pEntity,	float fDuration, bool bFlo
 
 void CHUDSilhouettes::SetSilhouette(IActor *pActor,float r,float g,float b,float a,float fDuration,bool bHighlightCurrentItem,bool bHighlightAccessories)
 {
-	if(!pActor)
+	if(!pActor || !pActor->GetEntity())
 		return;
 
 	SetSilhouette(pActor->GetEntity(),r,g,b,a,fDuration);
@@ -651,8 +652,8 @@ void CHUDSilhouettes::DrawDebugCombatInfo(const SSilhouette& silhoutte)
 			screenPos.y = screenPos.y / 100.0f * 600.0f;
 
 			pUIDraw->PreRender();
-			gEnv->pRenderer->Draw2dImage(screenPos.x, screenPos.y, barWidth, barHeight, 0, 0, 0, 1, 1, 0, 0.5f, 0.5f, 0.5f, color.a);
-			gEnv->pRenderer->Draw2dImage(screenPos.x, screenPos.y, barWidth * healthFraction, barHeight, 0, 0, 0, 1, 1, 0, color.r, color.g, color.b, color.a, 0.9f);
+			IRenderAuxImage::Draw2dImage(screenPos.x, screenPos.y, barWidth, barHeight, 0, 0, 0, 1, 1, 0, 0.5f, 0.5f, 0.5f, color.a);
+			IRenderAuxImage::Draw2dImage(screenPos.x, screenPos.y, barWidth * healthFraction, barHeight, 0, 0, 0, 1, 1, 0, color.r, color.g, color.b, color.a, 0.9f);
 			pUIDraw->PostRender();
 
 		}*/

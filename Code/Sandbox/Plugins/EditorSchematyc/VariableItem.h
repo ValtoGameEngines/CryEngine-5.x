@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -26,7 +26,7 @@ class CVariableItem : public CAbstractVariablesModelItem
 	};
 
 public:
-	CVariableItem(Schematyc::IScriptVariable& scriptVariable, CStateItem& state);
+	//CVariableItem(Schematyc::IScriptVariable& scriptVariable, CStateItem& state);
 	CVariableItem(Schematyc::IScriptVariable& scriptVariable, CObjectModel& object);
 	~CVariableItem();
 
@@ -37,7 +37,7 @@ public:
 	virtual void    Serialize(Serialization::IArchive& archive) override;
 	// ~CAbstractVariableItem
 
-	Schematyc::SGUID GetGUID() const;
+	CryGUID GetGUID() const;
 
 private:
 	Schematyc::IScriptVariable& m_scriptVariable;
@@ -46,3 +46,4 @@ private:
 };
 
 }
+

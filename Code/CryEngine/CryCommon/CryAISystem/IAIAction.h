@@ -1,9 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-#ifndef __IAIACTION_H__
-#define __IAIACTION_H__
+//! \cond INTERNAL
 
 #pragma once
+
+#include <CryEntitySystem/IEntity.h>
 
 struct IGoalPipe;
 struct IFlowGraph;
@@ -83,4 +84,4 @@ struct IAIAction
 	// </interfuscator:shuffle>
 };
 
-#endif
+//! \endcond

@@ -1,8 +1,12 @@
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
 #include "StdAfx.h"
 
 #include "geometries.h"
 #include "entities.h"
 #include "world.h"
+
+#include <CryMath/Random.h>
 
 using namespace primitives;
 using namespace cpx;

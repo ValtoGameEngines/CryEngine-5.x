@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // Note: Can't use #pragma once here, since (like assert.h) this file CAN be included more than once.
 // Each time it's included, it will re-define assert to match CRY_ASSERT.
@@ -23,7 +23,14 @@
 
 	#if defined(USE_CRY_ASSERT)
 
-void CryAssertSetGlobalFlagAddress(int*);
+enum class ECryAssertLevel
+{
+	Disabled,
+	Enabled,
+	FatalErrorOnAssert,
+	DebugBreakOnAssert
+};
+
 bool CryAssertIsEnabled();
 void CryAssertTrace(const char*, ...);
 void CryLogAssert(const char*, const char*, unsigned int, bool*);
@@ -46,13 +53,14 @@ struct SAssertCond
 	bool bLogAssert;
 };
 
-void CryAssertHandler(SAssertData const&, SAssertCond&, char const* const);
+void CryAssertHandler(SAssertData const&, SAssertCond&);
+void CryAssertHandler(SAssertData const& data, SAssertCond& cond, char const* const szMessage);
 
 template<typename ... TraceArgs>
 void CryAssertHandler(SAssertData const& data, SAssertCond& cond, char const* const szFormattedMessage, TraceArgs ... traceArgs)
 {
 	CryAssertTrace(szFormattedMessage, traceArgs ...);
-	CryAssertHandler(data, cond, nullptr);
+	CryAssertHandler(data, cond);
 }
 } // namespace Detail
 
@@ -78,6 +86,7 @@ void CryAssertHandler(SAssertData const& data, SAssertCond& cond, char const* co
 		      };                                                               \
 		      ::Detail::CryAssertHandler(assertData, assertCond, __VA_ARGS__); \
 		    }                                                                  \
+		    PREFAST_ASSUME(condition);                                         \
 		  } while (false)
 
 		#define CRY_ASSERT_TRACE(condition, parenthese_message) \
@@ -96,6 +105,8 @@ void CryAssertHandler(SAssertData const& data, SAssertCond& cond, char const* co
 	#endif
 
 	#ifdef IS_EDITOR_BUILD
+		#undef  Q_ASSERT
+		#undef  Q_ASSERT_X
 		#define Q_ASSERT(cond)                CRY_ASSERT_MESSAGE(cond, "Q_ASSERT")
 		#define Q_ASSERT_X(cond, where, what) CRY_ASSERT_MESSAGE(cond, "Q_ASSERT_X" where what)
 	#endif

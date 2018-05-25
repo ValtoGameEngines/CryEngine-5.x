@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 namespace pfx2
 {
@@ -8,17 +8,17 @@ namespace pfx2
 ILINE Vec3 HMin(const Vec3v& v0)
 {
 	return Vec3(
-	  HMin(v0.x),
-	  HMin(v0.y),
-	  HMin(v0.z));
+	  hmin(v0.x),
+		hmin(v0.y),
+		hmin(v0.z));
 }
 
 ILINE Vec3 HMax(const Vec3v& v0)
 {
 	return Vec3(
-	  HMax(v0.x),
-	  HMax(v0.y),
-	  HMax(v0.z));
+	  hmax(v0.x),
+		hmax(v0.y),
+		hmax(v0.z));
 }
 
 ILINE Vec3v Add(const Vec3v& a, floatv b)
@@ -48,10 +48,27 @@ ILINE Vec3_tpl<T> MAdd(const Vec3_tpl<T>& a, T b, const Vec3_tpl<T>& c)
 	  MAdd(a.z, b, c.z));
 }
 
-ILINE float DeltaTime(float normAge, float frameTime)
+template<typename T>
+ILINE T DeltaTime(T frameTime, T normAge, T lifeTime)
 {
-	return __fsel(normAge, frameTime, -(normAge * frameTime));
+	// Birth time = -age * life
+	// Death time = -age * life + life
+	// Delta time = min(- age * life + life, 0) - max(-age * life, -dT)
+	T age = normAge * lifeTime;
+	T startTime = -min(age, frameTime);
+	T endTime = min(lifeTime - age, convert<T>());
+	T deltaTime = max(endTime - startTime, convert<T>());
+	return deltaTime;
 }
+
+template<typename T>
+ILINE T StartTime(T curTime, T frameTime, T absAge)
+{
+	// Birth time = T - age*life
+	// Start time = T - min(age*life, dT)
+	return curTime - min(absAge, frameTime);
+}
+
 
 ILINE uint8 FloatToUFrac8Saturate(float v)
 {
@@ -99,8 +116,8 @@ ILINE Vec3 PolarCoordToVec3(float azimuth, float altitude)
 {
 	float azc, azs;
 	float alc, als;
-	sincos_tpl(azimuth, &azs, &azc);
-	sincos_tpl(altitude, &als, &alc);
+	sincos(azimuth, &azs, &azc);
+	sincos(altitude, &als, &alc);
 	return Vec3(azc*alc, azs*alc, als);
 }
 
@@ -142,16 +159,6 @@ ILINE Vec4v ToVec4v(Vec4 v)
 ILINE Planev ToPlanev(Plane v)
 {
 	return v;
-}
-
-ILINE float HMin(floatv v0)
-{
-	return v0;
-}
-
-ILINE float HMax(floatv v0)
-{
-	return v0;
 }
 
 ILINE ColorFv ToColorFv(UColv color)

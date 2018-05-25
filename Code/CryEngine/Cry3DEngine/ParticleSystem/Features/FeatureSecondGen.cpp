@@ -1,23 +1,30 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  Created:     18/12/2014 by Filipe amim
-//  Description:
-// -------------------------------------------------------------------------
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+// Legacy SecondGen features, replaced with Child features
 
 #include "StdAfx.h"
-#include "ParticleSystem/ParticleFeature.h"
-#include "ParticleSystem/ParticleEmitter.h"
+#include "ParticleSystem/ParticleSystem.h"
 #include "FeatureCollision.h"
-
-CRY_PFX2_DBG
 
 namespace pfx2
 {
 
+template<typename T>
+ILINE T Verify(T in, const char* message)
+{
+	CRY_ASSERT_MESSAGE(in, message);
+	return in;
+}
+
+#define CRY_PFX2_VERIFY(expr) Verify(expr, #expr)
+
 //////////////////////////////////////////////////////////////////////////
+// Convert legacy SecondGen features, which specify parenting on parents, to Child features, which specify parenting on children
+
+template<typename T>
+void AddValue(XmlNodeRef node, cstr name, const T& value)
+{
+	node->newChild(name)->setAttr("value", value);
+}
 
 SERIALIZATION_DECLARE_ENUM(ESecondGenMode,
                            All,
@@ -31,28 +38,73 @@ public:
 		: m_probability(1.0f)
 		, m_mode(ESecondGenMode::All) {}
 
-	void ResolveDependency(CParticleComponent* pComponent) override
+	CParticleFeature* MakeChildFeatures(CParticleComponent* pComponent, cstr featureName)
 	{
-		CRY_PFX2_ASSERT(pComponent);
-
 		CParticleEffect* pEffect = pComponent->GetEffect();
 
-		m_componentIds.clear();
+		// Count number of real children
+		uint numChildren = 0;
+		for (auto& componentName : m_componentNames)
+			if (pEffect->FindComponentByName(componentName))
+				numChildren++;
+
+		if (numChildren == 0)
+			return nullptr;
+
+		float componentFrac = m_mode == ESecondGenMode::All ? 1.0f : 1.0f / numChildren;
+		float probability = m_probability * componentFrac;
+		float selectionStart = 0.0f;
+
+		static uint                s_childGroup = 1;
+		static CParticleComponent* s_lastComponent = nullptr;
+		if (probability < 1.0f && numChildren > 1)
+		{
+			if (pComponent != s_lastComponent)
+				s_childGroup = 1;
+			else
+				s_childGroup++;
+			s_lastComponent = pComponent;
+		}
+
 		for (auto& componentName : m_componentNames)
 		{
-			TComponentId componentId = ResolveIdForName(pComponent, componentName);
-			const bool isvalid = componentId != gInvalidId;
-			if (isvalid)
+			if (auto pChild = pEffect->FindComponentByName(componentName))
 			{
-				const bool isUnique = std::find(m_componentIds.begin(), m_componentIds.end(), componentId) == m_componentIds.end();
-				if (isUnique)
+				pChild->SetParent(pComponent);
+
+				// Add Child feature of corresponding name
+				if (auto pParam = CRY_PFX2_VERIFY(GetPSystem()->FindFeatureParam("Child", featureName)))
 				{
-					CParticleComponent* pSubComp = pEffect->GetCComponent(componentId);
-					if (pSubComp->SetSecondGeneration(pComponent))
-						m_componentIds.push_back(componentId);
+					pChild->AddFeature(0, *pParam);
+
+					if (probability < 1.0f)
+					{
+						// Add Spawn Random feature	
+						if (auto pParam = CRY_PFX2_VERIFY(GetPSystem()->FindFeatureParam("Component", "ActivateRandom")))
+						{
+							IParticleFeature* pFeature = pChild->AddFeature(1, *pParam);
+							XmlNodeRef attrs = gEnv->pSystem->CreateXmlNode("ActivateRandom");
+							AddValue(attrs, "Probability", probability);
+
+							if (numChildren > 1)
+							{
+								AddValue(attrs, "Group", s_childGroup);
+							}
+							if (componentFrac < 1.0f)
+							{
+								AddValue(attrs, "SelectionStart", selectionStart);
+								selectionStart += componentFrac;
+							}
+
+							CRY_PFX2_VERIFY(Serialization::LoadXmlNode(*pFeature, attrs));
+						}
+					}
 				}
 			}
 		}
+
+		// Delete this feature
+		return nullptr;
 	}
 
 	void Serialize(Serialization::IArchive& ar) override
@@ -65,136 +117,12 @@ public:
 			VersionFix(ar);
 	}
 
-	uint GetNumConnectors() const override
+	const SParticleFeatureParams& GetFeatureParams() const override
 	{
-		return m_componentNames.size();
-	}
-
-	const char* GetConnectorName(uint connectorId) const override
-	{
-		if (connectorId >= m_componentNames.size())
-			return nullptr;
-		return m_componentNames[connectorId];
-	}
-
-	void ConnectTo(const char* pOtherName) override
-	{
-		auto it = FindComponentName(pOtherName);
-		if (it == m_componentNames.end())
-			m_componentNames.push_back(pOtherName);
-	}
-
-	void DisconnectFrom(const char* pOtherName) override
-	{
-		auto it = FindComponentName(pOtherName);
-		if (it != m_componentNames.end())
-			m_componentNames.erase(it);
-	}
-
-protected:
-	ILINE void TriggerParticles(const SUpdateContext& context, const TParticleId* pParticleIdTriggers, uint triggerCount)
-	{
-		if (m_mode == ESecondGenMode::All)
-			TriggerAll(context, pParticleIdTriggers, triggerCount);
-		else
-			TriggerRandom(context, pParticleIdTriggers, triggerCount);
+		static SParticleFeatureParams s_params; return s_params;
 	}
 
 private:
-	ILINE void TriggerAll(const SUpdateContext& context, const TParticleId* pParticleIdTriggers, uint triggerCount)
-	{
-		CParticleContainer& container = context.m_container;
-		TParticleHeap::Array<CParticleComponentRuntime::SInstance> newInstances(*context.m_pMemHeap);
-		newInstances.reserve(triggerCount);
-		const uint numEntries = m_componentIds.size();
-
-		for (uint i = 0; i < numEntries; ++i)
-		{
-			const TComponentId componentId = m_componentIds[i];
-			ICommonParticleComponentRuntime* pChildComponentRuntime =
-			  context.m_runtime.GetEmitter()->GetRuntimes()[componentId].pRuntime;
-			SChaosKey chaosKey = context.m_spawnRng;
-
-			for (uint j = 0; j < triggerCount; ++j)
-			{
-				const TParticleId particleId = pParticleIdTriggers[j];
-				const bool trigger = (chaosKey.RandUNorm() <= m_probability);
-				if (trigger)
-				{
-					CParticleComponentRuntime::SInstance instance;
-					instance.m_parentId = container.GetRealId(particleId);
-					newInstances.push_back(instance);
-				}
-			}
-			pChildComponentRuntime->AddSubInstances(newInstances.data(), newInstances.size());
-			newInstances.clear();
-		}
-	}
-
-	ILINE void TriggerRandom(const SUpdateContext& context, const TParticleId* pParticleIdTriggers, uint triggerCount)
-	{
-		CParticleContainer& container = context.m_container;
-		TParticleHeap::Array<CParticleComponentRuntime::SInstance> newInstances(*context.m_pMemHeap);
-		newInstances.reserve(triggerCount);
-		const uint numEntries = m_componentIds.size();
-
-		for (uint i = 0; i < numEntries; ++i)
-		{
-			const TComponentId componentId = m_componentIds[i];
-			ICommonParticleComponentRuntime* pChildComponentRuntime =
-			  context.m_runtime.GetEmitter()->GetRuntimes()[componentId].pRuntime;
-			SChaosKey chaosKey = context.m_spawnRng;
-
-			for (uint j = 0; j < triggerCount; ++j)
-			{
-				const TParticleId particleId = pParticleIdTriggers[j];
-				const float u = chaosKey.RandUNorm();
-				const float v = chaosKey.RandUNorm() * numEntries;
-				const bool trigger = (u <= m_probability);
-				const bool inRange = v >= float(i) && v < (float(i) + 1.0f);
-				if (trigger && inRange)
-				{
-					CParticleComponentRuntime::SInstance instance;
-					instance.m_parentId = container.GetRealId(particleId);
-					newInstances.push_back(instance);
-				}
-			}
-			pChildComponentRuntime->AddSubInstances(newInstances.data(), newInstances.size());
-			newInstances.clear();
-		}
-	}
-
-	std::vector<string>::iterator FindComponentName(const char* pOther)
-	{
-		auto it = std::find_if(m_componentNames.begin(), m_componentNames.end(),
-		                       [pOther](const string& componentName)
-			{
-				return strcmp(componentName.c_str(), pOther) == 0;
-		  });
-		return it;
-	}
-
-	TComponentId ResolveIdForName(CParticleComponent* pComponent, const string& componentName)
-	{
-		TComponentId compId = pComponent->GetComponentId();
-		CParticleEffect* pEffect = pComponent->GetEffect();
-		TComponentId subComponentId = gInvalidId;
-
-		if (componentName == pComponent->GetName())
-		{}  // TODO - user error - user set this component as sub component for itself.
-		for (TComponentId i = 0; i < pEffect->GetNumComponents(); ++i)
-		{
-			CParticleComponent* pSubComp = pEffect->GetCComponent(i);
-			if (pSubComp->GetName() == componentName)
-			{
-				subComponentId = i;
-				break;
-			}
-		}
-		if (subComponentId == gInvalidId)
-		{}      // TODO - user error - sub component name was not found
-		return subComponentId;
-	}
 
 	void VersionFix(Serialization::IArchive& ar)
 	{
@@ -210,10 +138,9 @@ private:
 		}
 	}
 
-	std::vector<string>       m_componentNames;
-	std::vector<TComponentId> m_componentIds;
-	SUnitFloat                m_probability;
-	ESecondGenMode            m_mode;
+	std::vector<string> m_componentNames;
+	SUnitFloat          m_probability;
+	ESecondGenMode      m_mode;
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -221,89 +148,34 @@ private:
 class CFeatureSecondGenOnSpawn : public CFeatureSecondGenBase
 {
 public:
-	CRY_PFX2_DECLARE_FEATURE
-
-	virtual void AddToComponent(CParticleComponent* pComponent, SComponentParams* pParams) override
+	CParticleFeature* ResolveDependency(CParticleComponent* pComponent) override
 	{
-		CFeatureSecondGenBase::AddToComponent(pComponent, pParams);
-		if (GetNumConnectors() != 0)
-			pComponent->AddToUpdateList(EUL_InitUpdate, this);
-	}
-
-	virtual void InitParticles(const SUpdateContext& context) override
-	{
-		CRY_PFX2_PROFILE_DETAIL;
-
-		TParticleHeap::Array<TParticleId> triggers(*context.m_pMemHeap);
-		triggers.reserve(context.m_container.GetNumSpawnedParticles());
-		CRY_PFX2_FOR_SPAWNED_PARTICLES(context)
-		{
-			triggers.push_back(particleId);
-		}
-		CRY_PFX2_FOR_END;
-		TriggerParticles(context, triggers.data(), triggers.size());
+		return MakeChildFeatures(pComponent, "OnBirth");
 	}
 };
 
-CRY_PFX2_IMPLEMENT_FEATURE_WITH_CONNECTOR(CParticleFeature, CFeatureSecondGenOnSpawn, "SecondGen", "OnSpawn", colorSecondGen);
-
-//////////////////////////////////////////////////////////////////////////
+CRY_PFX2_LEGACY_FEATURE(CFeatureSecondGenOnSpawn, "SecondGen", "OnSpawn");
 
 class CFeatureSecondGenOnDeath : public CFeatureSecondGenBase
 {
 public:
-	CRY_PFX2_DECLARE_FEATURE
-
-	virtual void AddToComponent(CParticleComponent* pComponent, SComponentParams* pParams) override
+	CParticleFeature* ResolveDependency(CParticleComponent* pComponent) override
 	{
-		CFeatureSecondGenBase::AddToComponent(pComponent, pParams);
-		if (GetNumConnectors() != 0)
-			pComponent->AddToUpdateList(EUL_KillUpdate, this);
-	}
-
-	void KillParticles(const SUpdateContext& context, TParticleId* pParticles, size_t count) override
-	{
-		TriggerParticles(context, pParticles, count);
+		return MakeChildFeatures(pComponent, "OnDeath");
 	}
 };
 
-CRY_PFX2_IMPLEMENT_FEATURE_WITH_CONNECTOR(CParticleFeature, CFeatureSecondGenOnDeath, "SecondGen", "OnDeath", colorSecondGen);
-
-//////////////////////////////////////////////////////////////////////////
+CRY_PFX2_LEGACY_FEATURE(CFeatureSecondGenOnDeath, "SecondGen", "OnDeath");
 
 class CFeatureSecondGenOnCollide : public CFeatureSecondGenBase
 {
 public:
-	CRY_PFX2_DECLARE_FEATURE
-
-	virtual void AddToComponent(CParticleComponent* pComponent, SComponentParams* pParams) override
+	CParticleFeature* ResolveDependency(CParticleComponent* pComponent) override
 	{
-		CFeatureSecondGenBase::AddToComponent(pComponent, pParams);
-		if (GetNumConnectors() != 0)
-			pComponent->AddToUpdateList(EUL_Update, this);
-	}
-
-	virtual void Update(const SUpdateContext& context) override
-	{
-		CRY_PFX2_PROFILE_DETAIL;
-
-		CParticleContainer& container = context.m_container;
-		const TIStream<SContactPoint> contactPoints = container.GetTIStream<SContactPoint>(EPDT_ContactPoint);
-		TParticleHeap::Array<TParticleId> triggers(*context.m_pMemHeap);
-		triggers.reserve(container.GetLastParticleId());
-
-		CRY_PFX2_FOR_ACTIVE_PARTICLES(context)
-		{
-			const SContactPoint contact = contactPoints.Load(particleId);
-			if (contact.m_flags & uint(EContactPointsFlags::Collided))
-				triggers.push_back(particleId);
-		}
-		CRY_PFX2_FOR_END;
-
-		TriggerParticles(context, triggers.data(), triggers.size());
+		return MakeChildFeatures(pComponent, "OnCollide");
 	}
 };
 
-CRY_PFX2_IMPLEMENT_FEATURE_WITH_CONNECTOR(CParticleFeature, CFeatureSecondGenOnCollide, "SecondGen", "OnCollide", colorSecondGen);
+CRY_PFX2_LEGACY_FEATURE(CFeatureSecondGenOnCollide, "SecondGen", "OnCollide");
 
 }

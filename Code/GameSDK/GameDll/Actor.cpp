@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
  -------------------------------------------------------------------------
@@ -410,6 +410,14 @@ CActor::~CActor()
 	UnRegisterDBAGroups();
 	ReleaseLegsColliders();
 	CActorManager::GetActorManager()->ActorRemoved(this);
+
+	if (IAIObject *pAI = GetEntity()->GetAI())
+	{
+		if (pAI->GetProxy())
+		{
+			pAI->GetProxy()->OnActorRemoved();
+		}
+	}
 }
 
 //------------------------------------------------------------------------
@@ -514,7 +522,7 @@ void CActor::PostInit( IGameObject * pGameObject )
 {
 	GetGameObject()->EnablePrePhysicsUpdate( gEnv->bMultiplayer ? ePPU_Always : ePPU_WhenAIActivated );
 
-	pGameObject->EnableUpdateSlot( this, 0 );	
+	pGameObject->EnableUpdateSlot(this, 0);
 	pGameObject->EnablePostUpdates( this );
 
 	if (m_teamId)
@@ -1629,7 +1637,7 @@ IEntity *CActor::LinkToVehicle(EntityId vehicleId)
   if (pLinked)  
     pLinked->AttachChild(GetEntity(), ENTITY_XFORM_USER|IEntity::ATTACHMENT_KEEP_TRANSFORMATION);
   else
-    GetEntity()->DetachThis(IEntity::ATTACHMENT_KEEP_TRANSFORMATION,/*ENTITY_XFORM_USER*/0);
+    GetEntity()->DetachThis(IEntity::ATTACHMENT_KEEP_TRANSFORMATION);
   
 	return pLinked;
 }
@@ -1651,12 +1659,12 @@ IEntity *CActor::LinkToEntity(EntityId entityId, bool bKeepTransformOnDetach)
   if (pLinked)
     pLinked->AttachChild(GetEntity(), 0);
   else
-		GetEntity()->DetachThis(bKeepTransformOnDetach ? IEntity::ATTACHMENT_KEEP_TRANSFORMATION : 0, bKeepTransformOnDetach ? ENTITY_XFORM_USER : 0);
+		GetEntity()->DetachThis(bKeepTransformOnDetach ? IEntity::ATTACHMENT_KEEP_TRANSFORMATION : IEntity::EAttachmentFlags(), bKeepTransformOnDetach ? ENTITY_XFORM_USER : EEntityXFormFlags());
 
 	return pLinked;
 }
 
-void CActor::ProcessEvent(SEntityEvent& event)
+void CActor::ProcessEvent(const SEntityEvent& event)
 {
 	switch (event.event)
 	{
@@ -1814,6 +1822,23 @@ void CActor::ProcessEvent(SEntityEvent& event)
 			break;
 		}
   }  
+}
+
+uint64 CActor::GetEventMask() const
+{
+	return ENTITY_EVENT_BIT(ENTITY_EVENT_HIDE)
+		| ENTITY_EVENT_BIT(ENTITY_EVENT_INVISIBLE)
+		| ENTITY_EVENT_BIT(ENTITY_EVENT_UNHIDE)
+		| ENTITY_EVENT_BIT(ENTITY_EVENT_VISIBLE)
+		| ENTITY_EVENT_BIT(ENTITY_EVENT_RESET)
+		| ENTITY_EVENT_BIT(ENTITY_EVENT_ANIM_EVENT)
+		| ENTITY_EVENT_BIT(ENTITY_EVENT_DONE)
+		| ENTITY_EVENT_BIT(ENTITY_EVENT_TIMER)
+		| ENTITY_EVENT_BIT(ENTITY_EVENT_PREPHYSICSUPDATE)
+		| ENTITY_EVENT_BIT(ENTITY_EVENT_INIT)
+		| ENTITY_EVENT_BIT(ENTITY_EVENT_RELOAD_SCRIPT)
+		| ENTITY_EVENT_BIT(ENTITY_EVENT_ADD_TO_RADAR)
+		| ENTITY_EVENT_BIT(ENTITY_EVENT_REMOVE_FROM_RADAR);
 }
 
 void CActor::BecomeRemotePlayer()
@@ -2972,7 +2997,7 @@ bool CActor::GetRagdollContext( CProceduralContextRagdoll** ppRagdollContext ) c
 	IActionController* piActionController = m_pAnimatedCharacter->GetActionController();
 	if( !gEnv->bMultiplayer && piActionController )
 	{
-		IProceduralContext* piProcContext = piActionController->FindOrCreateProceduralContext( PROCEDURAL_CONTEXT_RAGDOLL_NAME );
+		IProceduralContext* piProcContext = piActionController->FindOrCreateProceduralContext(CProceduralContextRagdoll::GetCID());
 		if( piProcContext )
 		{
 			*ppRagdollContext = static_cast<CProceduralContextRagdoll*> (piProcContext);
@@ -5203,7 +5228,7 @@ void CActor::DumpActorInfo()
   
   Vec3 entPos(pEntity->GetWorldPos());
   CryLog("Entity Pos: %.f %.f %.f", entPos.x, entPos.y, entPos.z);
-  CryLog("Active: %i", pEntity->IsActive());
+  CryLog("Active: %i", pEntity->IsActivatedForUpdates());
   CryLog("Hidden: %i", pEntity->IsHidden());
   CryLog("Invisible: %i", pEntity->IsInvisible());  
   CryLog("Profile: %i", m_currentPhysProfile);
@@ -5588,7 +5613,7 @@ void CActor::SetGrabbedByPlayer( IEntity* pPlayerEntity, bool grabbed )
 			SEntityEvent xFormEvent;
 			xFormEvent.event = ENTITY_EVENT_XFORM;
 			xFormEvent.nParam[0] = ENTITY_XFORM_ROT|ENTITY_XFORM_POS;
-			m_pAnimatedCharacter->ProcessEvent(xFormEvent);
+			m_pAnimatedCharacter->SendEvent(xFormEvent);
 
 			m_pAnimatedCharacter->SetInGrabbedState(false);
 		}
@@ -5969,15 +5994,9 @@ bool CActor::CanSwitchSpectatorStatus() const
 	return true;
 }
 
-IEntityComponent::ComponentEventPriority CActor::GetEventPriority( const int eventID ) const
+IEntityComponent::ComponentEventPriority CActor::GetEventPriority() const
 {
-	switch( eventID )
-	{
-	case ENTITY_EVENT_PREPHYSICSUPDATE:
-		return( ENTITY_PROXY_LAST - ENTITY_PROXY_USER + EEntityEventPriority_Actor + (m_isClient ? EEntityEventPriority_Client : 0) );
-	}
-
-	return IGameObjectExtension::GetEventPriority( eventID );
+	return ENTITY_PROXY_USER + EEntityEventPriority_Actor;
 }
 
 void CActor::OnHostMigrationCompleted()

@@ -1,4 +1,4 @@
-﻿// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
  -------------------------------------------------------------------------
@@ -46,6 +46,7 @@
 #include "ItemAnimation.h"
 
 #include <IVehicleSystem.h>
+#include <IPerceptionManager.h>
 
 
 #pragma warning(disable: 4355)	// 'this' used in base member initializer list
@@ -278,6 +279,9 @@ bool CItem::Init( IGameObject *pGameObject )
 	// attach script bind
 	g_pGame->GetItemScriptBind()->AttachTo(this);
 
+	// ignore invalid file access for CItem initialization
+	SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
+
 	if(!ResetParams())
 	{
 		//failed to find all appropriate shared parameters bailing out
@@ -362,7 +366,7 @@ bool CItem::ResetParams()
 //------------------------------------------------------------------------
 void CItem::Reset()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	if (IScriptTable* pScriptTable = gEnv->pEntitySystem->GetEntity(GetEntityId())->GetScriptTable())
 	{
@@ -492,7 +496,7 @@ void CItem::Release()
 //------------------------------------------------------------------------
 void CItem::Update( SEntityUpdateContext& ctx, int slot )
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	if (!IsDestroyed())
 	{
@@ -716,9 +720,9 @@ void CItem::HandleEvent( const SGameObjectEvent &evt )
 }
 
 //------------------------------------------------------------------------
-void CItem::ProcessEvent(SEntityEvent &event)
+void CItem::ProcessEvent(const SEntityEvent& event)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	switch (event.event)
 	{
@@ -816,6 +820,11 @@ void CItem::ProcessEvent(SEntityEvent &event)
 		}
 		break;
 	}
+}
+
+uint64 CItem::GetEventMask() const
+{
+	return ENTITY_EVENT_BIT(ENTITY_EVENT_ANIM_EVENT) | ENTITY_EVENT_BIT(ENTITY_EVENT_TIMER) | ENTITY_EVENT_BIT(ENTITY_EVENT_RESET) | ENTITY_EVENT_BIT(ENTITY_EVENT_PRE_SERIALIZE) | ENTITY_EVENT_BIT(ENTITY_EVENT_DEACTIVATED);
 }
 
 //------------------------------------------------------------------------
@@ -1806,8 +1815,10 @@ void CItem::Drop(float impulseScale, bool selectNext, bool byDeath)
 
 	// AI should ignore collisions from this item for a while
 	// to not 'scare' himself and the friends around him
-	if (gEnv->pAISystem)
-		gEnv->pAISystem->IgnoreStimulusFrom(pThisItemEntity->GetId(), AISTIM_COLLISION, 2.0f);
+	if (IPerceptionManager::GetInstance())
+	{
+		IPerceptionManager::GetInstance()->IgnoreStimulusFrom(pThisItemEntity->GetId(), AISTIM_COLLISION, 2.0f);
+	}
 
 	DetachItem(pThisItemEntity, pOwnerActor, impulseScale);
 

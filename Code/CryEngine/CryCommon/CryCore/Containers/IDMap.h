@@ -1,11 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __IDMap_h__
 #define __IDMap_h__
 
 #pragma once
 
-#include <CryCore/Assert/CompileTimeUtils.h>
+#include <type_traits>
 
 template<typename IDType, typename ValueType, typename IndexType = unsigned short, typename CounterType = unsigned short>
 class id_map
@@ -26,7 +26,7 @@ public:
 	void                    insert(id_type id, const value_type& value);
 	void                    erase(id_type id);
 	void                    swap(this_type& other);
-	void                    grow(size_t amount);
+	size_t                  grow(size_t amount);
 
 	ILINE size_t            size() const;
 	ILINE size_t            capacity() const;
@@ -49,6 +49,8 @@ public:
 
 	ILINE const value_type& operator[](id_type id) const;
 	ILINE value_type&       operator[](id_type id);
+
+	static constexpr size_t max_capacity() { return std::numeric_limits<index_type>::max(); }
 
 protected:
 	enum { index_bits = sizeof(index_type) * 8, };
@@ -93,8 +95,8 @@ protected:
 		{
 		}
 
-		aligned_storage<value_type> value;
-		counter_type                counter;
+		typename std::aligned_storage<sizeof(value_type), alignof(value_type)>::type value;
+		counter_type                                                                 counter;
 	};
 
 	typedef std::vector<index_type> Frees;
@@ -118,6 +120,8 @@ id_map<IDType, ValueType, IndexType, CounterType>::id_map(size_t size)
 	: values_(size)
 	, frees_(size)
 {
+	CRY_ASSERT(size <= max_capacity());
+	
 	for (size_t i = 0; i < size; ++i)
 		frees_[i] = static_cast<index_type>(size - i - 1);
 	freesBegin_ = 0;
@@ -241,19 +245,29 @@ void id_map<IDType, ValueType, IndexType, CounterType >::swap(this_type& other)
 }
 
 template<typename IDType, typename ValueType, typename IndexType, typename CounterType>
-void id_map<IDType, ValueType, IndexType, CounterType >::grow(size_t amount)
+size_t id_map<IDType, ValueType, IndexType, CounterType >::grow(size_t amount)
 {
+	const size_t size = values_.size();
+	amount = min(amount, max_capacity() - size);
+
 	if (amount)
 	{
-		size_t size = values_.size();
 		index_type first = static_cast<index_type>(size);
 
-		if (freesBegin_ <= freesEnd_)
+		if (freesBegin_ <= freesEnd_ && size != freesLen_)
 		{
 			frees_.resize(size + amount);
-			for (size_t i = 0; i < amount; ++i)
-				frees_[freesEnd_ + i] = first++;
-			freesEnd_ += amount;
+
+			for (size_t i = freesEnd_; i < size; ++i)
+			{
+				frees_[i + amount] = frees_[i];
+			}
+			const size_t newEnd = freesEnd_ + amount;
+			for (size_t i = freesEnd_; i < newEnd; ++i)
+			{
+				frees_[i] = first++;
+			}
+			freesEnd_ = newEnd;
 		}
 		else
 		{
@@ -283,6 +297,7 @@ void id_map<IDType, ValueType, IndexType, CounterType >::grow(size_t amount)
 
 		grown.swap(values_);
 	}
+	return amount;
 }
 
 template<typename IDType, typename ValueType, typename IndexType, typename CounterType>

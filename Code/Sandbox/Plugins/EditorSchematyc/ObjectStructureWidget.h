@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -6,7 +6,7 @@
 #include <QAbstractItemModel>
 
 class QFilteringPanel;
-class QTreeView;
+class QAdvancedTreeView;
 class QAttributeFilterProxyModel;
 class QToolButton;
 class QItemSelection;
@@ -25,13 +25,13 @@ class CAbstractObjectStructureModelItem;
 
 class CObjectStructureModel;
 
-class CObjectStructureWidget : public QWidget
+class CGraphsWidget : public QWidget
 {
 	Q_OBJECT;
 
 public:
-	CObjectStructureWidget(QWidget* pParent = nullptr);
-	~CObjectStructureWidget();
+	CGraphsWidget(QWidget* pParent = nullptr);
+	~CGraphsWidget();
 
 	CAbstractObjectStructureModel* GetModel() const { return m_pModel; }
 	void                           SetModel(CAbstractObjectStructureModel* pModel);
@@ -59,7 +59,7 @@ private:
 	CAbstractObjectStructureModel* m_pModel;
 
 	QFilteringPanel*               m_pFilter;
-	QTreeView*                     m_pComponentsList;
+	QAdvancedTreeView*             m_pComponentsList;
 	CObjectStructureModel*         m_pDataModel;
 	QAttributeFilterProxyModel*    m_pFilterProxy;
 	QToolButton*                   m_pAddButton;
@@ -68,3 +68,4 @@ private:
 };
 
 }
+

@@ -1,3 +1,5 @@
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
 #pragma once
 #ifdef INCLUDE_SCALEFORM_SDK
 
@@ -25,6 +27,7 @@ public:
 
 	virtual void Destroy() override
 	{
+		CSharedFlashPlayerResources::Shutdown();
 		delete this;
 	}
 

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "OpticsElement.h"
@@ -99,8 +99,6 @@ COpticsElement::COpticsElement(const char* name, float size, const float brightn
 	, m_bDynamics(false)
 	, m_bDynamicsInvert(false)
 {
-	m_samplerBilinearClamp       = CTexture::GetTexState(STexState(FILTER_LINEAR, true));
-	m_samplerBilinearBorderBlack = CTexture::GetTexState(STexState(FILTER_LINEAR, TADDR_BORDER, TADDR_BORDER, TADDR_BORDER, 0));
 }
 
 void COpticsElement::Load(IXmlNode* pNode)
@@ -274,6 +272,12 @@ void COpticsElement::updateXformMatrix()
 	SetTransform(combine);
 }
 
+//////////////////////////////////////////////////////////////////////////
+void COpticsElement::DeleteThis()
+{
+	gRenDev->ExecuteRenderThreadCommand( [=] { delete this; },ERenderCommandFlags::LevelLoadingThread_defer );
+}
+
 const Vec3 COpticsElement::computeOrbitPos(const Vec3& vSrcProjPos, float orbitAngle)
 {
 	if (orbitAngle < 0.01f && orbitAngle > -0.01f)
@@ -291,8 +295,6 @@ void COpticsElement::ApplyOcclusionPattern(SShaderParamsBase& shaderParams, CRen
 	if (GetRoot() == NULL)
 		return;
 
-	static STexState bilinearTS(FILTER_LINEAR, true);
-
 	CFlareSoftOcclusionQuery* pSoftOcclusionQuery = GetRoot()->GetOcclusionQuery();
 	if (pSoftOcclusionQuery && pSoftOcclusionQuery->GetGatherTexture())
 	{
@@ -305,13 +307,13 @@ void COpticsElement::ApplyOcclusionPattern(SShaderParamsBase& shaderParams, CRen
 
 		shaderParams.occPatternInfo = Vec4((x0 + x1) * 0.5f, (y0 + y1) * 0.5f, width, height);
 		primitive.SetTexture(5, pGatherTex);
-		primitive.SetSampler(5, m_samplerBilinearClamp);
+		primitive.SetSampler(5, EDefaultSamplerStates::LinearClamp);
 	}
 	else
 	{
 		shaderParams.occPatternInfo = Vec4(ZERO);
-		primitive.SetTexture(5, CTexture::s_ptexBlack);
-		primitive.SetSampler(5, m_samplerBilinearClamp);
+		primitive.SetTexture(5, CRendererResources::s_ptexBlack);
+		primitive.SetSampler(5, EDefaultSamplerStates::LinearClamp);
 	}
 }
 
@@ -335,9 +337,9 @@ void COpticsElement::ApplyGeneralFlags(uint64& rtFlags)
 		rtFlags |= g_HWSR_MaskBit[HWSR_SAMPLE5];
 }
 
-void COpticsElement::ApplyCommonParams(SShaderParamsBase& shaderParams, const SViewport& viewport, const Vec3& lightProjPos, const Vec2& size)
+void COpticsElement::ApplyCommonParams(SShaderParamsBase& shaderParams, const SRenderViewport& viewport, const Vec3& lightProjPos, const Vec2& size)
 {
-	shaderParams.outputDimAndSize = Vec4(float(viewport.nWidth), float(viewport.nHeight), size.x, size.y);
+	shaderParams.outputDimAndSize = Vec4(float(viewport.width), float(viewport.height), size.x, size.y);
 	shaderParams.xform = Matrix34(m_globalTransform.GetTransposed());
 
 	// dynamics

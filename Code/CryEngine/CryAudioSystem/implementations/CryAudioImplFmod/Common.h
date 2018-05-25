@@ -1,11 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <SharedAudioData.h>
 #include <fmod_common.h>
 
-#define FMOD_IMPL_DATA_ROOT               AUDIO_SYSTEM_DATA_ROOT CRY_NATIVE_PATH_SEPSTR "fmod"
 #define FMOD_IMPL_INFO_STRING             "Fmod Studio - "
 
 #define ASSERT_FMOD_OK                    CRY_ASSERT(fmodResult == FMOD_OK)
@@ -21,7 +20,7 @@ namespace Impl
 namespace Fmod
 {
 ///////////////////////////////////////////////////////////////////////////
-inline void FillFmodObjectPosition(SAudioObject3DAttributes const& inAttributes, FMOD_3D_ATTRIBUTES& outAttributes)
+inline void FillFmodObjectPosition(SObject3DAttributes const& inAttributes, FMOD_3D_ATTRIBUTES& outAttributes)
 {
 	outAttributes.forward.x = inAttributes.transformation.GetForward().x;
 	outAttributes.forward.z = inAttributes.transformation.GetForward().y;

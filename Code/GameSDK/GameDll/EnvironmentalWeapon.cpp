@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "EnvironmentalWeapon.h"
@@ -1171,7 +1171,12 @@ void CEnvironmentalWeapon::RenderDebugStats() const
 }
 #endif // #ifndef _RELEASE
 
-void CEnvironmentalWeapon::ProcessEvent(SEntityEvent& event)
+uint64 CEnvironmentalWeapon::GetEventMask() const
+{
+	return ENTITY_EVENT_BIT(ENTITY_EVENT_LEVEL_LOADED) | ENTITY_EVENT_BIT(ENTITY_EVENT_RESET) | ENTITY_EVENT_BIT(ENTITY_EVENT_LINK) | ENTITY_EVENT_BIT(ENTITY_EVENT_DELINK) | ENTITY_EVENT_BIT(ENTITY_EVENT_START_LEVEL) | ENTITY_EVENT_BIT(ENTITY_EVENT_XFORM);
+}
+
+void CEnvironmentalWeapon::ProcessEvent(const SEntityEvent& event)
 {
 	switch(event.event)
 	{
@@ -2869,10 +2874,11 @@ void CEnvironmentalWeapon::DelegateAuthorityOnOwnershipChanged(EntityId prevOwne
 			// If new owner is a remote player
 			IActor* pActor = g_pGame->GetIGameFramework()->GetIActorSystem()->GetActor(newOwnerId);
 			CRY_ASSERT_MESSAGE(pActor, "CEnvironmentalWeapon::DelegateAuthorityOnOwnershipChanged < Something has gone wrong here - perhaps trying to hand ownership to a player that has left the game?"); 
-			if(pActor) 
+			INetChannel *pNetChannel = gEnv->pGameFramework->GetNetChannel(pActor->GetChannelId());
+			if (pActor && pNetChannel)
 			{
 				// If somebody picked it up that wasn't the server.. hand over control. 
-				pNetContext->DelegateAuthority( GetEntityId(), pActor->GetGameObject()->GetNetChannel() );
+				pNetContext->DelegateAuthority(GetEntityId(), pNetChannel);
 			}
 		}
 	}	

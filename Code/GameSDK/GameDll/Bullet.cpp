@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -23,7 +23,8 @@ History:
 #include "WeaponSystem.h"
 #include <CryAnimation/ICryAnimation.h>
 #include <CryAISystem/IAIObject.h>
-#include "AI/GameAIEnv.h"
+
+#include <IPerceptionManager.h>
 
 struct SPhysicsRayWrapper
 {
@@ -288,7 +289,7 @@ void CBullet::ProcessHit(CGameRules& gameRules, const EventPhysCollision& collis
 //------------------------------------------------------------------------
 void CBullet::HandleEvent(const SGameObjectEvent &event)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	BaseClass::HandleEvent(event);
 
@@ -330,7 +331,8 @@ void CBullet::HandleEvent(const SGameObjectEvent &event)
 			//====================================~ Process Hit ======================================
 
 			//==================================== Notify AI    ======================================
-			if (gEnv->pAISystem)
+			IPerceptionManager* perceptionManager = IPerceptionManager::GetInstance();
+			if (perceptionManager)
 			{
 				if (gEnv->pEntitySystem->GetEntity(m_ownerId))
 				{
@@ -340,10 +342,10 @@ void CBullet::HandleEvent(const SGameObjectEvent &event)
 					const float soundRadius = pParams ? pParams->fImpactSoundRadius : 20.0f;
 
 					SAIStimulus stim(AISTIM_BULLET_HIT, 0, m_ownerId, pTarget ? pTarget->GetId() : 0, pCollision->pt, pCollision->vloc[0].GetNormalizedSafe(ZERO), radius);
-					gEnv->pAISystem->RegisterStimulus(stim);
+					perceptionManager->RegisterStimulus(stim);
 
 					SAIStimulus stimSound(AISTIM_SOUND, AISTIM_BULLET_HIT, m_ownerId, 0, pCollision->pt, ZERO, soundRadius);
-					gEnv->pAISystem->RegisterStimulus(stimSound);
+					perceptionManager->RegisterStimulus(stimSound);
 				}
 			}
 			//=========================================~ Notify AI ===============================
@@ -475,7 +477,7 @@ float CBullet::GetFinalDamage( const Vec3& hitPos ) const
 //////////////////////////////////////////////////////////////////////////
 void CBullet::HandlePierceableSurface( const EventPhysCollision* pCollision, IEntity* pHitTarget, const Vec3& hitDirection, bool bProcessedCollisionEvent )
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	const SPierceabilityParams& pierceabilityParams = m_pAmmoParams->pierceabilityParams;
 	
@@ -669,7 +671,7 @@ void CBullet::SetUpParticleParams(IEntity* pOwnerEntity, uint8 pierceabilityModi
 
 bool CBullet::RayTraceGeometry( const EventPhysCollision* pCollision, const Vec3& pos, const Vec3& hitDirection, SBackHitInfo* pBackHitInfo )
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	bool exitPointFound = false;
 

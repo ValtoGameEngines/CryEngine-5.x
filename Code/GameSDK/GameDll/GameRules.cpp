@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -145,6 +145,8 @@
 #include "ReplayActor.h"
 
 #include "UI/UIMultiPlayer.h"
+
+#include <IPerceptionManager.h>
 
 #if NUM_ASPECTS > 8
 	#define GAMERULES_LIMITS_ASPECT				eEA_GameServerC
@@ -370,7 +372,7 @@ CGameRules::CGameRules()
 	s_pSmartMineClass = gEnv->pEntitySystem->GetClassRegistry()->FindClass("SmartMine");
 	s_pTurretClass = gEnv->pEntitySystem->GetClassRegistry()->FindClass("Turret");
 		
-	gEnv->pSystem->GetISystemEventDispatcher()->RegisterListener( this );
+	gEnv->pSystem->GetISystemEventDispatcher()->RegisterListener( this, "CGameRules" );
 }
 
 //------------------------------------------------------------------------
@@ -1568,9 +1570,9 @@ void CGameRules::HandleEvent( const SGameObjectEvent& event)
 }
 
 //------------------------------------------------------------------------
-void CGameRules::ProcessEvent( SEntityEvent& event)
+void CGameRules::ProcessEvent( const SEntityEvent& event)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	static ICVar* pTOD = gEnv->pConsole->GetCVar("sv_timeofdayenable");
 
@@ -1671,10 +1673,6 @@ void CGameRules::ProcessEvent( SEntityEvent& event)
 
 		break;
 	}
-  case ENTITY_EVENT_POST_SERIALIZE:
-    {
-      break;
-    }
 	case ENTITY_EVENT_START_GAME:
 	{
 		m_timeOfDayInitialized = false;
@@ -1772,9 +1770,9 @@ void CGameRules::ProcessEvent( SEntityEvent& event)
 
 }
 
-//------------------------------------------------------------------------
-void CGameRules::SetAuthority( bool auth )
+uint64 CGameRules::GetEventMask() const
 {
+	return ENTITY_EVENT_BIT(ENTITY_EVENT_PRE_SERIALIZE) | ENTITY_EVENT_BIT(ENTITY_EVENT_RESET) | ENTITY_EVENT_BIT(ENTITY_EVENT_START_GAME) | ENTITY_EVENT_BIT(ENTITY_EVENT_ENTER_SCRIPT_STATE);
 }
 
 //------------------------------------------------------------------------
@@ -3572,7 +3570,7 @@ void CGameRules::RenamePlayer(IActor *pActor, const char *name)
 
 		GetGameObject()->InvokeRMIWithDependentObject(ClRenameEntity(), params, eRMI_ToAllClients, params.entityId);
 
-		if (INetChannel* pNetChannel = pActor->GetGameObject()->GetNetChannel())
+		if (INetChannel* pNetChannel = gEnv->pGameFramework->GetNetChannel(pActor->GetChannelId()))
 			pNetChannel->SetNickname(fixed.c_str());
 
 		m_pGameplayRecorder->Event(pActorEntity, GameplayEvent(eGE_Renamed, fixed));
@@ -5508,7 +5506,7 @@ float CGameRules::GetServerTime() const
 //------------------------------------------------------------------------
 bool CGameRules::OnCollision(const SGameCollision& event)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	CWeaponSystem* pWeaponSystem = g_pGame->GetWeaponSystem();
 	CProjectile* pProjectileSrc = pWeaponSystem && event.pSrcEntity ? pWeaponSystem->GetProjectile(event.pSrcEntity->GetId()) : 0;
@@ -5626,7 +5624,7 @@ bool CGameRules::OnCollision(const SGameCollision& event)
 		return true;
 
 	static IEntityClass* s_pBasicEntityClass = gEnv->pEntitySystem->GetClassRegistry()->FindClass("BasicEntity");
-	static IEntityClass* s_pDefaultClass = gEnv->pEntitySystem->GetClassRegistry()->FindClass("Default");
+	static IEntityClass* s_pDefaultClass = gEnv->pEntitySystem->GetClassRegistry()->GetDefaultClass();
 	bool srcClassFilter = false;
 	bool trgClassFilter = false;
 
@@ -5675,13 +5673,17 @@ bool CGameRules::OnCollision(const SGameCollision& event)
 
 void CGameRules::OnCollision_NotifyAI( const EventPhys * pEvent )
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 	// Skip the collision handling if there is no AI system or when in multi-player.
 	if (!gEnv->pAISystem || (gEnv->bMultiplayer && !gEnv->bServer)) // Márcio: Enabling AI in Multiplayer!
 		return;
 
 	IActorSystem* pActorSystem = g_pGame->GetIGameFramework()->GetIActorSystem();
 	IF_UNLIKELY (!pActorSystem)
+		return;
+
+	IPerceptionManager* pPerceptionManager = IPerceptionManager::GetInstance();
+	if (!pPerceptionManager)
 		return;
 
 	const EventPhysCollision* pCEvent = (const EventPhysCollision *) pEvent;
@@ -5778,11 +5780,11 @@ void CGameRules::OnCollision_NotifyAI( const EventPhys * pEvent )
 					assert(colliderId != 0);
 					
 					SAIStimulus stim(AISTIM_COLLISION, type, colliderId, targetId, pCEvent->pt, ZERO, reactionRadius);
-					gEnv->pAISystem->RegisterStimulus(stim);
+					pPerceptionManager->RegisterStimulus(stim);
 
 					SAIStimulus stimSound(AISTIM_SOUND, type == AICOL_SMALL ? AISOUND_COLLISION : AISOUND_COLLISION_LOUD, colliderId, 0,
 						pCEvent->pt, ZERO, soundRadius, AISTIMPROC_FILTER_LINK_WITH_PREVIOUS);
-					gEnv->pAISystem->RegisterStimulus(stimSound);
+					pPerceptionManager->RegisterStimulus(stimSound);
 				}
 			}
 		}
@@ -6300,7 +6302,8 @@ void CGameRules::Restart()
 	CGameMechanismManager::GetInstance()->Inform(kGMEvent_GameRulesRestart);
 
 #if defined(USE_PERFHUD)
-	CDebugAllowFileAccess afa;
+	SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
+
 	ICryPerfHUD* pPerfHud = gEnv->pSystem->GetPerfHUD();
 	if (pPerfHud)
 	{
@@ -8244,7 +8247,7 @@ void CGameRules::OnComplete(SHostMigrationInfo& hostMigrationInfo)
 }
 
 //------------------------------------------------------------------------
-void CGameRules::OnEntityEvent( IEntity *pEntity, SEntityEvent &event )
+void CGameRules::OnEntityEvent( IEntity *pEntity, const SEntityEvent &event )
 {
 	if (event.event == ENTITY_EVENT_DONE)
 	{
@@ -8567,7 +8570,7 @@ void CGameRules::SPlayerEndGameStatsParams::SerializeWith( TSerialize ser )
 		if (pPlayerStatsModule)
 		{
 			int numPlayerStats = pPlayerStatsModule->GetNumPlayerStats();
-			numPlayerStats = MIN(numPlayerStats, k_maxPlayerStats);
+			numPlayerStats = std::min<int>(numPlayerStats, MAX_PLAYER_LIMIT);
 
 			m_numPlayerStats = numPlayerStats;
 			ser.Value("numStats", m_numPlayerStats, 'ui5');
@@ -8969,7 +8972,8 @@ void CGameRules::OnSystemEvent( ESystemEvent event,UINT_PTR wparam,UINT_PTR lpar
 	switch(event)
 	{
 		case	ESYSTEM_EVENT_LEVEL_LOAD_END:
-			{ 				
+			{
+				LOADING_TIME_PROFILE_SECTION_NAMED("CGameRules::OnSystemEvent() ESYSTEM_EVENT_LEVEL_LOAD_END");
 				if(IGameRulesSpectatorModule * pSpectatorModule = GetSpectatorModule())
 				{
 					EntityId spectatorPositionId = pSpectatorModule->GetSpectatorLocation(0);
@@ -8993,19 +8997,6 @@ void CGameRules::OnSystemEvent( ESystemEvent event,UINT_PTR wparam,UINT_PTR lpar
 				if(CEquipmentLoadout* pEquipmentLoadout = g_pGame->GetEquipmentLoadout())
 				{
 					pEquipmentLoadout->ReleaseStreamedFPGeometry( CEquipmentLoadout::ePGE_All );
-				}
-			}
-			break;
-		case ESYSTEM_EVENT_SW_SHIFT_WORLD:
-			{
-				if(!gEnv->bMultiplayer && gEnv->bServer)
-					break;
-
-				IActorIteratorPtr actorIt = g_pGame->GetIGameFramework()->GetIActorSystem()->CreateActorIterator();
-				IActor *pActor;
-				while (pActor = actorIt->Next())
-				{
-					pActor->OnShiftWorld();
 				}
 			}
 			break;

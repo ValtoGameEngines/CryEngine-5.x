@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "DecalRenderNode.h"
@@ -12,6 +12,7 @@ int CDecalRenderNode::m_nFillBigDecalIndicesCounter = 0;
 CDecalRenderNode::CDecalRenderNode()
 	: m_pos(0, 0, 0)
 	, m_localBounds(Vec3(-1, -1, -1), Vec3(1, 1, 1))
+	, m_pOverrideMaterial(NULL)
 	, m_pMaterial(NULL)
 	, m_updateRequested(false)
 	, m_decalProperties()
@@ -82,16 +83,16 @@ void CDecalRenderNode::CreateDecalOnStaticObjects()
 	CVisAreaManager* pVisAreaManager(GetVisAreaManager());
 	PodArray<SRNInfo> decalReceivers;
 
-	if (pTerrain && m_pOcNode && !m_pOcNode->m_pVisArea)
+	if (pTerrain && m_pOcNode && !m_pOcNode->GetVisArea())
 		pTerrain->GetObjectsAround(m_decalProperties.m_pos, m_decalProperties.m_radius, &decalReceivers, true, false);
-	else if (pVisAreaManager && m_pOcNode && m_pOcNode->m_pVisArea)
+	else if (pVisAreaManager && m_pOcNode && m_pOcNode->GetVisArea())
 		pVisAreaManager->GetObjectsAround(m_decalProperties.m_pos, m_decalProperties.m_radius, &decalReceivers, true);
 
 	// delete vegetations
 	for (int nRecId(0); nRecId < decalReceivers.Count(); ++nRecId)
 	{
 		EERType eType = decalReceivers[nRecId].pNode->GetRenderNodeType();
-		if (eType != eERType_Brush && eType != eERType_RenderProxy)
+		if (eType != eERType_Brush && eType != eERType_MovableBrush)
 		{
 			decalReceivers.DeleteFastUnsorted(nRecId);
 			nRecId--;
@@ -176,7 +177,7 @@ void CDecalRenderNode::CreateDecalOnStaticObjects()
 
 void CDecalRenderNode::CreateDecalOnTerrain()
 {
-	float terrainHeight(GetTerrain()->GetZApr(m_decalProperties.m_pos.x, m_decalProperties.m_pos.y, m_nSID));
+	float terrainHeight(GetTerrain()->GetZApr(m_decalProperties.m_pos.x, m_decalProperties.m_pos.y));
 	float terrainDelta(m_decalProperties.m_pos.z - terrainHeight);
 	if (terrainDelta < m_decalProperties.m_radius && terrainDelta > -0.5f)
 	{
@@ -537,6 +538,7 @@ IRenderNode* CDecalRenderNode::Clone() const
 	pDestDecal->m_pos = m_pos;
 	pDestDecal->m_localBounds = m_localBounds;
 	pDestDecal->m_pMaterial = m_pMaterial;
+	pDestDecal->m_pOverrideMaterial = m_pOverrideMaterial;
 	pDestDecal->m_updateRequested = true;
 	pDestDecal->m_decalProperties = m_decalProperties;
 	pDestDecal->m_WSBBox = m_WSBBox;
@@ -552,7 +554,11 @@ IRenderNode* CDecalRenderNode::Clone() const
 
 void CDecalRenderNode::SetMatrix(const Matrix34& mat)
 {
-	m_pos = mat.GetTranslation();
+	Vec3 translation = mat.GetTranslation();
+	if (m_pos == translation)
+		return;
+
+	m_pos = translation;
 
 	if (m_decalProperties.m_projectionType == SDecalProperties::ePlanar)
 		m_WSBBox.SetTransformedAABB(m_Matrix, AABB(-Vec3(1, 1, 0.5f), Vec3(1, 1, 0.5f)));
@@ -564,6 +570,9 @@ void CDecalRenderNode::SetMatrix(const Matrix34& mat)
 
 void CDecalRenderNode::SetMatrixFull(const Matrix34& mat)
 {
+	if (m_Matrix == mat)
+		return;
+
 	m_Matrix = mat;
 	m_pos = mat.GetTranslation();
 
@@ -601,7 +610,7 @@ void CDecalRenderNode::Render(const SRendParams& rParam, const SRenderingPassInf
 
 		SDeferredDecal newItem;
 		newItem.fAlpha = fDistFading;
-		newItem.pMaterial = m_pMaterial;
+		newItem.pMaterial = m_pOverrideMaterial ? m_pOverrideMaterial : m_pMaterial;
 		newItem.projMatrix = m_Matrix;
 		newItem.nSortOrder = m_decalProperties.m_sortPrio;
 		newItem.nFlags = DECAL_STATIC;
@@ -649,14 +658,14 @@ void CDecalRenderNode::SetPhysics(IPhysicalEntity*)
 
 void CDecalRenderNode::SetMaterial(IMaterial* pMat)
 {
+	m_pOverrideMaterial = pMat;
+
 	for (size_t i(0); i < m_decals.size(); ++i)
 	{
 		CDecal* pDecal(m_decals[i]);
 		if (pDecal)
-			pDecal->m_pMaterial = pMat;
+			pDecal->m_pMaterial = m_pOverrideMaterial ? m_pOverrideMaterial : m_pMaterial;
 	}
-
-	m_pMaterial = pMat;
 
 	//special check for def decals forcing
 	if (GetCVars()->e_DecalsForceDeferred)
@@ -691,7 +700,7 @@ void CDecalRenderNode::CleanUpOldDecals()
 
 void CDecalRenderNode::OffsetPosition(const Vec3& delta)
 {
-	if (m_pTempData) m_pTempData->OffsetPosition(delta);
+	if (const auto pTempData = m_pTempData.load()) pTempData->OffsetPosition(delta);
 	m_pos += delta;
 	m_WSBBox.Move(delta);
 	m_Matrix.SetTranslation(m_Matrix.GetTranslation() + delta);
@@ -724,5 +733,5 @@ Vec3 CDecalRenderNode::GetPos(bool bWorldOnly) const
 
 IMaterial* CDecalRenderNode::GetMaterial(Vec3* pHitPos) const
 {
-	return m_pMaterial;
+	return m_pOverrideMaterial ? m_pOverrideMaterial : m_pMaterial;
 }

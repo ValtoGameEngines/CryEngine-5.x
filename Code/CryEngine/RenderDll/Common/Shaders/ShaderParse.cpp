@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*=============================================================================
    ShaderParse.cpp : implementation of the Shaders parser part of shaders manager.
@@ -183,6 +183,8 @@ SShaderGenBit* CShaderMan::mfCompileShaderGenProperty(char* scr)
 					shgm->m_nDependencySet |= SHGD_HW_GL4;
 				else if (!stricmp(data, "$HW_GLES3"))
 					shgm->m_nDependencySet |= SHGD_HW_GLES3;
+				else if (!stricmp(data, "$HW_VULKAN"))
+					shgm->m_nDependencySet |= SHGD_HW_VULKAN;
 
 				// backwards compatible names
 				else if (!stricmp(data, "$TEX_Bump") || !stricmp(data, "TM_Bump"))
@@ -265,6 +267,8 @@ SShaderGenBit* CShaderMan::mfCompileShaderGenProperty(char* scr)
 					shgm->m_nDependencyReset |= SHGD_HW_DURANGO;
 				else if (!stricmp(data, "$HW_ORBIS"))
 					shgm->m_nDependencyReset |= SHGD_HW_ORBIS;
+				else if (!stricmp(data, "$HW_VULKAN"))
+					shgm->m_nDependencySet |= SHGD_HW_VULKAN;
 
 				// backwards compatible names
 				else if (!stricmp(data, "$TEX_Bump") || !stricmp(data, "TM_Bump"))
@@ -330,79 +334,6 @@ bool CShaderMan::mfCompileShaderGen(SShaderGen* shg, char* scr)
 	}
 
 	return shg->m_BitMask.Num() != 0;
-}
-
-void CShaderMan::mfCompileLevelsList(std::vector<string>& List, char* scr)
-{
-	char* name;
-	long cmd;
-	char* params;
-	char* data;
-
-	enum {eName = 1, eVersion};
-	static STokenDesc commands[] =
-	{
-		{ eName, "Name" },
-		{ 0,     0      }
-	};
-
-	while ((cmd = shGetObject(&scr, commands, &name, &params)) > 0)
-	{
-		data = NULL;
-		if (name)
-			data = name;
-		else if (params)
-			data = params;
-
-		switch (cmd)
-		{
-		case eName:
-			if (data && data[0])
-				List.push_back(string("Levels/") + string(data) + string("/"));
-			break;
-		}
-	}
-}
-
-bool CShaderMan::mfCompileShaderLevelPolicies(SShaderLevelPolicies* pPL, char* scr)
-{
-	char* name;
-	long cmd;
-	char* params;
-	char* data;
-
-	enum {eGlobalList = 1, ePerLevelList, eVersion};
-	static STokenDesc commands[] =
-	{
-		{ eGlobalList,   "GlobalList"   },
-		{ ePerLevelList, "PerLevelList" },
-		{ eVersion,      "Version"      },
-		{ 0,             0              }
-	};
-
-	while ((cmd = shGetObject(&scr, commands, &name, &params)) > 0)
-	{
-		data = NULL;
-		if (name)
-			data = name;
-		else if (params)
-			data = params;
-
-		switch (cmd)
-		{
-		case eGlobalList:
-			mfCompileLevelsList(pPL->m_WhiteGlobalList, params);
-			break;
-		case ePerLevelList:
-			mfCompileLevelsList(pPL->m_WhitePerLevelList, params);
-			break;
-
-		case eVersion:
-			break;
-		}
-	}
-
-	return pPL->m_WhiteGlobalList.size() != 0;
 }
 
 string CShaderMan::mfGetShaderBitNamesFromMaskGen(const char* szFileName, uint64 nMaskGen)

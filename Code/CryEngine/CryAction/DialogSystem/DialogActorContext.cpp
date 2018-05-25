@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "DialogActorContext.h"
@@ -83,7 +83,7 @@ CDialogActorContext::CDialogActorContext(CDialogSession* pSession, CDialogScript
 	const char* debugName = pEntity ? pEntity->GetName() : "<no entity>";
 	m_pIActor = CCryAction::GetCryAction()->GetIActorSystem()->GetActor(m_entityID);
 	m_bIsLocalPlayer = m_pIActor != 0 && CCryAction::GetCryAction()->GetClientActor() == m_pIActor;
-	m_SpeechAuxProxy = INVALID_AUDIO_PROXY_ID;
+	m_SpeechAuxObject = CryAudio::InvalidAuxObjectId;
 
 	ResetState();
 	DiaLOG::Log(DiaLOG::eAlways, "[DIALOG] CDialogActorContext::ctor: %s 0x%p actorID=%d entity=%s entityId=%u",
@@ -93,7 +93,7 @@ CDialogActorContext::CDialogActorContext(CDialogSession* pSession, CDialogScript
 ////////////////////////////////////////////////////////////////////////////
 CDialogActorContext::~CDialogActorContext()
 {
-	if (m_SpeechAuxProxy != INVALID_AUDIO_PROXY_ID)
+	if (m_SpeechAuxObject != CryAudio::InvalidAuxObjectId)
 	{
 		IEntity* pActorEntity = m_pSession->GetActorEntity(m_actorID);
 		if (pActorEntity)
@@ -101,8 +101,8 @@ CDialogActorContext::~CDialogActorContext()
 			IEntityAudioComponent* pActorAudioProxy = m_pSession->GetEntityAudioProxy(pActorEntity);
 			if (pActorAudioProxy)
 			{
-				pActorAudioProxy->RemoveAsListenerFromAuxAudioProxy(m_SpeechAuxProxy, &CDialogActorContext::OnAudioTriggerFinished);
-				pActorAudioProxy->RemoveAuxAudioProxy(m_SpeechAuxProxy);
+				pActorAudioProxy->RemoveAsListenerFromAudioAuxObject(m_SpeechAuxObject, &CDialogActorContext::OnAudioTriggerFinished);
+				pActorAudioProxy->RemoveAudioAuxObject(m_SpeechAuxObject);
 			}
 		}
 	}
@@ -157,7 +157,6 @@ void CDialogActorContext::BeginSession()
 	ResetState();
 
 	IEntitySystem* pES = gEnv->pEntitySystem;
-	pES->AddEntityEventListener(m_entityID, ENTITY_EVENT_AI_DONE, this);
 	pES->AddEntityEventListener(m_entityID, ENTITY_EVENT_DONE, this);
 	pES->AddEntityEventListener(m_entityID, ENTITY_EVENT_RESET, this);
 
@@ -415,7 +414,7 @@ bool CDialogActorContext::Update(float dt)
 		case eDAC_ScheduleSoundPlay:
 			{
 				bAdvance = true;
-				const bool bHasSound = m_pCurLine->m_audioID != INVALID_AUDIO_CONTROL_ID;
+				const bool bHasSound = m_pCurLine->m_audioID != CryAudio::InvalidControlId;
 				if (bHasSound)
 				{
 					if (m_bSoundScheduled == false)
@@ -429,15 +428,15 @@ bool CDialogActorContext::Update(float dt)
 						if (pActorAudioProxy == 0)
 							break;
 
-						if (m_SpeechAuxProxy == INVALID_AUDIO_PROXY_ID)
+						if (m_SpeechAuxObject == CryAudio::InvalidAuxObjectId)
 						{
-							m_SpeechAuxProxy = pActorAudioProxy->CreateAuxAudioProxy();
-							pActorAudioProxy->AddAsListenerToAuxAudioProxy(m_SpeechAuxProxy, &CDialogActorContext::OnAudioTriggerFinished, eAudioRequestType_AudioCallbackManagerRequest, eAudioCallbackManagerRequestType_ReportFinishedTriggerInstance);
+							m_SpeechAuxObject = pActorAudioProxy->CreateAudioAuxObject();
+							pActorAudioProxy->AddAsListenerToAudioAuxObject(m_SpeechAuxObject, &CDialogActorContext::OnAudioTriggerFinished, CryAudio::ESystemEvents::TriggerFinished);
 						}
 						UpdateAuxProxyPosition();
 
-						SAudioCallBackInfo const callbackInfo(nullptr, (void*)CDialogActorContext::GetClassIdentifier(), reinterpret_cast<void*>(static_cast<intptr_t>(m_ContextID)), eAudioRequestFlags_PriorityNormal | eAudioRequestFlags_SyncFinishedCallback);
-						if (!pActorAudioProxy->ExecuteTrigger(m_pCurLine->m_audioID, m_SpeechAuxProxy, callbackInfo))
+						CryAudio::SRequestUserData const userData(CryAudio::ERequestFlags::DoneCallbackOnExternalThread, nullptr, (void*)CDialogActorContext::GetClassIdentifier(), reinterpret_cast<void*>(static_cast<intptr_t>(m_ContextID)));
+						if (!pActorAudioProxy->ExecuteTrigger(m_pCurLine->m_audioID, m_SpeechAuxObject, userData))
 						{
 							m_bSoundStarted = false;
 							m_bHasScheduled = false;
@@ -474,7 +473,7 @@ bool CDialogActorContext::Update(float dt)
 		case eDAC_SoundFacial:
 			{
 				bAdvance = true;
-				const bool bHasSound = m_pCurLine->m_audioID != INVALID_AUDIO_CONTROL_ID;
+				const bool bHasSound = m_pCurLine->m_audioID != CryAudio::InvalidControlId;
 				const bool bHasFacial = !m_pCurLine->m_facial.empty() || m_pCurLine->m_flagResetFacial;
 				if (bHasFacial)
 				{
@@ -608,7 +607,7 @@ void CDialogActorContext::UpdateAuxProxyPosition()
 		tmHead = Matrix34(IDENTITY, Vec3(0.0f, 1.80f, 0.0f));
 	}
 
-	pActorAudioProxy->SetAuxAudioProxyOffset(tmHead, m_SpeechAuxProxy);
+	pActorAudioProxy->SetAudioAuxObjectOffset(tmHead, m_SpeechAuxObject);
 }
 
 ////////////////////////////////////////////////////////////////////////////
@@ -917,7 +916,6 @@ void CDialogActorContext::CancelCurrent(bool bResetStates)
 	}
 
 	IEntitySystem* pES = gEnv->pEntitySystem;
-	pES->RemoveEntityEventListener(m_entityID, ENTITY_EVENT_AI_DONE, this);
 	pES->RemoveEntityEventListener(m_entityID, ENTITY_EVENT_DONE, this);
 	pES->RemoveEntityEventListener(m_entityID, ENTITY_EVENT_RESET, this);
 
@@ -1097,7 +1095,7 @@ void CDialogActorContext::StopSound(bool bUnregisterOnly)
 		if (pActorAudioProxy == 0)
 			return;
 
-		pActorAudioProxy->StopTrigger(m_pCurLine->m_audioID, m_SpeechAuxProxy);
+		pActorAudioProxy->StopTrigger(m_pCurLine->m_audioID, m_SpeechAuxObject);
 	}
 }
 
@@ -1222,11 +1220,11 @@ bool CDialogActorContext::DoLocalPlayerChecks(const float dt)
 ////////////////////////////////////////////////////////////////////////////
 bool CDialogActorContext::IsStillPlaying() const
 {
-	return m_bSoundStarted && m_pCurLine && m_pCurLine->m_audioID != INVALID_AUDIO_CONTROL_ID; //m_soundID != INVALID_SOUNDID && m_bSoundStarted;
+	return m_bSoundStarted && m_pCurLine && m_pCurLine->m_audioID != CryAudio::InvalidControlId; //m_soundID != INVALID_SOUNDID && m_bSoundStarted;
 }
 
 // IEntityEventListener
-void CDialogActorContext::OnEntityEvent(IEntity* pEntity, SEntityEvent& event)
+void CDialogActorContext::OnEntityEvent(IEntity* pEntity, const SEntityEvent& event)
 {
 	switch (event.event)
 	{
@@ -1305,7 +1303,7 @@ void CDialogActorContext::GetMemoryUsage(ICrySizer* pSizer) const
 }
 
 ////////////////////////////////////////////////////////////////////////////
-void CDialogActorContext::OnAudioTriggerFinished(SAudioRequestInfo const* const pAudioRequestInfo)
+void CDialogActorContext::OnAudioTriggerFinished(CryAudio::SRequestInfo const* const pAudioRequestInfo)
 {
 	CDialogActorContext* dialogContext = GetDialogActorContextByAudioCallbackData(pAudioRequestInfo);
 	if (dialogContext)
@@ -1318,7 +1316,7 @@ void CDialogActorContext::OnAudioTriggerFinished(SAudioRequestInfo const* const 
 }
 
 ////////////////////////////////////////////////////////////////////////////
-CDialogActorContext* CDialogActorContext::GetDialogActorContextByAudioCallbackData(SAudioRequestInfo const* const pAudioRequestInfo)
+CDialogActorContext* CDialogActorContext::GetDialogActorContextByAudioCallbackData(CryAudio::SRequestInfo const* const pAudioRequestInfo)
 {
 	if (pAudioRequestInfo->pUserDataOwner && pAudioRequestInfo->pUserData == CDialogActorContext::GetClassIdentifier())
 	{

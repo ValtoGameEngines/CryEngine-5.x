@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   LocalizedStringManager.h
@@ -215,7 +215,7 @@ CLocalizedStringsManager::CLocalizedStringsManager(ISystem* pSystem)
 	, m_availableLocalizations(0)
 {
 	m_pSystem = pSystem;
-	m_pSystem->GetISystemEventDispatcher()->RegisterListener(this);
+	m_pSystem->GetISystemEventDispatcher()->RegisterListener(this, "CLocalizedStringsManager");
 
 	m_languages.reserve(4);
 	m_pLanguage = 0;
@@ -1623,8 +1623,21 @@ bool CLocalizedStringsManager::LocalizeStringInternal(const char* pStr, size_t l
 		}
 
 		// find the end of the label
-		const char* pLabelEnd = strchr(pLabel, ' ');
-		if (!pLabelEnd) pLabelEnd = pEnd;
+		const char* pFirstAngleBracket = strchr(pLabel, '<');
+		const char* pFirstSpace = strchr(pLabel, ' ');
+		const char* pLabelEnd = pEnd;
+		if (pFirstAngleBracket && pFirstSpace)
+		{
+			pLabelEnd = min(pFirstSpace, pFirstAngleBracket);
+		}
+		else if (pFirstAngleBracket)
+		{
+			pLabelEnd = pFirstAngleBracket;
+		}
+		else if (pFirstSpace)
+		{
+			pLabelEnd = pFirstSpace;
+		}
 
 		// localize token
 		string token(pLabel, pLabelEnd);
@@ -1686,7 +1699,7 @@ static void LogDecompTimer(__int64 nTotalTicks, __int64 nDecompTicks, __int64 nA
 
 string CLocalizedStringsManager::SLocalizedStringEntry::GetTranslatedText(const SLanguage* pLanguage) const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_SYSTEM);
+	CRY_PROFILE_FUNCTION(PROFILE_SYSTEM);
 	if ((flags & IS_COMPRESSED) != 0)
 	{
 #if defined(LOG_DECOMP_TIMES)

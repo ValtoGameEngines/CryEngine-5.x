@@ -1,3 +1,5 @@
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
 #ifndef _MULTIRESRENDERING_H_
 #define _MULTIRESRENDERING_H_
 
@@ -30,7 +32,7 @@ public:
 
 	bool IsMultiResEnabled() const;
 	bool IsProjectionConfigured() const;
-	void Configure(const D3D11_VIEWPORT& originalViewport, bool bMirrored);
+	void Configure(const SRenderViewport& originalViewport, bool bMirrored);
 	
 	// creates a cached configuration and prepares the constant buffer for use
 	void PrepareProjectionParameters(CDeviceCommandListRef RESTRICT_REFERENCE commandList, const D3D11_VIEWPORT& viewport);
@@ -49,7 +51,7 @@ public:
 	CConstantBufferPtr GetProjectionConstantBuffer(int flattenedWidth, int flattenedHeight);
 
 	void ExecuteFlattenDepth(CTexture* pSrcRT, CTexture* pDestRT);
-	void ExecuteLensMatchedOctagon(SDepthTexture* pDestRT);
+	void ExecuteLensMatchedOctagon(CTexture* pDestRT);
 
 private:
 	CVrProjectionManager(CD3D9Renderer* const pRenderer);

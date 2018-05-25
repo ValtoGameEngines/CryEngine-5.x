@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -10,12 +10,11 @@
 #include <CryString/CryName.h>
 #include <CryCore/functor.h>
 
-#define IFlashUIExtensionName "FlashUI"
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////// UI variant data /////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+//! \cond INTERNAL
 typedef CryVariant<
 	int,
 	float,
@@ -36,7 +35,7 @@ struct SUIConversion
 		return true;
 	}
 };
-namespace detail
+namespace cry_variant
 {
 	template<class To, size_t I = 0>
 	ILINE bool ConvertVariant(const TUIDataVariant& from, To& to)
@@ -96,7 +95,7 @@ struct SUIConversion<TUIDataVariant, To>
 {
 	static ILINE bool ConvertValue(const TUIDataVariant& from, To& to)
 	{
-		return detail::ConvertVariant(from, to);
+		return cry_variant::ConvertVariant(from, to);
 	}
 };
 template<>
@@ -104,7 +103,7 @@ struct SUIConversion<TUIDataVariant, bool>
 {
 	static ILINE bool ConvertValue(const TUIDataVariant& from, bool& to)
 	{
-		return detail::ConvertVariant(from, to);
+		return cry_variant::ConvertVariant(from, to);
 	}
 };
 template<>
@@ -112,7 +111,7 @@ struct SUIConversion<TUIDataVariant, Vec3>
 {
 	static ILINE bool ConvertValue(const TUIDataVariant& from, Vec3& to)
 	{
-		return detail::ConvertVariant(from, to);
+		return cry_variant::ConvertVariant(from, to);
 	}
 };
 
@@ -365,13 +364,13 @@ struct SUIConversion<wstring, string>
 enum EUIDataTypes
 {
 	eUIDT_Any      = -1,
-	eUIDT_Bool     = detail::get_index<bool, TUIDataVariant>::value,
-	eUIDT_Int      = detail::get_index<int, TUIDataVariant>::value,
-	eUIDT_Float    = detail::get_index<float, TUIDataVariant>::value,
-	eUIDT_EntityId = detail::get_index<EntityId, TUIDataVariant>::value,
-	eUIDT_Vec3     = detail::get_index<Vec3, TUIDataVariant>::value,
-	eUIDT_String   = detail::get_index<string, TUIDataVariant>::value,
-	eUIDT_WString  = detail::get_index<wstring, TUIDataVariant>::value,
+	eUIDT_Bool     = cry_variant::get_index<bool, TUIDataVariant>::value,
+	eUIDT_Int      = cry_variant::get_index<int, TUIDataVariant>::value,
+	eUIDT_Float    = cry_variant::get_index<float, TUIDataVariant>::value,
+	eUIDT_EntityId = cry_variant::get_index<EntityId, TUIDataVariant>::value,
+	eUIDT_Vec3     = cry_variant::get_index<Vec3, TUIDataVariant>::value,
+	eUIDT_String   = cry_variant::get_index<string, TUIDataVariant>::value,
+	eUIDT_WString  = cry_variant::get_index<wstring, TUIDataVariant>::value,
 };
 
 class TUIData
@@ -511,6 +510,7 @@ template<> struct SUIParamTypeHelper<TUIData>
 		return (EUIDataTypes) d.GetType();
 	}
 };
+//! \endcond
 
 struct SUIArguments
 {
@@ -888,6 +888,7 @@ typedef SUIArguments SUIArgumentsRet;
 
 /////////////////////////////////////////// Lookup Table ///////////////////////////////////////////
 
+//! \cond INTERNAL
 //! This type is not implemented!
 template<class T> struct SUIItemLookupIDD
 {
@@ -994,7 +995,7 @@ struct SUIParameterDesc;
 struct SUIMovieClipDesc;
 struct SUIEventDesc;
 
-#if defined(_LIB) && !defined(IS_EAAS)
+#if defined(_LIB)
 template<class Base> struct SUIItemLookupSet : public SUIItemLookupSet_Impl<Base> {};
 #else
 struct SUIItemLookupSetFactory
@@ -1052,6 +1053,9 @@ typedef SUIItemLookupSet<SUIEventDesc>     TUIEventsLookup;
 //! Since those are not shared between DLL boundaries we can use the impl directly.
 typedef SUIItemLookupSet_Impl<IUIElement> TUIElementsLookup;
 typedef SUIItemLookupSet_Impl<IUIAction>  TUIActionsLookup;
+
+//! \endcond
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////// UI Descriptions /////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1698,7 +1702,7 @@ struct IUIModule
 
 struct IFlashUI : public ICryUnknown
 {
-	CRYINTERFACE_DECLARE(IFlashUI, 0xE1161004DA5B4F04, 0x9DFF8FC0EACE3BD4);
+	CRYINTERFACE_DECLARE_GUID(IFlashUI, "e1161004-da5b-4f04-9dff-8fc0eace3bd4"_cry_guid);
 
 public:
 	//! Init the Flash UI system.
@@ -1725,7 +1729,9 @@ public:
 	virtual IUIElement* GetUIElement(int index) const = 0;
 	virtual int         GetUIElementCount() const = 0;
 
-	virtual IUIElement* GetUIElementByInstanceStr(const char* UIInstanceStr) const = 0;
+	virtual                        IUIElement*  GetUIElementByInstanceStr(const char* UIInstanceStr) const = 0;
+	virtual std::pair<IUIElement*, IUIElement*> GetUIElementsByInstanceStr(const char* UIInstanceStr) const = 0;
+	virtual std::pair<string, int>              GetUIIdentifiersByInstanceStr(const char* sUIInstanceStr) const = 0;
 
 	//! Access for IUIActions.
 	virtual IUIAction*        GetUIAction(const char* name) const = 0;
@@ -1803,14 +1809,14 @@ public:
 	virtual void SetEditorUILogEventCallback(TEditorUILogEventCallback& cb) = 0;
 	virtual void RemoveEditorUILogEventCallback() = 0;
 
-#if !defined(_LIB) || defined(IS_EAAS)
+#if !defined(_LIB)
 	virtual SUIItemLookupSet_Impl<SUIParameterDesc>* CreateLookupParameter() = 0;
 	virtual SUIItemLookupSet_Impl<SUIMovieClipDesc>* CreateLookupMovieClip() = 0;
 	virtual SUIItemLookupSet_Impl<SUIEventDesc>*     CreateLookupEvent() = 0;
 #endif
 };
 
-#if !defined(_LIB) || defined(IS_EAAS)
+#if !defined(_LIB)
 inline SUIItemLookupSet_Impl<SUIParameterDesc>* SUIItemLookupSetFactory::CreateLookupParameter() { assert(gEnv->pFlashUI); return gEnv->pFlashUI->CreateLookupParameter(); }
 inline SUIItemLookupSet_Impl<SUIMovieClipDesc>* SUIItemLookupSetFactory::CreateLookupMovieClip() { assert(gEnv->pFlashUI); return gEnv->pFlashUI->CreateLookupMovieClip(); }
 inline SUIItemLookupSet_Impl<SUIEventDesc>*     SUIItemLookupSetFactory::CreateLookupEvent()     { assert(gEnv->pFlashUI); return gEnv->pFlashUI->CreateLookupEvent(); }
@@ -1822,7 +1828,7 @@ static IFlashUIPtr GetIFlashUIPtr()
 {
 	IFlashUIPtr pFlashUI;
 	if (gEnv && gEnv->pSystem)
-		CryCreateClassInstance(IFlashUIExtensionName, pFlashUI);
+		CryCreateClassInstanceForInterface<IFlashUI>(cryiidof<IFlashUI>(), pFlashUI);
 	return pFlashUI;
 }
 
@@ -1838,6 +1844,7 @@ enum EUIObjectType
 	eUOT_Events,
 };
 
+//! \cond INTERNAL
 template<EUIObjectType type> struct SUIDescTypeOf
 {
 	typedef int TType;
@@ -2019,6 +2026,7 @@ template<> struct SUIGetTypeStr<eUOT_Events>
 		return "event";
 	}
 };
+//! \endcond
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////// UIEvent Dispatch helper //////////////////////////////////////
@@ -2065,6 +2073,7 @@ template<> struct SUIGetTypeStr<eUOT_Events>
 #define UIEVENT_ASSERT_ARG(index) \
   CRY_ASSERT_MESSAGE(SUIEventArgumentCheck<T ## index>::Check(event.InputParams.Params[index].eType), "Template argument not compatible! Index: " # index);
 
+//! \cond INTERNAL
 //! Deref for T&, const T& and special case for const char* and const wchar_t*.
 template<class T> struct deref_t
 {
@@ -2102,6 +2111,7 @@ template<class T> struct deref_t<const T*>
 		return v.c_str();
 	}
 };
+//! \endcond
 
 // Argument check
 template<class T> struct SUIEventArgumentCheck
@@ -2137,6 +2147,7 @@ template<> inline bool SUIEventArgumentCheck<string        >::Check(SUIParameter
 template<> inline bool SUIEventArgumentCheck<wstring       >::Check(SUIParameterDesc::EUIParameterType type) { return type == SUIParameterDesc::eUIPT_WString; }
 template<> inline bool SUIEventArgumentCheck<TUIData       >::Check(SUIParameterDesc::EUIParameterType type) { return true; }
 
+//! \cond INTERNAL
 //! Dispatcher function interface.
 struct IUIEventDispatchFct
 {
@@ -2887,3 +2898,4 @@ struct SPerInstanceCall4
 private:
 	void _cb(IUIElement* pInstance, const SCallData& data) { data.cb(pInstance, data.arg1, data.arg2, data.arg3, data.arg4); }
 };
+//! \endcond

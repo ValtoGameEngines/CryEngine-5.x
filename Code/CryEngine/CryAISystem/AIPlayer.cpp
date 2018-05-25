@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    -------------------------------------------------------------------------
@@ -18,6 +18,7 @@
 #include "DebugDrawContext.h"
 #include "MissLocationSensor.h"
 #include "Puppet.h"
+#include "Formation/FormationManager.h"
 
 #include <CryAISystem/VisionMapTypes.h>
 
@@ -43,10 +44,12 @@ CAIPlayer::CAIPlayer()
 	, m_mercyTimer(-1.0f)
 	, m_coverExposedTime(-1.0f)
 	, m_coolMissCooldown(0.0f)
-#pragma warning(disable: 4355)
+#pragma warning(push)
+#pragma warning(disable: 4355) // 'this': used in base member initializer list
 #if ENABLE_MISSLOCATION_SENSOR
 	, m_pMissLocationSensor(new CMissLocationSensor(this))
 #endif
+#pragma warning(pop)
 {
 	_fastcast_CAIPlayer = true;
 }
@@ -108,7 +111,7 @@ void CAIPlayer::ReleaseExposedCoverObjects()
 //---------------------------------------------------------------------------------
 void CAIPlayer::AddExposedCoverObject(IPhysicalEntity* pPhysEnt)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	unsigned oldest = 0;
 	float oldestTime = FLT_MAX; // Count down timers, find smallest value.
@@ -149,7 +152,7 @@ void CAIPlayer::AddExposedCoverObject(IPhysicalEntity* pPhysEnt)
 //---------------------------------------------------------------------------------
 void CAIPlayer::CollectExposedCover()
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (m_coverExposedTime > 0.0f)
 	{
@@ -217,8 +220,6 @@ void CAIPlayer::GetPhysicalSkipEntities(PhysSkipList& skipList) const
 	{
 		stl::push_back_unique(skipList, m_exposedCoverObjects[i].pPhysEnt);
 	}
-
-	CRY_ASSERT_MESSAGE(skipList.size() <= 5, "Too many physical skipped entities determined. See SRwiRequest definition.");
 }
 
 //
@@ -345,7 +346,7 @@ bool CAIPlayer::IsAffectedByLight() const
 
 //
 //---------------------------------------------------------------------------------
-void CAIPlayer::Update(EObjectUpdate type)
+void CAIPlayer::Update(EUpdateType type)
 {
 	if (m_refAttentionTarget.IsValid())
 	{
@@ -394,7 +395,7 @@ void CAIPlayer::Update(EObjectUpdate type)
 	const float zMinDifferenceBetweenStandAndCrouchToRecalculateWaterOcclusion = 0.6f;
 	const bool playerFullyChangedStance = (m_lastFullUpdateStance != bodyInfo.stance)
 	                                      && abs(m_vLastFullUpdatePos.z - bodyInfo.vEyePos.z) > zMinDifferenceBetweenStandAndCrouchToRecalculateWaterOcclusion;
-	if (type == AIUPDATE_FULL && (!IsEquivalent(m_vLastFullUpdatePos, bodyInfo.vEyePos, 1.0f) || playerFullyChangedStance))
+	if (type == EUpdateType::Full && (!IsEquivalent(m_vLastFullUpdatePos, bodyInfo.vEyePos, 1.0f) || playerFullyChangedStance))
 	{
 		// Recalculate the water occlusion at the new point
 		m_cachedWaterOcclusionValue = GetAISystem()->GetWaterOcclusionValue(bodyInfo.vEyePos);
@@ -416,7 +417,7 @@ void CAIPlayer::Update(EObjectUpdate type)
 	if (pProxy)
 		pProxy->UpdateMind(m_State);
 
-	if (type == AIUPDATE_FULL)
+	if (type == EUpdateType::Full)
 	{
 		m_lightLevel = GetAISystem()->GetLightManager()->GetLightLevelAt(GetPos(), this, &m_usingCombatLight);
 
@@ -483,7 +484,7 @@ void CAIPlayer::Update(EObjectUpdate type)
 	}
 
 	// Collect new covers.
-	if (type == AIUPDATE_FULL)
+	if (type == EUpdateType::Full)
 		CollectExposedCover();
 
 #ifdef CRYAISYSTEM_DEBUG
@@ -910,7 +911,7 @@ void CAIPlayer::Event(unsigned short eType, SAIEVENT* pEvent)
 		m_bEnabled = false;
 		GetAISystem()->RemoveFromGroup(GetGroupId(), this);
 
-		GetAISystem()->ReleaseFormationPoint(this);
+		gAIEnv.pFormationManager->ReleaseFormationPoint(this);
 		ReleaseFormation();
 
 		m_State.ClearSignals();
@@ -929,17 +930,8 @@ void CAIPlayer::Event(unsigned short eType, SAIEVENT* pEvent)
 		m_playerStuntSprinting = -1.0f;
 		break;
 	case AIEVENT_PLAYER_STUNT_PUNCH:
-		if (pEvent)
-			AddThrownEntity(pEvent->targetId);
-		break;
 	case AIEVENT_PLAYER_STUNT_THROW:
-		if (pEvent)
-			AddThrownEntity(pEvent->targetId);
-		break;
 	case AIEVENT_PLAYER_STUNT_THROW_NPC:
-		if (pEvent)
-			AddThrownEntity(pEvent->targetId);
-		break;
 	case AIEVENT_PLAYER_THROW:
 		if (pEvent)
 			AddThrownEntity(pEvent->targetId);

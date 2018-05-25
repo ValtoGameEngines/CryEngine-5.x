@@ -1,11 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
-typedef unsigned int EntityId;          //!< Unique identifier for each entity instance. Don't change the type!
-#define INVALID_ENTITYID ((EntityId)(0))
-
+#include <CryEntitySystem/IEntityBasicTypes.h>
 #include <CryEntitySystem/IEntityComponent.h>
+#include <CrySchematyc/Utils/EnumFlags.h>
+
+#include <type_traits>
 
 // Forward declarations.
 struct IPhysicalEntity;
@@ -20,7 +21,6 @@ struct IEntitySerializationContext;
 struct IScriptTable;
 struct AABB;
 class XmlNodeRef;
-class CDLight;
 struct AIObjectParams;
 struct IParticleEffect;
 struct SpawnParams;
@@ -28,6 +28,10 @@ struct IGeomCacheRenderNode;
 struct ICharacterInstance;
 struct IParticleEmitter;
 struct IStatObj;
+struct INetEntity;
+struct SGeometryDebugDrawInfo;
+struct SFogVolumeProperties;
+struct SRenderLight;
 
 //////////////////////////////////////////////////////////////////////////
 struct IGameObject;
@@ -35,516 +39,19 @@ struct IAIObject;
 struct IMaterial;
 //////////////////////////////////////////////////////////////////////////
 
-#define FORWARD_DIRECTION Vec3(0, 1, 0)
-
-//! Unique Entity identifier, only used for saved entities.
-typedef uint64 EntityGUID;
-
-#if !defined(SWIG)
-enum EPartIds
+namespace Schematyc
 {
-	PARTID_MAX_SLOTS_log2  = 9,
-	PARTID_MAX_SLOTS       = 1 << PARTID_MAX_SLOTS_log2, //!< The maximum amount of slots in entity/skeleton/compound statobj.
-	PARTID_MAX_ATTACHMENTS = 32,                         //!< The maximum amount of physicalized entity attachments(must be a power of 2 and <32).
-	PARTID_LINKED          = 1 << 30,                    //!< Marks partids that belong to linked entities.
-};
-#endif
-
-//! Phys part id format:.
-//! Bit 31 = 0 (since partids can't be negative).
-//! Bit 30 - 1 if part belongs to an attached entity.
-//! Bits 29,28 - count of nested levels (numLevels) - 1, i.e. compound statobj within a cga within an entity.
-//! Lowest PARTID_MAX_SLOTS_log2*numLevels bits - indices of slots at the corresponding level.
-//! Bits directly above those - attachment id if bit 30 is set.
-inline int ParsePartId(int partId, int& nLevels, int& nSlotBits)
-{
-	nSlotBits = (nLevels = (partId >> 28 & 3) + 1) * PARTID_MAX_SLOTS_log2;
-	return partId >> 30 & 1;
+// Forward declarations.
+struct IObject;
+struct IEnvRegistrar;
 }
-
-//! Allocate next level of slots.
-inline int AllocPartIdRange(int partId, int nSlots)
-{
-	int nLevels, nBits;
-	ParsePartId(partId, nLevels, nBits);
-	return partId & 1 << 30 | nLevels << 28 | (partId & (1 << 28) - 1) << PARTID_MAX_SLOTS_log2;
-}
-
-//! Extract slot index from partid; 0 = top level.
-inline int GetSlotIdx(int partId, int level = 0)
-{
-	int nLevels, nBits;
-	ParsePartId(partId, nLevels, nBits);
-	return partId >> (nLevels - 1 - level) * PARTID_MAX_SLOTS_log2 & PARTID_MAX_SLOTS - 1;
-}
-
-// (MATT) This should really live in a minimal AI include, which right now we don't have  {2009/04/08}
-#ifndef INVALID_AIOBJECTID
-typedef uint32 tAIObjectID;
-	#define INVALID_AIOBJECTID ((tAIObjectID)(0))
-#endif
 
 //////////////////////////////////////////////////////////////////////////
 
 #include <CryNetwork/SerializeFwd.h>
 //////////////////////////////////////////////////////////////////////////
 
-struct SEntitySpawnParams
-{
-	//! The Entity unique identifier (EntityId).
-	//! If 0 then an ID will be generated automatically (based on the bStaticEntityId parameter).
-	EntityId   id;
-	EntityId   prevId;          //!< Previously used entityId, in the case of reloading.
-
-	EntityGUID guid;            //!< Optional entity guid.
-	EntityGUID prevGuid;        //!< Previously used entityGuid, in the case of reloading.
-
-	//! Class of entity.
-	IEntityClass* pClass;
-
-	//! Entity archetype.
-	IEntityArchetype* pArchetype;
-
-	//! The name of the layer the entity resides in, when in the Editor.
-	const char* sLayerName;
-
-	//! Reference to entity's xml node in level data.
-	XmlNodeRef entityNode;
-
-	//////////////////////////////////////////////////////////////////////////
-	// Initial Entity parameters.
-	const char* sName;          //!< \note The name of the entity does not need to be unique.
-	uint32      nFlags;         //!< Entity flags, e.g. ENTITY_FLAG_CASTSHADOW.
-	uint32      nFlagsExtended; //!< EEntityFlagsExtended flags.
-	bool        bIgnoreLock;    //!< Spawn lock.
-
-	//! To support save games compatible with patched levels (patched levels might use.
-	//! More EntityIDs and save game might conflict with dynamic ones).
-	bool  bStaticEntityId;
-
-	Vec3  vPosition;                  //!< Initial entity position (Local space).
-	Quat  qRotation;                  //!< Initial entity rotation (Local space).
-	Vec3  vScale;                     //!< Initial entity scale (Local space).
-	void* pUserData;                  //!< Any user defined data. It will be available for container when it will be created.
-	//////////////////////////////////////////////////////////////////////////
-
-	//////////////////////////////////////////////////////////////////////////
-	// Optional properties table.
-	IScriptTable* pPropertiesTable;
-	IScriptTable* pPropertiesInstanceTable;
-	//////////////////////////////////////////////////////////////////////////
-
-	SEntitySpawnParams()
-		: id(0)
-		, prevId(0)
-		, guid(0)
-		, prevGuid(0)
-		, nFlags(0)
-		, nFlagsExtended(0)
-		, bIgnoreLock(false)
-		, bStaticEntityId(false)
-		, pClass(NULL)
-		, sName("")
-		, sLayerName("")
-		, pArchetype(NULL)
-		, vPosition(ZERO)
-		, vScale(Vec3Constants<float>::fVec3_One)
-		, pUserData(0)
-		, pPropertiesTable(0)
-		, pPropertiesInstanceTable(0)
-	{
-		qRotation.SetIdentity();
-	}
-};
-
-//! Entity update context structure.
-struct SEntityUpdateContext
-{
-	int      nFrameID;            //!< Current rendering frame id.
-	CCamera* pCamera;             //!< Current camera.
-	float    fCurrTime;           //!< Current system time.
-	float    fFrameTime;          //!< Delta frame time (of last frame).
-	bool     bProfileToLog;       //!< Indicates if a profile entity must update the log.
-	int      numUpdatedEntities;  //!< Number of updated entities.
-	int      numVisibleEntities;  //!< Number of visible and updated entities.
-	float    fMaxViewDist;        //!< Maximal view distance.
-	float    fMaxViewDistSquared; //!< Maximal view distance squared.
-	Vec3     vCameraPos;          //!< Camera source position.
-
-	SEntityUpdateContext() : nFrameID(0), pCamera(0), fCurrTime(0),
-		bProfileToLog(false), numVisibleEntities(0), numUpdatedEntities(0), fMaxViewDist(1e+8), fFrameTime(0) {};
-};
-
-enum EEntityXFormFlags
-{
-	ENTITY_XFORM_POS                      = BIT(1),
-	ENTITY_XFORM_ROT                      = BIT(2),
-	ENTITY_XFORM_SCL                      = BIT(3),
-	ENTITY_XFORM_NO_PROPOGATE             = BIT(4),
-	ENTITY_XFORM_FROM_PARENT              = BIT(5),   //!< When parent changes his transformation.
-	ENTITY_XFORM_PHYSICS_STEP             = BIT(13),
-	ENTITY_XFORM_EDITOR                   = BIT(14),
-	ENTITY_XFORM_TRACKVIEW                = BIT(15),
-	ENTITY_XFORM_TIMEDEMO                 = BIT(16),
-	ENTITY_XFORM_NOT_REREGISTER           = BIT(17),  //!< Optimization flag, when set object will not be re-registered in 3D engine.
-	ENTITY_XFORM_NO_EVENT                 = BIT(18),  //!< Suppresses ENTITY_EVENT_XFORM event.
-	ENTITY_XFORM_NO_SEND_TO_ENTITY_SYSTEM = BIT(19),
-	ENTITY_XFORM_IGNORE_PHYSICS           = BIT(20),  //!< When set physics ignore xform event handling.
-	ENTITY_XFORM_USER                     = 0x1000000,
-};
-
-//! EEntityEvent defines all events that can be sent to an entity.
-enum EEntityEvent
-{
-	//! Sent when the entity local or world transformation matrix change (position/rotation/scale).
-	//! nParam[0] = combination of the EEntityXFormFlags.
-	ENTITY_EVENT_XFORM = 0,
-
-	//! Sent when the entity is updating every frame.
-	//! nParam[0] = pointer to SEntityUpdateContext structure.
-	ENTITY_EVENT_UPDATE,
-
-	//! Called when the entity is moved/scaled/rotated in the editor. Only send on mouseButtonUp (hence finished).
-	ENTITY_EVENT_XFORM_FINISHED_EDITOR,
-
-	//! Sent when the entity timer expire.
-	//! nParam[0] = TimerId, nParam[1] = milliseconds.
-	ENTITY_EVENT_TIMER,
-
-	//! Sent for unremovable entities when they are respawn.
-	ENTITY_EVENT_INIT,
-
-	//! Sent before entity is removed.
-	ENTITY_EVENT_DONE,
-
-	//! Sent when the entity becomes visible or invisible.
-	//! nParam[0] is 1 if the entity becomes visible or 0 if the entity becomes invisible.
-	ENTITY_EVENT_VISIBLITY,
-
-	//! Sent to reset the state of the entity (used from Editor).
-	//! nParam[0] is 1 if entering gamemode, 0 if exiting
-	ENTITY_EVENT_RESET,
-
-	//! Sent to parent entity after child entity have been attached.
-	//! nParam[0] contains ID of child entity.
-	ENTITY_EVENT_ATTACH,
-
-	//! Sent to child entity after it has been attached to the parent.
-	//! nParam[0] contains ID of parent entity.
-	ENTITY_EVENT_ATTACH_THIS,
-
-	//! Sent to parent entity after child entity have been detached.
-	//! nParam[0] contains ID of child entity.
-	ENTITY_EVENT_DETACH,
-
-	//! Sent to child entity after it has been detached from the parent.
-	//! nParam[0] contains ID of parent entity.
-	ENTITY_EVENT_DETACH_THIS,
-
-	//! Sent to parent entity after child entity have been linked.
-	//! nParam[0] contains IEntityLink ptr.
-	ENTITY_EVENT_LINK,
-
-	//! Sent to parent entity before child entity have been delinked.
-	//! nParam[0] contains IEntityLink ptr.
-	ENTITY_EVENT_DELINK,
-
-	//! Sent when the entity must be hidden.
-	ENTITY_EVENT_HIDE,
-
-	//! Sent when the entity must become not hidden.
-	ENTITY_EVENT_UNHIDE,
-
-	//! Sent when a physics processing for the entity must be enabled/disabled.
-	//! nParam[0] == 1 physics must be enabled if 0 physics must be disabled.
-	ENTITY_EVENT_ENABLE_PHYSICS,
-
-	//! Sent when a physics in an entity changes state.
-	//! nParam[0] == 1 physics entity awakes, 0 physics entity get to a sleep state.
-	ENTITY_EVENT_PHYSICS_CHANGE_STATE,
-
-	//! Sent when script is broadcasting its events.
-	//! nParam[0] = Pointer to the ASCIIZ string with the name of the script event.
-	//! nParam[1] = Type of the event value from IEntityClass::EventValueType.
-	//! nParam[2] = Pointer to the event value depending on the type.
-	ENTITY_EVENT_SCRIPT_EVENT,
-
-	//! Sent when triggering entity enters to the area proximity, this event sent to all target entities of the area.
-	//! nParam[0] = TriggerEntityId, nParam[1] = AreaId, nParam[2] = EntityId of Area
-	ENTITY_EVENT_ENTERAREA,
-
-	//! Sent when triggering entity leaves the area proximity, this event sent to all target entities of the area.
-	//! nParam[0] = TriggerEntityId, nParam[1] = AreaId, nParam[2] = EntityId of Area
-	ENTITY_EVENT_LEAVEAREA,
-
-	//! Sent when triggering entity is near to the area proximity, this event sent to all target entities of the area.
-	//! nParam[0] = TriggerEntityId, nParam[1] = AreaId, nParam[2] = EntityId of Area
-	//! fParam[0] = distance
-	ENTITY_EVENT_ENTERNEARAREA,
-
-	//! Sent when triggering entity leaves the near area within proximity region of the outside area border.
-	//! nParam[0] = TriggerEntityId, nParam[1] = AreaId, nParam[2] = EntityId of Area
-	ENTITY_EVENT_LEAVENEARAREA,
-
-	//! Sent when triggering entity moves inside the area within proximity region of the outside area border.
-	//! nParam[0] = TriggerEntityId, nParam[1] = AreaId, nParam[2] = EntityId of Area
-	ENTITY_EVENT_MOVEINSIDEAREA,
-
-	// Sent when triggering entity moves inside an area of higher priority then the area this entity is linked to.
-	// nParam[0] = TriggerEntityId, nParam[1] = AreaId, nParam[2] = EntityId of Area with low prio, nParam[3] = EntityId of Area with high prio
-	//ENTITY_EVENT_EXCLUSIVEMOVEINSIDEAREA,
-
-	//! Sent when triggering entity moves inside the area within the near region of the outside area border.
-	//! nParam[0] = TriggerEntityId, nParam[1] = AreaId, nParam[2] = EntityId of Area, fParam[0] = FadeRatio (0-1)
-	ENTITY_EVENT_MOVENEARAREA,
-
-	//! Sent when triggering entity enters or leaves an area so all active areas of same group get notified. This event is sent to all target entities of the area.
-	ENTITY_EVENT_CROSS_AREA,
-
-	//! Sent when an entity with pef_monitor_poststep receives a poststep notification (the hamdler should be thread safe!)
-	//! fParam[0] = time interval
-	ENTITY_EVENT_PHYS_POSTSTEP,
-
-	//! Sent when Breakable object is broken in physics.
-	ENTITY_EVENT_PHYS_BREAK,
-
-	//! Sent when AI object of the entity finished executing current order/action.
-	ENTITY_EVENT_AI_DONE,
-
-	//! Sent when a sound finished or was stopped playing.
-	ENTITY_EVENT_SOUND_DONE,
-
-	//! Physical collision.
-	ENTITY_EVENT_COLLISION,
-
-	//! Sent only if ENTITY_FLAG_SEND_RENDER_EVENT is set
-	//! Called when entity is first rendered (When any of the entity render nodes are considered by 3D engine for rendering this frame)
-  //! Or called when entity is not being rendered for at least several frames
-	//! nParam[0] == 0 if rendeing Stops.
-	//! nParam[0] == 1 if rendeing Starts.
-	ENTITY_EVENT_RENDER_VISIBILITY_CHANGE,
-
-	//! Called when the pre-physics update is done; fParam[0] is the frame time.
-	ENTITY_EVENT_PREPHYSICSUPDATE,
-
-	//! Called when the level loading is complete.
-	ENTITY_EVENT_LEVEL_LOADED,
-
-	//! Called when the level is started.
-	ENTITY_EVENT_START_LEVEL,
-
-	//! Called when the game is started (games may start multiple times).
-	ENTITY_EVENT_START_GAME,
-
-	//! Called when the entity enters a script state.
-	ENTITY_EVENT_ENTER_SCRIPT_STATE,
-
-	//! Called when the entity leaves a script state.
-	ENTITY_EVENT_LEAVE_SCRIPT_STATE,
-
-	//! Called before we serialized the game from file.
-	ENTITY_EVENT_PRE_SERIALIZE,
-
-	//! Called after we serialized the game from file.
-	ENTITY_EVENT_POST_SERIALIZE,
-
-	//! Called when the entity becomes invisible.
-	//! nParam[0] = if 1 physics will ignore this event
-	ENTITY_EVENT_INVISIBLE,
-
-	//! Called when the entity gets out of invisibility.
-	//! nParam[0] = if 1 physics will ignore this event
-	ENTITY_EVENT_VISIBLE,
-
-	//! Called when the entity material change.
-	//! nParam[0] = pointer to the new IMaterial.
-	ENTITY_EVENT_MATERIAL,
-
-	//! Called when the entitys material layer mask changes.
-	ENTITY_EVENT_MATERIAL_LAYER,
-
-	//! Called when the entity gets hits by a weapon.
-	ENTITY_EVENT_ONHIT,
-
-	//! Called when an animation event (placed on animations in editor) is encountered.
-	//! nParam[0] = AnimEventInstance* pEventParameters.
-	ENTITY_EVENT_ANIM_EVENT,
-
-	//! Called from ScriptBind_Entity when script requests to set collidermode.
-	//! nParam[0] = ColliderMode
-	ENTITY_EVENT_SCRIPT_REQUEST_COLLIDERMODE,
-
-	//! Called to activate some output in a flow node connected to the entity
-	//! nParam[0] = Output port index
-	//! nParam[1] = TFlowInputData* to send to output
-	ENTITY_EVENT_ACTIVATE_FLOW_NODE_OUTPUT,
-
-	//! Called in the editor when a Lua property of the selected entity changes. This is *not* sent when using IEntityPropertyGroup
-	ENTITY_EVENT_EDITOR_PROPERTY_CHANGED,
-
-	//! Called when a script reloading is requested and done in the editor.
-	ENTITY_EVENT_RELOAD_SCRIPT,
-
-	//! Called when the entity is added to the list of entities that are updated.
-	ENTITY_EVENT_ACTIVATED,
-
-	//! Called when the entity is removed from the list of entities that are updated.
-	ENTITY_EVENT_DEACTIVATED,
-
-	//! Called when the entity should be added to the radar.
-	ENTITY_EVENT_ADD_TO_RADAR,
-
-	//! Called when the entity should be removed from the radar.
-	ENTITY_EVENT_REMOVE_FROM_RADAR,
-
-	//! Last entity event in list.
-	ENTITY_EVENT_LAST,
-};
-
-#define ENTITY_PERFORMANCE_EXPENSIVE_EVENTS_MASK (BIT64(ENTITY_EVENT_RENDER_VISIBILITY_CHANGE)|BIT64(ENTITY_EVENT_PREPHYSICSUPDATE)|BIT64(ENTITY_EVENT_UPDATE))
-
-//! Variant of default BIT macro to safely handle 64-bit numbers.
-#define ENTITY_EVENT_BIT(x) BIT64((x))
-
-//! SEntityEvent structure describe event id and parameters that can be sent to an entity.
-struct SEntityEvent
-{
-	SEntityEvent(
-	  const int n0,
-	  const int n1,
-	  const int n2,
-	  const int n3,
-	  const float f0,
-	  const float f1,
-	  const float f2,
-	  Vec3 const& _vec)
-		: vec(_vec)
-	{
-		nParam[0] = n0;
-		nParam[1] = n1;
-		nParam[2] = n2;
-		nParam[3] = n3;
-		fParam[0] = f0;
-		fParam[1] = f1;
-		fParam[2] = f2;
-	}
-
-	SEntityEvent()
-		: event(ENTITY_EVENT_LAST)
-		, vec(ZERO)
-	{
-		nParam[0] = nParam[1] = nParam[2] = nParam[3] = 0;
-		fParam[0] = fParam[1] = fParam[2] = 0.0f;
-	}
-
-	explicit SEntityEvent(EEntityEvent const _event)
-		: event(_event)
-		, vec(ZERO)
-	{
-		nParam[0] = nParam[1] = nParam[2] = nParam[3] = 0;
-		fParam[0] = fParam[1] = fParam[2] = 0.0f;
-	}
-
-	EEntityEvent event;     //!< Any event from EEntityEvent enum.
-	INT_PTR      nParam[4]; //!< Event parameters.
-	float        fParam[3];
-	Vec3         vec;
-};
-
-//! Updates policy defines in which cases to call entity update function every frame.
-enum EEntityUpdatePolicy
-{
-	ENTITY_UPDATE_NEVER,           //!< Never update entity every frame.
-	ENTITY_UPDATE_IN_RANGE,        //!< Only update entity if it is in specified range from active camera.
-	ENTITY_UPDATE_POT_VISIBLE,     //!< Only update entity if it is potentially visible.
-	ENTITY_UPDATE_VISIBLE,         //!< Only update entity if it is visible.
-	ENTITY_UPDATE_PHYSICS,         //!< Only update entity if it is need to be updated due to physics.
-	ENTITY_UPDATE_PHYSICS_VISIBLE, //!< Only update entity if it is need to be updated due to physics or if it is visible.
-	ENTITY_UPDATE_ALWAYS,          //!< Always update entity every frame.
-};
-
-//! Flags can be set on entity with SetFlags/GetFlags method.
-enum EEntityFlags
-{
-	//////////////////////////////////////////////////////////////////////////
-	// Persistent flags (can be set from the editor).
-	ENTITY_FLAG_CASTSHADOW          = BIT(1),
-	ENTITY_FLAG_UNREMOVABLE         = BIT(2),        //!< This entity cannot be removed using IEntitySystem::RemoveEntity until this flag is cleared.
-	ENTITY_FLAG_GOOD_OCCLUDER       = BIT(3),
-	ENTITY_FLAG_NO_DECALNODE_DECALS = BIT(4),
-	//////////////////////////////////////////////////////////////////////////
-
-	ENTITY_FLAG_WRITE_ONLY              = BIT(5),
-	ENTITY_FLAG_NOT_REGISTER_IN_SECTORS = BIT(6),
-	ENTITY_FLAG_CALC_PHYSICS            = BIT(7),
-	ENTITY_FLAG_CLIENT_ONLY             = BIT(8),
-	ENTITY_FLAG_SERVER_ONLY             = BIT(9),
-	ENTITY_FLAG_CUSTOM_VIEWDIST_RATIO   = BIT(10),  //!< This entity have special custom view distance ratio (AI/Vehicles must have it).
-	ENTITY_FLAG_CALCBBOX_USEALL         = BIT(11),  //!< use character and objects in BBOx calculations.
-	ENTITY_FLAG_VOLUME_SOUND            = BIT(12),  //!< Entity is a volume sound (will get moved around by the sound proxy).
-	ENTITY_FLAG_HAS_AI                  = BIT(13),  //!< Entity has an AI object.
-	ENTITY_FLAG_TRIGGER_AREAS           = BIT(14),  //!< This entity will trigger areas when it enters them.
-	ENTITY_FLAG_NO_SAVE                 = BIT(15),  //!< This entity will not be saved.
-	ENTITY_FLAG_CAMERA_SOURCE           = BIT(16),  //!< This entity is a camera source.
-	ENTITY_FLAG_CLIENTSIDE_STATE        = BIT(17),  //!< Prevents error when state changes on the client and does not sync state changes to the client.
-	ENTITY_FLAG_SEND_RENDER_EVENT       = BIT(18),  //!< When set entity will send ENTITY_EVENT_RENDER_VISIBILITY_CHANGE when starts or stop actual rendering.
-	ENTITY_FLAG_NO_PROXIMITY            = BIT(19),  //!< Entity will not be registered in the partition grid and can not be found by proximity queries.
-	ENTITY_FLAG_PROCEDURAL              = BIT(20),  //!< Entity has been generated at runtime.
-	ENTITY_FLAG_UPDATE_HIDDEN           = BIT(21),  //!< Entity will be update even when hidden.
-	ENTITY_FLAG_NEVER_NETWORK_STATIC    = BIT(22),  //!< Entity should never be considered a static entity by the network system.
-	ENTITY_FLAG_IGNORE_PHYSICS_UPDATE   = BIT(23),  //!< Used by Editor only, (don't set).
-	ENTITY_FLAG_SPAWNED                 = BIT(24),  //!< Entity was spawned dynamically without a class.
-	ENTITY_FLAG_SLOTS_CHANGED           = BIT(25),  //!< Entity's slots were changed dynamically.
-	ENTITY_FLAG_MODIFIED_BY_PHYSICS     = BIT(26),  //!< Entity was procedurally modified by physics.
-	ENTITY_FLAG_OUTDOORONLY             = BIT(27),  //!< Same as Brush->Outdoor only.
-
-	ENTITY_FLAG_RECVWIND                = BIT(29),  //!< Receives wind.
-	ENTITY_FLAG_LOCAL_PLAYER            = BIT(30),
-	ENTITY_FLAG_AI_HIDEABLE             = BIT(31),  //!< AI can use the object to calculate automatic hide points.
-};
-
-enum EEntityFlagsExtended
-{
-	ENTITY_FLAG_EXTENDED_AUDIO_LISTENER                 = BIT(0),
-	ENTITY_FLAG_EXTENDED_AUDIO_DISABLED                 = BIT(1),
-	ENTITY_FLAG_EXTENDED_NEEDS_MOVEINSIDE               = BIT(2),
-	ENTITY_FLAG_EXTENDED_CAN_COLLIDE_WITH_MERGED_MESHES = BIT(3),
-	ENTITY_FLAG_EXTENDED_DYNAMIC_DISTANCE_SHADOWS       = BIT(4),
-	ENTITY_FLAG_EXTENDED_GI_MODE_BIT0                   = BIT(5), // Bit0 of entity GI mode, see IRenderNode::EGIMode
-	ENTITY_FLAG_EXTENDED_GI_MODE_BIT1                   = BIT(6), // Bit1 of entity GI mode, see IRenderNode::EGIMode
-	ENTITY_FLAG_EXTENDED_GI_MODE_BIT2                   = BIT(7), // Bit2 of entity GI mode, see IRenderNode::EGIMode
-};
-
-#define ENTITY_FLAG_EXTENDED_GI_MODE_BIT_OFFSET 5               // Bit offset of entity GI mode in EEntityFlagsExtended.
-#define ENTITY_FLAG_EXTENDED_GI_MODE_BIT_MASK (ENTITY_FLAG_EXTENDED_GI_MODE_BIT0 | ENTITY_FLAG_EXTENDED_GI_MODE_BIT1 | ENTITY_FLAG_EXTENDED_GI_MODE_BIT2) // Bit mask of entity GI mode.
-
-//! Flags can be passed to IEntity::Serialize().
-enum EEntitySerializeFlags
-{
-
-	ENTITY_SERIALIZE_PROXIES    = BIT(1),    //!< Serialize proxies.
-	ENTITY_SERIALIZE_POSITION   = BIT(2),    //!< Serialize properties common to all entities (position, rotation, scale).
-	ENTITY_SERIALIZE_ROTATION   = BIT(3),
-	ENTITY_SERIALIZE_SCALE      = BIT(4),
-	ENTITY_SERIALIZE_GEOMETRIES = BIT(5),
-	ENTITY_SERIALIZE_PROPERTIES = BIT(6),
-};
-
-enum EEntityGetSetSlotFlags
-{
-	ENTITY_SLOT_ACTUAL = 1 << 31
-};
-
-#define ENTITY_LINK_NAME_MAX_LENGTH 31
-
-struct IEntityLink
-{
-	char         name[ENTITY_LINK_NAME_MAX_LENGTH + 1]; //!< Name of the link.
-	EntityId     entityId;                              //!< Entity targeted by the link.
-	EntityGUID   entityGuid;                            //!< Entity targeted by the link.
-	IEntityLink* next;                                  //!< Pointer to the next link, or NULL if last link.
-};
-
+//! Parameters used when attaching one entity to another, creating a parent-child hierarchy
 struct SChildAttachParams
 {
 	SChildAttachParams()
@@ -562,11 +69,205 @@ struct SChildAttachParams
 		, m_target(target)
 	{}
 
+	//! See IEntity::EAttachmentFlags
 	int         m_nAttachFlags;
 	const char* m_target;
 };
 
-//! Parameters passed to IEntity::Physicalize function.
+#if (eCryModule != eCryM_LegacyGameDLL && eCryModule != eCryM_ScriptSystem && eCryModule != eCryM_AISystem && eCryModule != eCryM_FlowGraph \
+  && eCryModule != eCryM_GameFramework && eCryModule != eCryM_Legacy && eCryModule != eCryM_Editor && eCryModule != eCryM_EntitySystem \
+  && eCryModule != eCryM_MonoBridge)
+	#define CRY_DEPRECATED_ENTTIY_ARCHETYPE CRY_DEPRECATED("(v5.4) Entity archetypes are deprecated in favour of Schematyc usage")
+#else
+	#define CRY_DEPRECATED_ENTTIY_ARCHETYPE
+#endif
+
+#if (eCryModule != eCryM_LegacyGameDLL && eCryModule != eCryM_System && eCryModule != eCryM_ScriptSystem && eCryModule != eCryM_Movie \
+  && eCryModule != eCryM_FlowGraph && eCryModule != eCryM_GameFramework && eCryModule != eCryM_Legacy && eCryModule != eCryM_Editor   \
+  && eCryModule != eCryM_EntitySystem && eCryModule != eCryM_AISystem && eCryModule != eCryM_MonoBridge)
+	#define CRY_DEPRECATED_ENTTIY_LUA CRY_DEPRECATED("(v5.5) Lua has been deprecated in favor of C# and Schematyc")
+#else
+	#define CRY_DEPRECATED_ENTTIY_LUA
+#endif
+
+//! Structure used when spawning new entities to define their initial state
+struct SEntitySpawnParams
+{
+	SEntitySpawnParams() = default;
+
+	//! Optional: Initial position of the new entity instance in world space if pParent is not specified, otherwise local
+	Vec3 vPosition = ZERO;
+	//! Optional: Initial rotation of the new entity instance in world space if pParent is not specified, otherwise local
+	Quat qRotation = IDENTITY;
+	//! Optional: Initial scale of the new entity instance in world space if pParent is not specified, otherwise local
+	Vec3 vScale = Vec3(1.f);
+
+	//! Optional: Name of the new entity instance
+	//! Does *not* have to be unique!
+	const char* sName = "";          //!< \note The name of the entity does not need to be unique.
+	//! Optional: Default entity flags to assign to the new instance
+	//! See EEntityFlags
+	uint32 nFlags = 0;
+	//! Optional: Default extended entity flags to assign to the new instance
+	//! See EEntityFlagsExtended
+	uint32 nFlagsExtended = 0;
+
+	//! Optional: Specify the parent of the new entity instance, ensuring that the new instance's coordinates are in relation to its parent
+	//! Note that setting this will indicate that vPosition, qRotation and vScale should be provided in local space
+	IEntity*           pParent = nullptr;
+	//! Used when pParent is specified, same behavior as pParent->AttachChild(this, attachmentParams).
+	SChildAttachParams attachmentParams;
+
+	//! Optional: Entity class to use, if null we use the default class
+	IEntityClass* pClass = nullptr;
+
+	// Optional: Unique entity identifier to use for the new instance, generates automatically if not provided
+	EntityId id = INVALID_ENTITYID;
+	//! Optional: Unique entity identifier used for the previous instance if we are reloading
+	EntityId prevId = INVALID_ENTITYID;
+	//! Optional: Used when id is set to automatically generate (id = INVALID_ENTITYID) to pick identifiers from the static pool instead of being treated as a dynamically spawned entity
+	//! This is useful for supporting save games compatible with patched levels
+	bool bStaticEntityId = false;
+
+	//! Optional: Globally unique identifier for this entity instance, this is guaranteed to be unique across sessions and save games assuming that the entity is saved by the entity system
+	//! If one is not provided, it will be generated by the entity system
+	EntityGUID guid;
+	//! Optional: Globally unique identifier used for the previous instance if we are reloading
+	EntityGUID prevGuid;
+
+	//! Optional: The name of the layer the entity resides in, used in the Editor
+	const char* sLayerName = "";
+
+	//! Optional: Reference to entity's xml data, used when loading entities from disk
+	XmlNodeRef entityNode;
+
+	//! Optional: Whether the spawning of this entity should ignore whether or not IEntitySystem::LockSpawning was called
+	//! If not provided, the spawning will fail if a lock was put in place
+	bool bIgnoreLock = false;
+
+	//! Optional: User data that can be read from IEntitySystemSink to interact with the spawning of entities
+	void* pUserData = nullptr;
+
+	//! Set by networking when an entity is being spawned on a client as requested by the server
+	//! This can be used by custom entity classes to deserialize data specified by the host via IEntity::GetSerializableNetworkSpawnInfo.
+	//! Used internally to automatically call IEntityComponent::NetReplicateSerialize.
+	TSerialize* pSpawnSerializer = nullptr;
+
+	/*CRY_DEPRECATED_ENTTIY_LUA*/ IScriptTable*           pPropertiesTable = nullptr;
+	/*CRY_DEPRECATED_ENTTIY_LUA*/ IScriptTable*           pPropertiesInstanceTable = nullptr;
+	/*CRY_DEPRECATED_ENTTIY_ARCHETYPE*/ IEntityArchetype* pArchetype = nullptr;
+};
+
+//! Update context of an entity, passed along to components with useful data such as frame time and frame identifier
+struct SEntityUpdateContext
+{
+	//! Delta time for this frame
+	float  fFrameTime;
+	//! Current time at the start of the entity update - see ITimer::GetCurTime
+	float  fCurrTime;
+	//! The current frame identifier, see gEnv->nMainFrameID
+	uint32 frameID;
+};
+
+enum EEntityHideFlags
+{
+	ENTITY_HIDE_NO_FLAG = 0,
+
+	ENTITY_HIDE_LAYER   = BIT(0),
+	ENTITY_HIDE_PARENT  = BIT(1),
+};
+
+//! Each entity instance holds flags that indicate special behavior within the system
+//! These can be set with IEntity::SetFlags, and retrieved with IEntity::GetFlags
+enum EEntityFlags : uint32
+{
+	//////////////////////////////////////////////////////////////////////////
+	// Persistent flags (can be set from the editor).
+	ENTITY_FLAG_CASTSHADOW          = BIT(0),
+	ENTITY_FLAG_UNREMOVABLE         = BIT(1), //!< This entity cannot be removed using IEntitySystem::RemoveEntity until this flag is cleared.
+	ENTITY_FLAG_GOOD_OCCLUDER       = BIT(2),
+	ENTITY_FLAG_NO_DECALNODE_DECALS = BIT(3),
+	//////////////////////////////////////////////////////////////////////////
+
+	ENTITY_FLAG_WRITE_ONLY              = BIT(4),
+	ENTITY_FLAG_NOT_REGISTER_IN_SECTORS = BIT(5),
+	ENTITY_FLAG_CALC_PHYSICS            = BIT(6),
+	//! Entity should only be present on the client, and not server
+	ENTITY_FLAG_CLIENT_ONLY             = BIT(7),
+	//! Entity should only be present on the server, and not clients
+	ENTITY_FLAG_SERVER_ONLY             = BIT(8),
+	ENTITY_FLAG_CUSTOM_VIEWDIST_RATIO   = BIT(9), //!< This entity have special custom view distance ratio (AI/Vehicles must have it).
+	ENTITY_FLAG_CALCBBOX_USEALL         = BIT(10), //!< use character and objects in BBOx calculations.
+	ENTITY_FLAG_VOLUME_SOUND            = BIT(11), //!< Entity is a volume sound (will get moved around by the sound proxy).
+	ENTITY_FLAG_HAS_AI                  = BIT(12), //!< Entity has an AI object.
+	ENTITY_FLAG_TRIGGER_AREAS           = BIT(13), //!< This entity will trigger areas when it enters them.
+	ENTITY_FLAG_NO_SAVE                 = BIT(14), //!< This entity will not be saved.
+	ENTITY_FLAG_CAMERA_SOURCE           = BIT(15), //!< This entity is a camera source.
+	ENTITY_FLAG_CLIENTSIDE_STATE        = BIT(16), //!< Prevents error when state changes on the client and does not sync state changes to the client.
+	ENTITY_FLAG_SEND_RENDER_EVENT       = BIT(17), //!< When set entity will send ENTITY_EVENT_RENDER_VISIBILITY_CHANGE when starts or stop actual rendering.
+	ENTITY_FLAG_NO_PROXIMITY            = BIT(18), //!< Entity will not be registered in the partition grid and can not be found by proximity queries.
+	ENTITY_FLAG_PROCEDURAL              = BIT(19), //!< Entity has been generated at runtime.
+	ENTITY_FLAG_UPDATE_HIDDEN           = BIT(20), //!< Whether update of game logic should be skipped when the entity is hidden. This does *not* disable update of components unless they specifically request it.
+	ENTITY_FLAG_NEVER_NETWORK_STATIC    = BIT(21), //!< Entity should never be considered a static entity by the network system.
+	ENTITY_FLAG_IGNORE_PHYSICS_UPDATE   = BIT(22), //!< Used by Editor only, (don't set).
+	ENTITY_FLAG_SPAWNED                 = BIT(23), //!< Entity was spawned dynamically without a class.
+	ENTITY_FLAG_SLOTS_CHANGED           = BIT(24), //!< Entity's slots were changed dynamically.
+	ENTITY_FLAG_MODIFIED_BY_PHYSICS     = BIT(25), //!< Entity was procedurally modified by physics.
+	ENTITY_FLAG_OUTDOORONLY             = BIT(26), //!< Same as Brush->Outdoor only.
+
+	ENTITY_FLAG_RECVWIND                = BIT(27), //!< Receives wind.
+	ENTITY_FLAG_LOCAL_PLAYER            = BIT(28),
+	ENTITY_FLAG_AI_HIDEABLE             = BIT(29), //!< AI can use the object to calculate automatic hide points.
+
+	ENTITY_FLAG_PREALLOCATED_COMPONENTS = BIT(30)   //! Components known at load time were allocated in one contiguous chunk of memory along with the entity
+};
+
+enum EEntityFlagsExtended : uint16
+{
+	ENTITY_FLAG_EXTENDED_AUDIO_LISTENER                 = BIT(0),
+	ENTITY_FLAG_EXTENDED_NEEDS_MOVEINSIDE               = BIT(1),
+	ENTITY_FLAG_EXTENDED_CAN_COLLIDE_WITH_MERGED_MESHES = BIT(2),
+	ENTITY_FLAG_EXTENDED_DYNAMIC_DISTANCE_SHADOWS       = BIT(3),
+	ENTITY_FLAG_EXTENDED_GI_MODE_BIT0                   = BIT(4), // Bit0 of entity GI mode, see IRenderNode::EGIMode
+	ENTITY_FLAG_EXTENDED_GI_MODE_BIT1                   = BIT(5), // Bit1 of entity GI mode, see IRenderNode::EGIMode
+	ENTITY_FLAG_EXTENDED_GI_MODE_BIT2                   = BIT(6), // Bit2 of entity GI mode, see IRenderNode::EGIMode
+	ENTITY_FLAG_EXTENDED_PREVIEW                        = BIT(7), //!< Entity is spawn for the previewing
+	ENTITY_FLAG_EXTENDED_CLONED                         = BIT(8), //!< Entity was cloned from another
+	ENTITY_FLAG_EXTENDED_IGNORED_IN_NAVMESH_GENERATION  = BIT(9), //!< Entity's geometry doesn't contribute to NavMesh generation
+};
+
+#define ENTITY_FLAG_EXTENDED_GI_MODE_BIT_OFFSET 4                                                                                                           // Bit offset of entity GI mode in EEntityFlagsExtended. Must be equal to the bit id of ENTITY_FLAG_EXTENDED_GI_MODE_BIT0
+#define ENTITY_FLAG_EXTENDED_GI_MODE_BIT_MASK   (ENTITY_FLAG_EXTENDED_GI_MODE_BIT0 | ENTITY_FLAG_EXTENDED_GI_MODE_BIT1 | ENTITY_FLAG_EXTENDED_GI_MODE_BIT2) // Bit mask of entity GI mode.
+
+//! Flags can be passed to IEntity::Serialize().
+enum EEntitySerializeFlags
+{
+	ENTITY_SERIALIZE_PROXIES    = BIT(1), //!< Serialize proxies.
+	ENTITY_SERIALIZE_POSITION   = BIT(2), //!< Serialize properties common to all entities (position, rotation, scale).
+	ENTITY_SERIALIZE_ROTATION   = BIT(3),
+	ENTITY_SERIALIZE_SCALE      = BIT(4),
+	ENTITY_SERIALIZE_GEOMETRIES = BIT(5),
+	ENTITY_SERIALIZE_PROPERTIES = BIT(6),
+};
+
+enum EEntityGetSetSlotFlags
+{
+	ENTITY_SLOT_ACTUAL = 1 << 31
+};
+
+//! Representation of a link connecting one entity to another
+//! Links can be added by designers in the Editor to indicate specific behavior between two entities
+//! Each link can be given a name, allowing code to identify a certain type of connection.
+struct IEntityLink
+{
+	string       name;
+	EntityId     entityId;                              //!< Entity targeted by the link.
+	EntityGUID   entityGuid;                            //!< Entity targeted by the link.
+	IEntityLink* next;                                  //!< Pointer to the next link, or NULL if last link.
+};
+
+//! Parameters used to determine how an entity should be physicalized when IEntity::Physicalize is called
+//! \see IEntity::Physicalize
 struct SEntityPhysicalizeParams
 {
 	//////////////////////////////////////////////////////////////////////////
@@ -581,7 +282,7 @@ struct SEntityPhysicalizeParams
 	//! Index of object slot. -1 if all slots should be used.
 	int nSlot;
 
-	//! Only one either density or mass must be set, parameter set to 0 is ignored.
+	//! Only one either density or mass must be set, parameter set to a negative value will be ignored.
 	float density;
 	float mass;
 
@@ -681,9 +382,49 @@ struct SEntitySlotInfo
 	IMaterial* pMaterial;
 };
 
-//! Interface to entity object.
+//! Parameters passed to the preview render function
+//! \see IEntity::PreviewRender
+struct SEntityPreviewContext
+{
+	SEntityPreviewContext(SGeometryDebugDrawInfo& debugDrawInfo_) : debugDrawInfo(debugDrawInfo_) {}
+
+	//! Defines if the entity has any render nodes
+	bool                             bNoRenderNodes = false;
+	//! Is the entity currently selected in the sandbox
+	bool                             bSelected = false;
+	//! Defines if the render slots should get previewed too
+	bool                             bRenderSlots = true;
+
+	//! \see I3DEngine::SGeometryDebugDrawInfo
+	SGeometryDebugDrawInfo&          debugDrawInfo;
+	//! \see IRenderer::SRendParams
+	const struct SRendParams*        pRenderParams = nullptr;
+	//! \see IRenderer::SRenderingPassInfo
+	const struct SRenderingPassInfo* pPassInfo = nullptr;
+};
+
+struct IEntityEventListener
+{
+	// <interfuscator:shuffle>
+	virtual ~IEntityEventListener() = default;
+	virtual void OnEntityEvent(IEntity* pEntity, const SEntityEvent& event) = 0;
+	// </interfuscator:shuffle>
+};
+
+//! Entities represent dynamic objects that can manipulate themselves or the scene they reside in during runtime.
+//! Examples include light sources, physicalized objects (such as bullets) and players.
+//! Entities themselves can not contain custom logic, instead they can contain Components (see IEntityComponent).
 struct IEntity
 {
+#ifndef SWIG
+	//! This is a GUID of the Schematyc environment scope where all entity components must be registered under to be found in UI.
+	static CryGUID GetEntityScopeGUID()
+	{
+		static CryGUID guid = "be845278-0dd2-409f-b8be-97895607c256"_cry_guid;
+		return guid;
+	}
+#endif
+
 	enum EEntityLoadFlags
 	{
 		EF_AUTO_PHYSICALIZE = 0x0001,
@@ -691,22 +432,20 @@ struct IEntity
 	};
 	enum EAttachmentFlags
 	{
-		ATTACHMENT_KEEP_TRANSFORMATION = BIT(0),    //!< Keeps world transformation of entity when attaching or detaching it.
-		ATTACHMENT_GEOMCACHENODE       = BIT(1),    //!< Attach to geom cache node.
-		ATTACHMENT_CHARACTERBONE       = BIT(2),    //!< Attached to character bone.
+		ATTACHMENT_KEEP_TRANSFORMATION = BIT(0), //!< Keeps world transformation of entity when attaching or detaching it.
+		ATTACHMENT_GEOMCACHENODE       = BIT(1), //!< Attach to geom cache node.
+		ATTACHMENT_CHARACTERBONE       = BIT(2), //!< Attached to character bone.
+		ATTACHMENT_LOCAL_SIM           = BIT(3), //!< Simulated inside the parent by the physics
+		ATTACHMENT_SUPPRESS_UPDATE     = BIT(4), //!< Suppresses attachment event and matrix update
+
+		ATTACHMENT_COUNT               = 5,
 	};
 
-#ifdef SEG_WORLD
-	enum ESWObjFlag
-	{
-		ESWOF_Normal   = 0x00,
-		ESWOF_CrossSeg = 0x01,
-		ESWOF_Global   = 0x02
-	};
+	using AttachmentFlagsMask = CEnumFlags<EAttachmentFlags>;
+	using AttachmentFlagsType = uint32;
 
-	virtual void SetLocalSeg(bool bL) = 0;
-	virtual bool IsLocalSeg() const = 0;
-#endif //SEG_WORLD
+	static constexpr int CREATE_NEW_UNIQUE_TIMER_ID = -666;
+	static constexpr int KILL_ALL_TIMER = -1;
 
 	struct SRenderNodeParams
 	{
@@ -723,27 +462,25 @@ struct IEntity
 		void SetMinSpec(ESystemConfigSpec spec)     { minSpec = spec; }
 	};
 
-	//! Parameters passed to the IEntity::PreviewRender
-	struct SPreviewRenderParams
-	{
-		const struct SRendParams*        pRenderParams = nullptr;
-		const struct SRenderingPassInfo* pPassInfo = nullptr;
-	};
+	//! Callback used for visiting components
+	//! @see IEntity::VisitComponents method
+	typedef std::function<void (IEntityComponent*)> ComponentsVisitor;
 
 public:
 	// <interfuscator:shuffle>
-	virtual ~IEntity(){}
+	virtual ~IEntity() {}
 
 	//! Retrieves the runtime unique identifier of this entity assigned to it by the Entity System.
-	//! EntityId may not be the same when saving/loading entity.
-	//! EntityId is mostly used in runtime for fast and unique identification of entities..
-	//! \return The entity ID.
+	//! EntityId may not be the same when saving/loading entity
+	//! EntityId is not unique across the network, but can be serialized via the 'eid' compression policy
+	//! EntityId is mostly used in runtime for fast and unique identification of entities, as the system allows for an O(1) retrieval
+	//! \return The entity instance's identifier
 	virtual EntityId GetId() const = 0;
 
 	//! Retrieves the globally unique identifier of this entity assigned to it by the Entity System.
-	//! EntityGuid is guaranteed to be the same when saving/loading entity, it is also same in the editor and in the game.
+	//! EntityGuid is guaranteed to be the same when saving / loading entity, it is also same in the editor and in the game.
 	//! \return The entity globally unique identifier.
-	virtual EntityGUID GetGuid() const = 0;
+	virtual const EntityGUID& GetGuid() const = 0;
 
 	//! Retrieves the entity class pointer.
 	//! Entity class defines entity type, what script it will use, etc...
@@ -753,7 +490,7 @@ public:
 	//! Retrieves the entity archetype.
 	//! Entity archetype contain definition for entity script properties.
 	//! \return Pointer to the entity archetype interface.
-	virtual IEntityArchetype* GetArchetype() const = 0;
+	CRY_DEPRECATED_ENTTIY_ARCHETYPE virtual IEntityArchetype* GetArchetype() const = 0;
 
 	//! Sets entity flags, completely replaces all flags which are already set in the entity.
 	//! \param flags Flag values which are defined in EEntityFlags.
@@ -781,10 +518,17 @@ public:
 	//! Gets current entity EEntityFlagsExtended flags.
 	virtual uint32 GetFlagsExtended() const = 0;
 
+	//! \return true if entity is completely initialized.
+	virtual bool IsInitialized() const = 0;
+
 	//! Checks if this entity was marked for deletion.
 	//! If this function returns true, it will be deleted on next frame, and it is pointless to perform any operations on such entity.
 	//! \return True if entity marked for deletion, false otherwise.
 	virtual bool IsGarbage() const = 0;
+
+	//! Returns a number which is incremeting every time the entity components get changed
+	//! Can be checked with an older one to determine if the entity components have changed
+	virtual uint8 GetComponentChangeState() const = 0;
 
 	//! Changes the entity name.
 	//! Entity name does not have to be unique, but for the sake of easier finding entities by name it is better to not
@@ -800,9 +544,7 @@ public:
 	virtual string GetEntityTextDescription() const = 0;
 
 	//! Serializes entity parameters to/from XML.
-	virtual void SerializeXML(XmlNodeRef& entityNode, bool bLoading, bool bIncludeScriptProxy = true) = 0;
-
-	virtual void SerializeProperties(Serialization::IArchive& ar) = 0;
+	virtual void SerializeXML(XmlNodeRef& entityNode, bool bLoading, bool bIncludeScriptProxy = true, bool bExcludeSchematycProperties = false) = 0;
 
 	//! \retval true if this entity was loaded from level file.
 	//! \retval false for entities created dynamically.
@@ -817,12 +559,10 @@ public:
 	virtual void AttachChild(IEntity* pChildEntity, const SChildAttachParams& attachParams = SChildAttachParams()) = 0;
 
 	//! Detaches all the child entities attached to this entity.
-	//! \param nDetachFlags Combination of the EAttachmentFlags flags.
-	virtual void DetachAll(int nDetachFlags = 0) = 0;
+	virtual void DetachAll(AttachmentFlagsType attachmentFlags = 0) = 0;
 
 	//! Detach this entity from the parent entity (assumes that this entity is the child entity).
-	//! \param nDetachFlags Combination of the EAttachmentFlags flags.
-	virtual void DetachThis(int nDetachFlags = 0, int nWhyFlags = 0) = 0;
+	virtual void DetachThis(AttachmentFlagsType attachmentFlags = 0, EntityTransformationFlagsType transformReasons = 0) = 0;
 
 	//! Retrieves the number of attached child entities.
 	virtual int GetChildCount() const = 0;
@@ -836,6 +576,10 @@ public:
 	//! \return Pointer to the parent entity interface, or NULL if this entity does not have a parent.
 	virtual IEntity* GetParent() const = 0;
 
+	//! Retrieves the parent of this entity if the parent is a local simulation grid
+	//! \return Pointer to the parent entity interface, or NULL if this entity does not have a parent or the parent is not a local simulation grid.
+	virtual IEntity* GetLocalSimParent() const = 0;
+
 	//! Retrieves the TM of the point this entity is attached to if it has a parent.
 	//! \note This can be different from GetParent()->GetWorldTM() when the attachment point is not the pivot.
 	//! \return World space matrix of the parent attachment transform
@@ -848,11 +592,11 @@ public:
 
 	//! Sets entity transformation matrix in the world space.
 	//! \param tm World space transformation matrix (Non unifrorm scale is not supported).
-	virtual void SetWorldTM(const Matrix34& tm, int nWhyFlags = 0) = 0;
+	virtual void SetWorldTM(const Matrix34& tm, EntityTransformationFlagsMask transformReasons = EntityTransformationFlagsMask()) = 0;
 
 	//! Sets entity transformation matrix in the local entity space.
 	//! \param tm Local space transformation matrix (Non unifrorm scale is not supported).
-	virtual void SetLocalTM(const Matrix34& tm, int nWhyFlags = 0) = 0;
+	virtual void SetLocalTM(const Matrix34& tm, EntityTransformationFlagsMask transformReasons = EntityTransformationFlagsMask()) = 0;
 
 	//! Retrieves the entity transformation matrix in the world space.
 	//! \return World space transformation matrix (Include transformations of all parent entities).
@@ -880,25 +624,25 @@ public:
 
 	//////////////////////////////////////////////////////////////////////////
 	//! Set the entity local space position.
-	virtual void SetPos(const Vec3& vPos, int nWhyFlags = 0, bool bRecalcPhyBounds = false, bool bForce = false) = 0;
+	virtual void SetPos(const Vec3& vPos, EntityTransformationFlagsMask transformReasons = EntityTransformationFlagsMask(), bool bRecalcPhyBounds = false, bool bForce = false) = 0;
 
 	//! Retrieve the entity local space position.
 	virtual const Vec3& GetPos() const = 0;
 
 	//! Sets the entity local space rotation quaternion.
-	virtual void SetRotation(const Quat& qRotation, int nWhyFlags = 0) = 0;
+	virtual void SetRotation(const Quat& qRotation, EntityTransformationFlagsMask transformReasons = EntityTransformationFlagsMask()) = 0;
 
 	//! Retrieves the entity local space rotation quaternion.
 	virtual const Quat& GetRotation() const = 0;
 
 	//! Sets the entity local space scale.
-	virtual void SetScale(const Vec3& vScale, int nWhyFlags = 0) = 0;
+	virtual void SetScale(const Vec3& vScale, EntityTransformationFlagsMask transformReasons = EntityTransformationFlagsMask()) = 0;
 
 	//! Retrieves the entity local space scale.
 	virtual const Vec3& GetScale() const = 0;
 
 	//! Sets the entity position,rotation and scale at once.
-	virtual void SetPosRotScale(const Vec3& vPos, const Quat& qRotation, const Vec3& vScale, int nWhyFlags = 0) = 0;
+	virtual void SetPosRotScale(const Vec3& vPos, const Quat& qRotation, const Vec3& vScale, EntityTransformationFlagsMask transformReasons = EntityTransformationFlagsMask()) = 0;
 
 	//! Helper function to retrieve world space entity position.
 	virtual Vec3 GetWorldPos() const = 0;
@@ -909,22 +653,18 @@ public:
 	//! Helper function to retrieve world space entity orientation quaternion
 	virtual Quat GetWorldRotation() const = 0;
 
-	//! Helper function to retrieve world space forward dir
-	virtual const Vec3& GetForwardDir() const = 0;
-
+	//! Helper function to retrieve world space entity scale
+	virtual Vec3 GetWorldScale() const = 0;
 	//////////////////////////////////////////////////////////////////////////
 
-	//! Activates entity, if entity is active it will be updated every frame.
-	virtual void Activate(bool bActive) = 0;
+	//! Used to update the stored mask for a certain component, from IEntityComponent::GetEventMask
+	//! For example, changing IEntityComponent::GetEventMask to return ENTITY_EVENT_UPDATE and then calling GetEventMask will result in the component and its entity being updated the next frame.
+	//! \par Example
+	//! \include CryEntitySystem/Examples/ComponentEvents.cpp
+	virtual void UpdateComponentEventMask(const IEntityComponent* pComponent) = 0;
 
-	//! Check if the entity is active now.
-	virtual bool IsActive() const = 0;
-
-	//! Activates entity, if entity is active it will be updated every frame.
-	virtual void PrePhysicsActivate(bool bActive) = 0;
-
-	//! Check if the entity is active now.
-	virtual bool IsPrePhysicsActive() = 0;
+	//! Checks whether the entity is set to be updated this / next frame.
+	virtual bool IsActivatedForUpdates() const = 0;
 
 	//////////////////////////////////////////////////////////////////////////
 
@@ -937,7 +677,12 @@ public:
 
 	//! Sends event to the entity.
 	//! \param event Event description (event id, parameters).
-	virtual bool SendEvent(SEntityEvent& event) = 0;
+	virtual bool SendEvent(const SEntityEvent& event) = 0;
+
+	//! Adds a listener that can receive the specified event from this entity
+	virtual void AddEventListener(EEntityEvent event, IEntityEventListener* pListener) = 0;
+	//! Removes an existing event listener from the entity
+	virtual void RemoveEventListener(EEntityEvent event, IEntityEventListener* pListener) = 0;
 
 	//////////////////////////////////////////////////////////////////////////
 
@@ -948,51 +693,45 @@ public:
 	//! Multiple timers can be started simultaneously with different timer ids.
 	//! If some timer is not yet finished and another timer with the same timerID is set, the new one
 	//! will override old timer, and old timer will not send finish event.
-	//! \param nTimerId Timer ID, multiple timers with different IDs are possible.
+	//! \param nTimerId Timer ID, multiple timers with different IDs are possible. (specify IEntity::CREATE_NEW_UNIQUE_TIMER_ID to let the system generate a new and unique Id)
 	//! \param nMilliSeconds Timer timeout time in milliseconds.
-	virtual void SetTimer(int nTimerId, int nMilliSeconds) = 0;
+	//! \return the (generated) timerId
+	virtual int SetTimer(int nTimerId, int nMilliSeconds) = 0;
 
 	//! Stops already started entity timer with this id.
-	//! \param nTimerId Timer ID of the timer started for this entity.
+	//! \param nTimerId Timer ID of the timer started for this entity. (specify IEntity::KILL_ALL_TIMER to stop all timer on this entity)
 	virtual void KillTimer(int nTimerId) = 0;
 
 	//! Hides this entity, makes it invisible and disable its physics.
+	//! Note that the difference between Invisible and Hide is that hiding will also disable certain update logic, such as physics.
 	//! \param bHide If true hide the entity, is false unhides it.
-	virtual void Hide(bool bHide) = 0;
+	virtual void Hide(bool bHide, EEntityHideFlags hideFlags = ENTITY_HIDE_NO_FLAG) = 0;
 
 	//! Checks if the entity is hidden.
 	virtual bool IsHidden() const = 0;
 
 	//! Makes the entity invisible and disable its physics.
-	//! Different from hide in that the entity is still updated.
+	//! Different from hide in that the entity is still updated, and physics is still active
 	virtual void Invisible(bool bInvisible) = 0;
 
 	//! Checks if the entity is invisible.
 	virtual bool IsInvisible() const = 0;
 
 	//////////////////////////////////////////////////////////////////////////
-	virtual IAIObject*  GetAI() = 0;
-	virtual bool        HasAI() const = 0;
-	virtual tAIObjectID GetAIObjectID() const = 0;
-	virtual void        SetAIObjectID(tAIObjectID id) = 0;
-	//////////////////////////////////////////////////////////////////////////
-	virtual bool        RegisterInAISystem(const AIObjectParams& params) = 0;
+	virtual const IAIObject* GetAI() const = 0;
+	virtual IAIObject*       GetAI() = 0;
+	virtual bool             HasAI() const = 0;
+	virtual tAIObjectID      GetAIObjectID() const = 0;
+	virtual void             SetAIObjectID(tAIObjectID id) = 0;
 	//////////////////////////////////////////////////////////////////////////
 
 	//! Retrieve access to the rendering functionality of the Entity.
 	IEntity* GetRenderInterface() { return this; };
 
-	//! Changes the entity update policy.
-	//! Update policy of entity defines the automatic activation rules for the entity.
-	//! For example. when a physical object awakens it will activate the entity, and when will go to sleep
-	//! again will deactivate it.
-	//! Or entity can become active every time that it becomes visible, and deactivated when goes out of view.
-	//! There are multiple such predefined update policies exist, consider EEntityUpdatePolicy enum.
-	//! \param eUpdatePolicy - Update policy, one of EEntityUpdatePolicy enums.
-	virtual void SetUpdatePolicy(EEntityUpdatePolicy eUpdatePolicy) = 0;
-
-	//! Retrieves the entity update policy.
-	virtual EEntityUpdatePolicy GetUpdatePolicy() const = 0;
+	//! Called by networking on the server to serialize entity information in order to replicate the entity (and its components) on a remote host.
+	//! The data is then deserialized on the remote host via SEntitySpawnParams::pSpawnSerializer.
+	//! This function will collect information from components by calling IEntityComponent::NetReplicateSerialize.
+	virtual ISerializableInfoPtr GetSerializableNetworkSpawnInfo() const = 0;
 
 	// Entity Proxies Interfaces access functions.
 
@@ -1010,59 +749,240 @@ public:
 	// EntityComponents
 	//////////////////////////////////////////////////////////////////////////
 
-	//! Register or unregisters a component with the entity.
-	//! \param pComponent The target component.
-	//! \param flags IEntityComponent.h contains the relevent flags to control registration behaviour.
-	//! \param eventMask is a bit mask of the EEntityEvents flags.
-	//! \return if input param pComponent is null AddComponent will try to create a component for the provided interface id.
-	virtual IEntityComponent* AddComponent(CryInterfaceID typeId, std::shared_ptr<IEntityComponent> pComponent,bool bAllowDuplicate) = 0;
+	//! Queries an entity component type by interface, and then creates the component inside this entity
+	//! \param interfaceId The GUID of the component we want to add
+	//! \param pInitParams Optional initialization parameters to determine the initial state of the component
+	//! \return The newly created entity component pointer (owned by the entity), or null if creation failed.
+	virtual IEntityComponent* CreateComponentByInterfaceID(const CryInterfaceID& interfaceId, IEntityComponent::SInitParams* pInitParams = nullptr) = 0;
+
+	//! Adds an already created component to the entity
+	//! \param pComponent A shared pointer to the component we want to add, can not be null!
+	//! \param pInitParams Optional initialization parameters to determine the initial state of the component
+	//! \return True if the component was added, otherwise false.
+	virtual bool AddComponent(std::shared_ptr<IEntityComponent> pComponent, IEntityComponent::SInitParams* pInitParams = nullptr) = 0;
 
 	//! Remove previously created component from the Entity
 	//! \param pComponent Component pointer to remove from the Entity
 	virtual void RemoveComponent(IEntityComponent* pComponent) = 0;
 
-	//! Return first component of the entity with the specified interface ID.
-	//! \param interfaceID Identifier for the component interface.
+	//! Removes and shut downs all components that entity contains.
+	virtual void RemoveAllComponents() = 0;
+
+	//! Replaces an existing component in the entity with another, without shutting down the existing component
+	//! Used for reallocating components at run-time while keeping internal state intact
+	//! Note that this function does *not* copy any data between the components, that is up to the caller.
+	virtual void ReplaceComponent(IEntityComponent* pExistingComponent, std::shared_ptr<IEntityComponent> pNewComponent) = 0;
+
+	//! Return first component of the entity with the specified class ID.
+	//! \param interfaceID Identifier for the component implementation.
 	virtual IEntityComponent* GetComponentByTypeId(const CryInterfaceID& interfaceID) const = 0;
+	//! Return all components with the specified class ID contained in the entity.
+	//! \param interfaceID Identifier for the component implementation.
+	virtual void GetComponentsByTypeId(const CryInterfaceID& interfaceID, DynArray<IEntityComponent*>& components) const = 0;
 
-	//! Get existing or Create a new initialized component inside the entity.
-	template<typename ComponentType>
-	ComponentType* GetOrCreateComponent();
+	//! Return component with the unique GUID.
+	//! \param guid Identifier for the component.
+	virtual IEntityComponent* GetComponentByGUID(const CryGUID& guid) const = 0;
 
-	//! Get existing or Create a new initialized component using the new operator of the class type, typeid of the component is null guid.
-	template<typename ComponentType>
-	ComponentType* GetOrCreateComponentClass();
+	//! Queries an array of entity components implementing the specified component interface
+	virtual void              QueryComponentsByInterfaceID(const CryInterfaceID& interfaceID, DynArray<IEntityComponent*>& components) const = 0;
+	//! Queries an entity component implementing the specified component interface
+	virtual IEntityComponent* QueryComponentByInterfaceID(const CryInterfaceID& interfaceID) const = 0;
 
-	//! Create a new initialized component using interface type id to create a class using factory component class creation.
-	//! ComponentType must be a valid interface that can be queried with cryidof<ComponentType>()
-	//! Instance of the component is created by the lookup in the class registry for the first class that implements ComponentType interface,
-	//! If such class is not previously registered the assert will be raised and method will fail.
-	template<typename ComponentType>
-	ComponentType* CreateComponent(bool bAllowDuplicate=false);
+#if !defined(SWIG)
+	// Helper to check for reflection in std::enable_if, since this can't be done with a constexpr function
+	template<class ComponentType>
+	struct IsComponentReflected { static constexpr bool value = Schematyc::IsReflectedType<ComponentType>(); };
 
-	//! Create a new initialized component using a new operator of the class type, typeid of the component is null guid.
-	template<typename ComponentClass>
-	ComponentClass* CreateComponentClass(bool bAllowDuplicate=false);
-
-	//! Helper template function to simplify querying components
-	//! ex: auto pScriptProxy = pEntity->GetComponent<IEntityScriptComponent>();
-	template<typename ComponentType>
-	ComponentType* GetComponent() const 
+	// Incorrectly implemented component, either doesn't reflect Schematyc properties or is an incorrectly configured legacy component!
+	template<class ComponentType, typename = void>
+	struct SComponentType
 	{
-		//static_assert(IEntityComponent::IsDeclared<ComponentType>::Check, "Tried to query component  that was not declared with CRY_ENTITY_COMPONENT_INTERFACE, CRY_ENTITY_COMPONENT_INTERFACE_AND_CLASS or CRY_ENTITY_COMPONENT_CLASS!");
+		enum { kFalse = false };
+		static_assert(kFalse, "Component was not reflected!");
+	};
 
-		return static_cast<ComponentType*>(GetComponentByTypeId(cryiidof<ComponentType>())); 
+	// New Schematyc component type
+	template<class ComponentType>
+	struct SComponentType<ComponentType, typename std::enable_if<IsComponentReflected<ComponentType>::value&& std::is_convertible<ComponentType, IEntityComponent>::value>::type>
+	{
+		static const CryGUID& GetGUID()
+		{
+			static const CryGUID s_guid = Schematyc::GetTypeGUID<ComponentType>();
+			return s_guid;
+		}
+
+		template<typename ... TArgs>
+		static ComponentType* CreateInEntity(IEntity* pEntity, TArgs&& ... args)
+		{
+			std::shared_ptr<ComponentType> pComponent = std::make_shared<ComponentType>(std::forward<TArgs>(args) ...);
+			IEntityComponent::SInitParams initParams = IEntityComponent::SInitParams { pEntity, CryGUID::Create(), "", &Schematyc::GetTypeDesc<ComponentType>(), EEntityComponentFlags::None, nullptr, nullptr };
+			if (pEntity->AddComponent(pComponent, &initParams))
+			{
+				static_cast<IEntityComponent*>(pComponent.get())->Initialize();
+
+				return pComponent.get();
+			}
+
+			return nullptr;
+		}
+	};
+
+	// Legacy entity components
+	template<class ComponentType>
+	struct SComponentType<ComponentType, typename std::enable_if<!IsComponentReflected<ComponentType>::value&& std::is_convertible<ComponentType, IEntityComponent>::value>::type>
+	{
+		static const CryGUID& GetGUID()
+		{
+			return cryiidof<ComponentType>();
+		}
+
+		template<typename ... TArgs>
+		static ComponentType* CreateInEntity(IEntity* pEntity, TArgs&& ... args)
+		{
+			std::shared_ptr<ComponentType> pComponent = std::make_shared<ComponentType>(std::forward<TArgs>(args) ...);
+			if (pEntity->AddComponent(pComponent))
+			{
+				static_cast<IEntityComponent*>(pComponent.get())->Initialize();
+
+				return pComponent.get();
+			}
+
+			return nullptr;
+		}
+	};
+
+	//! Creates a new entity component of type ComponentType from a registered factory and adds it to the entity.
+	//! ComponentType must be a valid IEntityComponent implementation.
+	//! \returns A pointer to the newly created component, otherwise nullptr (and likely an assertion).
+	template<typename ComponentType>
+	ComponentType* CreateComponent()
+	{
+		return static_cast<ComponentType*>(CreateComponentByInterfaceID(SComponentType<ComponentType>::GetGUID()));
 	}
 
+	//! Get existing or Create a new initialized component inside the entity.
+	//! \param bCheckHierarchy Whether or not we should traverse the inheritance hierarchy for all components, otherwise performs a (much faster) equality check to see if the implementation is ComponentType
+	template<typename ComponentType>
+	ComponentType* GetOrCreateComponent(bool bCheckHierarchy = true)
+	{
+		if (ComponentType* pComponent = GetComponent<ComponentType>(bCheckHierarchy))
+		{
+			return pComponent;
+		}
+		else
+		{
+			return CreateComponent<ComponentType>();
+		}
+	}
 
-	//! Creates instances of the components contained in the other entity
-	//! Also copies over properties for all the components created.
-	virtual void CloneComponentsFrom(IEntity& otherEntity) = 0;
+	//! Helper template function to simplify finding the first component implementing the specified component type
+	//! This will traverse the inheritance tree, and is therefore slower than GetComponentByImplementation which simply does an equality check.
+	//! ex: auto pScriptProxy = pEntity->GetComponent<IEntityScriptComponent>();
+	//! \param bCheckHierarchy Whether or not we should traverse the inheritance hierarchy for all components, otherwise performs a (much faster) equality check to see if the implementation is ComponentType
+	template<typename ComponentType>
+	ComponentType* GetComponent(bool bCheckHierarchy = true) const
+	{
+		if (bCheckHierarchy)
+		{
+			return static_cast<ComponentType*>(QueryComponentByInterfaceID(SComponentType<ComponentType>::GetGUID()));
+		}
+		else
+		{
+			return static_cast<ComponentType*>(GetComponentByTypeId(SComponentType<ComponentType>::GetGUID()));
+		}
+
+		return nullptr;
+	}
+
+	//! Helper template function to simplify finding all components implementing the specified component type
+	//! \param components DynArray into which any found components will be stored
+	//! \param bCheckHierarchy Whether or not we should traverse the inheritance hierarchy for all components, otherwise performs a (much faster) equality check to see if the implementation is ComponentType
+	template<typename ComponentType>
+	void GetAllComponents(DynArray<ComponentType*>& components, bool bCheckHierarchy = true) const
+	{
+		// Hack to avoid copy of vectors, seeing as the interface querying guarantees that the pointers inside are compatible
+		DynArray<IEntityComponent*>* pRawComponents = (DynArray<IEntityComponent*>*)(void*) & components;
+		if (bCheckHierarchy)
+		{
+			QueryComponentsByInterfaceID(SComponentType<ComponentType>::GetGUID(), *pRawComponents);
+		}
+		else
+		{
+			GetComponentsByTypeId(SComponentType<ComponentType>::GetGUID(), *pRawComponents);
+		}
+
+		// Static cast all types from IEntityComponent* to ComponentType*
+		for (auto it = pRawComponents->begin(); it != pRawComponents->end(); ++it)
+		{
+			*it = static_cast<ComponentType*>((IEntityComponent*)(void*)*it);
+		}
+	}
+
+	//! Create a new initialized component using a new operator of the class type.
+	template<class ComponentType, typename ... TArgs>
+	ComponentType* CreateComponentClass(TArgs&& ... args)
+	{
+		return SComponentType<ComponentType>::CreateInEntity(this, std::forward<TArgs>(args) ...);
+	}
+
+	//! Get existing or Create a new initialized component using the new operator of the class type, typeid of the component is null guid.
+	template<class ComponentType, typename ... TArgs>
+	ComponentType* GetOrCreateComponentClass(TArgs&& ... args)
+	{
+		if (ComponentType* pComponent = GetComponent<ComponentType>())
+		{
+			return pComponent;
+		}
+		else
+		{
+			return CreateComponentClass<ComponentType>(std::forward<TArgs>(args) ...);
+		}
+	}
+
+	//! Removes the first instance of the specified component type found in the entity
+	//! \param checkHierarchy Whether or not we should traverse the inheritance hierarchy for all components, otherwise performs a (much faster) equality check to see if the implementation is ComponentType
+	template<typename ComponentType>
+	void RemoveComponent(bool checkHierarchy = true)
+	{
+		if (ComponentType* pComponent = GetComponent<ComponentType>(checkHierarchy))
+		{
+			RemoveComponent(pComponent);
+		}
+	}
+
+	//! Removes all instances of the specified component type found in the entity
+	//! \param checkHierarchy Whether or not we should traverse the inheritance hierarchy for all components, otherwise performs a (much faster) equality check to see if the implementation is ComponentType
+	template<typename ComponentType>
+	void RemoveAllComponents(bool checkHierarchy = true)
+	{
+		DynArray<ComponentType*> components;
+		GetAllComponents(components, checkHierarchy);
+
+		for(ComponentType* pComponent : components)
+		{
+			RemoveComponent(pComponent);
+		}
+	}
+#endif // !defined(SWIG)
+
+	//! Retrieve array of entity components
+	virtual void GetComponents(DynArray<IEntityComponent*>& components) const = 0;
+
+	//! Retrieve nu number of components in the entity.
+	virtual uint32 GetComponentsCount() const = 0;
+
+	//! Calls a callback on all of the components in the entity
+	//! This is a more efficient way to operate on components then using GetComponents method as it is not require temporary allocations
+	virtual void VisitComponents(const ComponentsVisitor& visitor) = 0;
 
 	//////////////////////////////////////////////////////////////////////////
 	// Physics.
 	//////////////////////////////////////////////////////////////////////////
 	//! Physicalize entity by creating a PhysicalEntity based on a specified physical parameters
+	//! \see IEntity::PhysicalizeSlot
+	//! \par Example
+	//! \include CryEntitySystem/Examples/PhysicalizeEntity.cpp
 	virtual void Physicalize(SEntityPhysicalizeParams& params) = 0;
 
 	//! Enable/Disable physics by flag.
@@ -1079,6 +999,11 @@ public:
 	virtual IPhysicalEntity* GetPhysics() const = 0;
 	IPhysicalEntity*         GetPhysicalEntity() const { return GetPhysics(); };
 
+	//! Adds physical geometry to the physical entity tied to this entity, based on the slot (if present)
+	//! Entity has to have been physicalized with IEntity::Physicalize first.
+	//! \see IEntity::Physicalize
+	//! \par Example
+	//! \include CryEntitySystem/Examples/PhysicalizeEntitySlot.cpp
 	virtual int              PhysicalizeSlot(int slot, SEntityPhysicalizeParams& params) = 0;
 	virtual void             UnphysicalizeSlot(int slot) = 0;
 	virtual void             UpdateSlotPhysics(int slot) = 0;
@@ -1102,8 +1027,8 @@ public:
 
 	//! Enable/disable network serialization of the physics aspect.
 	virtual void PhysicsNetSerializeEnable(bool enable) = 0;
-	virtual void PhysicsNetSerializeTyped(TSerialize &ser, int type, int flags) = 0;
-	virtual void PhysicsNetSerialize(TSerialize &ser) = 0;
+	virtual void PhysicsNetSerializeTyped(TSerialize& ser, int type, int flags) = 0;
+	virtual void PhysicsNetSerialize(TSerialize& ser) = 0;
 	//////////////////////////////////////////////////////////////////////////
 
 	// Custom entity material.
@@ -1140,15 +1065,15 @@ public:
 	virtual bool GetSlotInfo(int nIndex, SEntitySlotInfo& slotInfo) const = 0;
 
 	//! \return World transformation matrix of the object slot.
-	virtual const Matrix34& GetSlotWorldTM(int nSlot) const = 0;
+	virtual Matrix34 GetSlotWorldTM(int nSlot) const = 0;
 
 	//! \return Local transformation matrix relative to host entity transformation matrix of the object slot.
 	//! \param nSlot - Index of required slot.
 	//! \param bRelativeToParent - flag specifying whether the local transformation matrix is relative to the parent slot or the entity.
-	virtual const Matrix34& GetSlotLocalTM(int nSlot, bool bRelativeToParent) const = 0;
+	virtual Matrix34 GetSlotLocalTM(int nSlot, bool bRelativeToParent) const = 0;
 
 	//! Sets local transformation matrix of the object slot.
-	virtual void SetSlotLocalTM(int nSlot, const Matrix34& localTM, int nWhyFlags = 0) = 0;
+	virtual void SetSlotLocalTM(int nSlot, const Matrix34& localTM, EntityTransformationFlagsMask transformReasons = EntityTransformationFlagsMask()) = 0;
 
 	//! Sets camera space position of the object slot.
 	virtual void SetSlotCameraSpacePos(int nSlot, const Vec3& cameraSpacePos) = 0;
@@ -1161,6 +1086,9 @@ public:
 	//! \param nParentIndex Index of the parent slot (Child slot will be attached to this one).
 	//! \param nChildIndex Index of the child slot.
 	virtual bool SetParentSlot(int nParentIndex, int nChildIndex) = 0;
+
+	//! Prepare and update an entity slot to be used with component
+	virtual void UpdateSlotForComponent(IEntityComponent* pComponent, bool callOnTransformChanged = true) = 0;
 
 	//! Assigns a custom material to the specified object slot.
 	//! \param nSlot Index of the slot, if -1 assign this material to all existing slots.
@@ -1209,7 +1137,7 @@ public:
 	//! \param nSlot		Index of a slot, or -1 if a new slot need to be allocated.
 	//! \param pCharacter	A pointer to character instance.
 	//! \return An integer which refers to the slot index which used.
-	virtual int SetCharacter(ICharacterInstance* pCharacter, int nSlot) = 0;
+	virtual int SetCharacter(ICharacterInstance* pCharacter, int nSlot, bool bUpdatePhysics = true) = 0;
 
 	//! Fast method to get the static object at the specified slot.
 	//! \param nSlot Index of the slot; | with ENTITY_SLOT_ACTUAL to disable compound statobj handling.
@@ -1237,19 +1165,23 @@ public:
 	//! \param mass New mass of the slot, negative value to keep the current.
 	//! \return Integer which refer to the slot index which used
 	virtual int SetStatObj(IStatObj* pStatObj, int nSlot, bool bUpdatePhysics, float mass = -1.0f) = 0;
-
+	
 	//! Loads static geometry to the specified slot, or to next available slot.
 	//! If same object is already loaded in this slot, operation is ignored.
 	//! If this slot number is occupied by different kind of object it is overwritten with static object.
 	//! \param nLoadFlags See ELoadFlags
 	//! \see ELoadFlags
 	//! \return Slot id where the object was loaded, or -1 if loading failed.
+	//! \par Example
+	//! \include CryEntitySystem/Examples/LoadGeometry.cpp
 	virtual int LoadGeometry(int nSlot, const char* sFilename, const char* sGeomName = NULL, int nLoadFlags = 0) = 0;
 
 	//! Loads character to the specified slot, or to next available slot.
 	//! If same character is already loaded in this slot, operation is ignored.
 	//! If this slot number is occupied by different kind of object it is overwritten.
 	//! \return Slot id where the object was loaded, or -1 if loading failed.
+	//! \par Example
+	//! \include CryEntitySystem/Examples/LoadCharacter.cpp
 	virtual int LoadCharacter(int nSlot, const char* sFilename, int nLoadFlags = 0) = 0;
 
 #if defined(USE_GEOM_CACHES)
@@ -1257,28 +1189,52 @@ public:
 	//! If same geometry cache is already loaded in this slot, operation is ignored.
 	//! If this slot number is occupied by different kind of object it is overwritten.
 	//! \return Slot id where the object was loaded, or -1 if loading failed.
+	//! \par Example
+	//! \include CryEntitySystem/Examples/LoadGeomCache.cpp
 	virtual int LoadGeomCache(int nSlot, const char* sFilename) = 0;
 #endif
 
+	//! Assigns a 3DEngine render node to the Entity Slot.
+	virtual int SetSlotRenderNode(int nSlot, IRenderNode* pRenderNode) = 0;
+
+	//! Returns a 3DEngine render node assigned to an Entity Slot.
+	virtual IRenderNode* GetSlotRenderNode(int nSlot) = 0;
+
+	//! Returns the network proxy associated with the entity.
+	//! Use the proxy to modify the entity's network behavior.
+	virtual INetEntity* GetNetEntity() = 0;
+
+	//! \details Do not use. Provides a way for CGameObject to replace NetEntity with itself.
+	virtual INetEntity* AssignNetEntityLegacy(INetEntity* ptr) = 0;
+
 	//! Loads a new particle emitter to the specified slot, or to next available slot.
-	//! If same character is already loaded in this slot, operation is ignored.
 	//! If this slot number is occupied by different kind of object it is overwritten.
 	//! \return Slot id where the particle emitter was loaded, or -1 if loading failed.
+	//! \par Example
+	//! \include CryEntitySystem/Examples/LoadParticleEmitter.cpp
 	virtual int LoadParticleEmitter(int nSlot, IParticleEffect* pEffect, SpawnParams const* params = NULL, bool bPrime = false, bool bSerialize = false) = 0;
+	//! Sets an existing particle emitter to the specified slot, or the next available slot.
+	//! If this slot number is occupied by different kind of object it is overwritten.
+	//! \return Slot id where the particle emitter was loaded, or -1 if loading failed.
 	virtual int SetParticleEmitter(int nSlot, IParticleEmitter* pEmitter, bool bSerialize = false) = 0;
 
 	//! Loads a light source to the specified slot, or to next available slot.
 	//! \return Slot id where the light source was loaded, or -1 if loading failed.
-	virtual int LoadLight(int nSlot, CDLight* pLight) = 0;
+	//! \par Example
+	//! \include CryEntitySystem/Examples/LoadLight.cpp
+	virtual int LoadLight(int nSlot, SRenderLight* pLight) = 0;
 
-	virtual int LoadCloud(int nSlot, const char* sFilename) = 0;
-	virtual int SetCloudMovementProperties(int nSlot, const struct SCloudMovementProperties& properties) = 0;
+	//! Loads a fog volume to the specified slot, or to the next available slot.
+	//! \return Slot id where the fog volume was loaded, or -1 if loading failed.
+	//! \par Example
+	//! \include CryEntitySystem/Examples/LoadFogVolume.cpp
+	virtual int LoadFogVolume(int nSlot, const SFogVolumeProperties& properties) = 0;
 
 	//! Invalidates the entity's and all its children's transformation matrices!
-	virtual void InvalidateTM(int nWhyFlags = 0, bool bRecalcPhyBounds = false) = 0;
+	virtual void InvalidateTM(EntityTransformationFlagsMask transformReasons = EntityTransformationFlagsMask(), bool bRecalcPhyBounds = false) = 0;
 
 	//! Easy Script table access.
-	virtual IScriptTable* GetScriptTable() const = 0;
+	CRY_DEPRECATED_ENTTIY_LUA virtual IScriptTable* GetScriptTable() const = 0;
 
 	//! Retrieve 3D Engine render node, used to render this entity for a given slot.
 	//! If nSlot is -1 return first existing render node in slots.
@@ -1286,12 +1242,12 @@ public:
 
 	//! Check if Entity is being Rendered by 3dengine.
 	//! It doesn't necessary mean that it will be visible on screen but only that 3d engine considers it for a rendering now
-	virtual bool         IsRendered() const = 0;
+	virtual bool IsRendered() const = 0;
 
 	//! Render a preview of the Entity
 	//! This method is not used when entity is normally rendered
 	//! But only used for previewing the entity in the Sandbox Editor
-	virtual void         PreviewRender(SPreviewRenderParams &params) = 0;
+	virtual void PreviewRender(SEntityPreviewContext& context) = 0;
 
 	//! Sets common parameters that are applied on all render nodes for this render proxy.
 	virtual void                       SetRenderNodeParams(const IEntity::SRenderNodeParams& params) = 0;
@@ -1303,7 +1259,8 @@ public:
 
 	//! Gets pointer to the first entity link.
 	virtual IEntityLink* GetEntityLinks() = 0;
-	virtual IEntityLink* AddEntityLink(const char* sLinkName, EntityId entityId, EntityGUID entityGuid = 0) = 0;
+	virtual IEntityLink* AddEntityLink(const char* sLinkName, EntityId entityId, EntityGUID entityGuid) = 0;
+	virtual void         RenameEntityLink(IEntityLink* pLink, const char* sNewLinkName) = 0;
 	virtual void         RemoveEntityLink(IEntityLink* pLink) = 0;
 	virtual void         RemoveAllEntityLinks() = 0;
 	//////////////////////////////////////////////////////////////////////////
@@ -1312,13 +1269,7 @@ public:
 	//! \return An attached child entity that corresponds to the physical part partId.
 	virtual IEntity* UnmapAttachedChild(int& partId) = 0;
 
-	//! \return true if entity is completely initialized.
-	virtual bool IsInitialized() const = 0;
-
-	//! Draw a debug view of this entity geometry.
-	virtual void DebugDraw(const struct SGeometryDebugDrawInfo& info) = 0;
-
-	virtual void GetMemoryUsage(ICrySizer* pSizer) const = 0;
+	virtual void     GetMemoryUsage(ICrySizer* pSizer) const = 0;
 
 	//! Increase/or decrease KeepAliveCounter
 	//! Used as a refcount to prevent deletion when deferring some events
@@ -1340,21 +1291,21 @@ public:
 	//! \return the last time (as set by the system timer) when the entity was last seen.
 	virtual float GetLastSeenTime() const = 0;
 
-#ifdef SEG_WORLD
-	//! Draw a debug view of this entity geometry
-	virtual unsigned int GetSwObjDebugFlag() const = 0;
-	virtual void         SetSwObjDebugFlag(unsigned int uiVal) = 0;
-#endif //SEG_WORLD
-
 	//! ObjectID that corresponds to editor base objects. This is used for selection and highlighting
 	//! so it should be set by editor and have a 1-1 correspondence with a baseobject. This is intended as a
 	//! runtime ID and does not need to be serialized
 	virtual uint32 GetEditorObjectID() const = 0;
-	virtual void   SetObjectID(uint32 ID) = 0;
 	virtual void   GetEditorObjectInfo(bool& bSelected, bool& bHighlighted) const = 0;
 	virtual void   SetEditorObjectInfo(bool bSelected, bool bHighlighted) = 0;
 
+	//! Retrieve current simulation mode of the Entity
+	virtual EEntitySimulationMode GetSimulationMode() const = 0;
+
 	// </interfuscator:shuffle>
+
+	//! Schematyc Object associated with this entity
+	virtual Schematyc::IObject* GetSchematycObject() const = 0;
+	virtual void                OnSchematycObjectDestroyed() = 0;
 
 	//////////////////////////////////////////////////////////////////////////
 	// Helper methods
@@ -1366,6 +1317,43 @@ public:
 	void  SetOpacity(float fAmount);
 	float GetOpacity() const { return GetRenderNodeParams().opacity; };
 	//////////////////////////////////////////////////////////////////////////
+
+	//! Returns the forward facing direction of the entity
+	Vec3 GetForwardDir() const
+	{
+		if (!GetScale().IsUnit())
+		{
+			Matrix34 auxTM = GetWorldTM();
+			auxTM.OrthonormalizeFast();
+			return auxTM.GetColumn1();
+		}
+
+		return GetWorldRotation().GetColumn1();
+	}
+	//! Returns the right facing direction of the entity
+	Vec3 GetRightDir() const
+	{
+		if (!GetScale().IsUnit())
+		{
+			Matrix34 auxTM = GetWorldTM();
+			auxTM.OrthonormalizeFast();
+			return auxTM.GetColumn0();
+		}
+
+		return GetWorldRotation().GetColumn0();
+	}
+	//! Returns the up facing direction of the entity
+	Vec3 GetUpDir() const
+	{
+		if (!GetScale().IsUnit())
+		{
+			Matrix34 auxTM = GetWorldTM();
+			auxTM.OrthonormalizeFast();
+			return auxTM.GetColumn2();
+		}
+
+		return GetWorldRotation().GetColumn2();
+	}
 };
 
 typedef IEntity IEntityRender;
@@ -1373,45 +1361,6 @@ typedef IEntity IEntityPhysicalProxy;
 
 template<typename DST, typename SRC>
 DST crycomponent_cast(SRC pComponent) { return static_cast<DST>(pComponent); }
-
-template<typename ComponentType>
-inline ComponentType* IEntity::CreateComponentClass(bool bAllowDuplicate)
-{
-	return static_cast<ComponentType*>(AddComponent(cryiidof<ComponentType>(), std::make_shared<ComponentType>(), bAllowDuplicate));
-}
-
-template<typename ComponentInterfaceType>
-inline ComponentInterfaceType* IEntity::CreateComponent(bool bAllowDuplicate)
-{
-	//static_assert(InterfaceCastSemantics::cryhasiid<ComponentInterfaceType>::Check, "Tried to create component class that was not declared with CRY_ENTITY_COMPONENT_INTERFACE_AND_CLASS, CRY_ENTITY_COMPONENT_CLASS or CRY_ENTITY_COMPONENT_INTERFACE in a public scope!");
-
-	ComponentInterfaceType* pReturn = static_cast<ComponentInterfaceType*>(AddComponent(cryiidof<ComponentInterfaceType>(), nullptr, bAllowDuplicate));
-	assert(pReturn); // Must return a valid component interface
-
-	return pReturn;
-}
-
-//////////////////////////////////////////////////////////////////////////
-template<typename ComponentType>
-inline ComponentType* IEntity::GetOrCreateComponent()
-{
-	auto component = GetComponent<ComponentType>();
-	if (component)
-		return component;
-	else
-		return CreateComponent<ComponentType>();
-}
-
-//////////////////////////////////////////////////////////////////////////
-template<typename ComponentType>
-inline ComponentType* IEntity::GetOrCreateComponentClass()
-{
-	auto component = GetComponent<ComponentType>();
-	if (component)
-		return component;
-	else
-		return CreateComponentClass<ComponentType>();
-}
 
 // Helper methods
 //! Set the viewDistRatio on the render node.
@@ -1442,4 +1391,120 @@ inline void IEntity::SetOpacity(float fAmount)
 	SetRenderNodeParams(params);
 }
 
-ILINE EntityId IEntityComponent::GetEntityId() const { return m_pEntity->GetId(); }
+//////////////////////////////////////////////////////////////////////////
+// IEntityComponent methods that depend on the IEntity interface
+//////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////
+ILINE EntityId IEntityComponent::GetEntityId() const
+{
+	return m_pEntity->GetId();
+}
+
+//////////////////////////////////////////////////////////////////////////
+ILINE int IEntityComponent::GetOrMakeEntitySlotId()
+{
+	if (m_entitySlotId == EmptySlotId)
+	{
+		GetEntity()->UpdateSlotForComponent(this);
+	}
+	return m_entitySlotId;
+}
+
+//////////////////////////////////////////////////////////////////////////
+ILINE void IEntityComponent::NetMarkAspectsDirty(const NetworkAspectType aspects)
+{
+	if (INetEntity* pNetEntity = GetEntity()->GetNetEntity())
+	{
+		pNetEntity->MarkAspectsDirty(aspects);
+	}
+}
+//////////////////////////////////////////////////////////////////////////
+ILINE void IEntityComponent::FreeEntitySlot()
+{
+	if (m_entitySlotId != EmptySlotId)
+	{
+		GetEntity()->FreeSlot(m_entitySlotId);
+		m_entitySlotId = EmptySlotId;
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+inline EEntitySimulationMode IEntityComponent::GetEntitySimulationMode() const
+{
+	return GetEntity()->GetSimulationMode();
+}
+
+//////////////////////////////////////////////////////////////////////////
+inline void IEntityComponent::SetTransformMatrix(const Matrix34& transform)
+{
+	if (m_pTransform == nullptr)
+	{
+		m_componentFlags.Add(EEntityComponentFlags::Transform);
+		m_pTransform = std::make_shared<CryTransform::CTransform>();
+	}
+
+	*m_pTransform = CryTransform::CTransform(transform);
+	GetEntity()->UpdateSlotForComponent(this);
+}
+
+inline void IEntityComponent::SetTransformMatrix(const CryTransform::CTransformPtr& transform)
+{
+	if (m_pTransform == nullptr)
+	{
+		m_componentFlags.Add(EEntityComponentFlags::Transform);
+		m_pTransform = std::make_shared<CryTransform::CTransform>();
+	}
+
+	*m_pTransform = *transform;
+	GetEntity()->UpdateSlotForComponent(this);
+}
+
+//////////////////////////////////////////////////////////////////////////
+inline Matrix34 IEntityComponent::GetWorldTransformMatrix() const
+{
+	return m_pEntity->GetWorldTM() * GetTransformMatrix();
+}
+
+//////////////////////////////////////////////////////////////////////////
+//! Utility namespace used by physics.
+namespace EntityPhysicsUtils
+{
+#if !defined(SWIG)
+enum EPartIds
+{
+	PARTID_MAX_SLOTS_log2  = 9,
+	PARTID_MAX_SLOTS       = 1 << PARTID_MAX_SLOTS_log2, //!< The maximum amount of slots in entity/skeleton/compound statobj.
+	PARTID_MAX_ATTACHMENTS = 32,                         //!< The maximum amount of physicalized entity attachments(must be a power of 2 and <32).
+	PARTID_LINKED          = 1 << 30,                    //!< Marks partids that belong to linked entities.
+};
+#endif
+
+//! Phys part id format:.
+//! Bit 31 = 0 (since partids can't be negative).
+//! Bit 30 - 1 if part belongs to an attached entity.
+//! Bits 29,28 - count of nested levels (numLevels) - 1, i.e. compound statobj within a cga within an entity.
+//! Lowest PARTID_MAX_SLOTS_log2*numLevels bits - indices of slots at the corresponding level.
+//! Bits directly above those - attachment id if bit 30 is set.
+inline int ParsePartId(int partId, int& nLevels, int& nSlotBits)
+{
+	nSlotBits = (nLevels = (partId >> 28 & 3) + 1) * PARTID_MAX_SLOTS_log2;
+	return partId >> 30 & 1;
+}
+
+//! Allocate next level of slots.
+inline int AllocPartIdRange(int partId, int nSlots)
+{
+	int nLevels, nBits;
+	ParsePartId(partId, nLevels, nBits);
+	return partId & 1 << 30 | nLevels << 28 | (partId & (1 << 28) - 1) << PARTID_MAX_SLOTS_log2;
+}
+
+//! Extract slot index from partid; 0 = top level.
+inline int GetSlotIdx(int partId, int level = 0)
+{
+	int nLevels, nBits;
+	ParsePartId(partId, nLevels, nBits);
+	return partId >> (nLevels - 1 - level) * PARTID_MAX_SLOTS_log2 & PARTID_MAX_SLOTS - 1;
+}
+}

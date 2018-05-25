@@ -1,10 +1,7 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 using System;
 
-/// <summary>
-/// Assembly of useful supportive classes and functions.
-/// </summary>
 namespace CryEngine
 {
 	/// <summary>

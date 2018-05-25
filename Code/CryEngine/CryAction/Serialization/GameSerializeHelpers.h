@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __GAME_SERIALIZE_HELPERS_H__
 #define __GAME_SERIALIZE_HELPERS_H__
@@ -69,7 +69,6 @@ struct SBasicEntityData
 	enum ExtraFlags
 	{
 		FLAG_HIDDEN             = BIT(0),
-		FLAG_ACTIVE             = BIT(1),
 		FLAG_INVISIBLE          = BIT(2),
 		FLAG_IGNORE_POS_ROT_SCL = BIT(3),
 		FLAG_PHYSICS_ENABLED    = BIT(4)
@@ -81,12 +80,10 @@ struct SBasicEntityData
 		rot(1.0f, 0.0f, 0.0f, 0.0f),
 		scale(1.0f, 1.0f, 1.0f),
 		flags(0),
-		updatePolicy(0),
 		iPhysType(0),
 		parentEntity(0),
 		aiObjectId(0),
 		isHidden(false),
-		isActive(false),
 		isInvisible(false),
 		ignorePosRotScl(false),
 		isPhysicsEnabled(false)
@@ -100,12 +97,10 @@ struct SBasicEntityData
 		if (ser.IsWriting())
 		{
 			if (isHidden)          flags2 |= FLAG_HIDDEN;
-			if (isActive)          flags2 |= FLAG_ACTIVE;
 			if (isInvisible)       flags2 |= FLAG_INVISIBLE;
 			if (ignorePosRotScl)   flags2 |= FLAG_IGNORE_POS_ROT_SCL;
 			if (isPhysicsEnabled)  flags2 |= FLAG_PHYSICS_ENABLED;
 
-			flags2 |= (updatePolicy & 0xF) << (32 - 4);
 			flags2 |= (iPhysType & 0xF) << (32 - 8);
 		}
 
@@ -119,12 +114,10 @@ struct SBasicEntityData
 		if (ser.IsReading())
 		{
 			isHidden = (flags2 & FLAG_HIDDEN) != 0;
-			isActive = (flags2 & FLAG_ACTIVE) != 0;
 			isInvisible = (flags2 & FLAG_INVISIBLE) != 0;
 			ignorePosRotScl = (flags2 & FLAG_IGNORE_POS_ROT_SCL) != 0;
 			isPhysicsEnabled = (flags2 & FLAG_PHYSICS_ENABLED) != 0;
 			iPhysType = (flags2 >> (32 - 8)) & 0xF;
-			updatePolicy = (flags2 >> (32 - 4)) & 0xF;
 		}
 
 		if (!ignorePosRotScl)
@@ -183,13 +176,11 @@ struct SBasicEntityData
 	Quat        rot;
 	Vec3        scale;
 	uint32      flags;
-	uint32      updatePolicy;
 	EntityId    parentEntity;
 	tAIObjectID aiObjectId;
 	int         iPhysType;
 
 	bool        isHidden         : 1;
-	bool        isActive         : 1;
 	bool        isInvisible      : 1;
 	bool        ignorePosRotScl  : 1;
 	bool        isPhysicsEnabled : 1;

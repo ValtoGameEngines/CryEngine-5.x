@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -8,7 +8,6 @@
 class CAutoExposureStage : public CGraphicsPipelineStage
 {
 public:
-	void Init();
 	void Execute();
 
 private:
@@ -19,7 +18,4 @@ private:
 	CFullscreenPass m_passLuminanceInitial;
 	CFullscreenPass m_passLuminanceIteration[NUM_HDR_TONEMAP_TEXTURES];
 	CFullscreenPass m_passAutoExposure;
-
-	int             m_samplerPoint;
-	int             m_samplerLinear;
 };

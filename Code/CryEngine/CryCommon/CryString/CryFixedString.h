@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -13,6 +13,7 @@
 #include <wctype.h>
 #include <type_traits>  // std::is_same<>
 
+//! \cond INTERNAL
 #ifndef CRY_STRING_DEBUG
 	#define CRY_STRING_DEBUG(s)
 #endif
@@ -224,6 +225,7 @@ public:
 		wmemset(dest, ch, count);
 	}
 };
+//! \endcond
 
 template<class T, size_t S>
 class CryStackStringT : public CharTraits<T>
@@ -244,7 +246,7 @@ public:
 	typedef const_pointer         const_iterator;
 	static const size_type MAX_SIZE = S;
 
-	enum _npos_type
+	enum _npos_type : size_t
 	{
 		npos = (size_type) ~0
 	};
@@ -1080,12 +1082,20 @@ template<class T, size_t S> inline bool operator==(const CryStackStringT<T, S>& 
 { return s1.compare(s2) == 0; }
 template<class T, size_t S> inline bool operator==(const typename CryStackStringT<T, S>::value_type* s1, const CryStackStringT<T, S>& s2)
 { return s2.compare(s1) == 0; }
+template<class T, size_t S> inline bool operator==(const CryStackStringT<T, S>& s1, const CryStringT<T>& s2)
+{ return s1 == s2.c_str(); }
+template<class T, size_t S> inline bool operator==(const CryStringT<T>& s1, const CryStackStringT<T, S>& s2)
+{ return s1.c_str() == s2; }
 template<class T, size_t S> inline bool operator!=(const CryStackStringT<T, S>& s1, const CryStackStringT<T, S>& s2)
 { return s1.compare(s2) != 0; }
 template<class T, size_t S> inline bool operator!=(const CryStackStringT<T, S>& s1, const typename CryStackStringT<T, S>::value_type* s2)
 { return s1.compare(s2) != 0; }
 template<class T, size_t S> inline bool operator!=(const typename CryStackStringT<T, S>::value_type* s1, const CryStackStringT<T, S>& s2)
 { return s2.compare(s1) != 0; }
+template<class T, size_t S> inline bool operator!=(const CryStackStringT<T, S>& s1, const CryStringT<T>& s2)
+{ return s1 != s2.c_str(); }
+template<class T, size_t S> inline bool operator!=(const CryStringT<T>& s1, const CryStackStringT<T, S>& s2)
+{ return s1.c_str() != s2; }
 template<class T, size_t S> inline bool operator<(const CryStackStringT<T, S>& s1, const CryStackStringT<T, S>& s2)
 { return s1.compare(s2) < 0; }
 template<class T, size_t S> inline bool operator<(const CryStackStringT<T, S>& s1, const typename CryStackStringT<T, S>::value_type* s2)
@@ -1268,8 +1278,6 @@ inline typename CryStackStringT<T, S>::size_type CryStackStringT<T, S >::rfind(v
 	}
 	else
 	{
-		if (pos == npos)
-			pos = length();
 		if (pos > length())
 		{
 			return npos;
@@ -1954,6 +1962,7 @@ public:
 	void GetMemoryUsage(class ICrySizer* pSizer) const {}
 };
 
+//! \cond INTERNAL
 //! Template specialization for a fixed list of CryFixedString.
 template<size_t maxElements, size_t stringSize>
 class CCryFixedStringListT
@@ -1995,6 +2004,7 @@ private:
 	CryFixedStringT<stringSize> m_data[NUM_MAX_ELEMENTS];
 	int32                       m_currentAmount;
 };
+// \endcond
 
 //! A template specialization for wchar_t.
 template<size_t S> class CryFixedWStringT : public CryStackStringT<wchar_t, S>

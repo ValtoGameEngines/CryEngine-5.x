@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*=============================================================================
    ShaderFXParseBin.cpp : implementation of the Shaders parser using FX language.
@@ -169,7 +169,7 @@ SShaderBin* CShaderManBin::SaveBinShader(
 				++buf;
 			com[n] = 0;
 
-			fpStripExtension(com, com);
+			PathUtil::RemoveExtension(com);
 
 			SShaderBin* pBIncl = GetBinShader(com, true, 0);
 			//
@@ -1004,7 +1004,7 @@ SShaderBin* CShaderManBin::GetBinShader(const char* szName, bool bInclude, uint3
 	const char *szExt = bInclude ? "cfi" : "cfx";
 	// First look for source in Game folder
 	nameFile.Format("%sCryFX/%s.%s", gRenDev->m_cEF.m_ShadersGamePath.c_str(), szName, szExt);
-#if !defined(_RELEASE) && !defined(IS_EAAS)
+#if !defined(_RELEASE)
 	{
 		fpSrc = gEnv->pCryPak->FOpen(nameFile.c_str(), "rb");
 		nSourceCRC32 = fpSrc ? gEnv->pCryPak->ComputeCRC(nameFile) : 0;
@@ -1013,8 +1013,8 @@ SShaderBin* CShaderManBin::GetBinShader(const char* szName, bool bInclude, uint3
 	if (!fpSrc)
 	{
 		// Second look in Engine folder
-		nameFile.Format("%sCryFX/%s.%s", gRenDev->m_cEF.m_ShadersPath, szName, szExt);
-#if !defined(_RELEASE) && !defined(IS_EAAS)
+		nameFile.Format("%s/%sCryFX/%s.%s", "%ENGINE%", gRenDev->m_cEF.m_ShadersPath, szName, szExt);
+#if !defined(_RELEASE)
 		{
 			fpSrc = gEnv->pCryPak->FOpen(nameFile.c_str(), "rb");
 			nSourceCRC32 = fpSrc ? gEnv->pCryPak->ComputeCRC(nameFile) : 0;
@@ -1023,7 +1023,7 @@ SShaderBin* CShaderManBin::GetBinShader(const char* szName, bool bInclude, uint3
 	}
 	//char szPath[1024];
 	//getcwd(szPath, 1024);
-	nameBin.Format("%s%s.%s", m_pCEF->m_ShadersCache, szName, bInclude ? "cfib" : "cfxb");
+	nameBin.Format("%s/%s%s.%s", "%ENGINE%", m_pCEF->m_ShadersCache, szName, bInclude ? "cfib" : "cfxb");
 	FILE* fpDst = NULL;
 	int i = 0, n = 2;
 
@@ -1031,7 +1031,7 @@ SShaderBin* CShaderManBin::GetBinShader(const char* szName, bool bInclude, uint3
 	if (CRenderer::CV_r_shadersediting)
 		i = 1;
 
-	string szDst = m_pCEF->m_szUserPath + nameBin;
+	string szDst = m_pCEF->m_szUserPath + (nameBin.c_str() + 9); // skip '%ENGINE%/'
 	byte bValid = 0;
 	float fVersion = (float)FX_CACHE_VER;
 	for (; i < n; i++)
@@ -1065,7 +1065,7 @@ SShaderBin* CShaderManBin::GetBinShader(const char* szName, bool bInclude, uint3
 			if (CParserBin::m_bEndians)
 				SwapEndian(Header[i], eBigEndian);
 
-#if !defined(_RELEASE) && !defined(IS_EAAS)
+#if !defined(_RELEASE)
 			// check source crc changes
 			if (nSourceCRC32 && nSourceCRC32 != Header[i].m_nSourceCRC32)
 			{
@@ -1087,7 +1087,7 @@ SShaderBin* CShaderManBin::GetBinShader(const char* szName, bool bInclude, uint3
 	}
 	if (i == n)
 	{
-#if !defined(_RELEASE) && !defined(CONSOLE_CONST_CVAR_MODE) && !defined(IS_EAAS)
+#if !defined(_RELEASE) && !defined(CONSOLE_CONST_CVAR_MODE)
 		{
 			char acTemp[512];
 			if (bValid & 1)
@@ -1105,15 +1105,15 @@ SShaderBin* CShaderManBin::GetBinShader(const char* szName, bool bInclude, uint3
 
 			if (bValid & 2)
 			{
-				cry_sprintf(acTemp, "WARNING: Bin FXShader USER '%s' source crc mismatch", nameBin.c_str());
+				cry_sprintf(acTemp, "WARNING: Bin FXShader USER '%s' source crc mismatch", szDst.c_str());
 			}
 			if (bValid & 8)
 			{
-				cry_sprintf(acTemp, "WARNING: Bin FXShader USER '%s' version mismatch (Cache: %u.%u, Expected: %.1f)", nameBin.c_str(), Header[1].m_VersionHigh, Header[1].m_VersionLow, fVersion);
+				cry_sprintf(acTemp, "WARNING: Bin FXShader USER '%s' version mismatch (Cache: %u.%u, Expected: %.1f)", szDst.c_str(), Header[1].m_VersionHigh, Header[1].m_VersionLow, fVersion);
 			}
 			if (bValid & 0x20)
 			{
-				cry_sprintf(acTemp, "WARNING: Bin FXShader USER '%s' CRC mismatch", nameBin.c_str());
+				cry_sprintf(acTemp, "WARNING: Bin FXShader USER '%s' CRC mismatch", szDst.c_str());
 			}
 
 			if (bValid)
@@ -1145,27 +1145,9 @@ SShaderBin* CShaderManBin::GetBinShader(const char* szName, bool bInclude, uint3
 
 						if (bShowMessageBox)
 						{
-							IPlatformOS::EMsgBoxResult result;
-
-							IPlatformOS* pOS = gEnv->pSystem->GetPlatformOS();
-							if (pOS)
-							{
-								result = pOS->DebugMessageBox(acTemp, "Invalid ShaderCache");
-
-								if (result == IPlatformOS::eMsgBox_Cancel)
-								{
-									CryDebugBreak();
-								}
-								else
-								{
-									bShowMessageBox = false;
-									Sleep(33);
-								}
-							}
-							else
-							{
-								Warning("Invalid ShaderCache");
-							}
+							CryMessageBox(acTemp, "Invalid ShaderCache", eMB_Error);
+							bShowMessageBox = false;
+							CrySleep(33);
 						}
 					}
 				}
@@ -1322,6 +1304,7 @@ bool CShaderManBin::ParseBinFX_Global_Annotations(CParserBin& Parser, SParserFra
 	FX_TOKEN(AlphaBlendShadows)
 	FX_TOKEN(EyeOverlay)
 	FX_TOKEN(WrinkleBlending)
+	FX_TOKEN(Billboard)
 	FX_END_TOKENS
 
 	int nIndex;
@@ -1468,9 +1451,11 @@ bool CShaderManBin::ParseBinFX_Global_Annotations(CParserBin& Parser, SParserFra
 			ef->m_Flags2 |= EF2_FORCE_DRAWAFTERWATER;
 			break;
 		case eT_DepthFixup:
+#if !CRY_PLATFORM_ORBIS
 			if (!ef)
 				break;
 			ef->m_Flags2 |= EF2_DEPTH_FIXUP;
+#endif
 			break;
 		case eT_SingleLightPass:
 			if (!ef)
@@ -1529,6 +1514,12 @@ bool CShaderManBin::ParseBinFX_Global_Annotations(CParserBin& Parser, SParserFra
 			ef->m_Flags2 |= EF2_VERTEXCOLORS;
 			break;
 
+		case eT_Billboard:
+			if (!ef)
+				break;
+			ef->m_Flags2 |= EF2_BILLBOARD;
+			break;
+
 		case eT_WrinkleBlending:
 			if (!ef)
 				break;
@@ -1566,6 +1557,8 @@ bool CShaderManBin::ParseBinFX_Global_Annotations(CParserBin& Parser, SParserFra
 				}
 				else if (eT == eT_OceanShore)
 					ef->m_eSHDType = eSHDT_OceanShore;
+				else if (eT == eT_DebugHelper)
+					ef->m_eSHDType = eSHDT_DebugHelper;
 				else
 				{
 					Warning("Unknown shader draw type '%s'", Parser.GetString(eT));
@@ -1622,11 +1615,7 @@ bool CShaderManBin::ParseBinFX_Global_Annotations(CParserBin& Parser, SParserFra
 				if (!ef)
 					break;
 				eT = Parser.GetToken(Parser.m_Data);
-				if (eT == eT_GenerateSprites)
-					ef->m_Flags2 |= EF2_PREPR_GENSPRITES;
-				else if (eT == eT_GenerateClouds)
-					ef->m_Flags2 |= EF2_PREPR_GENCLOUDS;
-				else if (eT == eT_ScanWater)
+				if (eT == eT_ScanWater)
 					ef->m_Flags2 |= EF2_PREPR_SCANWATER;
 				else
 				{
@@ -1696,22 +1685,23 @@ bool CShaderManBin::ParseBinFX_Global(CParserBin& Parser, SParserFrame& Frame, b
 	return bRes;
 }
 
-static int sGetTAddress(uint32 nToken)
+static ESamplerAddressMode sGetTAddress(uint32 nToken)
 {
 	switch (nToken)
 	{
 	case eT_Clamp:
-		return TADDR_CLAMP;
+		return eSamplerAddressMode_Clamp;
 	case eT_Border:
-		return TADDR_BORDER;
+		return eSamplerAddressMode_Border;
 	case eT_Wrap:
-		return TADDR_WRAP;
+		return eSamplerAddressMode_Wrap;
 	case eT_Mirror:
-		return TADDR_MIRROR;
+		return eSamplerAddressMode_Mirror;
 	default:
 		assert(0);
 	}
-	return -1;
+
+	return eSamplerAddressMode_Clamp;
 }
 
 void STexSamplerFX::PostLoad()
@@ -1723,10 +1713,10 @@ void STexSamplerFX::PostLoad()
 	{
 		if (pRt->m_nIDInPool >= 0)
 		{
-			if ((int)CTexture::s_CustomRT_2D.Num() <= pRt->m_nIDInPool)
-				CTexture::s_CustomRT_2D.Expand(pRt->m_nIDInPool + 1);
+			if ((int)CRendererResources::s_CustomRT_2D.Num() <= pRt->m_nIDInPool)
+				CRendererResources::s_CustomRT_2D.Expand(pRt->m_nIDInPool + 1);
 		}
-		pRt->m_pTarget[0] = CTexture::s_ptexRT_2D;
+		pRt->m_pTarget = CRendererResources::s_ptexRT_2D;
 	}
 }
 
@@ -1817,7 +1807,7 @@ bool CShaderManBin::ParseBinFX_Sampler_Annotations_Script(CParserBin& Parser, SP
 			{
 				eT = Parser.GetToken(Parser.m_Data);
 				if (eT == eT_CurObject)
-					pRt->m_nFlags |= FRT_RENDTYPE_CUROBJECT;
+					pRt->m_nFlags |= 0;
 				else if (eT == eT_CurScene)
 					pRt->m_nFlags |= FRT_RENDTYPE_CURSCENE;
 				else if (eT == eT_RecursiveScene)
@@ -2004,15 +1994,15 @@ bool CShaderManBin::ParseBinFX_Sampler(CParserBin& Parser, SParserFrame& Frame, 
 	FX_END_TOKENS
 
 	STexSamplerFX samp;
-	STexState ST;
+	SSamplerState ST;
 	DWORD dwBorderColor = 0;
 	uint32 nFilter = 0;
 	uint32 nFiltMin = 0;
 	uint32 nFiltMip = 0;
 	uint32 nFiltMag = 0;
-	uint32 nAddressU = 0;
-	uint32 nAddressV = 0;
-	uint32 nAddressW = 0;
+	ESamplerAddressMode nAddressU = eSamplerAddressMode_Wrap;
+	ESamplerAddressMode nAddressV = eSamplerAddressMode_Wrap;
+	ESamplerAddressMode nAddressW = eSamplerAddressMode_Wrap;
 	uint32 nAnisotropyLevel = 0;
 
 	int nIndex = -1;
@@ -2166,7 +2156,7 @@ bool CShaderManBin::ParseBinFX_Sampler(CParserBin& Parser, SParserFrame& Frame, 
 
 	if (!gcpRendD3D->IsShaderCacheGenMode())
 	{
-		samp.m_nTexState = CTexture::GetTexState(ST);
+		samp.m_nTexState = CDeviceObjectFactory::GetOrCreateSamplerStateHandle(ST);
 	}
 	samp.m_nSlotId = m_pCEF->mfCheckTextureSlotName(samp.m_szTexture);
 
@@ -2235,15 +2225,15 @@ bool CShaderManBin::ParseBinFX_Sampler(CParserBin& Parser, SParserFrame& Frame, 
 	FX_TOKEN(Global)
 	FX_END_TOKENS
 
-	STexState ST;
+	SSamplerState ST;
 	DWORD dwBorderColor = 0;
 	uint32 nFilter = 0;
 	uint32 nFiltMin = 0;
 	uint32 nFiltMip = 0;
 	uint32 nFiltMag = 0;
-	uint32 nAddressU = 0;
-	uint32 nAddressV = 0;
-	uint32 nAddressW = 0;
+	ESamplerAddressMode nAddressU = eSamplerAddressMode_Wrap;
+	ESamplerAddressMode nAddressV = eSamplerAddressMode_Wrap;
+	ESamplerAddressMode nAddressW = eSamplerAddressMode_Wrap;
 	uint32 nAnisotropyLevel = 0;
 
 	int nIndex = -1;
@@ -2373,7 +2363,7 @@ bool CShaderManBin::ParseBinFX_Sampler(CParserBin& Parser, SParserFrame& Frame, 
 
 		if (!gcpRendD3D->IsShaderCacheGenMode())
 		{
-			Sampl.m_nTexState = CTexture::GetTexState(ST);
+			Sampl.m_nTexState = CDeviceObjectFactory::GetOrCreateSamplerStateHandle(ST);
 		}
 	}
 
@@ -2506,7 +2496,7 @@ void CShaderManBin::AddAffectedParameter(CParserBin& Parser, std::vector<SFXPara
 		AffectedParams.push_back(*pParam);
 	else
 	{
-		if (CParserBin::m_nPlatform == SF_D3D11 || CParserBin::m_nPlatform == SF_DURANGO || CParserBin::m_nPlatform == SF_ORBIS || CParserBin::m_nPlatform == SF_GL4 || CParserBin::m_nPlatform == SF_GLES3)
+		if (CParserBin::m_nPlatform & (SF_D3D11 | SF_DURANGO | SF_ORBIS | SF_GL4 | SF_GLES3 | SF_VULKAN))
 		{
 			assert(eSHClass < eHWSC_Num);
 			if (((nFlags & PF_TWEAKABLE_MASK) || pParam->m_Values.c_str()[0] == '(') && pParam->m_nRegister[eSHClass] >= 0 && pParam->m_nRegister[eSHClass] < 1000)
@@ -2899,6 +2889,8 @@ bool CShaderManBin::ParseBinFX_Technique_Pass_PackParameters(CParserBin& Parser,
 	// Replace new parameters in shader tokens
 	for (uint32 n = 0; n < AffectedFunc.size(); n++)
 	{
+		CRY_ASSERT_MESSAGE(AffectedFunc[n] < Parser.m_CodeFragments.size(), "function index is larger than number of CodeFragments!");
+
 		SCodeFragment* st = &Parser.m_CodeFragments[AffectedFunc[n]];
 		//const char *szName = Parser.GetString(st->m_dwName);
 
@@ -3173,6 +3165,8 @@ bool CShaderManBin::ParseBinFX_Technique_Pass_GenerateShaderData(CParserBin& Par
 	nAffectMask = 0;
 	for (i = 0; i < AffectedFragments.size(); i++)
 	{
+		CRY_ASSERT_MESSAGE(AffectedFragments[i] < Parser.m_CodeFragments.size(), "fragment index is larger than number of CodeFragments!");
+
 		SCodeFragment* s = &Parser.m_CodeFragments[AffectedFragments[i]];
 		if (s->m_eType != eFT_Function && s->m_eType != eFT_Structure && s->m_eType != eFT_ConstBuffer && s->m_eType != eFT_StorageClass)
 			continue;
@@ -3418,7 +3412,7 @@ bool CShaderManBin::ParseBinFX_Technique_Pass_GenerateShaderData(CParserBin& Par
 			Parser.CopyTokens(cf, SHData, Replaces, NewTokens, h);
 			if (cf->m_eType == eFT_Sampler)
 			{
-				if (CParserBin::m_nPlatform == SF_D3D11 || CParserBin::m_nPlatform == SF_DURANGO || CParserBin::m_nPlatform == SF_GL4 || CParserBin::m_nPlatform == SF_GLES3)
+				if (CParserBin::m_nPlatform & (SF_D3D11 | SF_DURANGO | SF_GL4 | SF_GLES3 | SF_VULKAN))
 				{
 					int nT = Parser.m_Tokens[cf->m_nLastToken - 1];
 					//assert(nT >= eT_s0 && nT <= eT_s15);
@@ -3483,7 +3477,7 @@ bool CShaderManBin::ParseBinFX_Technique_Pass_LoadShader(CParserBin& Parser, FXM
 	PodArray<uint32> SHDataBuffer(SHDATA_BUFFER_SIZE);
 	const char* szName = Parser.GetString(dwSHName);
 	bRes &= ParseBinFX_Technique_Pass_GenerateShaderData(Parser, Macros, FXParams, dwSHName, eSHClass, nGenMask, dwSHType, SHDataBuffer, pShTech);
-#if defined(_DEBUG) && !defined(IS_EAAS)
+#if defined(_DEBUG)
 	if (SHDataBuffer.size() > SHDATA_BUFFER_SIZE)
 	{
 		CryLogAlways("CShaderManBin::ParseBinFX_Technique_Pass_LoadShader: SHDataBuffer has been exceeded (buffer=%d, count=%u). Adjust buffer size to remove unnecessary allocs", SHDATA_BUFFER_SIZE, SHDataBuffer.Size());
@@ -3495,9 +3489,7 @@ bool CShaderManBin::ParseBinFX_Technique_Pass_LoadShader(CParserBin& Parser, FXM
 	CHWShader* pSH = NULL;
 	bool bValidShader = false;
 
-	CShader* efSave = gRenDev->m_RP.m_pShader;
-	gRenDev->m_RP.m_pShader = Parser.m_pCurShader;
-	assert(gRenDev->m_RP.m_pShader != 0);
+	assert(Parser.m_pCurShader != nullptr);
 	if (bRes && (!CParserBin::m_bParseFX || !SHData.empty() || szName[0] == '$'))
 	{
 		char str[1024];
@@ -3528,8 +3520,6 @@ bool CShaderManBin::ParseBinFX_Technique_Pass_LoadShader(CParserBin& Parser, FXM
 		else
 			CryLog("Unsupported/unrecognised shader: %s[%d]", pSH->m_Name.c_str(), eSHClass);
 	}
-
-	gRenDev->m_RP.m_pShader = efSave;
 
 	return bRes;
 }
@@ -3644,29 +3634,29 @@ bool CShaderManBin::ParseBinFX_Technique_Pass(CParserBin& Parser, SParserFrame& 
 			break;
 		case eT_ColorWriteEnable:
 			{
-				if (ColorWriteMask == 0xff)
-					ColorWriteMask = 0;
-				uint32 nCur = Parser.m_Data.m_nFirstToken;
-				while (nCur <= Parser.m_Data.m_nLastToken)
+			if (ColorWriteMask == 0xff)
+				ColorWriteMask = 0;
+			uint32 nCur = Parser.m_Data.m_nFirstToken;
+			while (nCur <= Parser.m_Data.m_nLastToken)
+			{
+				uint32 nT = Parser.m_Tokens[nCur++];
+				if (nT == eT_or)
+					continue;
+				if (nT == eT_0)
+					ColorWriteMask |= 0;
+				else if (nT == eT_RED)
+					ColorWriteMask |= 1;
+				else if (nT == eT_GREEN)
+					ColorWriteMask |= 2;
+				else if (nT == eT_BLUE)
+					ColorWriteMask |= 4;
+				else if (nT == eT_ALPHA)
+					ColorWriteMask |= 8;
+				else
 				{
-					uint32 nT = Parser.m_Tokens[nCur++];
-					if (nT == eT_or)
-						continue;
-					if (nT == eT_0)
-						ColorWriteMask |= 0;
-					else if (nT == eT_RED)
-						ColorWriteMask |= 1;
-					else if (nT == eT_GREEN)
-						ColorWriteMask |= 2;
-					else if (nT == eT_BLUE)
-						ColorWriteMask |= 4;
-					else if (nT == eT_ALPHA)
-						ColorWriteMask |= 8;
-					else
-					{
-						Warning("unknown WriteMask parameter '%s' (Skipping)\n", Parser.GetString(eT));
-					}
+					Warning("unknown WriteMask parameter '%s' (Skipping)\n", Parser.GetString(eT));
 				}
+			}
 			}
 			break;
 		case eT_ZFunc:
@@ -3707,10 +3697,19 @@ bool CShaderManBin::ParseBinFX_Technique_Pass(CParserBin& Parser, SParserFrame& 
 	}
 	if (ColorWriteMask != 0xff)
 	{
-		for (int i = 0; i < 4; i++)
+		ColorWriteMask = (~ColorWriteMask) & 0xf;
+		auto it = std::find_if(AvailableColorMasks.cbegin(), AvailableColorMasks.cend(), [ColorWriteMask](const uint32 &bitmask)
 		{
-			if (!(ColorWriteMask & (1 << i)))
-				State |= GS_NOCOLMASK_R << i;
+			return (ColorWriteMask == bitmask);
+		});
+
+		if (it != AvailableColorMasks.cend())
+		{
+			State |= (std::distance(AvailableColorMasks.cbegin(), it) << GS_COLMASK_SHIFT);
+		}
+		else
+		{
+			iLog->LogError("Unsupported/unrecognized ColorWriteMask in shader: %s", Parser.m_pCurShader->m_NameShader.c_str());
 		}
 	}
 
@@ -3957,7 +3956,6 @@ bool CShaderManBin::ParseBinFX_Technique_Annotations_String(CParserBin& Parser, 
 	FX_TOKEN(TechniqueCustomRender)
 	FX_TOKEN(TechniqueEffectLayer)
 	FX_TOKEN(TechniqueDebug)
-	FX_TOKEN(TechniqueSoftAlphaTest)
 	FX_TOKEN(TechniqueWaterRefl)
 	FX_TOKEN(TechniqueWaterCaustic)
 	FX_TOKEN(TechniqueThickness)
@@ -4004,7 +4002,6 @@ bool CShaderManBin::ParseBinFX_Technique_Annotations_String(CParserBin& Parser, 
 		case eT_TechniqueMotionBlur:
 		case eT_TechniqueCustomRender:
 		case eT_TechniqueEffectLayer:
-		case eT_TechniqueSoftAlphaTest:
 		case eT_TechniqueWaterRefl:
 		case eT_TechniqueWaterCaustic:
 		case eT_TechniqueThickness:
@@ -4020,7 +4017,6 @@ bool CShaderManBin::ParseBinFX_Technique_Annotations_String(CParserBin& Parser, 
 					TTYPE_CUSTOMRENDERPASS,     //eT_TechniqueCustomRender
 					TTYPE_EFFECTLAYER,          //eT_TechniqueEffectLayer
 					TTYPE_DEBUG,                //eT_TechniqueDebug
-					TTYPE_SOFTALPHATESTPASS,    //eT_TechniqueSoftAlphaTest
 					TTYPE_WATERREFLPASS,        //eT_TechniqueWaterRefl
 					TTYPE_WATERCAUSTICPASS,     //eT_TechniqueWaterCaustic
 					TTYPE_ZPREPASS,             //eT_TechniqueZPrepass
@@ -4085,36 +4081,12 @@ bool CShaderManBin::ParseBinFX_Technique_CustomRE(CParserBin& Parser, SParserFra
 	if (nName == eT_LensOptics)
 	{
 		CRELensOptics* ps = new CRELensOptics;
-		if (ps->mfCompile(Parser, Frame))
+
 		{
 			pShTech->m_REs.AddElem(ps);
 			pShTech->m_Flags |= FHF_RE_LENSOPTICS;
 			return true;
 		}
-		else
-			delete ps;
-	}
-	else if (nName == eT_Cloud)
-	{
-		CRECloud* ps = new CRECloud;
-		if (ps->mfCompile(Parser, Frame))
-		{
-			pShTech->m_REs.AddElem(ps);
-			pShTech->m_Flags |= FHF_RE_CLOUD;
-			return true;
-		}
-		else
-			delete ps;
-	}
-	else if (nName == eT_Beam)
-	{
-		CREBeam* ps = new CREBeam;
-		if (ps->mfCompile(Parser, Frame))
-		{
-			pShTech->m_REs.AddElem(ps);
-		}
-		else
-			delete ps;
 	}
 	else if (nName == eT_Ocean)
 	{
@@ -4508,7 +4480,7 @@ bool CShaderManBin::ParseBinFX(SShaderBin* pBin, CShader* ef, uint64 nMaskGen)
 						else
 							Pr.m_nCB = CB_PER_BATCH;
 					}
-					else if (CParserBin::m_nPlatform & (SF_D3D11 | SF_ORBIS | SF_DURANGO | SF_GL4 | SF_GLES3))
+					else if (CParserBin::m_nPlatform & (SF_D3D11 | SF_ORBIS | SF_DURANGO | SF_GL4 | SF_GLES3 | SF_VULKAN))
 					{
 						uint32 nTokName = Parser.GetToken(Parser.m_Name);
 						if (nTokName == eT__g_SkinQuat)
@@ -4532,9 +4504,9 @@ bool CShaderManBin::ParseBinFX(SShaderBin* pBin, CShader* ef, uint64 nMaskGen)
 						assert(szReg[0] == 'c');
 						Pr.m_nRegister[eHWSC_Vertex] = atoi(&szReg[1]);
 						Pr.m_nRegister[eHWSC_Pixel] = Pr.m_nRegister[eHWSC_Vertex];
-						if (GEOMETRYSHADER_SUPPORT && (CParserBin::m_nPlatform == SF_D3D11 || CParserBin::m_nPlatform == SF_DURANGO || CParserBin::m_nPlatform == SF_ORBIS || CParserBin::m_nPlatform == SF_GL4))
+						if (GEOMETRYSHADER_SUPPORT && CParserBin::PlatformSupportsGeometryShaders())
 							Pr.m_nRegister[eHWSC_Geometry] = Pr.m_nRegister[eHWSC_Vertex];
-						if (CParserBin::m_nPlatform == SF_D3D11 || CParserBin::m_nPlatform == SF_DURANGO || CParserBin::m_nPlatform == SF_ORBIS || CParserBin::m_nPlatform == SF_GL4)
+						if (CParserBin::PlatformSupportsDomainShaders())
 							Pr.m_nRegister[eHWSC_Domain] = Pr.m_nRegister[eHWSC_Vertex];
 					}
 					uint32 prFlags = Pr.GetParamFlags();
@@ -4750,6 +4722,8 @@ SShaderTexSlots* CShaderManBin::GetTextureSlots(CParserBin& Parser, SShaderBin* 
 				SParamCacheInfo::AffectedFuncsVec& AffectedFragments = pCache->m_AffectedFuncs;
 				for (uint32 i = 0; i < AffectedFragments.size(); i++)
 				{
+					CRY_ASSERT_MESSAGE(AffectedFragments[i] < Parser.m_CodeFragments.size(), "fragment index is larger than number of CodeFragments!");
+
 					SCodeFragment* s = &Parser.m_CodeFragments[AffectedFragments[i]];
 
 					// if it's a sampler, include this sampler name CRC
@@ -5218,19 +5192,23 @@ bool STexSamplerRT::Update()
 {
 	if (m_pAnimInfo && m_pAnimInfo->m_Time && gRenDev->m_bPauseTimer == 0)
 	{
-		assert(gRenDev->m_RP.m_TI[gRenDev->m_RP.m_nProcessThreadID].m_RealTime >= 0);
-		uint32 m = (uint32)(gRenDev->m_RP.m_TI[gRenDev->m_RP.m_nProcessThreadID].m_RealTime / m_pAnimInfo->m_Time) % (m_pAnimInfo->m_NumAnimTexs);
+		float time = gRenDev->GetFrameSyncTime().GetSeconds();
+		assert(time >= 0);
+		uint32 m = (uint32)(time / m_pAnimInfo->m_Time) % (m_pAnimInfo->m_NumAnimTexs);
 		assert(m < (uint32)m_pAnimInfo->m_TexPics.Num());
 
-		if (m_pTex)
+		if (m_pTex != m_pAnimInfo->m_TexPics[m])
 		{
-			m_pTex->Release();
+			if (m_pTex)
+			{
+				m_pTex->Release();
+			}
+
+			m_pTex = m_pAnimInfo->m_TexPics[m];
+			m_pTex->AddRef();
+
+			return true;
 		}
-
-		m_pTex = m_pAnimInfo->m_TexPics[m];
-		m_pTex->AddRef();
-
-		return true;
 	}
 
 	return false;

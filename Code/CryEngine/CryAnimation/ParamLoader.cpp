@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "ParamLoader.h"
@@ -253,7 +253,7 @@ bool CParamLoader::ExpandWildcards(uint32 listID)
 		uint32 img = g_pCharacterManager->IsInitializedByIMG();
 		if (img & 2 && IsLMG == 0 && IsFSQ == 0)
 		{
-			uint32 crcFolder = CCrc32::ComputeLowercase(szFolder, iPathLength);
+			uint32 crcFolder = CCrc32::ComputeLowercase(szFolder, size_t(iPathLength), 0);
 
 			memset(strAnimName, 0, sizeof(strAnimName));
 
@@ -966,6 +966,8 @@ bool CParamLoader::LoadXML(CDefaultSkeleton* pDefaultSkeleton, string defaultAni
 
 bool CParamLoader::LoadLod(const XmlNodeRef lodNode)
 {
+	m_pDefaultSkeleton->m_arrAnimationLOD.clear();
+
 	if (!lodNode)
 		return false;
 

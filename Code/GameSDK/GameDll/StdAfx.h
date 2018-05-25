@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
  -------------------------------------------------------------------------
@@ -25,7 +25,7 @@
 #endif // _MSC_VER > 1000
 
 #include <CryCore/Project/CryModuleDefs.h> 
-#define eCryModule eCryM_Game
+#define eCryModule eCryM_LegacyGameDLL
 #define RWI_NAME_TAG "RayWorldIntersection(Game)"
 #define PWI_NAME_TAG "PrimitiveWorldIntersection(Game)"
 
@@ -57,6 +57,8 @@
 #include <CrySystem/ILog.h>
 #include <IGameplayRecorder.h>
 #include <CryNetwork/ISerialize.h>
+
+#include <CryMath/Random.h>
 
 #include "CryMacros.h"
 
@@ -111,17 +113,6 @@ inline float LinePointDistanceSqr(const Line& line, const Vec3& point, float zSc
 	x2.z*=zScale;
 
 	return ((x2-x1).Cross(x1-x0)).GetLengthSquared()/(x2-x1).GetLengthSquared();
-}
-
-inline IEntityComponent* GetOrMakeProxy(IEntity *pEntity, EEntityProxy proxyType)
-{
-	IEntityComponent* pProxy = pEntity->GetProxy(proxyType);
-	if (!pProxy)
-	{
-		if (pEntity->CreateProxy(proxyType))
-			pProxy = pEntity->GetProxy(proxyType);
-	}
-	return pProxy;
 }
 
 #if !defined(_RELEASE)

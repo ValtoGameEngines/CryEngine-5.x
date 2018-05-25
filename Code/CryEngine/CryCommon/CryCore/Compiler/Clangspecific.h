@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -31,9 +31,14 @@
 //! PREfast not supported
 #define PREFAST_SUPPRESS_WARNING(W)
 #define PREFAST_ASSUME(cond)
+#define _Out_writes_z_(x)
+#define _Inout_updates_z_(x)
 
-//! Mark function as deprecated
-#define CRY_DEPRECATED(func) __attribute__((deprecated)) func
+#if __cplusplus >= 201402L
+#define CRY_DEPRECATED(message) [[deprecated(message)]]
+#else
+#define CRY_DEPRECATED(message) __attribute__((deprecated(message)))
+#endif
 
 //! Portable alignment helper, can be placed after the struct/class/union keyword, or before the type of a declaration.
 //! Example: struct CRY_ALIGN(16) { ... }; CRY_ALIGN(16) char myAlignedChar;
@@ -71,3 +76,16 @@
 #else
 	#define CRY_FUNCTION_CONTAINS_UNDEFINED_BEHAVIOR
 #endif
+
+//! Unreachable code marker for helping error handling and optimization
+#define UNREACHABLE() __builtin_unreachable()
+
+#ifdef  _MSC_VER
+// For clang on MSBuild
+#define stricmp   _stricmp
+#define strnicmp  _strnicmp
+#define wcsicmp   _wcsicmp
+#define wcsnicmp  _wcsnicmp
+#define alloca    _alloca
+#define itoa      _itoa
+#endif //CRY_PLATFORM_ORBIS

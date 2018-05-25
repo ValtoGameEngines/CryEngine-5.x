@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "ParametricSampler.h"
@@ -1200,14 +1200,12 @@ int SParametricSamplerInternal::GetWeights1D(f32 fDesiredParameter, const Global
 	{
 		if (rLMG.m_arrBSAnnotations[f].num == 2)
 		{
-			int32 i0 = rLMG.m_arrBSAnnotations[f].idx0;
-			int32 i1 = rLMG.m_arrBSAnnotations[f].idx1;
+			int32 i0 = rLMG.m_arrBSAnnotations[f].idx[0];
+			int32 i1 = rLMG.m_arrBSAnnotations[f].idx[1];
 			f32 x0 = rLMG.m_arrParameter[i0].m_Para.x;
 			f32 x1 = rLMG.m_arrParameter[i1].m_Para.x;
 
 #if !defined(_RELEASE)
-			if (fabsf(x0 - x1) < 0.01f)
-				g_pISystem->Warning(VALIDATOR_MODULE_ANIMATION, VALIDATOR_WARNING, VALIDATOR_FLAG_FILE, 0, "!CryAnimation: parameters in 1D-Blend-Space are too close: %s", rLMG.GetFilePath());
 			if (x0 >= x1)
 				g_pISystem->Warning(VALIDATOR_MODULE_ANIMATION, VALIDATOR_WARNING, VALIDATOR_FLAG_FILE, 0, "!CryAnimation: motion parameter must be sorted by size in the 1D-Blend-Space. Lowest parameter must come first: %s", rLMG.GetFilePath());
 #endif
@@ -1269,8 +1267,8 @@ int SParametricSamplerInternal::GetWeights1D(f32 fDesiredParameter, const Global
 		{
 			if (rLMG.m_arrBSAnnotations[f].num == 2)
 			{
-				int32 i0 = rLMG.m_arrBSAnnotations[f].idx0;
-				int32 i1 = rLMG.m_arrBSAnnotations[f].idx1;
+				int32 i0 = rLMG.m_arrBSAnnotations[f].idx[0];
+				int32 i1 = rLMG.m_arrBSAnnotations[f].idx[1];
 				f32 x0 = rLMG.m_arrParameter[i0].m_Para.x;
 				f32 x1 = rLMG.m_arrParameter[i1].m_Para.x;
 
@@ -1306,8 +1304,8 @@ int SParametricSamplerInternal::GetWeights1D(f32 fDesiredParameter, const Global
 
 		if (nLineNo != -1)
 		{
-			int32 i0 = rLMG.m_arrBSAnnotations[nLineNo].idx0;
-			int32 i1 = rLMG.m_arrBSAnnotations[nLineNo].idx1;
+			int32 i0 = rLMG.m_arrBSAnnotations[nLineNo].idx[0];
+			int32 i1 = rLMG.m_arrBSAnnotations[nLineNo].idx[1];
 			f32 x0 = rLMG.m_arrParameter[i0].m_Para.x;
 			f32 x1 = rLMG.m_arrParameter[i1].m_Para.x;
 #ifdef BLENDSPACE_VISUALIZATION
@@ -1369,10 +1367,9 @@ int SParametricSamplerInternal::GetWeights2D(const Vec2& vDesiredParameter, cons
 		for (uint32 b = 0; b < numBlocks; b++)
 		{
 			uint32 numPoints = rLMG.m_arrBSAnnotations[b].num;
-			const uint8* indices = &rLMG.m_arrBSAnnotations[b].idx0;
 			for (uint32 e = 0; e < numPoints; e++)
 			{
-				i[e] = indices[e];
+				i[e] = rLMG.m_arrBSAnnotations[b].idx[e];
 				v[e] = Vec3(rLMG.m_arrParameter[i[e]].m_Para.x, rLMG.m_arrParameter[i[e]].m_Para.y, rLMG.m_arrParameter[i[e]].m_Para.z);
 			}
 
@@ -1417,10 +1414,9 @@ int SParametricSamplerInternal::GetWeights3D(const Vec3& vDesiredParameter, cons
 		for (uint32 b = 0; b < numBlocks; b++)
 		{
 			uint32 numPoints = rLMG.m_arrBSAnnotations[b].num;
-			const uint8* indices = &rLMG.m_arrBSAnnotations[b].idx0;
 			for (uint32 e = 0; e < numPoints; e++)
 			{
-				i[e] = indices[e];
+				i[e] = rLMG.m_arrBSAnnotations[b].idx[e];
 				v[e] = Vec3(rLMG.m_arrParameter[i[e]].m_Para.x, rLMG.m_arrParameter[i[e]].m_Para.y, rLMG.m_arrParameter[i[e]].m_Para.z);
 			}
 
@@ -1521,13 +1517,6 @@ BC4 SParametricSamplerInternal::GetConvex4(uint32 numPoints, const Vec2& vDesire
 		uint8 i2 = idx[2];
 		Vec3 v2 = vtx[2];
 
-#if !defined(_RELEASE)
-		if ((v0 - v1).GetLength() < 0.01f || (v1 - v2).GetLength() < 0.01f || (v2 - v0).GetLength() < 0.01f)
-		{
-			g_pISystem->Warning(VALIDATOR_MODULE_ANIMATION, VALIDATOR_WARNING, VALIDATOR_FLAG_FILE, 0, "CryAnimation: parameters in 2D-Blend-Space are too close: %s", rLMG.GetFilePath());
-		}
-#endif
-
 		//calculate the three weight-values using barycentric coordinates
 		f32 px = vDesiredParameter.x - v2.x;
 		f32 py = vDesiredParameter.y - v2.y;
@@ -1583,13 +1572,6 @@ BC4 SParametricSamplerInternal::GetConvex4(uint32 numPoints, const Vec2& vDesire
 		Vec3 v2 = vtx[2];
 		uint8 i3 = idx[3];
 		Vec3 v3 = vtx[3];
-
-#if !defined(_RELEASE)
-		if ((v0 - v1).GetLength() < 0.01f || (v1 - v2).GetLength() < 0.01f || (v2 - v3).GetLength() < 0.01f || (v3 - v0).GetLength() < 0.01f)
-		{
-			g_pISystem->Warning(VALIDATOR_MODULE_ANIMATION, VALIDATOR_WARNING, VALIDATOR_FLAG_FILE, 0, "CryAnimation: parameters in 2D-Blend-Space are too close: %s", rLMG.GetFilePath());
-		}
-#endif
 
 		Vec4 bw = Vec4(0, 0, 0, 0);
 		ComputeWeightExtrapolate4(bw, vDesiredParameter, Vec2(v0), Vec2(v1), Vec2(v2), Vec2(v3));
@@ -1794,13 +1776,6 @@ BC8 SParametricSamplerInternal::GetConvex8(uint32 numPoints, const Vec3& vDesire
 		uint8 i3 = i[3];
 		Vec3 v3 = v[3];
 
-#if !defined(_RELEASE)
-		if ((v0 - v1).GetLength() < 0.01f || (v1 - v2).GetLength() < 0.01f || (v2 - v3).GetLength() < 0.01f || (v3 - v0).GetLength() < 0.01f)
-		{
-			g_pISystem->Warning(VALIDATOR_MODULE_ANIMATION, VALIDATOR_WARNING, VALIDATOR_FLAG_FILE, 0, "CryAnimation: parameters in 3D-Blend-Space are too close: %s", rLMG.GetFilePath());
-		}
-#endif
-
 		uint32 pl0 = fabsf(v0.z) < 0.01f;
 		uint32 pl1 = fabsf(v1.z) < 0.01f;
 		uint32 pl2 = fabsf(v2.z) < 0.01f;
@@ -1871,11 +1846,6 @@ BC8 SParametricSamplerInternal::GetConvex8(uint32 numPoints, const Vec3& vDesire
 		Vec3 v3 = v[3];
 		uint8 i4 = i[4];
 		Vec3 v4 = v[4];
-
-		if ((v0 - v1).GetLength() < 0.01f || (v1 - v2).GetLength() < 0.01f || (v2 - v3).GetLength() < 0.01f || (v3 - v4).GetLength() < 0.01f || (v4 - v0).GetLength() < 0.01f)
-		{
-			g_pISystem->Warning(VALIDATOR_MODULE_ANIMATION, VALIDATOR_WARNING, VALIDATOR_FLAG_FILE, 0, "CryAnimation: parameters in 3D-Blend-Space are too close: %s", rLMG.GetFilePath());
-		}
 
 		uint32 pl0 = fabsf(v0.z) < 0.01f;
 		uint32 pl1 = fabsf(v1.z) < 0.01f;
@@ -1959,11 +1929,6 @@ BC8 SParametricSamplerInternal::GetConvex8(uint32 numPoints, const Vec3& vDesire
 		Vec3 v4 = v[4];
 		uint8 i5 = i[5];
 		Vec3 v5 = v[5];
-
-		if ((v0 - v1).GetLength() < 0.01f || (v1 - v2).GetLength() < 0.01f || (v2 - v3).GetLength() < 0.01f || (v3 - v4).GetLength() < 0.01f || (v4 - v5).GetLength() < 0.01f || (v5 - v0).GetLength() < 0.01f)
-		{
-			g_pISystem->Warning(VALIDATOR_MODULE_ANIMATION, VALIDATOR_WARNING, VALIDATOR_FLAG_FILE, 0, "CryAnimation: parameters in 3D-Blend-Space are too close: %s", rLMG.GetFilePath());
-		}
 
 		uint32 pl0 = fabsf(v0.z) < 0.01f;
 		uint32 pl1 = fabsf(v1.z) < 0.01f;
@@ -2230,7 +2195,6 @@ void SParametricSamplerInternal::VisualizeBlendSpace(const IAnimationSet* _pAnim
 			const ColorB faceColor = (selectedFace == f) ? selFaceColor : unselFaceColor;
 
 			const BSBlendable& face = rLMG.m_arrBSAnnotations[f];
-			const uint8* pIdxs = &face.idx0;
 
 			if (face.num < 3)
 			{
@@ -2239,7 +2203,7 @@ void SParametricSamplerInternal::VisualizeBlendSpace(const IAnimationSet* _pAnim
 
 			for (uint32 i = 0; i < face.num; i++)
 			{
-				const Vec3 pt(rLMG.m_arrParameter[pIdxs[i]].m_Para.x, rLMG.m_arrParameter[pIdxs[i]].m_Para.y, rLMG.m_arrParameter[pIdxs[i]].m_Para.z);
+				const Vec3 pt(rLMG.m_arrParameter[face.idx[i]].m_Para.x, rLMG.m_arrParameter[face.idx[i]].m_Para.y, rLMG.m_arrParameter[face.idx[i]].m_Para.z);
 				facePts[i] = pt * scl + off;
 			}
 

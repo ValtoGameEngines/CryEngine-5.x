@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "Actor.h"
@@ -53,7 +53,7 @@ CHommingSwarmProjectile::~CHommingSwarmProjectile()
 
 void CHommingSwarmProjectile::Update(SEntityUpdateContext &ctx, int updateSlot)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	BaseClass::Update(ctx, updateSlot);
 
@@ -184,7 +184,8 @@ void CHommingSwarmProjectile::HandleEvent(const SGameObjectEvent &event)
 			IEntity* pTarget = pCollision->iForeignData[1]==PHYS_FOREIGN_ID_ENTITY ? (IEntity*)pCollision->pForeignData[1] : 0;
 			CProjectile::SExplodeDesc explodeDesc(true);
 			explodeDesc.impact = false;
-			explodeDesc.normal = -pCollision->n,pCollision->vloc[0];
+			explodeDesc.normal = -pCollision->n;
+			explodeDesc.vel = pCollision->vloc[0];
 			explodeDesc.targetId = pTarget ? pTarget->GetId() : 0;
 			Explode(explodeDesc);
 		}

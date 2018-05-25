@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "BehaviorTreeNodes_Core.h"
@@ -13,6 +13,7 @@
 
 #ifdef USING_BEHAVIOR_TREE_SERIALIZATION
 	#include <CrySerialization/Enum.h>
+	#include <CrySerialization/ClassFactory.h>
 #endif
 
 namespace BehaviorTree
@@ -83,7 +84,7 @@ public:
 protected:
 	virtual Status Update(const UpdateContext& context) override
 	{
-		FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+		CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 		RuntimeData& runtimeData = GetRuntimeData<RuntimeData>(context);
 
@@ -188,7 +189,7 @@ protected:
 
 	virtual Status Update(const UpdateContext& context) override
 	{
-		FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+		CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 		RuntimeData& runtimeData = GetRuntimeData<RuntimeData>(context);
 
@@ -871,7 +872,7 @@ protected:
 
 	virtual Status Update(const UpdateContext& context) override
 	{
-		FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+		CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 		CaseIndexType& currentChildIndex = GetRuntimeData<RuntimeData>(context).currentCaseIndex;
 
@@ -1287,7 +1288,7 @@ protected:
 
 	virtual Status Update(const UpdateContext& context) override
 	{
-		FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+		CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 		RuntimeData& runtimeData = GetRuntimeData<RuntimeData>(context);
 
@@ -1698,7 +1699,7 @@ public:
 
 	virtual Status Update(const UpdateContext& context) override
 	{
-		FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+		CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 		if (m_condition.Evaluate(context.variables.collection))
 		{
@@ -2193,7 +2194,7 @@ public:
 protected:
 	virtual void OnInitialize(const UpdateContext& context) override
 	{
-		FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+		CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 		RuntimeData& runtimeData = GetRuntimeData<RuntimeData>(context);
 
@@ -2357,7 +2358,7 @@ public:
 protected:
 	virtual Status Update(const UpdateContext& context) override
 	{
-		FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+		CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 		if (m_succeedIfTimestampWasNeverSet && !context.timestamps.HasBeenSetAtLeastOnce(m_timestampID))
 		{
@@ -2495,7 +2496,7 @@ public:
 protected:
 	virtual Status Update(const UpdateContext& context) override
 	{
-		FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+		CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 		if (m_succeedIfTimestampWasNeverSet && !context.timestamps.HasBeenSetAtLeastOnce(m_timestampID))
 		{
@@ -2711,7 +2712,7 @@ class Graft : public Action
 public:
 	typedef Action BaseClass;
 
-	struct RuntimeData : public IGraftNode
+	struct RuntimeData final : public IGraftNode
 	{
 		virtual bool RunBehavior(EntityId entityId, const char* behaviorName, XmlNodeRef behaviorXmlNode) override
 		{

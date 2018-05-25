@@ -1,8 +1,9 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef physinterface_h
 #define physinterface_h
 
+#include <CryCore/Platform/platform.h>
 #include <CryNetwork/SerializeFwd.h>
 #include <CryMemory/CrySizer.h>
 #include <CryMath/Cry_Geo.h>
@@ -45,6 +46,7 @@ enum EPE_Params
 	ePE_params_skeleton                    = 24,
 	ePE_params_structural_initial_velocity = 25,
 	ePE_params_collision_class             = 26,
+	ePE_params_walking_rigid               = 27,
 
 	ePE_Params_Count
 };
@@ -115,7 +117,7 @@ enum EPE_Status
 };
 
 //! CStatoscope::AddPhysEntity must be updated when changing this enum.
-enum pe_type { PE_NONE = 0, PE_STATIC = 1, PE_RIGID = 2, PE_WHEELEDVEHICLE = 3, PE_LIVING = 4, PE_PARTICLE = 5, PE_ARTICULATED = 6, PE_ROPE = 7, PE_SOFT = 8, PE_AREA = 9 };
+enum pe_type { PE_NONE = 0, PE_STATIC = 1, PE_RIGID = 2, PE_WHEELEDVEHICLE = 3, PE_LIVING = 4, PE_PARTICLE = 5, PE_ARTICULATED = 6, PE_ROPE = 7, PE_SOFT = 8, PE_AREA = 9, PE_GRID = 10, PE_WALKINGRIGID = 11 };
 enum sim_class { SC_STATIC = 0, SC_SLEEPING_RIGID = 1, SC_ACTIVE_RIGID = 2, SC_LIVING = 3, SC_INDEPENDENT = 4, SC_TRIGGER = 6, SC_DELETED = 7 };
 struct IGeometry;
 struct IPhysicalEntity;
@@ -138,7 +140,7 @@ IPhysicalEntity* const WORLD_ENTITY = (IPhysicalEntity*)-10;
 	#endif
 #endif
 
-#ifndef USE_IMPROVED_RIGID_ENTITY_SYNCHRONISATION
+#if !defined(USE_IMPROVED_RIGID_ENTITY_SYNCHRONISATION) && !defined(DONT_USE_IMPROVED_RIGID_ENTITY_SYNCHRONISATION)
 	#define USE_IMPROVED_RIGID_ENTITY_SYNCHRONISATION 1
 #endif
 
@@ -146,6 +148,7 @@ IPhysicalEntity* const WORLD_ENTITY = (IPhysicalEntity*)-10;
 //////////////////////////// IPhysicsStreamer Interface /////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////
 
+//! \cond INTERNAL
 //! This is a callback interface for on-demand physicalization, physics gets a pointer to an implementation.
 struct IPhysicsStreamer
 {
@@ -178,7 +181,8 @@ struct IPhysRenderer
 	virtual ~IPhysRenderer(){}
 
 	//! Draws helpers for the specified geometry (idxColor is in 0..7 range).
-	virtual void DrawGeometry(IGeometry* pGeom, struct geom_world_data* pgwd, int idxColor = 0, int bSlowFadein = 0, const Vec3& sweepDir = Vec3(0)) = 0;
+	//! \param color Used to specify an explicit color, only used if idxColor is negative.
+	virtual void DrawGeometry(IGeometry* pGeom, struct geom_world_data* pgwd, int idxColor = 0, int bSlowFadein = 0, const Vec3& sweepDir = Vec3(0), const ColorF& color = ColorF(1, 1, 1, 1)) = 0;
 
 	//! Draws a line for wireframe helpers.
 	virtual void DrawLine(const Vec3& pt0, const Vec3& pt1, int idxColor = 0, int bSlowFadein = 0) = 0;
@@ -189,8 +193,8 @@ struct IPhysRenderer
 	//! Draws a text line (stauration is 0..1 and is currently used to represent stress level on a breakable joint).
 	virtual void DrawText(const Vec3& pt, const char* txt, int idxColor, float saturation = 0) = 0;
 
-	//! Sets an offset that is to be added to all subsequent draw requests.
-	virtual Vec3 SetOffset(const Vec3& offs = Vec3(ZERO)) = 0;
+	//! Sets an offset that is to be added to all subsequent draw requests (ZERO quat to keep the current one). Returns the previous offset
+	virtual QuatT SetOffset(const Vec3& offs = Vec3(ZERO), const Quat& qrot = Quat(ZERO)) = 0;
 
 	//! Draw a frame or a partial frame using a scale for the axes.
 	//! \param pnt The world space position.
@@ -318,6 +322,7 @@ public:
 	bool  bSwapEndian;
 	int   bMeasureOnly;
 };
+//! \endcond
 
 // Workaround for bug in GCC 4.8. The kind of access patterns here leads to an internal
 // compiler error in GCC 4.8 when optimizing with debug symbols. Two possible solutions
@@ -331,6 +336,8 @@ public:
 #else
 	#define CRY_GCC48_AVOID_OPTIMIZE
 #endif
+
+//! \cond INTERNAL
 //! Unused_marker deliberately fills a variable with invalid data.
 //! This is so that later is_unused() can check whether it was initialized (this is used in all physics params/status/action structures)
 class unused_marker
@@ -356,6 +363,8 @@ public:
 	template<class F> unused_marker&   operator,(Quat_tpl<F>& x)                 { return *this, x.w; }
 	template<class F> unused_marker&   operator,(strided_pointer<F>& x)          { return *this, x.data; }
 };
+//! \endcond
+
 inline unused_marker& unused_marker::operator,(float& x)        { *alias_cast<int*>(&x) = 0xFFBFFFFF; return *this; }
 inline unused_marker& unused_marker::operator,(double& x)       { (alias_cast<int*>(&x))[false ? 1 : 0] = 0xFFF7FFFF; return *this; }
 inline unused_marker& unused_marker::operator,(int& x)          { x = 1 << 31; return *this; }
@@ -435,13 +444,15 @@ struct pe_params
 };
 
 //! Sets position and orientation of entity.
+//! \par Example
+//! \include CryPhysics/Examples/SetPhysicalEntityPosition.cpp
 struct pe_params_pos : pe_params
 {
 	enum entype { type_id = ePE_params_pos };
 	pe_params_pos()
 	{
 		type = type_id;
-		MARK_UNUSED pos, scale, q, iSimClass;
+		MARK_UNUSED pos, scale, q, iSimClass, pGridRefEnt;
 		pMtx3x4 = 0;
 		pMtx3x3 = 0;
 		bRecalcBounds = 1;
@@ -457,6 +468,8 @@ struct pe_params_pos : pe_params
 	int         bRecalcBounds;  //!< Tells to recompute the bounding boxes.
 	bool        bEntGridUseOBB; //!< Whether or not to use part OBBs rather than object AABB when registering in the entity grid.
 
+	const IPhysicalEntity* pGridRefEnt;	//!< New grid (set via a reference entity)
+
 	VALIDATORS_START
 	  VALIDATOR(pos)
 	VALIDATOR_NORM_MSG(q, "(perhaps non-uniform scaling was used?)", pos)
@@ -464,6 +477,7 @@ struct pe_params_pos : pe_params
 	VALIDATORS_END
 };
 
+//! Sets or gets the bounding box of a physical entity
 struct pe_params_bbox : pe_params
 {
 	enum entype { type_id = ePE_params_bbox };
@@ -479,10 +493,9 @@ struct pe_params_bbox : pe_params
 struct pe_params_outer_entity : pe_params
 {
 	enum entype { type_id = ePE_params_outer_entity };
-	pe_params_outer_entity() { type = type_id; pOuterEntity = 0; pBoundingGeometry = 0; }
+	pe_params_outer_entity() { type = type_id; pOuterEntity = 0; }
 
-	IPhysicalEntity* pOuterEntity;      //!< Outer entity is used to group together SC_INDEPENDENT entities (example: ropes on a tree trunk).
-	IGeometry*       pBoundingGeometry; //!< Optional geometry to test containment (used in pe_status_contains_point).
+	IPhysicalEntity* pOuterEntity;      //!< Outer entity is used to group together SC_INDEPENDENT entities (example: ropes on a tree trunk) and order their updates.
 };
 
 struct ITetrLattice;
@@ -545,6 +558,9 @@ struct pe_params_sensors : pe_params
 	const Vec3* pDirections;    //!< Sensor's directions (dir*ray length) in entity CS.
 };
 
+//! Used to set or get simulation parameters such as gravity and mass
+//! \par Example
+//! \include CryPhysics/Examples/GetSimulationParams.cpp
 struct pe_simulation_params : pe_params
 {
 	enum entype { type_id = ePE_simulation_params };
@@ -876,6 +892,9 @@ struct pe_params_articulated_body : pe_params
 
 ////////// living entity params
 
+//! Determines the dimensions of the main capsule (or cylinder) of a living / walking entity
+//! \par Example
+//! \include CryEntitySystem/Examples/PhysicalizeLiving.cpp
 struct pe_player_dimensions : pe_params
 {
 	enum entype { type_id = ePE_player_dimensions };
@@ -903,6 +922,9 @@ struct pe_player_dimensions : pe_params
 	VALIDATORS_END
 };
 
+//! Determines the dynamics of a living / walking entity
+//! \par Example
+//! \include CryEntitySystem/Examples/PhysicalizeLiving.cpp
 struct pe_player_dynamics : pe_params
 {
 	enum entype { type_id = ePE_player_dynamics };
@@ -1060,6 +1082,24 @@ struct pe_params_wheel : pe_params
 	float kLatFriction;     //!< lateral friction scale (doesn't apply when on handbrake)
 	float Tscale;           //!< optional driving torque scale
 	float w;                //!< rotational velocity; it's computed automatically, but can be overriden if needed
+};
+
+////////// walking rigid entity params
+
+struct pe_params_walking_rigid : pe_params
+{
+	enum entype { type_id = ePE_params_walking_rigid };
+	pe_params_walking_rigid()
+	{
+		type = type_id;
+		MARK_UNUSED velLegStick, legFriction, legStiffness, legsColltype, minLegTestMass;
+	}
+
+	float velLegStick;    // keep leg contact if it's separated by less than velStick*dt per frame
+	float legFriction;	  // friction of the leg contact
+	float legStiffness;	  // how fast the legs will return to the default length
+	int   legsColltype;   // geometry flags the legs look for
+	float minLegTestMass; // only test legs collisions against objects with this or higher mass
 };
 
 ////////// rope entity params
@@ -1224,10 +1264,13 @@ struct pe_action
 	int type;
 };
 
+//! Used to apply an impulse on a physical entity
+//! \par Example
+//! \include CryPhysics/Examples/ActionImpulse.cpp
 struct pe_action_impulse : pe_action
 {
 	enum entype { type_id = ePE_action_impulse };
-	pe_action_impulse() { type = type_id; impulse.Set(0, 0, 0); MARK_UNUSED point, angImpulse, partid, ipart; iApplyTime = 2; iSource = 0; }
+	pe_action_impulse() { type = type_id; impulse.Set(0, 0, 0); MARK_UNUSED point, angImpulse, partid, ipart, pGridRefEnt; iApplyTime = 2; iSource = 0; }
 
 	Vec3 impulse;
 	Vec3 angImpulse; //!< optional
@@ -1236,6 +1279,8 @@ struct pe_action_impulse : pe_action
 	int  ipart;      //!< alternatively, part index can be used
 	int  iApplyTime; //!< 0-apply immediately, 1-apply before the next time step, 2-apply after the next time step
 	int  iSource;    //!< reserved for internal use
+
+	const IPhysicalEntity* pGridRefEnt; //!< source grid of the impulse (set via a reference entity)
 
 	VALIDATORS_START
 	  VALIDATOR_RANGE2(impulse, 0, 1E12f)
@@ -1269,6 +1314,9 @@ enum constrflags
 	constraint_no_tears       = 0x8000  //!< constraint is not deleted when force limit is reached
 };
 
+//! Adds a physical constraint on an entity
+//! \par Example
+//! \include CryPhysics/Examples/AddConstraint.cpp
 struct pe_action_add_constraint : pe_action
 {
 	enum entype { type_id = ePE_action_add_constraint };
@@ -1439,6 +1487,8 @@ struct pe_action_slice : pe_action
 ////////// living entity actions
 
 //! Movement request for living entities.
+//! \par Example
+//! \include CryEntitySystem/Examples/PhysicalizeLiving.cpp
 struct pe_action_move : pe_action
 {
 	enum entype { type_id = ePE_action_move };
@@ -1509,10 +1559,13 @@ struct pe_status
 
 enum status_pos_flags { status_local = 1, status_thread_safe = 2, status_addref_geoms = 4 };
 
+//! Gets the world-space position of an entity
+//! \par Example
+//! \include CryPhysics/Examples/GetPhysicalEntityPosition.cpp
 struct pe_status_pos : pe_status
 {
 	enum entype { type_id = ePE_status_pos };
-	pe_status_pos() { type = type_id; ipart = partid = -1; flags = 0; pMtx3x4 = 0; pMtx3x3 = 0; iSimClass = 0; timeBack = 0; }
+	pe_status_pos() { type = type_id; ipart = partid = -1; flags = 0; pMtx3x4 = 0; pMtx3x3 = 0; iSimClass = 0; timeBack = 0; pGridRefEnt = nullptr; }
 
 	int          partid;   //!< part identifier, -1 for entire entity
 	int          ipart;    //!< optionally, part slot index
@@ -1528,6 +1581,8 @@ struct pe_status_pos : pe_status
 	Matrix33*    pMtx3x3; //!< optional 3x3 rotation+scale matrix
 	IGeometry*   pGeom, * pGeomProxy;
 	float        timeBack; //!< can retrieve previous position; only supported by rigid entities; pos and q; one step back
+
+	const IPhysicalEntity* pGridRefEnt;	//!< Target grid (set via a reference entity)
 };
 
 //! Only works when USE_IMPROVED_RIGID_ENTITY_SYNCHRONISATION is 1.
@@ -1557,8 +1612,8 @@ struct pe_status_extent : pe_status
 struct pe_status_random : pe_status_extent
 {
 	enum entype { type_id = ePE_status_random };
-	pe_status_random() { type = type_id; ran.vPos.zero(); ran.vNorm.zero(); }
-	PosNorm ran;
+	pe_status_random() { type = type_id; }
+	Array<PosNorm> points;
 	CRndGen seed;
 };
 
@@ -1573,6 +1628,9 @@ struct pe_status_sensors : pe_status
 	unsigned int flags;    //!< bitmask of flags, bit==1 - sensor touched environment
 };
 
+//! Gets the dynamic state of an entity, such as its velocity, mass and angular velocity
+//! \par Example
+//! \include CryPhysics/Examples/GetDynamicsStatus.cpp
 struct pe_status_dynamics : pe_status
 {
 	enum entype { type_id = ePE_status_dynamics };
@@ -1855,6 +1913,7 @@ struct pe_status_rope : pe_status
 		stiffnessAnim = timeLastActive = 0;
 		nVtx = 0;
 		lock = 0;
+		MARK_UNUSED pGridRefEnt;
 	}
 
 	int                               nSegments;
@@ -1872,6 +1931,7 @@ struct pe_status_rope : pe_status
 	Vec3                              posHost;             //!< host (the entity part it's attached to) position that corresponds to the returned state
 	quaternionf                       qHost;               //!< host's orientation
 	int                               lock;                //!< for subdivided ropes: +1 to leave read-locked, -1 to release from a previously read-locked state; 0 - local locking only
+	const IPhysicalEntity*            pGridRefEnt;	       //!< Target grid (set via a reference entity)
 };
 
 ////////// soft entity statuses
@@ -1944,6 +2004,7 @@ enum geom_flags
 	geom_no_particle_impulse    = 0x8000000, //!< phys particles don't apply impulses to this part; should be used in flagsCollider
 	geom_destroyed_on_break     = 0x2000000, //!< should be used in flagsCollider
 	geom_allow_id_duplicates    = 0x1000000, //!< doesn't check if id is already used; should be set in flagsCollider
+	geom_ignore_BBox            = 0x20000000,//!< doon't include the part in entity world BBox computation
 	//! mnemonic group names
 	geom_colltype_player        = geom_colltype1, geom_colltype_explosion = geom_colltype2,
 	geom_colltype_vehicle       = geom_colltype3, geom_colltype_foliage = geom_colltype4, geom_colltype_debris = geom_colltype5,
@@ -2091,6 +2152,7 @@ struct pe_tetrlattice_params : pe_params
 //////////////////////////// IGeometry Interface ////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////
 
+//! \cond INTERNAL
 struct geom_world_data   //!< geometry orientation for Intersect() requests
 {
 	geom_world_data()
@@ -2110,6 +2172,7 @@ struct geom_world_data   //!< geometry orientation for Intersect() requests
 	Vec3     centerOfMass; //!< w is rotation around this point
 	int      iStartNode;   //!< for warm-starting (checks collisions in this node first)
 };
+//! \endcond
 
 struct intersection_params
 {
@@ -2281,6 +2344,7 @@ struct mesh_island
 	int   bProcessed; //!< for internal use
 };
 
+//! \cond INTERNAL
 //! Maintains a linked triangle list inside an island.
 struct tri2isle
 {
@@ -2288,6 +2352,7 @@ struct tri2isle
 	unsigned int isle  : 15;
 	unsigned int bFree : 1;
 };
+//! \endcond
 
 struct mesh_data : primitives::primitive
 {
@@ -2362,7 +2427,7 @@ struct IGeometry
 	};
 	struct SProxifyParams
 	{
-		SProxifyParams() : ncells(50), islandMap(-1ll), maxLineDot(0.88f), maxLineDist(2.0f), minLineCells(8), minSurfCells(50), surfPrimIters(1.0f), surfMinNormLen(0.5f), surfMergeDist(4.0f),
+		SProxifyParams() : ncells(50), islandMap(-1l), maxLineDot(0.88f), maxLineDist(2.0f), minLineCells(8), minSurfCells(50), surfPrimIters(1.0f), surfMinNormLen(0.5f), surfMergeDist(4.0f),
 			surfNormRefineThresh(0.94f), primVoxInflate(1.5f), primRefillThresh(0.6f), primVfillSurf(0.85f), primVfillLine(0.6f), primSurfOutside(0.4f), capsHRratio(4.0f), maxGeoms(128),
 			surfMeshMinCells(80), surfMeshIters(7), lenVtxNorm(1.0f), surfRefineWithMesh(1), surfMaxAndMinNorms(0), inflatePrims(0), inflateMeshes(0), nVoxPatches(0),
 			mergeIslands(1), convexHull(0), closeHoles(0), forceBBox(0), findPrimSurfaces(1), findPrimLines(1), findMeshes(1), storeVox(0), reuseVox(0), flipCurCell(0), skipPrimMask(0)
@@ -2472,7 +2537,7 @@ struct IGeometry
 	virtual void  RemapForeignIdx(int* pCurForeignIdx, int* pNewForeignIdx, int nTris) = 0; //!< used in rendermesh-physics sync after boolean ops
 	virtual void  AppendVertices(Vec3* pVtx, int* pVtxMap, int nVtx) = 0;                   //!< used in rendermesh-physics sync after boolean ops
 	virtual float GetExtent(EGeomForm eForm) const = 0;
-	virtual void  GetRandomPos(PosNorm& ran, CRndGen& seed, EGeomForm eForm) const = 0;
+	virtual void  GetRandomPoints(Array<PosNorm> points, CRndGen& seed, EGeomForm eForm) const = 0;
 	virtual void  CompactMemory() = 0; //!< used only by non-breakable meshes to compact non-shared vertices into same contingous block of memory
 	//! Boxify: attempts to build a set of boxes covering the geometry's volume (only supported by trimeshes)
 	virtual int   Boxify(primitives::box* pboxes, int nMaxBoxes, const SBoxificationParams& params) = 0;
@@ -2496,6 +2561,7 @@ struct SBVTreeParams : SMeshBVParams
 	float favorAABB;       //!< when several BV trees are requested in CreateMesh, it selects the one with the smallest volume; favorAABB scales AABB's volume down
 };
 
+//! \cond INTERNAL
 //! Voxel grid is a regular 3d grid collision test acceleration structure.
 struct SVoxGridParams : SMeshBVParams
 {
@@ -2536,6 +2602,7 @@ struct IBreakableGrid2d
 	virtual void              GetMemoryStatistics(ICrySizer* pSizer) const = 0;
 	// </interfuscator:shuffle>
 };
+//! \endcond
 
 struct IGeomManager
 {
@@ -2604,9 +2671,27 @@ struct IPhysUtils
 	//! center is a pre-calculated geometrical center of pt's
 	//! outputs data into centers and radii arrays, which use global buffers; returns the number of circles
 	virtual int  CoverPolygonWithCircles(strided_pointer<Vec2> pt, int npt, bool bConsecutive, const Vec2& center, Vec2*& centers, float*& radii, float minCircleRadius) = 0;
+	//! qhull - computes convex hull of a set of 3d points. returns the number of triangles in pTris
+	//! pts - point list
+	//! npts - number of points
+	//! pTris - will receive an internally allocated pointer to the triangles (recommended to be deleted via DeletePointer)
+	//! qmalloc - optional custom allocator for pTris 
 	virtual int  qhull(strided_pointer<Vec3> pts, int npts, index_t*& pTris, qhullmalloc qmalloc = 0) = 0;
+	//! qhull2d - computes convex hull of a set of 2d points. returns the number of edges (linked via edgeitem.next)
+	//! pts - source points (only pt needs to be set in ptitem; next/prev are used internally; iContact can be used to store some relevant index)
+	//! nVtx - number of source points
+	//! edges - pre-allocated destination array of edges (pvtx and next are the output fields)
+	//! nMaxEdges - if >0, the function will chop vertices with the least associated "ear" area until the limit is satisfied
+	//              in this case the first edge of the hull will not necessarily be in edges[0] - it'll be the first item with non-0 next
 	virtual int  qhull2d(ptitem2d* pts, int nVtx, edgeitem* edges, int nMaxEdges = 0) = 0;
+	//! DeletePointer - deletes any pointer allocated by the physics
 	virtual void DeletePointer(void* pdata) = 0; //!< should be used to free data allocated in physics
+	//! Triangulates a 2d polygon, returns the number of triangles
+	//! pVtx - source points of the polygon. polygons can have several unconnected contours. counter-clockwise contours have polygon area inside them, 
+	//         clockwise - outside. each contour must have a terminator point with MARK_UNUSED pt[i].x (even if there's only one contour)
+	//! nVtx - the number of source points, including terminators
+	//! pTris - pointer to a pre-allocated destination index buffer; (nVtx+nContours*2)*3 is a conservative upper limit
+	//! szTriBuf - size of the index buffer (assuming 3 indices per tri)
 	virtual int  TriangulatePoly(Vec2* pVtx, int nVtx, int* pTris, int szTriBuf) = 0;
 	// </interfuscator:shuffle>
 };
@@ -2617,6 +2702,8 @@ struct IPhysUtils
 
 enum snapshot_flags { ssf_compensate_time_diff = 1, ssf_checksum_only = 2, ssf_no_update = 4 };
 
+//! Represents a physical entity instance in the world
+//! Note that this is independent of entities (IEntity), but physical entities can be attached to entities via the entity system.
 struct IPhysicalEntity
 {
 	// <interfuscator:shuffle>
@@ -2626,12 +2713,25 @@ struct IPhysicalEntity
 	virtual int     AddRef() = 0;
 	virtual int     Release() = 0;
 
-	//! SetParams - changes parameters; can be queued and executed later if the physics is busy (unless bThreadSafe is flagged)
+	//! Sets / changes parameters on a physical entity; can be queued and executed later if the physics is busy (unless bThreadSafe is flagged)
 	//! \return !0 if successful.
+	//! \par Example
+	//! \include CryPhysics/Examples/SetPhysicalEntityPosition.cpp
 	virtual int SetParams(pe_params* params, int bThreadSafe = 0) = 0;
-	virtual int GetParams(pe_params* params) const = 0;      //!< uses the same structures as SetParams; returns !0 if successful
-	virtual int GetStatus(pe_status* status) const = 0;      //!< generally returns >0 if successful, but some pe_status'es have special meaning
-	virtual int Action(pe_action*, int bThreadSafe = 0) = 0; //!< like SetParams, can get queued
+	//! Gets the parameters of a physical entity, uses the same structures as SetParams;
+	//! \return  !0 if successful
+	//! \par Example
+	//! \include CryPhysics/Examples/GetSimulationParams.cpp
+	virtual int GetParams(pe_params* params) const = 0;
+	//! Gets the status of a physical entity, using the pe_status structure.
+	//! \return In most cases, >0 if successful - with special exception for some pe_status implementations.
+	//! \par Example
+	//! \include CryPhysics/Examples/GetPhysicalEntityPosition.cpp
+	virtual int GetStatus(pe_status* status) const = 0;
+	//! Performs an action such as applying an impulse on an entity.
+	//! \par Example
+	//! \include CryPhysics/Examples/ActionImpulse.cpp
+	virtual int Action(pe_action*, int bThreadSafe = 0) = 0;
 
 	//! AddGeometry - add a new entity part, containing pgeom; request can get queued
 	//! params can be specialized depending on the entity type
@@ -2669,6 +2769,7 @@ struct IPhysicalEntity
 //////////////////////////// IPhysicsEventClient Interface //////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////
 
+//! \cond INTERNAL
 //! Obsolete, replaced with event system (EventPhys...).
 struct IPhysicsEventClient
 {
@@ -2681,6 +2782,7 @@ struct IPhysicsEventClient
 	virtual void OnPostStep(IPhysicalEntity* pEntity, void* pForeignData, int iForeignData, float dt) = 0;
 	// </interfuscator:shuffle>
 };
+//! \endcond
 
 /////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////// IPhysicalWorld Interface //////////////////////////////
@@ -2695,6 +2797,7 @@ enum rwi_flags
 {
 	rwi_ignore_terrain_holes     = 0x20, rwi_ignore_noncolliding = 0x40, rwi_ignore_back_faces = 0x80, rwi_ignore_solid_back_faces = 0x100,
 	rwi_pierceability_mask       = 0x0F, rwi_pierceability0 = 0, rwi_stop_at_pierceable = 0x0F,
+	rwi_max_piercing             = 0x10,         //!< the ray will pierce all surfaces (including those with pierceability 0)
 	rwi_separate_important_hits  = sf_important, //!< among pierceble hits, materials with sf_important will have priority
 	rwi_colltype_bit             = 16,           //!< used to manually specify collision geometry types (default is geom_colltype_ray)
 	rwi_colltype_any             = 0x400,        //!< if several colltype flag are specified, switches between requiring all or any of them in a geometry
@@ -2721,7 +2824,7 @@ enum entity_query_flags
 	ent_no_ondemand_activation = 0x80000,  //!< can only be used in RayWorldIntersection
 	ent_delayed_deformations   = 0x80000   //!< queues procedural breakage requests; can only be used in SimulateExplosion
 };
-enum phys_locks { PLOCK_WORLD_STEP = 1, PLOCK_CALLER0, PLOCK_CALLER1, PLOCK_QUEUE, PLOCK_AREAS };
+enum phys_locks { PLOCK_WORLD_STEP = 1, PLOCK_QUEUE, PLOCK_TRACE_PENDING_RAYS, PLOCK_AREAS, PLOCK_CALLER0, PLOCK_CALLER1 };
 
 struct phys_profile_info
 {
@@ -2875,6 +2978,7 @@ struct PhysicsVars : SolverSettings
 	float breakageMinAxisInertia; //!< For procedural breaking, each axis must have a minium inertia compared to the axis with the largest inertia (0.01-1.00)
 
 	int   bForceSyncPhysics;
+	int   idEntBreakOnAwake;
 };
 
 struct ray_hit
@@ -2894,6 +2998,7 @@ struct ray_hit
 	ray_hit*         next;     //!< reserved for internal use, do not change
 };
 
+//! \cond INTERNAL
 struct ray_hit_cached   //!< used in conjunction with rwi_reuse_last_hit
 {
 	ray_hit_cached() { pCollider = 0; ipart = 0; }
@@ -2904,6 +3009,7 @@ struct ray_hit_cached   //!< used in conjunction with rwi_reuse_last_hit
 	int              ipart;
 	int              iNode;
 };
+//! \endcond
 
 #ifndef PWI_NAME_TAG
 	#define PWI_NAME_TAG "PrimitiveWorldIntersection"
@@ -3018,11 +3124,13 @@ struct EventPhysEnvChange : EventPhysMono
 struct EventPhysPostStep : EventPhysMono
 {
 	enum entype { id = 4, flagsCall = pef_monitor_poststep, flagsLog = pef_log_poststep };
-	EventPhysPostStep() { idval = id; }
-	float       dt;
-	Vec3        pos;
-	quaternionf q;
-	int         idStep; //!< world's internal step count
+	EventPhysPostStep() { idval = id; pGrid = nullptr; iCaller = 0; }
+	float            dt;
+	Vec3             pos;
+	quaternionf      q;
+	int              idStep; //!< world's internal step count
+	IPhysicalEntity* pGrid; //!< interface to the grid
+	int              iCaller; //!< index of the physics thread
 };
 
 //! Physics mesh changed.
@@ -3036,7 +3144,7 @@ struct EventPhysUpdateMesh : EventPhysMono
 	int             iReason;       //!< see enum reason
 	IGeometry*      pMesh;         //!< ->GetForeignData(DATA_MESHUPDATE) returns a list of bop_meshupdates
 	bop_meshupdate* pLastUpdate;   //!< the last mesh update for at moment when the event was generated
-	Matrix34        mtxSkelToMesh; //!< skeleton's frame -> mesh's frame transform
+	Matrix34f       mtxSkelToMesh; //!< skeleton's frame -> mesh's frame transform
 	IGeometry*      pMeshSkel;     //!< for deformable bodies
 	int             idx;           //!< used for event deferring by listeners
 };
@@ -3151,6 +3259,7 @@ struct EventPhysEntityDeleted : EventPhysMono
 	enum entype { id = 14, flagsCall = 0, flagsLog = 0 };
 	EventPhysEntityDeleted() { idval = id; }
 	int mode;
+	int isFromPOD;
 };
 
 struct EventPhysPostPump : EventPhys
@@ -3177,6 +3286,8 @@ struct IPhysicalEntityIt
 	// </interfuscator:shuffle>
 };
 
+//! Main interface to the physics implementation
+//! \see IPhysicalEntity
 struct IPhysicalWorld
 {
 	//! RayWorldIntersection - steps through the entity grid and raytraces entities
@@ -3193,7 +3304,8 @@ struct IPhysicalWorld
 		SRWIParams() { memset(this, 0, sizeof(*this)); objtypes = ent_all; flags = rwi_stop_at_pierceable; }
 
 		const SRWIParams& Init(const Vec3& _org, const Vec3& _dir, int _objtypes, unsigned int _flags, const SCollisionClass& _collclass, ray_hit* _hits, int _nMaxHits,
-		                       IPhysicalEntity** _pSkipEnts = 0, int _nSkipEnts = 0, void* _pForeignData = 0, int _iForeignData = 0, ray_hit_cached* _phitLast = 0)
+		                       IPhysicalEntity** _pSkipEnts = 0, int _nSkipEnts = 0, void* _pForeignData = 0, int _iForeignData = 0, ray_hit_cached* _phitLast = 0,
+		                       IPhysicalEntity** _pPortals = nullptr, int _nMaxPortals = 0)
 		{
 			memset(this, 0, sizeof(*this));
 			org = _org;
@@ -3208,6 +3320,8 @@ struct IPhysicalWorld
 			phitLast = _phitLast;
 			pSkipEnts = _pSkipEnts;
 			nSkipEnts = _nSkipEnts;
+			pPortals = _pPortals;
+			nMaxPortals = _nMaxPortals;
 			return *this;
 		}
 
@@ -3224,6 +3338,8 @@ struct IPhysicalWorld
 		int               nSkipEnts;
 		IPhysicalEntity** pSkipEnts;
 		SCollisionClass   collclass;
+		IPhysicalEntity** pPortals;	   // returns null-terminated list of encountered portals
+		int               nMaxPortals; // max amount of returned portals (= list size - 1)
 	};
 
 	//! PrimitiveWorldIntersection  - similar to RayWorldIntersection, but does a primitive sweep (or overlap) check
@@ -3282,7 +3398,8 @@ struct IPhysicalWorld
 	//! log2PODscale sets how many grid cells comprise one on-demand physicalization sector (on_demand_sector = 1<<log2PODscale)
 	//! bCyclic==0 : entities that are outside the grid are all registered in one "exterior" cell
 	//! bCyclic==1 : the grid is infinitely repeated, projected world coordinates only use lower bits to access grid cells
-	virtual void SetupEntityGrid(int axisz, Vec3 org, int nx, int ny, float stepx, float stepy, int log2PODscale = 0, int bCyclic = 0) = 0;
+	virtual IPhysicalEntity* SetupEntityGrid(int axisz, Vec3 org, int nx, int ny, float stepx, float stepy, int log2PODscale = 0, int bCyclic = 0, 
+		IPhysicalEntity* pHost = nullptr, const QuatT& posInHost = QuatT(IDENTITY)) = 0;
 
 	//! Clean up memory pools after level was unloaded.
 	//! should only be called when all outside references to physics where deleted.
@@ -3349,6 +3466,9 @@ struct IPhysicalWorld
 	//! returns the number of entities
 	virtual int GetEntitiesInBox(Vec3 ptmin, Vec3 ptmax, IPhysicalEntity**& pList, int objtypes, int szListPrealloc = 0) = 0;
 
+	//! Performs a raycast through the physical world, returning possible hits into the provided hits structure
+	//! \par Example
+	//! \include CryPhysics/Examples/RayWorldIntersection.cpp
 	virtual int RayWorldIntersection(const SRWIParams& rp, const char* pNameTag = RWI_NAME_TAG, int iCaller = MAX_PHYS_THREADS) = 0;
 	//! Traces ray requests (rwi calls with rwi_queue set); logs and calls EventPhysRWIResult for each
 	//! returns the number of rays traced
@@ -3366,6 +3486,9 @@ struct IPhysicalWorld
 
 	virtual IPhysicalEntityIt* GetEntitiesIterator() = 0;
 
+	//! Simulates an explosion in the world, affecting entities near the epicenter (and within the specified radius)
+	//! \par Example
+	//! \include CryPhysics/Examples/SimulateExplosion.cpp
 	virtual void               SimulateExplosion(pe_explosion* pexpl, IPhysicalEntity** pSkipEnts = 0, int nSkipEnts = 0, int iTypes = ent_rigid | ent_sleeping_rigid | ent_living | ent_independent, int iCaller = MAX_PHYS_THREADS) = 0;
 
 	//! RasterizeEntities - builds a depth map from physical gometries in a box specified by grid; only updates area affected by offsBBox +/- sizeBBox
@@ -3422,6 +3545,7 @@ struct IPhysicalWorld
 	virtual void             PumpLoggedEvents() = 0; //!< calls event clients for logged events
 	virtual uint32           GetPumpLoggedEventsTicks() = 0;
 	virtual void             ClearLoggedEvents() = 0;
+	virtual int              NotifyEventClients(EventPhys* pEvent, int bLogged) = 0; // immediately calls listeners for the event; returns the sum of their return results
 
 	virtual IPhysicalEntity* AddGlobalArea() = 0; //!< adds a global phys area or returns an existing one
 	//! AddArea - adds a 2d-contour area. Computes the best fitting plane for the points and projects them on it
@@ -3445,7 +3569,7 @@ struct IPhysicalWorld
 	virtual int              GetWatermanStatus(pe_status* status) = 0; //!< pe_status_waterman
 	virtual void             DestroyWaterManager() = 0;
 
-	virtual volatile int*    GetInternalLock(int idx) = 0; //!< returns one of phys_lock locks
+	virtual volatile int*    GetInternalLock(int idx) = 0; //!< returns one of phys_locks locks
 
 	virtual int              SerializeWorld(const char* fname, int bSave) = 0; //!< saves/loads the world state (without geometries) in a text file
 	virtual int              SerializeGeometries(const char* fname, int bSave) = 0;
@@ -3461,6 +3585,9 @@ struct IPhysicalWorld
 	virtual void*			 GetInternalImplementation(int type, void* object = nullptr) = 0; // get native data from actual physics implementation
 	// </interfuscator:shuffle>
 
+	//! Performs a raycast through the physical world, returning possible hits into the provided hits structure
+	//! \par Example
+	//! \include CryPhysics/Examples/RayWorldIntersection.cpp
 	inline int RayWorldIntersection(const Vec3& org, const Vec3& dir, int objtypes, unsigned int flags, ray_hit* hits, int nMaxHits,
 	                                IPhysicalEntity** pSkipEnts = 0, int nSkipEnts = 0, void* pForeignData = 0, int iForeignData = 0,
 	                                const char* pNameTag = RWI_NAME_TAG, ray_hit_cached* phitLast = 0, int iCaller = MAX_PHYS_THREADS)
@@ -3479,6 +3606,9 @@ struct IPhysicalWorld
 		rp.nSkipEnts = nSkipEnts;
 		return RayWorldIntersection(rp, pNameTag, iCaller);
 	}
+	//! Performs a raycast through the physical world, returning possible hits into the provided hits structure
+	//! \par Example
+	//! \include CryPhysics/Examples/RayWorldIntersection.cpp
 	int RayWorldIntersection(const Vec3& org, const Vec3& dir, int objtypes, unsigned int flags, ray_hit* hits, int nMaxHits,
 	                         IPhysicalEntity* pSkipEnt, IPhysicalEntity* pSkipEntAux = 0, void* pForeignData = 0, int iForeignData = 0)
 	{

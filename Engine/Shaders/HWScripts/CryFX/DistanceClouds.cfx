@@ -1,8 +1,9 @@
-// CRYENGINE Source Code File
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "Common.cfi"
 #include "ShadeLib.cfi"
+#include "ForwardShading.cfi"
+#include "ModificatorVT.cfi"
 
 float Script : STANDARDSGLOBAL
 <
@@ -10,16 +11,10 @@ float Script : STANDARDSGLOBAL
 		"Public;"
 		"Decal;"
 		"ShaderDrawType = General;"
-        "ShaderType = FX;"
+    "ShaderType = FX;"
 >;
 
 #if !%SIMPLE
-
-float4 CameraRightVector			: PB_CameraRight;
-float4 CameraUpVector				: PB_CameraUp;
-
-float3 ShadeColorFromSun			: PB_CloudShadingColorSun;
-float3 ShadeColorFromSky			: PB_CloudShadingColorSky;
 
 #if %ADVANCED
 
@@ -182,13 +177,13 @@ struct a2v
 	float2 baseTC	: TEXCOORD0;
 	float4 color	: COLOR0;
 	float4 Tangent	: TANGENT;
-	float4 Binormal	: BINORMAL;
+	float4 Binormal	: BITANGENT;
 };
 
 
 struct v2f
 {
-	float4 Position		: POSITION;
+	float4 Position		: SV_POSITION;
 	float2 baseTC		: TEXCOORD0;
 	float3 toSun		: TEXCOORD1;
 };
@@ -196,7 +191,7 @@ struct v2f
 
 struct v2f_simple
 {
-	float4 Position		: POSITION;
+	float4 Position		: SV_POSITION;
 	float2 baseTC		: TEXCOORD0;
 };
 
@@ -206,7 +201,7 @@ v2f DistanceCloudsVS(a2v IN)
 	v2f OUT = (v2f)0;
 
 	// Position in screen space
-	float3 worldPos = mul(ObjWorldMatrix, IN.Position);
+	float3 worldPos = mul(Get_SPI_ObjWorldMat(0), IN.Position);
 	OUT.Position = mul(CV_ViewProjMatr, float4(worldPos,1));
 	
 #ifndef %_RT_REVERSE_DEPTH
@@ -256,11 +251,9 @@ pixout DistanceCloudsPS(v2f IN)
 		//height += toSun.z;
 	}
 	
-  // Re-scale range
-
 	float c = exp2( -Attenuation * density );
 	float a = pow( opacity, AlphaSaturation );
-	float3 col = lerp( SkyColorMultiplier * ShadeColorFromSky.xyz, SunColorMultiplier * ShadeColorFromSun.xyz, c );
+	float3 col = lerp( SkyColorMultiplier * cbMisc.CloudShadingColorSky.xyz, SunColorMultiplier * cbMisc.CloudShadingColorSun.xyz, c );
   // Re-scale range
   col *= PS_HDR_RANGE_ADAPT_MAX;
 
@@ -328,7 +321,7 @@ pixout DistanceCloudsAdvancedPS(v2f IN)
 	float scatteringSun = exp( -DensitySun * density );
 	
 	// Full shading
-	float3 col = ShadeColorFromSky.xyz * scatteringSky + ShadeColorFromSun.xyz * scatteringSun;
+	float3 col = cbMisc.CloudShadingColorSky.xyz * scatteringSky + cbMisc.CloudShadingColorSun.xyz * scatteringSun;
 	
 	// Opacity
 	float alpha = pow( saturate( height * AlphaMultiplier ), AlphaSaturation );
@@ -345,7 +338,7 @@ v2f_simple DistanceCloudsSimpleVS(a2v IN)
 	v2f_simple OUT = (v2f_simple)0;
 
 	// Position in screen space
-	float3 worldPos = mul(ObjWorldMatrix, IN.Position);
+	float3 worldPos = mul(Get_SPI_ObjWorldMat(0), IN.Position);
 	OUT.Position = mul(CV_ViewProjMatr, float4(worldPos,1));
 	OUT.Position.z = OUT.Position.w;
 	

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   cry3dengine.cpp
@@ -36,7 +36,7 @@
 #endif
 //////////////////////////////////////////////////////////////////////
 
-struct CSystemEventListner_3DEngine : public ISystemEventListener
+struct CSystemEventListener_3DEngine : public ISystemEventListener
 {
 public:
 	virtual void OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR lparam)
@@ -70,21 +70,12 @@ public:
 			}
 		case ESYSTEM_EVENT_3D_POST_RENDERING_START:
 			{
-				// Pre allocate object tree for objects to go in
-				if ((Cry3DEngineBase::Get3DEngine()) && (Cry3DEngineBase::Get3DEngine()->m_pObjectsTree.Count() == 0))
-				{
-					Cry3DEngineBase::Get3DEngine()->m_pObjectsTree.PreAllocate(1, 1);
-				}
 				Cry3DEngineBase::GetMatMan()->DoLoadSurfaceTypesInInit(false);
 				break;
 			}
 		case ESYSTEM_EVENT_3D_POST_RENDERING_END:
 			{
-				for (int nSID = 0; nSID < Cry3DEngineBase::Get3DEngine()->m_pObjectsTree.Count(); nSID++)
-				{
-					SAFE_DELETE(Cry3DEngineBase::Get3DEngine()->m_pObjectsTree[nSID]);
-				}
-				Cry3DEngineBase::Get3DEngine()->m_pObjectsTree.Free();
+				SAFE_DELETE(Cry3DEngineBase::Get3DEngine()->m_pObjectsTree);
 
 				// We have to unload physics data *before* shutting down the geom manager
 				// Otherwise physical entities that are destroyed later will reference dangling geom pointers
@@ -111,28 +102,35 @@ public:
 		}
 	}
 };
-static CSystemEventListner_3DEngine g_system_event_listener_engine;
+static CSystemEventListener_3DEngine g_system_event_listener_engine;
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-class CEngineModule_Cry3DEngine : public IEngineModule
+class CEngineModule_Cry3DEngine : public I3DEngineModule
 {
-	CRYINTERFACE_SIMPLE(IEngineModule)
-	CRYGENERATE_SINGLETONCLASS(CEngineModule_Cry3DEngine, "EngineModule_Cry3DEngine", 0x2d38f12a521d43cf, 0xba18fd1fa7ea5020)
+	CRYINTERFACE_BEGIN()
+	CRYINTERFACE_ADD(Cry::IDefaultModule)
+	CRYINTERFACE_ADD(I3DEngineModule)
+	CRYINTERFACE_END()
 
-	virtual ~CEngineModule_Cry3DEngine() {}
+	CRYGENERATE_SINGLETONCLASS_GUID(CEngineModule_Cry3DEngine, "EngineModule_Cry3DEngine", "2d38f12a-521d-43cf-ba18-fd1fa7ea5020"_cry_guid)
+
+	virtual ~CEngineModule_Cry3DEngine()
+	{
+		gEnv->pSystem->GetISystemEventDispatcher()->RemoveListener(&g_system_event_listener_engine);
+		SAFE_RELEASE(gEnv->p3DEngine);
+	}
 
 	//////////////////////////////////////////////////////////////////////////
-	virtual const char* GetName() override { return "Cry3DEngine"; };
-	virtual const char* GetCategory() override { return "CryEngine"; };
+	virtual const char* GetName() const override     { return "Cry3DEngine"; }
+	virtual const char* GetCategory() const override { return "CryEngine"; }
 
 	//////////////////////////////////////////////////////////////////////////
 	virtual bool Initialize(SSystemGlobalEnvironment& env, const SSystemInitParams& initParams) override
 	{
 		ISystem* pSystem = env.pSystem;
 
-		ModuleInitISystem(pSystem, "Cry3DEngine");
-		pSystem->GetISystemEventDispatcher()->RegisterListener(&g_system_event_listener_engine);
+		pSystem->GetISystemEventDispatcher()->RegisterListener(&g_system_event_listener_engine, "CSystemEventListener_3DEngine");
 
 		C3DEngine* p3DEngine = CryAlignedNew<C3DEngine>(pSystem);
 		env.p3DEngine = p3DEngine;
@@ -334,9 +332,9 @@ bool Cry3DEngineBase::CheckMinSpec(uint32 nMinSpec)
 bool Cry3DEngineBase::IsEscapePressed()
 {
 #if CRY_PLATFORM_WINDOWS
-	if (Cry3DEngineBase::m_bEditor && (CryGetAsyncKeyState(0x03) & 1)) // Ctrl+Break
+	if (Cry3DEngineBase::m_bEditor && (CryGetAsyncKeyState(VK_CANCEL) & (1 << 15)) && (CryGetAsyncKeyState(VK_ESCAPE) & (1 << 15)))
 	{
-		Get3DEngine()->PrintMessage("*** Ctrl-Break was pressed - operation aborted ***");
+		Get3DEngine()->PrintMessage("*** ESC key was pressed - operation aborted ***");
 		return true;
 	}
 #endif

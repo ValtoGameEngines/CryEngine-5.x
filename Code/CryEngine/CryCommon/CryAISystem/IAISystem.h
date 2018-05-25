@@ -1,6 +1,9 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
+
+#include <CryPhysics/RayCastQueue.h>
+#include <CryPhysics/IntersectionTestQueue.h>
 
 #include <CryNetwork/SerializeFwd.h>
 #include <CryAISystem/IAIRecorder.h>  // <> required for Interfuscator
@@ -22,8 +25,8 @@ struct ICoordinationManager;
 struct ICommunicationManager;
 struct ICoverSystem;
 struct INavigationSystem;
-struct ISelectionTreeManager;
-namespace BehaviorTree {
+namespace BehaviorTree
+{
 struct IBehaviorTreeManager;
 }
 struct IFunctionHandler;
@@ -34,9 +37,10 @@ struct Sphere;
 struct IAIActionManager;
 struct ISmartObjectManager;
 struct HidespotQueryContext;
+struct IAuditionMap;
 class IVisionMap;
 struct IFactionMap;
-class IAISystemListener;
+class IAISystemComponent;
 struct IAIObjectManager;
 struct IAIActorProxyFactory;
 struct IAIGroupProxyFactory;
@@ -49,6 +53,7 @@ class IPathFollower;
 struct IPathObstacles;
 struct PathFollowerParams;
 struct IAIBubblesSystem;
+struct IActorLookUp;
 namespace AIActionSequence {
 struct ISequenceManager;
 }
@@ -62,19 +67,9 @@ struct ISequenceManager;
 #define SMART_OBJECTS_XML           "Libs/SmartObjects.xml"
 #define AI_ACTIONS_PATH             "Libs/ActionGraphs"
 
-static const unsigned AI_MAX_FILTERS = 4;
-
-//! The type is sometimes converted to a mask and stored in an dword (32bits), no more than 32 subtypes.
-static const unsigned AI_MAX_STIMULI = 32;
-
-//! The subtype is sometimes converted to a mask and stored in a byte (8bits), no more than 8 subtypes.
-static const unsigned AI_MAX_SUBTYPES = 8;
-
 typedef CryFixedArray<IPhysicalEntity*, 32> PhysSkipList;
 
-typedef std::list<IAIObject*>               TAIObjectList;
-typedef std::vector<int>                    TSubActionList;
-
+//! \cond INTERNAL
 //! If this is changed be sure to change the table aiCollisionEntitiesTable in AICollision.cpp.
 enum EAICollisionEntities
 {
@@ -98,17 +93,6 @@ enum EnumAreaType
 	AREATYPE_EXTRALINKCOST,
 	AREATYPE_GENERIC,
 	AREATYPE_PERCEPTION_MODIFIER,
-};
-
-//! The first word refers to how the nodes are initially connected.
-//! The second word refers to how the node connections are subsequently modified - partial means that links only get disabled.
-enum EWaypointConnections
-{
-	WPCON_DESIGNER_NONE,
-	WPCON_DESIGNER_PARTIAL,
-	WPCON_AUTO_NONE,
-	WPCON_AUTO_PARTIAL,
-	WPCON_MAXVALUE = WPCON_AUTO_PARTIAL
 };
 
 //! ENavModifierType: Values are important and some types have been removed.
@@ -171,26 +155,6 @@ enum EAILightEventType
 	AILE_LAST,
 };
 
-enum EAIStimulusType
-{
-	AISTIM_SOUND,
-	AISTIM_COLLISION,
-	AISTIM_EXPLOSION,
-	AISTIM_BULLET_WHIZZ,
-	AISTIM_BULLET_HIT,
-	AISTIM_GRENADE,
-	AISTIM_LAST,
-};
-
-enum EAIStimProcessFlags
-{
-	AISTIMPROC_EMPTY                     = BIT(0),
-	AISTIMPROC_FILTER_LINK_WITH_PREVIOUS = BIT(1), //!< Uses the stimulus filtering from prev stim.
-	AISTIMPROC_NO_UPDATE_MEMORY          = BIT(2), //!< This won't update the mem target position of the source.
-	AISTIMPROC_ONLY_IF_VISIBLE           = BIT(3), //!< This won't allow the stimulus to be processed if the position is not visible.
-	                                               //!< It's currently used only by the AISTIM_EXPLOSION.
-};
-
 enum EActionType
 {
 	eAT_None = 0,
@@ -207,86 +171,40 @@ enum EActionType
 	eAT_PriorityAnimationAction,
 };
 
-enum SAICollisionObjClassification
-{
-	AICOL_SMALL,
-	AICOL_MEDIUM,
-	AICOL_LARGE,
-};
-
-//! Stimulus Filter describes how the stimulus filter works.
-//! When a new stimulus is processed and it is within the radius of existing stimulus
-//! the new stimulus is discarded. If the merge option is specified, the new stimulus
-//! Will be merged into the existing stimulus iff the stimulus time is less than
-//! the processDelay of the stimulus type.
-//! The type specifies which one type of existing stimulus that will be considered as filter.
-//! The subType specifies a mask of all possible subtypes that will be considered as filter.
-//! Before the radius is checked, the radius of the existing stimulus is scaled by the scale.
-enum EAIStimulusFilterMerge
-{
-	AISTIMFILTER_DISCARD,                 //!< Discard new stimulus when inside existing stimulus.
-	AISTIMFILTER_MERGE_AND_DISCARD,       //!< Merge new stimulus when inside existing stimulus if (and only if) the
-	                                      //!< lifetime of the existing stimulus is less than processDelay, else discard.
-};
-
 typedef uint16 EAILoadDataFlags;
 enum EAILoadDataFlag : EAILoadDataFlags
 {
-	eAILoadDataFlag_None             = 0,
-	eAILoadDataFlag_MNM              = BIT(0),
-	eAILoadDataFlag_DesignedAreas    = BIT(1),
-	eAILoadDataFlag_Covers           = BIT(2),
-	
-	eAILoadDataFlag_AfterExport      = BIT(14),
-	eAILoadDataFlag_QuickLoad        = BIT(15),
+	eAILoadDataFlag_None          = 0,
+	eAILoadDataFlag_MNM           = BIT(0),
+	eAILoadDataFlag_DesignedAreas = BIT(1),
+	eAILoadDataFlag_Covers        = BIT(2),
 
-	eAILoadDataFlag_Navigation = eAILoadDataFlag_MNM | eAILoadDataFlag_DesignedAreas,
-	eAILoadDataFlag_AllSystems = 0xFFFF & ~(eAILoadDataFlag_AfterExport | eAILoadDataFlag_QuickLoad),
+	eAILoadDataFlag_AfterExport   = BIT(14),
+	eAILoadDataFlag_QuickLoad     = BIT(15),
+
+	eAILoadDataFlag_Navigation    = eAILoadDataFlag_MNM | eAILoadDataFlag_DesignedAreas,
+	eAILoadDataFlag_AllSystems    = 0xFFFF & ~(eAILoadDataFlag_AfterExport | eAILoadDataFlag_QuickLoad),
 };
 
 struct SNavigationShapeParams
 {
 	SNavigationShapeParams(
-	  const char* szPathName = 0,
-	  EnumAreaType areaType = AREATYPE_PATH,
-	  bool pathIsRoad = true,
-	  bool closed = false,
-	  const Vec3* points = 0,
-	  unsigned nPoints = 0,
-	  float fHeight = 0,
-	  int nNavType = 0,
-	  int nAuxType = 0,
-	  EAILightLevel lightLevel = AILL_NONE,
-	  float fNodeAutoConnectDistance = 0,
-	  EWaypointConnections waypointConnections = WPCON_DESIGNER_NONE,
-	  bool bVehiclesInHumanNav = false,
-	  bool bCalculate3DNav = true,
-	  bool bCritterOnly = false,
-	  float f3DNavVolumeRadius = 10.0f,
-	  float extraLinkCostFactor = 0.0f,
-	  float fReductionPerMetre = 0.0f,
-	  float fReductionMax = 1.0f,
-	  float flyAgentWidth = 0.0f,
-	  float flyAgentHeight = 0.0f,
-	  const char* szPFPropertiesList = 0)
-		: szPathName(szPathName), areaType(areaType), pathIsRoad(pathIsRoad), closed(closed), points(points), nPoints(nPoints), fHeight(fHeight),
-		nNavType(nNavType), nAuxType(nAuxType), fNodeAutoConnectDistance(fNodeAutoConnectDistance),
-		waypointConnections(waypointConnections), bVehiclesInHumanNav(bVehiclesInHumanNav), bCalculate3DNav(bCalculate3DNav),
-		bCritterOnly(bCritterOnly), f3DNavVolumeRadius(f3DNavVolumeRadius),
-		extraLinkCostFactor(extraLinkCostFactor), fReductionPerMetre(fReductionPerMetre), fReductionMax(fReductionMax), lightLevel(lightLevel),
-		flyAgentWidth(flyAgentWidth), flyAgentHeight(flyAgentHeight), szPFPropertiesList(szPFPropertiesList)
+		const char* szPathName = 0, EnumAreaType areaType = AREATYPE_PATH, bool pathIsRoad = true,
+		bool closed = false, const Vec3* points = 0, unsigned nPoints = 0, float fHeight = 0,
+		int nNavType = 0, int nAuxType = 0, EAILightLevel lightLevel = AILL_NONE,
+		float fReductionPerMetre = 0.0f, float fReductionMax = 1.0f)
+		: szPathName(szPathName)
+		, areaType(areaType)
+		, pathIsRoad(pathIsRoad)
+		, closed(closed), points(points)
+		, nPoints(nPoints)
+		, fHeight(fHeight)
+		, nNavType(nNavType)
+		, nAuxType(nAuxType)
+		, fReductionPerMetre(fReductionPerMetre)
+		, fReductionMax(fReductionMax)
+		, lightLevel(lightLevel)
 	{}
-
-	struct FlightNavData
-	{
-		float flyAgentWidth;
-		float flyAgentHeight;
-		float voxelOffsetX;
-		float voxelOffsetY;
-
-		FlightNavData() : flyAgentWidth(0.0f), flyAgentHeight(0.0f), voxelOffsetX(0.0f), voxelOffsetY(0.0f)
-		{}
-	};
 
 	const char*          szPathName;
 	EnumAreaType         areaType;
@@ -297,54 +215,11 @@ struct SNavigationShapeParams
 	float                fHeight;
 	int                  nNavType;
 	int                  nAuxType;
-	float                fNodeAutoConnectDistance;
-	EWaypointConnections waypointConnections;
-	bool                 bVehiclesInHumanNav;
-	bool                 bCalculate3DNav;
-	bool                 bCritterOnly;
 	EAILightLevel        lightLevel;
-	float                f3DNavVolumeRadius;
-
-	//! Cost of links going through this shape gets multiplied by (1 + extraCostScale) - should be >= 0 for A* heuristic to be valid.
-	float extraLinkCostFactor;
 
 	//! Size of the triangles to create when it's a nav modifier that adds extra triangles for parameters for PerceptionModifier.
 	float         fReductionPerMetre;
 	float         fReductionMax;
-	float         flyAgentWidth;
-	float         flyAgentHeight;
-
-	FlightNavData flightNavData;
-
-	const char*   szPFPropertiesList;
-};
-
-//! AI Stimulus record.
-//! Stimuli are used to tell the perception manager about important events happening in the gameworld
-//! such as sounds or grenades.
-//! When the stimulus is processed, it can be merged with previous stimuli in order to prevent
-//! too many stimuli to cause too many reactions.
-struct SAIStimulus
-{
-	SAIStimulus() : sourceId(0), targetId(0), pos(0, 0, 0), dir(0, 0, 0), radius(0), type(0), subType(0), flags(0)
-	{
-	}
-
-	SAIStimulus(EAIStimulusType type, unsigned char subType, EntityId sourceId, EntityId targetId,
-	            const Vec3& pos, const Vec3& dir, float radius, unsigned char flags = 0) :
-		sourceId(sourceId), targetId(targetId), pos(pos), dir(dir),
-		radius(radius), type(type), subType(subType), flags(flags)
-	{
-	}
-
-	EntityId      sourceId;     //!< The source of the stimulus.
-	EntityId      targetId;     //!< Optional target of the stimulus.
-	Vec3          pos;          //!< Location of the stimulus.
-	Vec3          dir;          //!< Optional direction of the stimulus - for now, should be pre-normalised.
-	float         radius;       //!< Radius of the stimulus.
-	unsigned char type;         //!< Stimulation type.
-	unsigned char subType;      //!< Stimulation sub-type.
-	unsigned char flags;        //!< Processing flags.
 };
 
 struct SmartObjectCondition
@@ -515,15 +390,6 @@ private:
 	IAIObjectIter* m_pIter;
 };
 
-//! AI event listener.
-struct IAIEventListener
-{
-	// <interfuscator:shuffle>
-	virtual ~IAIEventListener(){}
-	virtual void OnAIEvent(EAIStimulusType type, const Vec3& pos, float radius, float threat, EntityId sender) = 0;
-	// </interfuscator:shuffle>
-};
-
 //! AI Global perception Listener.
 struct IAIGlobalPerceptionListener
 {
@@ -555,10 +421,27 @@ enum EAIFilterType
 	eAIFT_Faction,
 	eAIFT_None,
 };
+//! \endcond
 
-//! Interface to AI system. Defines functions to control the ai system.
+struct IAIEngineModule : public Cry::IDefaultModule
+{
+	CRYINTERFACE_DECLARE_GUID(IAIEngineModule, "4b00591d-c874-43c7-9bca-78a59ecd6d9c"_cry_guid);
+};
+
+struct IAISystemCallbacks
+{
+	virtual CFunctorsList<Functor1<IAIObject*>>& ObjectCreated() = 0;
+	virtual CFunctorsList<Functor1<IAIObject*>>& ObjectRemoved() = 0;
+	virtual CFunctorsList<Functor2<tAIObjectID, bool>>& EnabledStateChanged() = 0;
+	virtual CFunctorsList<Functor2<EntityId, EntityId>>& AgentDied() = 0;
+};
+
+//! Interface to AI system. Defines functions to control the AI system.
 struct IAISystem
 {
+	typedef RayCastQueue<41>                    GlobalRayCaster;
+	typedef IntersectionTestQueue<43>           GlobalIntersectionTester;
+	
 	//! Flags used by the GetGroupCount.
 	enum EGroupFlags
 	{
@@ -651,32 +534,32 @@ struct IAISystem
 	};
 	typedef NavCapMask tNavCapMask;
 
-	struct SBuildingInfo
-	{
-		EWaypointConnections waypointConnections;
-		float                fNodeAutoConnectDistance;
-	};
-
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	//Basic
 	IAISystem() {}
 	// <interfuscator:shuffle>
 	virtual ~IAISystem() {}
 
-	virtual bool                  Init() = 0;
-	virtual bool                  CompleteInit() = 0;
+	virtual bool                        Init() = 0;
 
-	virtual void                  Reload() {; }
-	virtual void                  Reset(EResetReason reason) = 0;
-	virtual void                  Release() = 0;
+	virtual void                        Reload() {}
+	virtual void                        Reset(EResetReason reason) = 0;
+	virtual void                        Release() = 0;
 
-	virtual void                  SetActorProxyFactory(IAIActorProxyFactory* pFactory) = 0;
-	virtual IAIActorProxyFactory* GetActorProxyFactory() const = 0;
+	virtual IAISystemCallbacks&         Callbacks() = 0;
 
-	virtual void                  SetGroupProxyFactory(IAIGroupProxyFactory* pFactory) = 0;
-	virtual IAIGroupProxyFactory* GetGroupProxyFactory() const = 0;
+	virtual void                        SetActorProxyFactory(IAIActorProxyFactory* pFactory) = 0;
+	virtual IAIActorProxyFactory*       GetActorProxyFactory() const = 0;
 
-	virtual IAIGroupProxy*        GetAIGroupProxy(int groupID) = 0;
+	virtual void                        SetGroupProxyFactory(IAIGroupProxyFactory* pFactory) = 0;
+	virtual IAIGroupProxyFactory*       GetGroupProxyFactory() const = 0;
+
+	virtual IAIGroupProxy*              GetAIGroupProxy(int groupID) = 0;
+
+	virtual IActorLookUp*               GetActorLookup() = 0;
+
+	virtual IAISystem::GlobalRayCaster*          GetGlobalRaycaster() = 0;
+	virtual IAISystem::GlobalIntersectionTester* GetGlobalIntersectionTester() = 0;
 
 	//If disabled most things early out
 	virtual void Enable(bool enable = true) = 0;
@@ -685,16 +568,10 @@ struct IAISystem
 	//! Every frame (multiple time steps per frame possible?)
 	//! \param currentTime AI time since game start in seconds (GetCurrentTime).
 	//! \param frameTime AI time since last update (GetFrameTime).
-	virtual void Update(CTimeValue currentTime, float frameTime) = 0;
+	virtual void                Update(CTimeValue currentTime, float frameTime) = 0;
 
-	virtual bool RegisterListener(IAISystemListener* pListener) = 0;
-	virtual bool UnregisterListener(IAISystemListener* pListener) = 0;
-
-	//! Registers AI event listener. Only events overlapping the sphere will be sent.
-	//! Register can be called again to update the listener position, radius and flags.
-	//! If pointer to the listener is specified it will be used instead of the pointer to entity.
-	virtual void                RegisterAIEventListener(IAIEventListener* pListener, const Vec3& pos, float rad, int flags) = 0;
-	virtual void                UnregisterAIEventListener(IAIEventListener* pListener) = 0;
+	virtual bool                RegisterSystemComponent(IAISystemComponent* pComponent) = 0;
+	virtual bool                UnregisterSystemComponent(IAISystemComponent* pComponent) = 0;
 
 	virtual void                SendAnonymousSignal(int nSignalId, const char* szText, const Vec3& pos, float fRadius, IAIObject* pSenderObject, IAISignalExtraData* pData = NULL) = 0;
 	virtual void                SendSignal(unsigned char cFilter, int nSignalId, const char* szText, IAIObject* pSenderObject, IAISignalExtraData* pData = NULL, uint32 crcCode = 0) = 0;
@@ -791,7 +668,6 @@ struct IAISystem
 	virtual ISmartObjectManager*                GetSmartObjectManager() = 0;
 
 	virtual ITargetTrackManager*                GetTargetTrackManager() const = 0;
-	virtual ISelectionTreeManager*              GetSelectionTreeManager() const = 0;
 	virtual BehaviorTree::IBehaviorTreeManager* GetIBehaviorTreeManager() const = 0;
 	virtual ICoverSystem*                       GetCoverSystem() const = 0;
 	virtual INavigationSystem*                  GetNavigationSystem() const = 0;
@@ -799,7 +675,6 @@ struct IAISystem
 	virtual ICommunicationManager*              GetCommunicationManager() const = 0;
 	virtual ITacticalPointSystem*               GetTacticalPointSystem(void) = 0;
 	virtual ICentralInterestManager*            GetCentralInterestManager(void) = 0;
-	virtual IAIPathFinder*                      GetIAIPathFinder() = 0;
 	virtual INavigation*                        GetINavigation() = 0;
 	virtual IAIRecorder*                        GetIAIRecorder() = 0;
 	virtual struct IMovementSystem*             GetMovementSystem() const = 0;
@@ -832,6 +707,9 @@ struct IAISystem
 	virtual bool DoesNavigationShapeExists(const char* szName, EnumAreaType areaType, bool road = false) = 0;
 	virtual void EnableGenericShape(const char* shapeName, bool state) = 0;
 
+	//Temporary - move to perception system in the future
+	virtual int  RayOcclusionPlaneIntersection(const Vec3& start, const Vec3& end) = 0;
+
 	// Pathfinding properties.
 	virtual void                              AssignPFPropertiesToPathType(const string& sPathType, const AgentPathfindingProperties& properties) = 0;
 	virtual const AgentPathfindingProperties* GetPFPropertiesOfPathType(const string& sPathType) = 0;
@@ -845,12 +723,6 @@ struct IAISystem
 
 	virtual void DummyFunctionNumberOne(void) = 0;
 
-	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	// Hide spots
-	//! Any of the pointers to return values can be null. Returns number of hidespots found.
-	//! \return specified number of nearest hidespots. It considers the hidespots in graph and anchors.
-	virtual unsigned int GetHideSpotsInRange(IAIObject* requester, const Vec3& reqPos, const Vec3& hideFrom, float minRange, float maxRange, bool collidableOnly, bool validatedOnly, unsigned int maxPts, Vec3* coverPos, Vec3* coverObjPos, Vec3* coverObjDir, float* coverRad, bool* coverCollidable) = 0;
-
 	//! \return A point which is a valid distance away from a wall in front of the point.
 	virtual void AdjustDirectionalCoverPosition(Vec3& pos, const Vec3& dir, float agentRadius, float testHeight) = 0;
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -858,10 +730,8 @@ struct IAISystem
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	//Perception
 	//! Current global AI alertness value (what's the most alerted puppet).
-	virtual int  GetAlertness() const = 0;
-	virtual int  GetAlertness(const IAIAlertnessPredicate& alertnessPredicate) = 0;
-	virtual void SetAssesmentMultiplier(unsigned short type, float fMultiplier) = 0;
-	virtual void SetFactionThreatMultiplier(uint8 factionID, float fMultiplier) = 0;
+	virtual int GetAlertness() const = 0;
+	virtual int GetAlertness(const IAIAlertnessPredicate& alertnessPredicate) = 0;
 
 	//! Look up table to be used when calculating visual time-out increment.
 	virtual void SetPerceptionDistLookUp(float* pLookUpTable, int tableSize) = 0;
@@ -876,11 +746,11 @@ struct IAISystem
 
 	// Fills the array with possible dangers, returns number of dangers.
 	virtual unsigned int GetDangerSpots(const IAIObject* requester, float range, Vec3* positions, unsigned int* types, unsigned int n, unsigned int flags) = 0;
-	virtual void         RegisterStimulus(const SAIStimulus& stim) = 0;
-	virtual void         IgnoreStimulusFrom(EntityId sourceId, EAIStimulusType type, float time) = 0;
+
 	virtual void         DynOmniLightEvent(const Vec3& pos, float radius, EAILightEventType type, EntityId shooterId, float time = 5.0f) = 0;
 	virtual void         DynSpotLightEvent(const Vec3& pos, const Vec3& dir, float radius, float fov, EAILightEventType type, EntityId shooterId, float time = 5.0f) = 0;
 
+	virtual IAuditionMap*  GetAuditionMap() = 0;
 	virtual IVisionMap*  GetVisionMap() = 0;
 	virtual IFactionMap& GetFactionMap() = 0;
 	///////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -913,6 +783,7 @@ struct IAISystem
 };
 
 #if defined(ENABLE_LW_PROFILERS)
+//! \cond INTERNAL
 class CAILightProfileSection
 {
 public:
@@ -934,6 +805,7 @@ public:
 private:
 	uint64 m_nTicks;
 };
+//! \endcond
 
 	#define AISYSTEM_LIGHT_PROFILER() CAILightProfileSection _aiLightProfileSection;
 #else

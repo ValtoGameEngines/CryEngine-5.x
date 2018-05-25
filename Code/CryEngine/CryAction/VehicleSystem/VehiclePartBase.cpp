@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -465,9 +465,9 @@ void CVehiclePartBase::GetGeometryName(EVehiclePartState state, string& name)
 }
 
 //------------------------------------------------------------------------
-const Matrix34& CVehiclePartBase::GetLocalTM(bool relativeToParentPart, bool forced)
+Matrix34 CVehiclePartBase::GetLocalTM(bool relativeToParentPart, bool forced)
 {
-	const Matrix34& tm = GetEntity()->GetSlotLocalTM(m_slot, relativeToParentPart);
+	const Matrix34 tm = GetEntity()->GetSlotLocalTM(m_slot, relativeToParentPart);
 
 	return VALIDATE_MAT(tm);
 }
@@ -489,7 +489,7 @@ void CVehiclePartBase::ResetLocalTM(bool recursive)
 }
 
 //------------------------------------------------------------------------
-const Matrix34& CVehiclePartBase::GetWorldTM()
+Matrix34 CVehiclePartBase::GetWorldTM()
 {
 	return VALIDATE_MAT(GetEntity()->GetSlotWorldTM(m_slot));
 }
@@ -497,7 +497,7 @@ const Matrix34& CVehiclePartBase::GetWorldTM()
 //------------------------------------------------------------------------
 const Matrix34& CVehiclePartBase::LocalToVehicleTM(const Matrix34& localTM)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	static Matrix34 tm;
 	tm = VALIDATE_MAT(localTM);
@@ -544,7 +544,7 @@ const AABB& CVehiclePartBase::GetLocalBounds()
 //------------------------------------------------------------------------
 void CVehiclePartBase::Update(float frameTime)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	if (m_hideMode != eVPH_NoFade)
 	{
@@ -768,12 +768,12 @@ bool CVehiclePartBase::SetCGASlot(int jointId, IStatObj* pStatObj, bool bUpdateP
 		if (pStatObj)
 		{
 			pe_params_part pp;
-			pp.partid = AllocPartIdRange(GetEntity()->GetPhysicalEntityPartId0(m_slot), PARTID_MAX_SLOTS) | jointId;
+			pp.partid = EntityPhysicsUtils::AllocPartIdRange(GetEntity()->GetPhysicalEntityPartId0(m_slot), EntityPhysicsUtils::PARTID_MAX_SLOTS) | jointId;
 			pp.pPhysGeom = pStatObj->GetPhysGeom();
 			GetEntity()->GetPhysics()->SetParams(&pp);
 		}
 		else
-			GetEntity()->GetPhysics()->RemoveGeometry(AllocPartIdRange(GetEntity()->GetPhysicalEntityPartId0(m_slot), PARTID_MAX_SLOTS) | jointId);
+			GetEntity()->GetPhysics()->RemoveGeometry(EntityPhysicsUtils::AllocPartIdRange(GetEntity()->GetPhysicalEntityPartId0(m_slot), EntityPhysicsUtils::PARTID_MAX_SLOTS) | jointId);
 	}
 	return true;
 }

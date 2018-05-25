@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -50,7 +50,7 @@ protected:
 	bool m_bTurretTurning;
 	float m_turretTurnSpeed;
 	float m_lastTurretTurnSpeed;
-	AudioControlId m_turretTurnRtpcId;
+	CryAudio::ControlId m_turretTurnRtpcId;
 
 	typedef std::vector<IVehiclePart*> TTreadParts;
 	TTreadParts m_treadParts;    

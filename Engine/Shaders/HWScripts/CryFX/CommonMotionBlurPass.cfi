@@ -1,5 +1,4 @@
-// CRYENGINE Source Code File
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 
 // When set motion blur amount is computed based on displacement of previous and current positions
@@ -72,14 +71,6 @@ vert2fragMotionBlur Common_MotionBlurPassVS(app2vertMotionBlur IN)
 #endif
 
   float fAlpha = AmbientOp.w;
-#if %_RT_INSTANCING_ATTR
-  {
-    float4 InstanceAmbientOp;
-    #fetchinst (InstanceAmbientOp = IN.InstAmbientOp, vertPassPos.nInstance);
-    fAlpha = InstanceAmbientOp.w;
-  }
-#endif
-
 	OUT.vVelocity.z = fAlpha;
 
   return OUT;            

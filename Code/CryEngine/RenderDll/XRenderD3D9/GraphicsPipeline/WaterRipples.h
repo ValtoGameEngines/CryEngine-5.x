@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -12,28 +12,31 @@ public:
 	CWaterRipplesStage();
 	~CWaterRipplesStage();
 
-	void Init() override;
-	void Prepare(CRenderView* pRenderView) override;
+	void Init() final;
+	void Update() final;
 
-	void Execute(CRenderView* pRenderView);
+	void Execute();
 
 	Vec4 GetWaterRippleLookupParam() const
 	{
 		return m_lookupParam;
 	}
 
-	bool IsVisible(CRenderView* pRenderView) const;
+	CTexture* GetWaterRippleTex() const;
+
+	bool IsVisible() const;
 
 private:
-	bool Update(CRenderView* pRenderView);
-	void ExecuteWaterRipples(CRenderView* pRenderView, CTexture* pTargetTex, const D3DViewPort& viewport);
-	void UpdateAndDrawDebugInfo(CRenderView* pRenderView);
+	bool RefreshParameters();
+	void ExecuteWaterRipples(CTexture* pTargetTex, const D3DViewPort& viewport);
+	void UpdateAndDrawDebugInfo();
 
 private:
-	static const int32         sVertexCount = 4;
-	static const int32         sTotalVertexCount = sVertexCount * SWaterRippleInfo::MaxWaterRipplesInScene;
-	static const EVertexFormat sVertexFormat = eVF_P3F_C4B_T2F;
-	static const size_t        sVertexStride = sizeof(SVF_P3F_C4B_T2F);
+	static const int32                         sVertexCount = 4;
+	static const int32                         sTotalVertexCount = sVertexCount * SWaterRippleInfo::MaxWaterRipplesInScene;
+	static const EDefaultInputLayouts::PreDefs sVertexFormat = EDefaultInputLayouts::P3F_C4B_T2F;
+	static const size_t                        sVertexStride = sizeof(SVF_P3F_C4B_T2F);
+
 	typedef SVF_P3F_C4B_T2F SVertex;
 
 	struct SWaterRippleRecord
@@ -47,8 +50,19 @@ private:
 		{}
 	};
 
+	struct SWaterRippleConstants
+	{
+		Vec4 params;
+	};
+
 private:
+	_smart_ptr<CTexture>          m_pTexWaterRipplesDDN; // xy: wave propagation normals, z: frame t-2, w: frame t-1
+	_smart_ptr<CTexture>          m_pTempTexture;
+
+	CTypedConstantBuffer<SWaterRippleConstants> m_constants;
+
 	CFullscreenPass               m_passSnapToCenter;
+	CStretchRectPass              m_passCopy;
 	CFullscreenPass               m_passWaterWavePropagation;
 	CPrimitiveRenderPass          m_passAddWaterRipples;
 	CMipmapGenPass                m_passMipmapGen;
@@ -56,16 +70,14 @@ private:
 	CRenderPrimitive              m_ripplePrimitive[SWaterRippleInfo::MaxWaterRipplesInScene];
 	buffer_handle_t               m_vertexBuffer; // stored all ripples' vertices.
 
-	CTexture*                     m_pTempTexture;
+	SResourceRegionMapping        m_TempCopyParams;
 
 	ICVar*                        m_pCVarWaterRipplesDebug;
 
 	CCryNameTSCRC                 m_ripplesGenTechName;
 	CCryNameTSCRC                 m_ripplesHitTechName;
-	CCryNameR                     m_ripplesParamName;
 
 	int32                         m_frameID;
-	int32                         m_samplerLinearClamp;
 
 	float                         m_lastSpawnTime;
 	float                         m_lastUpdateTime;

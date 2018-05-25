@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -24,7 +24,7 @@ private:
 	};
 
 public:
-	PROCEDURAL_CONTEXT(CProceduralWeaponAnimationContext, "ProceduralWeaponAnimationContext", 0xDF1D02E05F4048A1, 0xBC7759DCC568AA7F);
+	PROCEDURAL_CONTEXT(CProceduralWeaponAnimationContext, "ProceduralWeaponAnimationContext", "df1d02e0-5f40-48a1-bc77-59dcc568aa7f"_cry_guid);
 
 	CProceduralWeaponAnimationContext();
 	virtual ~CProceduralWeaponAnimationContext() {}

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -33,7 +33,7 @@ private:
 	float m_headUnderWaterTimer;
 	bool m_onSurface;
 	bool m_bStillDiving;
-	static AudioControlId m_submersionDepthParam;
+	static CryAudio::ControlId m_submersionDepthParam;
 	static float m_previousSubmersionDepth;
 
 	struct CSwimmingParams

@@ -1,3 +1,5 @@
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
 #include "StdAfx.h"
 
 #include "geometries.h"
@@ -59,9 +61,10 @@ int PhysXEnt::AddGeometry(phys_geometry* pgeom, pe_geomparams* params, int id, i
 		pMatMapping=params->pMatMapping, nMats=params->nMats;
 	PxMaterial *const mtl = g_pPhysWorld->GetSurfaceType(pMatMapping ? pMatMapping[max(0,min(nMats-1,pgeom->surface_idx))] : pgeom->surface_idx);
 
-	newPart.shape = pGeom->CreateAndUse(trans,scale, [this,mtl,&trans](const PxGeometry &geom) { return m_actor->createShape(geom,*mtl,T(trans)); });
+	newPart.shape = pGeom->CreateAndUse(trans, scale, [this, mtl](const PxGeometry &geom) { return PxRigidActorExt::createExclusiveShape(*m_actor, geom, *mtl); });
 	if (!newPart.shape)
 		return -1;
+	newPart.shape->setLocalPose(T(trans));
 	
 	if (pGeom->GetType()== GEOM_HEIGHTFIELD) newPart.shape->setFlag(physx::PxShapeFlag::eVISUALIZATION, false); // disable debug vis for heightfield (performance)
 
@@ -240,10 +243,9 @@ int PhysXEnt::SetParams(pe_params *_params, int bThreadSafe)
 			i0 = i1 = params->ipart;
 		if ((uint)i0 >= m_parts.size())
 			return 0;
-		int flagsCond = !is_unused(params->flagsCond) ? params->flagsCond : -1;
 		for(int i=i0; i<=i1; i++) {
 			PxFilterData fd = m_parts[i].shape->getSimulationFilterData();
-			if (!(fd.word0 & flagsCond))
+			if (!is_unused(params->flagsCond) && !(fd.word0 & params->flagsCond))
 				continue;
 			fd.word0 &= params->flagsAND;
 			fd.word0 |= params->flagsOR;
@@ -256,6 +258,13 @@ int PhysXEnt::SetParams(pe_params *_params, int bThreadSafe)
 				if (!is_unused(params->pos)) trans.t = params->pos;
 				if (!is_unused(params->q)) trans.q = params->q;
 				setLocalPose(i,trans);
+				/*if (PxRigidBody *pRB = m_actor->isRigidBody())
+					if (!(pRB->getRigidBodyFlags() & PxRigidBodyFlag::eKINEMATIC) && m_type!=PE_ARTICULATED) {
+						float *densities = (float*)alloca(m_parts.size()*sizeof(float));
+						for(int i=0; i<m_parts.size(); i++)
+						densities[i] = max(1e-8f, m_parts[i].density);
+						PxRigidBodyExt::updateMassAndInertia(*pRB, densities, m_parts.size());
+					}*/
 			}
 		}
 		return 1;
@@ -322,6 +331,35 @@ int PhysXEnt::GetParams(pe_params* _params) const
 		return 1;
 	}
 
+	if (_params->type==pe_params_part::type_id) {
+		pe_params_part *params = (pe_params_part*)_params;
+		int i = 0;
+		if (!is_unused(params->partid))
+			i = idxPart(params->partid);
+		else if (!is_unused(params->ipart))
+			i = params->ipart;
+		if ((unsigned int)i >= m_parts.size())
+			return 0;
+		params->ipart = i;
+		params->partid = PartId(m_parts[i].shape);
+		params->density = m_parts[i].density;
+		params->mass = m_parts[i].geom->pGeom->GetVolume()*params->density*(Vec3(1)*m_parts[i].scale).GetVolume();
+		PxFilterData fd = m_parts[i].shape->getSimulationFilterData();
+		params->flagsAND=params->flagsOR = fd.word0;
+		params->flagsColliderAND=params->flagsColliderOR = fd.word1;
+		QuatT pose = getLocalPose(i);
+		params->pos = pose.t;
+		params->q = pose.q;
+		params->scale = m_parts[i].scale.x;
+		params->pPhysGeom=params->pPhysGeomProxy = m_parts[i].geom;
+		if (params->bAddrefGeoms)
+			g_pPhysWorld->AddRefGeometry(params->pPhysGeom);	
+		params->pMatMapping = 0;
+		params->nMats = 0;
+		params->pLattice = 0;
+		return 1;
+	}
+
 	if (_params->type==pe_params_area::type_id && m_type==PE_AREA) {
 		pe_params_area *params = (pe_params_area*)_params;
 		memset(params, 0, sizeof(pe_params_area));
@@ -360,7 +398,7 @@ int PhysXEnt::GetStatus(pe_status* _status) const
 		if (status->pMtx3x4)
 			*status->pMtx3x4 = Matrix34(Matrix33(trans.q)*scale, trans.t);
 		status->iSimClass = 0;
-		if (PxRigidDynamic *pRD = m_actor->isRigidDynamic())
+		if (m_actor) if (PxRigidDynamic *pRD = m_actor->isRigidDynamic())
 			status->iSimClass = 2-pRD->isSleeping();
 		getBBox(status->BBox);
 		status->BBox[0]-=status->pos; status->BBox[1]-=status->pos;

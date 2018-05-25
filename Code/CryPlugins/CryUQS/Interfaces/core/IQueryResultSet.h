@@ -1,16 +1,17 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
-namespace uqs
+namespace UQS
 {
-	namespace core
+	namespace Core
 	{
 
 		struct IQueryResultSet;         // below
 		struct SQueryResultSetDeleter;  // below
+		class CQueryResultSet;          // actually lives inside the core implemenation; forward-declared here only for IQueryResultSet::GetImplementation()
 
 		//===================================================================================
 		//
@@ -36,9 +37,10 @@ namespace uqs
 			};
 
 			virtual                               ~IQueryResultSet() {}
-			virtual client::IItemFactory&         GetItemFactory() const = 0;
+			virtual Client::IItemFactory&         GetItemFactory() const = 0;
 			virtual size_t                        GetResultCount() const = 0;
 			virtual SResultSetEntry               GetResult(size_t index) const = 0;
+			virtual const CQueryResultSet&        GetImplementation() const = 0;  // only used by the core implementation: type-safe way of down-casting along the inheritance hierarchy (some local code there needs access to the implementation but only gets an IQueryResultSet passed in)
 
 		private:
 			friend struct SQueryResultSetDeleter;

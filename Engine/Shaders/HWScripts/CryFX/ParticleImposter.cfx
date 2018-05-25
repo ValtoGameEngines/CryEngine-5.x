@@ -1,5 +1,4 @@
-// CRYENGINE Source Code File
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "Common.cfi"
 #include "ShadeLib.cfi"
@@ -110,12 +109,12 @@ struct a2v
 	float2 baseTC	: TEXCOORD0;
 	float4 color	: COLOR0;
 	float4 Tangent	: TANGENT;
-	float4 Binormal	: BINORMAL;
+	float4 Binormal	: BITANGENT;
 };
 
 struct v2f
 {
-	float4 Position		: POSITION;
+	float4 Position		: SV_POSITION;
 	float4 baseTC		: TEXCOORDN;
 	float3 bumpTC		: TEXCOORDN;
 

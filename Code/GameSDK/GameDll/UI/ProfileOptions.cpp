@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -709,7 +709,7 @@ void CProfileOptions::AddOrReplacePendingOption(const char* command, const char*
 
 bool CProfileOptions::WriteGameCfg()
 {
-	CDebugAllowFileAccess ignoreInvalidFileAccess;
+	SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
 
 	FILE* pFile = fxopen("%USER%/game.cfg", "wb");
 	if (pFile == 0)

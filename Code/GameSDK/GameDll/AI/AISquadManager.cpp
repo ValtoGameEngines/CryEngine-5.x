@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "AISquadManager.h"
@@ -438,7 +438,7 @@ void AISquadManager::RequestSquadsUpdate()
 			const EntityId id = it->first;
 			IEntity* pEntity = gEnv->pEntitySystem->GetEntity(id);
 			assert(pEntity);
-			if(pEntity && pEntity->IsActive())
+			if(pEntity && pEntity->IsActivatedForUpdates())
 			{
 				pRequest->SetNewPointInRequest(id, pEntity->GetPos());
 			} 

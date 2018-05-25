@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "MannequinObject.h"
@@ -62,7 +62,7 @@ void CMannequinObject::OnShutDown()
 	}
 }
 
-void CMannequinObject::ProcessEvent(SEntityEvent& event)
+void CMannequinObject::ProcessEvent(const SEntityEvent& event)
 {
 	switch (event.event)
 	{
@@ -79,10 +79,10 @@ void CMannequinObject::ProcessEvent(SEntityEvent& event)
 
 uint64 CMannequinObject::GetEventMask() const
 {
-	return BIT64(ENTITY_EVENT_START_LEVEL)
-	       | BIT64(ENTITY_EVENT_EDITOR_PROPERTY_CHANGED)
-	       | BIT64(ENTITY_EVENT_RESET)
-	       | BIT64(ENTITY_EVENT_XFORM_FINISHED_EDITOR);
+	return ENTITY_EVENT_BIT(ENTITY_EVENT_START_LEVEL)
+	       | ENTITY_EVENT_BIT(ENTITY_EVENT_EDITOR_PROPERTY_CHANGED)
+	       | ENTITY_EVENT_BIT(ENTITY_EVENT_RESET)
+	       | ENTITY_EVENT_BIT(ENTITY_EVENT_XFORM_FINISHED_EDITOR);
 }
 
 IEntityPropertyGroup* CMannequinObject::GetPropertyGroup()
@@ -105,7 +105,10 @@ void CMannequinObject::Reset()
 	if (!m_pAnimatedCharacter)
 	{
 		m_pAnimatedCharacter = static_cast<IAnimatedCharacter*>(pGameObject->AcquireExtension("AnimatedCharacter"));
-		assert(m_pAnimatedCharacter);
+		if (!m_pAnimatedCharacter)
+		{
+			return;
+		}
 	}
 
 	m_pAnimatedCharacter->ResetState();

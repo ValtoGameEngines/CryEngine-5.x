@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "OpticsProxy.h"
@@ -9,6 +9,11 @@ DynArray<FuncVariableGroup> COpticsProxy::GetEditorParamGroups()
 	return DynArray<FuncVariableGroup>();
 }
 #endif
+
+void COpticsProxy::DeleteThis()
+{
+	delete this;
+}
 
 COpticsProxy::COpticsProxy(const char* name) :
 	m_bEnable(false),

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -324,7 +324,7 @@ namespace CryLinkService
 				{
 					encodedQuery.append(&ch, 1);
 				}
-				else if (ch <= 0x7f)
+				else if (ch <= 0x7f && ch >= 0)
 				{
 					encodedQuery.append(s_szAsHex[ch], 3);
 				}

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   GameCodeCoverageManager.cpp
@@ -111,9 +111,11 @@ class CGameCodeCoverageOutput_File : public IGameCodeCoverageOutput
 	public:
 	CGameCodeCoverageOutput_File(const char * filename)
 	{
-		CDebugAllowFileAccess allowFileAccess;
-		stream = gEnv->pCryPak->FOpen(filename, "w");
-		allowFileAccess.End();
+		{
+			SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
+			stream = gEnv->pCryPak->FOpen(filename, "w");
+		}
+		
 		CRY_ASSERT_MESSAGE (stream, string().Format("Failed to open '%s' for output of game code coverage checkpoints!"));
 		if (stream)
 		{

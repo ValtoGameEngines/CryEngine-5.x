@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __IAIActorProxy_h__
 #define __IAIActorProxy_h__
@@ -30,7 +30,7 @@ struct IAIActorProxy :
 	virtual bool                     SetCharacter(const char* character, const char* behaviour = NULL) = 0;
 	virtual const char*              GetCharacter() = 0;
 #endif
-	virtual void                     QueryBodyInfo(SAIBodyInfo& bodyInfo) = 0;
+	virtual bool                     QueryBodyInfo(SAIBodyInfo& bodyInfo) = 0;
 	virtual bool                     QueryBodyInfo(const SAIBodyInfoQuery& query, SAIBodyInfo& bodyInfo) = 0;
 	virtual void                     QueryWeaponInfo(SAIWeaponInfo& weaponInfo) = 0;
 	virtual EntityId                 GetLinkedDriverEntityId() = 0;
@@ -91,7 +91,6 @@ struct IAIActorProxy :
 	virtual const char* GetVoiceLibraryName(const bool useForcedDefaultName = false) const = 0;
 	virtual const char* GetCommunicationConfigName() const = 0;
 	virtual const float GetFmodCharacterTypeParam() const = 0;
-	virtual const char* GetBehaviorSelectionTreeName() const = 0;
 	virtual const char* GetNavigationTypeName() const = 0;
 
 	//! Needed for debug drawing.
@@ -118,6 +117,8 @@ struct IAIActorProxy :
 	virtual void        UpdateMeAlways(bool doUpdateMeAlways) = 0;
 
 	virtual void        SetBehaviour(const char* szBehavior, const IAISignalExtraData* pData = 0) = 0;
+
+	virtual void        OnActorRemoved() {}
 
 	//! The AI signals sent from the AI handler are usually throttled
 	//! so they are not sent out all the time. For example, if the

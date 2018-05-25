@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "SandboxPythonBridge.h"
@@ -6,12 +6,11 @@
 #include "EditorFramework/Editor.h"
 
 // Disable warnings (treated as errors) thrown by shiboken headers, causing compilation to fail.
-#pragma warning (disable : 4522)
-#pragma warning (disable : 4800)
-#pragma warning (disable : 4244)
-#pragma warning (disable : 4005)
+#pragma warning (push)
+#pragma warning (disable : 4522 4800 4244 4005)
 #include <sbkpython.h>
 #include <shiboken.h>
+#pragma warning (pop)
 #include <pyside.h>
 
 #include <pyside2_qtwidgets_python.h>
@@ -28,6 +27,14 @@ struct PythonWidget
 
 	operator bool() const { return pShibokenWrapper && pQtWidget; }
 };
+
+QWidget* CreateErrorWidget()
+{
+	QLabel* result = new QLabel();
+	result->setAlignment(Qt::AlignCenter);
+	result->setText("Failed to create widget. Consult the error log for details.");
+	return result;
+}
 
 PythonWidget InstantiateWidgetFromPython(PyObject* pWidgetType)
 {
@@ -46,7 +53,7 @@ PythonWidget InstantiateWidgetFromPython(PyObject* pWidgetType)
 			PyErr_PrintEx(0);
 		}
 
-		return PythonWidget{ nullptr, nullptr };
+		return PythonWidget{ nullptr, CreateErrorWidget() };
 	}
 
 	// Check to make sure we've gotten a QWidget
@@ -55,7 +62,7 @@ PythonWidget InstantiateWidgetFromPython(PyObject* pWidgetType)
 	{
 		Shiboken::warning(PyExc_RuntimeWarning, 2, "Invalid return value in function %s, expected %s, got %s.", "IWidgetFactory.ConstructWidget", Shiboken::SbkType< QWidget >()->tp_name, pyResult->ob_type->tp_name);
 		Py_DECREF(pyResult);
-		return PythonWidget{ nullptr, nullptr };
+		return PythonWidget{ nullptr, CreateErrorWidget() };
 	}
 
 	// Convert python QWidget to a QWidget*
@@ -67,6 +74,8 @@ PythonWidget InstantiateWidgetFromPython(PyObject* pWidgetType)
 
 class PythonViewPaneWidget : public IPane
 {
+	friend class PythonViewPaneClass;
+
 public:
 	PythonViewPaneWidget(PyObject* pWidgetType, const char* name) : IPane()
 		, name(name)
@@ -126,7 +135,10 @@ public:
 	virtual CRuntimeClass* GetRuntimeClass() override { return 0; }
 	virtual const char* GetPaneTitle() override { return name.c_str(); }
 	virtual bool SinglePane() override { return unique; }
-	virtual IPane* CreatePane() const override { return new PythonViewPaneWidget(pWidgetType, name.c_str()); }
+	virtual IPane* CreatePane() const override
+	{ 
+		return new PythonViewPaneWidget(pWidgetType, name.c_str());
+	}
 };
 
 static PyObject* RegisterWindow(PyObject *dummy, PyObject *args)
@@ -182,3 +194,4 @@ PyMODINIT_FUNC initSandboxPythonBridge(void)
 	PyObject* module;
 	module = Py_InitModule("SandboxPythonBridge", BridgeMethods);
 }
+

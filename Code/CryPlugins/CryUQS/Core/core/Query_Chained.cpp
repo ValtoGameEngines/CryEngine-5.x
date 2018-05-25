@@ -1,12 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
-namespace uqs
+namespace UQS
 {
-	namespace core
+	namespace Core
 	{
 
 		//===================================================================================
@@ -23,6 +23,8 @@ namespace uqs
 
 		void CQuery_Chained::HandleChildQueryFinishedWithSuccess(const CQueryID& childQueryID, QueryResultSetUniquePtr&& pResultSet)
 		{
+			CRY_PROFILE_FUNCTION_ARG(UQS_PROFILED_SUBSYSTEM_TO_USE, m_pQueryBlueprint->GetName());	// mainly for keeping an eye on the copy operation of the items below
+
 			assert(pResultSet != nullptr);
 
 			// * if there are more queries in chain, then do the following:
@@ -34,8 +36,12 @@ namespace uqs
 
 			if (HasMoreChildrenLeftToInstantiate())
 			{
-				StoreResultSetForUseInNextChildQuery(*pResultSet);
-				InstantiateNextChildQueryBlueprint();
+				// TODO: copying the items from the result set to a separate list is not very efficient
+				//       -> would be better to somehow move-transfer what is in the underlying CItemList
+
+				const std::shared_ptr<CItemList> pResultingItemsFromChild(new CItemList);
+				pResultingItemsFromChild->CopyOtherToSelf(pResultSet->GetImplementation().GetItemList());
+				InstantiateNextChildQueryBlueprint(pResultingItemsFromChild);
 			}
 			else
 			{
@@ -45,7 +51,7 @@ namespace uqs
 			}
 
 			// transfer all item-monitors from the child to ourself to keep monitoring until a higher-level query decides differently
-			CQueryBase* pChildQuery = g_hubImpl->GetQueryManager().FindQueryByQueryID(childQueryID);
+			CQueryBase* pChildQuery = g_pHub->GetQueryManager().FindQueryByQueryID(childQueryID);
 			assert(pChildQuery);
 			pChildQuery->TransferAllItemMonitorsToOtherQuery(*this);
 		}

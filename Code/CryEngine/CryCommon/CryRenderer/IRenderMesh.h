@@ -1,4 +1,5 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+#pragma once
 
 #ifndef _RenderMesh_H_
 #define _RenderMesh_H_
@@ -83,7 +84,7 @@ struct IRenderMesh
 	//! Render mesh initialization parameters, that can be used to create RenderMesh from row pointers.
 	struct SInitParamerers
 	{
-		EVertexFormat             eVertexFormat;
+		InputLayoutHandle             eVertexFormat;
 		ERenderMeshType           eType;
 
 		void*                     pVertBuffer;
@@ -99,7 +100,7 @@ struct IRenderMesh
 		bool                      bPrecache;
 		bool                      bLockForThreadAccess;
 
-		SInitParamerers() : eVertexFormat(eVF_P3F_C4B_T2F), eType(eRMT_Static), pVertBuffer(0), nVertexCount(0), pTangents(0), pNormals(0), pIndices(0), nIndexCount(0),
+		SInitParamerers() : eVertexFormat(EDefaultInputLayouts::P3F_C4B_T2F), eType(eRMT_Static), pVertBuffer(0), nVertexCount(0), pTangents(0), pNormals(0), pIndices(0), nIndexCount(0),
 			nPrimetiveType(prtTriangleList), nRenderChunkCount(0), nClientTextureBindID(0), bOnlyVideoBuffer(false), bPrecache(true), bLockForThreadAccess(false) {}
 	};
 
@@ -144,7 +145,7 @@ struct IRenderMesh
 
 	virtual int             GetIndicesCount() = 0;
 	virtual int             GetVerticesCount() = 0;
-	virtual EVertexFormat   GetVertexFormat() = 0;
+	virtual InputLayoutHandle   GetVertexFormat() = 0;
 	virtual ERenderMeshType GetMeshType() = 0;
 	virtual float           GetGeometricMeanFaceArea() const = 0;
 
@@ -189,18 +190,18 @@ struct IRenderMesh
 	virtual uint32*                              GetPhysVertexMap() = 0;
 	virtual bool                                 IsEmpty() = 0;
 
-	virtual byte*                                GetPosPtrNoCache(int32& nStride, uint32 nFlags, int32 nOffset = 0) = 0;
-	virtual byte*                                GetPosPtr(int32& nStride, uint32 nFlags, int32 nOffset = 0) = 0;
-	virtual byte*                                GetColorPtr(int32& nStride, uint32 nFlags, int32 nOffset = 0) = 0;
-	virtual byte*                                GetNormPtr(int32& nStride, uint32 nFlags, int32 nOffset = 0) = 0;
-	virtual byte*                                GetUVPtrNoCache(int32& nStride, uint32 nFlags, int32 nOffset = 0) = 0;
-	virtual byte*                                GetUVPtr(int32& nStride, uint32 nFlags, int32 nOffset = 0) = 0;
+	virtual uint8*                               GetPosPtrNoCache(int32& nStride, uint32 nFlags, int32 nOffset = 0) = 0;
+	virtual uint8*                               GetPosPtr(int32& nStride, uint32 nFlags, int32 nOffset = 0) = 0;
+	virtual uint8*                               GetColorPtr(int32& nStride, uint32 nFlags, int32 nOffset = 0) = 0;
+	virtual uint8*                               GetNormPtr(int32& nStride, uint32 nFlags, int32 nOffset = 0) = 0;
+	virtual uint8*                               GetUVPtrNoCache(int32& nStride, uint32 nFlags, int32 nOffset = 0) = 0;
+	virtual uint8*                               GetUVPtr(int32& nStride, uint32 nFlags, int32 nOffset = 0) = 0;
 
-	virtual byte*                                GetTangentPtr(int32& nStride, uint32 nFlags, int32 nOffset = 0) = 0;
-	virtual byte*                                GetQTangentPtr(int32& nStride, uint32 nFlags, int32 nOffset = 0) = 0;
+	virtual uint8*                               GetTangentPtr(int32& nStride, uint32 nFlags, int32 nOffset = 0) = 0;
+	virtual uint8*                               GetQTangentPtr(int32& nStride, uint32 nFlags, int32 nOffset = 0) = 0;
 
-	virtual byte*                                GetHWSkinPtr(int32& nStride, uint32 nFlags, int32 nOffset = 0, bool remapped = false) = 0;
-	virtual byte*                                GetVelocityPtr(int32& nStride, uint32 nFlags, int32 nOffset = 0) = 0;
+	virtual uint8*                               GetHWSkinPtr(int32& nStride, uint32 nFlags, int32 nOffset = 0, bool remapped = false) = 0;
+	virtual uint8*                               GetVelocityPtr(int32& nStride, uint32 nFlags, int32 nOffset = 0) = 0;
 
 	virtual void                                 UnlockStream(int nStream) = 0;
 	virtual void                                 UnlockIndexStream() = 0;
@@ -209,7 +210,7 @@ struct IRenderMesh
 	virtual const PodArray<std::pair<int, int>>* GetTrisForPosition(const Vec3& vPos, IMaterial* pMaterial) = 0;
 
 	virtual float                                GetExtent(EGeomForm eForm) = 0;
-	virtual void                                 GetRandomPos(PosNorm& ran, CRndGen& seed, EGeomForm eForm, SSkinningData const* pSkinning = NULL) = 0;
+	virtual void                                 GetRandomPoints(Array<PosNorm> points, CRndGen& seed, EGeomForm eForm, SSkinningData const* pSkinning = NULL) = 0;
 
 	virtual void                                 Render(CRenderObject* pObj, const SRenderingPassInfo& passInfo) = 0;
 	virtual void                                 AddRenderElements(IMaterial* pIMatInfo, CRenderObject* pObj, const SRenderingPassInfo& passInfo, int nSortId = EFSLIST_GENERAL, int nAW = 1) = 0;
@@ -242,6 +243,8 @@ struct IRenderMesh
 	virtual void          ReleaseRemappedBoneIndicesPair(const uint pairGuid) = 0;
 
 	virtual void          OffsetPosition(const Vec3& delta) = 0;
+
+	virtual bool          RayIntersectMesh(const Ray& ray, Vec3& hitpos, Vec3& p0, Vec3& p1, Vec3& p2, Vec2& uv0, Vec2& uv1, Vec2& uv2) = 0;
 
 	// </interfuscator:shuffle>
 };

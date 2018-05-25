@@ -1,4 +1,4 @@
-# Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+# Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 from waflib import Logs
 
 def build(bld):
@@ -21,12 +21,10 @@ def build(bld):
 				Path('Code/SDKs/OculusSDK/LibOVR/Include'),
 				Path('Code/SDKs/OculusSDK/Logging/Include'),
 				],
-			win_lib = ['oleaut32'],
 
 			module_provides = dict(
 				includes = [ Path('Code/SDKs/OculusSDK/LibOVR/Include'), ],
 				defines = [ 'INCLUDE_OCULUS_SDK' ],
-				win_lib = ['oleaut32'],
 			),
 		)
 	else:

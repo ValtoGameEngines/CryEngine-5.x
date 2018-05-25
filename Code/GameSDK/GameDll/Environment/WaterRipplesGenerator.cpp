@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "WaterRipplesGenerator.h"
@@ -190,7 +190,7 @@ void CWaterRipplesGenerator::HandleEvent( const SGameObjectEvent &gameObjectEven
 	}
 }
 
-void CWaterRipplesGenerator::ProcessEvent(SEntityEvent &event)
+void CWaterRipplesGenerator::ProcessEvent(const SEntityEvent& event)
 {
 	if (event.event == ENTITY_EVENT_XFORM)
 	{
@@ -212,6 +212,11 @@ void CWaterRipplesGenerator::ProcessEvent(SEntityEvent &event)
 			Reset();
 		}
 	}
+}
+
+uint64 CWaterRipplesGenerator::GetEventMask() const
+{
+	return ENTITY_EVENT_BIT(ENTITY_EVENT_XFORM) | ENTITY_EVENT_BIT(ENTITY_EVENT_RESET);
 }
 
 void CWaterRipplesGenerator::ProcessHit(bool isMoving)
@@ -251,8 +256,6 @@ void CWaterRipplesGenerator::Reset()
 
 void CWaterRipplesGenerator::ActivateGeneration( const bool activate )
 {
-	GetEntity()->Activate( activate );
-
 	if (activate && (gEnv->IsEditor() || m_properties.m_autoSpawn))
 	{
 		if (GetGameObject()->GetUpdateSlotEnables( this, WATER_RIPPLES_GENERATOR_UPDATE_SLOT) == 0)

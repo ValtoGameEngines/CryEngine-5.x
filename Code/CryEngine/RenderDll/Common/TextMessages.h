@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef _TEXTMESSAGES_H_
 #define _TEXTMESSAGES_H_
@@ -13,12 +13,15 @@ public:
 
 	class CTextMessageHeader;
 
+	const CTextMessages& operator=(const CTextMessages& rhs);
+	void                 Merge(const CTextMessages& rhs);
+
 	// iteration should not be started yet
 	// Arguments
 	//   vPos - WorldSpace position
 	//   szText - must not be 0
 	//   nDrawFlags - EDrawTextFlags
-	void PushEntry_Text(const Vec3& vPos, const ColorB col, const Vec2& fFontSize, const int nDrawFlags, const char* szText);
+	void PushEntry_Text(const Vec3& vPos, const ColorB col, IFFont* pFont, const Vec2& fFontSize, const int nDrawFlags, const char* szText);
 
 	// usually called every frame
 	// resets/ends iteration
@@ -61,6 +64,7 @@ public:
 		ColorB m_Color;
 		Vec2  m_fFontSize;
 		uint32 m_nDrawFlags;      // EDrawTextFlags
+		IFFont* m_pFont;
 	};
 
 	void GetMemoryUsage(ICrySizer* pSizer) const

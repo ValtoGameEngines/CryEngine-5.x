@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "CryLinkCommands.h"
@@ -11,16 +11,16 @@ static void RpcEditorShow(IConsoleCmdArgs* pArgs)
 {
 	if (gEnv->IsEditor())
 	{
-		SGUID elementGUID;
+		CryGUID elementGUID;
 		if (pArgs->GetArgCount() >= 2)
 		{
-			elementGUID = GUID::FromString(pArgs->GetArg(1));
+			elementGUID = CryGUID::FromString(pArgs->GetArg(1));
 		}
 
-		SGUID detailGUID;
+		CryGUID detailGUID;
 		if (pArgs->GetArgCount() >= 3)
 		{
-			detailGUID = GUID::FromString(pArgs->GetArg(2));
+			detailGUID = CryGUID::FromString(pArgs->GetArg(2));
 		}
 
 		if (!GUID::IsEmpty(elementGUID))
@@ -74,3 +74,4 @@ CCryLinkCommands& CCryLinkCommands::GetInstance()
 
 CCryLinkCommands CCryLinkCommands::ms_instance;
 } // Schematyc
+

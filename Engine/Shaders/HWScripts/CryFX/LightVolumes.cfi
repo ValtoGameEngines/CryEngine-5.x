@@ -1,5 +1,4 @@
-// CRYENGINE Source Code File
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 
 struct SLightVolumeInfo
@@ -22,8 +21,8 @@ struct SLightVolumeRange
 
 
 
-StructuredBuffer<SLightVolumeInfo> lightVolumeInfos   : register(t5);
-StructuredBuffer<SLightVolumeRange> lightVolumeRanges  : register(t6);
+StructuredBuffer<SLightVolumeInfo> lightVolumeInfos   : register(t33);
+StructuredBuffer<SLightVolumeRange> lightVolumeRanges : register(t34);
 
 
 
@@ -77,8 +76,7 @@ void ProjectLightVolume(in float3 vWorldPos, in half sunShadow, in half backLigh
 	half4 vDirectional = half4(0,0,0,0.00001);
 
 #if %_RT_LIGHTVOLUME0
-	const uint lightVolumeId = asuint(PullVerticesInfo.y);
-	SLightVolumeRange range = lightVolumeRanges[lightVolumeId];
+	SLightVolumeRange range = lightVolumeRanges[particleInstance.lightVolumeId];
 	[loop] for (uint i = range.begin; i < range.end; ++i)
 	{
 		SLightVolumeInfo lightVol = lightVolumeInfos[i];

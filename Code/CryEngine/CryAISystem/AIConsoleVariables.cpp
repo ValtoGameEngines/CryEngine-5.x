@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "AIConsoleVariables.h"
@@ -21,9 +21,6 @@ void AIConsoleVars::Init()
 	               "Draws the A* open list for the specified AI agent.\n"
 	               "Usage: ai_DebugDrawAStarOpenList [AI agent name]\n"
 	               "Default is 0, which disables the debug draw. Requires ai_DebugPathfinding=1 to be activated.");
-
-	REGISTER_CVAR2("ai_DebugCheckWalkabilityRadius", &DebugCheckWalkabilityRadius, 0.5f, VF_CHEAT | VF_CHEAT_NOCHECK,
-	               "Radius to use for the per-frame debug CheckWalkability test.");
 
 	REGISTER_CVAR2("ai_DebugDrawAStarOpenListTime", &DebugDrawAStarOpenListTime, 10.0f, VF_CHEAT | VF_CHEAT_NOCHECK,
 	               "The amount of time to draw the A* open list.");
@@ -69,9 +66,6 @@ void AIConsoleVars::Init()
 	               "on which to focus.");
 	DefineConstIntCVarName("ai_DebugDrawPhysicsAccess", DebugDrawPhysicsAccess, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
 	                       "Displays current physics access statistics for the AI module.");
-	REGISTER_CVAR2("ai_DebugBehaviorSelection", &DebugBehaviorSelection, "", VF_CHEAT | VF_CHEAT_NOCHECK,
-	               "Display behavior selection information for a specific agent\n"
-	               "Usage: ai_DebugBehaviorSelection <name>");
 
 	DefineConstIntCVarName("ai_RayCasterQuota", RayCasterQuota, 12, VF_CHEAT | VF_CHEAT_NOCHECK,
 	                       "Amount of deferred rays allowed to be cast per frame!");
@@ -79,8 +73,6 @@ void AIConsoleVars::Init()
 	DefineConstIntCVarName("ai_IntersectionTesterQuota", IntersectionTesterQuota, 12, VF_CHEAT | VF_CHEAT_NOCHECK,
 	                       "Amount of deferred intersection tests allowed to be cast per frame!");
 
-	REGISTER_CVAR2("ai_DebugHideSpotName", &DebugHideSpotName, "0", VF_CHEAT | VF_CHEAT_NOCHECK,
-	               "Debug HideSpot Name!");
 	REGISTER_CVAR2("ai_DrawShooting", &DrawShooting, "none", VF_CHEAT | VF_CHEAT_NOCHECK,
 	               "Name of puppet to show fire stats");
 	REGISTER_CVAR2("ai_DrawAgentStats", &DrawAgentStats, "NkcBbtGgSfdDL", VF_NULL,
@@ -143,16 +135,6 @@ void AIConsoleVars::Init()
 	               "In seconds the amount of time between two full updates for AI  \n"
 	               "Usage: ai_UpdateInterval <number>\n"
 	               "Default is 0.1. Number is time in seconds");
-	REGISTER_CVAR2("ai_DynamicWaypointUpdateTime", &DynamicWaypointUpdateTime, 0.00035f, VF_NULL,
-	               "How long (max) to spend updating dynamic waypoint regions per AI update (in sec)\n"
-	               "0 disables dynamic updates. 0.0005 is a sensible value");
-	REGISTER_CVAR2("ai_DynamicVolumeUpdateTime", &DynamicVolumeUpdateTime, 0.000175f, VF_NULL,
-	               "How long (max) to spend updating dynamic volume regions per AI update (in sec)\n"
-	               "0 disables dynamic updates. 0.002 is a sensible value");
-	REGISTER_CVAR2("ai_LayerSwitchDynamicLinkBump", &LayerSwitchDynamicLinkBump, 8.0f, VF_NULL,
-	               "Multiplier for the dynamic link update budget when layer switch occurs.");
-	REGISTER_CVAR2("ai_LayerSwitchDynamicLinkBumpDuration", &LayerSwitchDynamicLinkBumpDuration, 60, VF_NULL,
-	               "Duration of the dynamic link update budget bump in frames.");
 	DefineConstIntCVarName("ai_AdjustPathsAroundDynamicObstacles", AdjustPathsAroundDynamicObstacles, 1, VF_CHEAT | VF_CHEAT_NOCHECK,
 	                       "Set to 1/0 to enable/disable AI path adjustment around dynamic obstacles");
 	// is not cheat protected because it changes during game, depending on your settings
@@ -336,10 +318,6 @@ void AIConsoleVars::Init()
 	                       "-n draws all voxels with original value =  n");
 	DefineConstIntCVarName("ai_DebugPathfinding", DebugPathFinding, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
 	                       "Toggles output of pathfinding information [default 0 is off]");
-	DefineConstIntCVarName("ai_DebugCheckWalkability", DebugCheckWalkability, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
-	                       "Toggles output of check walkability information, as well as allowing the use of tagpoints named CheckWalkabilityTestStart/End to trigger a test each update. [default 0 is off]");
-	DefineConstIntCVarName("ai_DebugWalkabilityCache", DebugWalkabilityCache, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
-	                       "Toggles allowing the use of tagpoints named WalkabilityCacheOrigin to cache walkability. [default 0 is off]");
 	DefineConstIntCVarName("ai_DebugDrawBannedNavsos", DebugDrawBannedNavsos, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
 	                       "Toggles drawing banned navsos [default 0 is off]");
 	DefineConstIntCVarName("ai_DebugDrawGroups", DebugDrawGroups, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
@@ -403,6 +381,12 @@ void AIConsoleVars::Init()
 	                       "4 - triangles, mesh contours, external links and triangle IDs\n"
 	                       "5 - triangles, mesh contours, external links and island IDs\n"
 	                       "6 - triangles with backfaces, mesh contours and external links\n");
+	DefineConstIntCVarName("ai_MNMDebugTriangleOnCursor", DebugTriangleOnCursor, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
+		"Displays the basic information about the MNM Triangle where the cursor is pointing.\n"
+		"Usage: ai_MNMDebugTriangleOnCursor [0/1]\n"
+		"Default is 0 (off)\n"
+		"0 - off\n"
+		"1 - show triangle information\n");
 	DefineConstIntCVarName("ai_IslandConnectionsSystemProfileMemory", IslandConnectionsSystemProfileMemory, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
 	                       "Enables/Disables the memory profile for the island connections system.");
 	DefineConstIntCVarName("ai_NavigationSystemMT", NavigationSystemMT, 1, VF_CHEAT | VF_CHEAT_NOCHECK,
@@ -419,6 +403,18 @@ void AIConsoleVars::Init()
 	                       " Fast machine [10]\n"
 	                       " Slow machine [4]\n"
 	                       " Smooth [1]\n");
+	REGISTER_CVAR2("ai_MNMDebugDrawFlag", &MNMDebugDrawFlag, "", VF_CHEAT | VF_CHEAT_NOCHECK,
+		"Color the MNM triangles is overriden by the specified annotation flag color.\n"
+		"Usage: ai_MNMDebugDrawFlag 'flagName'\n"
+		"Default is 'empty'\n");
+	REGISTER_CVAR2("ai_NavmeshTileDistanceDraw", &NavmeshTileDistanceDraw, 200.0f, VF_CHEAT | VF_CHEAT_NOCHECK,
+	               "Maximum distance from the camera for tile to be drawn.\n"
+	               "Usage: ai_NavmeshTileDistanceDraw [0.0-...]\n"
+	               "Default is 200.0\n");
+	REGISTER_CVAR2("ai_NavmeshStabilizationTimeToUpdate", &NavmeshStabilizationTimeToUpdate, 0.3f, VF_CHEAT | VF_CHEAT_NOCHECK,
+		"Time that navmesh needs to be without any new updates to apply the latest changes.\n"
+		"Usage: ai_NavmeshStabilizationTimeToUpdate [0.0-...]\n"
+		"Default is 0.3\n");
 	DefineConstIntCVarName("ai_DebugDrawNavigationWorldMonitor", DebugDrawNavigationWorldMonitor, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
 	                       "Enables displaying bounding boxes for world changes.\n"
 	                       "Usage: ai_DebugDrawNavigationWorldMonitor [0/1]\n"
@@ -695,8 +691,6 @@ void AIConsoleVars::Init()
 	                       "Draws indicators showing enemy view intersection with perception modifiers");
 	DefineConstIntCVarName("ai_DrawPerceptionModifiers", DrawPerceptionModifiers, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
 	                       "Draws perception modifier areas in game mode");
-	DefineConstIntCVarName("ai_DebugPerceptionManager", DebugPerceptionManager, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
-	                       "Draws perception manager performance overlay. 0=disable, 1=vis checks, 2=stimulus");
 	DefineConstIntCVarName("ai_DebugGlobalPerceptionScale", DebugGlobalPerceptionScale, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
 	                       "Draws global perception scale multipliers on screen");
 	DefineConstIntCVarName("ai_TargetTracking", TargetTracking, 1, VF_CHEAT | VF_CHEAT_NOCHECK,
@@ -746,17 +740,6 @@ void AIConsoleVars::Init()
 	DefineConstIntCVarName("ai_DebugDrawPlayerActions", DebugDrawPlayerActions, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
 	                       "Debug draw special player actions.");
 
-	DefineConstIntCVarName("ai_DrawCollisionEvents", DrawCollisionEvents, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
-	                       "Debug draw the collision events the AI system processes. 0=disable, 1=enable.");
-	DefineConstIntCVarName("ai_DrawBulletEvents", DrawBulletEvents, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
-	                       "Debug draw the bullet events the AI system processes. 0=disable, 1=enable.");
-	DefineConstIntCVarName("ai_DrawSoundEvents", DrawSoundEvents, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
-	                       "Debug draw the sound events the AI system processes. 0=disable, 1=enable.");
-	DefineConstIntCVarName("ai_DrawGrenadeEvents", DrawGrenadeEvents, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
-	                       "Debug draw the grenade events the AI system processes. 0=disable, 1=enable.");
-	DefineConstIntCVarName("ai_DrawExplosions", DrawExplosions, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
-	                       "Debug draw the explosion events the AI system processes. 0=disable, 1=enable.");
-
 	DefineConstIntCVarName("ai_EnableWaterOcclusion", WaterOcclusionEnable, 1, VF_CHEAT | VF_CHEAT_NOCHECK,
 	                       "Enables applying water occlusion to AI target visibility checks");
 	REGISTER_CVAR2("ai_WaterOcclusion", &WaterOcclusionScale, .5f, VF_NULL,
@@ -789,9 +772,6 @@ void AIConsoleVars::Init()
 	               "Obstacle size in meters that differentiates small obstacles from big ones so that vehicles can ignore the small ones");
 	REGISTER_CVAR2("ai_DrawGetEnclosingFailures", &DrawGetEnclosingFailures, 0.0f, VF_CHEAT | VF_CHEAT_NOCHECK,
 	               "Set to the number of seconds you want GetEnclosing() failures visualized.  Set to 0 to turn visualization off.");
-
-	DefineConstIntCVarName("ai_CodeCoverageMode", CodeCoverage, 0, VF_CHEAT | VF_CHEAT_NOCHECK,
-	                       "Set current mode of Code Coverage system.\n0 = off, 1 = smart, 2 = silent, 3 = force");
 
 	DefineConstIntCVarName("ai_EnablePerceptionStanceVisibleRange", EnablePerceptionStanceVisibleRange, 0, VF_CHEAT | VF_CHEAT_NOCHECK, "Turn on use of max perception range for AI based on player's stance");
 	REGISTER_CVAR2("ai_CrouchVisibleRange", &CrouchVisibleRange, 15.0f, VF_CHEAT | VF_CHEAT_NOCHECK, "Max perception range for AI when player is crouching");
@@ -828,11 +808,12 @@ void AIConsoleVars::Init()
 	DefineConstIntCVarName("ai_MNMPathfinderConcurrentRequests", MNMPathfinderConcurrentRequests, 4, VF_CHEAT | VF_CHEAT_NOCHECK,
 	                       "Defines the amount of concurrent pathfinder requests that can be served at the same time.");
 
-	DefineConstIntCVarName("ai_MNMRaycastImplementation", MNMRaycastImplementation, 1, VF_CHEAT | VF_CHEAT_NOCHECK,
+	DefineConstIntCVarName("ai_MNMRaycastImplementation", MNMRaycastImplementation, 2, VF_CHEAT | VF_CHEAT_NOCHECK,
 	                       "Defines which type of raycast implementation to use on the MNM meshes."
-	                       "0 - Old one. This version will be deprecated as it sometimes does not handle correctly the cases where the ray coincides with triangle egdes, which has been fixed in the new version.\n"
-	                       "1 - New one.\n"
-	                       "Any other value is used for the new one");
+	                       "0 - Version 1. This version will be deprecated as it sometimes does not handle correctly the cases where the ray coincides with triangle egdes, which has been fixed in the new version.\n"
+	                       "1 - Version 2. This version also fails in some cases when the ray goes exactly through triangle corners and then hitting the wall. \n"
+	                       "2 - Version 3. The newest version that should be working in all special cases. This version is around 40% faster then the previous one. \n"
+	                       "Any other value is used for the biggest version.");
 
 	DefineConstIntCVarName("ai_SmartPathFollower_useAdvancedPathShortcutting", SmartPathFollower_useAdvancedPathShortcutting, 1, VF_NULL, "Enables a more failsafe way of preventing the AI to shortcut through obstacles (0 = disable, any other value = enable)");
 	DefineConstIntCVarName("ai_SmartPathFollower_useAdvancedPathShortcutting_debug", SmartPathFollower_useAdvancedPathShortcutting_debug, 0, VF_NULL, "Show debug lines for when CVar ai_SmartPathFollower_useAdvancedPathShortcutting_debug is enabled");

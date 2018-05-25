@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   3denginelight.cpp
@@ -23,7 +23,7 @@
 #include "Brush.h"
 #include "ClipVolumeManager.h"
 
-void C3DEngine::RegisterLightSourceInSectors(CDLight* pDynLight, int nSID, const SRenderingPassInfo& passInfo)
+void C3DEngine::RegisterLightSourceInSectors(SRenderLight* pDynLight, const SRenderingPassInfo& passInfo)
 {
 	// AntonK: this hack for colored shadow maps is temporary, since we will render it another way in the future
 	if (pDynLight->m_Flags & DLF_SUN || !m_pTerrain || !pDynLight->m_pOwner)
@@ -36,8 +36,8 @@ void C3DEngine::RegisterLightSourceInSectors(CDLight* pDynLight, int nSID, const
 	IVisArea* pLightArea = pDynLight->m_pOwner->GetEntityVisArea();
 	if (!pLightArea || ((pDynLight->m_Flags & DLF_PROJECT) && pLightArea->IsConnectedToOutdoor()))
 	{
-		if (m_pObjectsTree[nSID])
-			m_pObjectsTree[nSID]->AddLightSource(pDynLight, passInfo);
+		if (m_pObjectsTree)
+			m_pObjectsTree->AddLightSource(pDynLight, passInfo);
 	}
 
 	if (m_pVisAreaManager)
@@ -73,7 +73,7 @@ void CLightEntity::Release(bool)
 	Get3DEngine()->DeleteLightSource(this);
 }
 
-void CLightEntity::SetLightProperties(const CDLight& light)
+void CLightEntity::SetLightProperties(const SRenderLight& light)
 {
 	C3DEngine* engine = Get3DEngine();
 
@@ -81,7 +81,6 @@ void CLightEntity::SetLightProperties(const CDLight& light)
 
 	m_bShadowCaster = (m_light.m_Flags & DLF_CASTSHADOW_MAPS) != 0;
 
-	m_light.m_fBaseRadius = m_light.m_fRadius;
 	m_light.m_fLightFrustumAngle = CLAMP(m_light.m_fLightFrustumAngle, 0.f, (LIGHT_PROJECTOR_MAX_FOV / 2.f));
 
 	if (!(m_light.m_Flags & (DLF_PROJECT | DLF_AREA_LIGHT)))
@@ -108,7 +107,7 @@ void CLightEntity::SetLightProperties(const CDLight& light)
 		lightEntities.InsertBefore((ILightSource*)this, 0);
 }
 
-const PodArray<CDLight*>* C3DEngine::GetStaticLightSources()
+const PodArray<SRenderLight*>* C3DEngine::GetStaticLightSources()
 {
 	m_tmpLstLights.Clear();
 
@@ -127,16 +126,13 @@ void C3DEngine::FindPotentialLightSources(const SRenderingPassInfo& passInfo)
 	static ICVar* pCV_r_wireframe = GetConsole()->GetCVar("r_wireframe");
 	if (pCV_r_wireframe && pCV_r_wireframe->GetIVal() == R_WIREFRAME_MODE)
 		return;
-	static ICVar* pCV_e_sketch_mode = gEnv->pConsole->GetCVar("e_SketchMode");
-	if (pCV_e_sketch_mode && pCV_e_sketch_mode->GetIVal() == 4) // 4 is set by setting CV_r_TexelsPerMeter ration to != 0
-		return;
 #endif
 	const Vec3 vCamPos = passInfo.GetCamera().GetPosition();
 
 	for (int i = 0; i < m_lstStaticLights.Count(); i++)
 	{
 		CLightEntity* pLightEntity = (CLightEntity*)m_lstStaticLights[i];
-		CDLight* pLight = &pLightEntity->m_light;
+		SRenderLight* pLight = &pLightEntity->GetLightProperties();
 
 		if (pLight->m_Flags & DLF_DEFERRED_LIGHT)
 			break; // process deferred lights in CLightEntity::Render(), deferred lights are stored in the end of this array
@@ -214,16 +210,7 @@ void C3DEngine::ResetCasterCombinationsCache()
 	}
 }
 
-void C3DEngine::DeleteAllStaticLightSources()
-{
-	for (int i = 0; i < m_lstStaticLights.Count(); i++)
-		delete m_lstStaticLights[i];
-	m_lstStaticLights.Reset();
-
-	m_pSun = NULL;
-}
-
-void C3DEngine::AddDynamicLightSource(const class CDLight& LSource, ILightSource* pEnt, int nEntityLightId, float fFadeout, const SRenderingPassInfo& passInfo)
+void C3DEngine::AddDynamicLightSource(const SRenderLight& LSource, ILightSource* pEnt, int nEntityLightId, float fFadeout, const SRenderingPassInfo& passInfo)
 {
 	assert(pEnt && _finite(LSource.m_Origin.x) && _finite(LSource.m_Origin.y) && _finite(LSource.m_fRadius));
 	assert(LSource.IsOk());
@@ -329,7 +316,7 @@ void C3DEngine::AddDynamicLightSource(const class CDLight& LSource, ILightSource
 	// Add new lsource into list and set some parameters
 	////////////////////////////////////////////////////////////////////////////////////////////////
 
-	m_lstDynLights.Add(new CDLight);
+	m_lstDynLights.Add(new SRenderLight);
 	*m_lstDynLights.Last() = LSource;
 
 	// add ref to avoid shader deleting
@@ -458,18 +445,16 @@ void C3DEngine::PrepareLightSourcesForRendering_0(const SRenderingPassInfo& pass
 
 			if (m_lstDynLights[i]->m_Flags & DLF_DEFERRED_LIGHT)
 			{
-				CDLight* pLight = m_lstDynLights[i];
+				SRenderLight* pLight = m_lstDynLights[i];
 				CLightEntity* pLightEntity = (CLightEntity*)pLight->m_pOwner;
 
 				if (passInfo.RenderShadows() && (pLight->m_Flags & DLF_CASTSHADOW_MAPS) && pLight->m_Id >= 0)
 				{
 					pLightEntity->UpdateGSMLightSourceShadowFrustum(passInfo);
 
-					if (pLightEntity->m_pShadowMapInfo)
+					if (pLightEntity->GetShadowMapInfo())
 					{
-						pLight->m_pShadowMapFrustums = reinterpret_cast<ShadowMapFrustum**>(pLightEntity->m_pShadowMapInfo->pGSM);
-						for (int nLod = 0; nLod < MAX_GSM_LODS_NUM && pLight->m_pShadowMapFrustums[nLod]; nLod++)
-							pLight->m_pShadowMapFrustums[nLod]->nDLightId = pLight->m_Id;
+						pLight->m_pShadowMapFrustums = reinterpret_cast<ShadowMapFrustum**>(pLightEntity->GetShadowMapInfo()->pGSM);
 					}
 				}
 
@@ -555,8 +540,7 @@ void C3DEngine::PrepareLightSourcesForRendering_1(const SRenderingPassInfo& pass
 			assert(m_lstDynLights[i]->m_Id == i);
 			if (m_lstDynLights[i]->m_Id != -1)
 			{
-				for (int nSID = 0; nSID < Get3DEngine()->m_pObjectsTree.Count(); nSID++)
-					RegisterLightSourceInSectors(m_lstDynLights[i], nSID, passInfo);
+				RegisterLightSourceInSectors(m_lstDynLights[i], passInfo);
 			}
 		}
 	}
@@ -572,8 +556,7 @@ void C3DEngine::PrepareLightSourcesForRendering_1(const SRenderingPassInfo& pass
 			if (m_lstDynLights[i]->m_fRadius >= 0.5f)
 			{
 				assert(m_lstDynLights[i]->m_fRadius >= 0.5f && !(m_lstDynLights[i]->m_Flags & DLF_FAKE));
-				for (int nSID = 0; nSID < Get3DEngine()->m_pObjectsTree.Count(); nSID++)
-					RegisterLightSourceInSectors(m_lstDynLights[i], nSID, passInfo);
+				RegisterLightSourceInSectors(m_lstDynLights[i], passInfo);
 			}
 		}
 
@@ -590,7 +573,7 @@ void C3DEngine::PrepareLightSourcesForRendering_1(const SRenderingPassInfo& pass
 	{
 		for (int i = 0; i < m_lstDynLights.Count(); i++)
 		{
-			CDLight* pL = m_lstDynLights[i];
+			SRenderLight* pL = m_lstDynLights[i];
 			float fSize = 0.05f * (sinf(GetCurTimeSec() * 10.f) + 2.0f);
 			DrawSphere(pL->m_Origin, fSize, pL->m_Color);
 			IRenderAuxText::DrawLabelF(pL->m_Origin, 1.3f, "id=%d, rad=%.1f, vdr=%d", pL->m_Id, pL->m_fRadius, (int)(pL->m_pOwner ? pL->m_pOwner->m_ucViewDistRatio : 0));
@@ -609,25 +592,23 @@ void C3DEngine::InitShadowFrustums(const SRenderingPassInfo& passInfo)
 
 		for (int i = nValidCasters; i < m_nRealLightsNum && i < m_lstDynLights.Count(); i++)
 		{
-			CDLight* pCurLight = m_lstDynLights[i];
+			SRenderLight* pCurLight = m_lstDynLights[i];
 			pCurLight->m_Flags &= ~DLF_CASTSHADOW_MAPS;
 		}
 	}
 
 	for (int i = 0; i < m_nRealLightsNum && i < m_lstDynLights.Count(); i++)
 	{
-		CDLight* pLight = m_lstDynLights[i];
+		SRenderLight* pLight = m_lstDynLights[i];
 		CLightEntity* pLightEntity = (CLightEntity*)pLight->m_pOwner;
 
 		if (passInfo.RenderShadows() && (pLight->m_Flags & DLF_CASTSHADOW_MAPS) && pLight->m_Id >= 0)
 		{
 			pLightEntity->UpdateGSMLightSourceShadowFrustum(passInfo);
 
-			if (pLightEntity->m_pShadowMapInfo)
+			if (pLightEntity->GetShadowMapInfo())
 			{
-				pLight->m_pShadowMapFrustums = reinterpret_cast<ShadowMapFrustum**>(pLightEntity->m_pShadowMapInfo->pGSM);
-				for (int nLod = 0; nLod < MAX_GSM_LODS_NUM && pLight->m_pShadowMapFrustums[nLod]; nLod++)
-					pLight->m_pShadowMapFrustums[nLod]->nDLightId = pLight->m_Id;
+				pLight->m_pShadowMapFrustums = reinterpret_cast<ShadowMapFrustum**>(pLightEntity->GetShadowMapInfo()->pGSM);
 			}
 		}
 
@@ -684,7 +665,7 @@ void C3DEngine::InitShadowFrustums(const SRenderingPassInfo& passInfo)
 			for (int j = (m_nRealLightsNum - 1); j >= (i + 1); j--)
 			{
 
-				CDLight* pLight = m_lstDynLights[i];
+				SRenderLight* pLight = m_lstDynLights[i];
 				CLightEntity* pLightEntity1 = (CLightEntity*)pLight->m_pOwner;
 
 				pLight = m_lstDynLights[j];
@@ -716,8 +697,12 @@ void C3DEngine::AddPerObjectShadow(IShadowCaster* pCaster, float fConstBias, flo
 
 	if (bRequiresObjTreeUpdate)
 	{
-		FRAME_PROFILER("C3DEngine::AddPerObjectShadow", GetSystem(), PROFILE_3DENGINE);
-		ObjectsTreeMarkAsUncompiled(static_cast<IRenderNode*>(pCaster));
+		CRY_PROFILE_FUNCTION(PROFILE_3DENGINE);
+
+		if (static_cast<IRenderNode*>(pCaster)->m_pOcNode)
+		{
+			static_cast<COctreeNode*>(static_cast<IRenderNode*>(pCaster)->m_pOcNode)->SetCompiled(IRenderNode::GetRenderNodeListId(pCaster->GetRenderNodeType()), false);
+		}
 	}
 }
 
@@ -726,12 +711,15 @@ void C3DEngine::RemovePerObjectShadow(IShadowCaster* pCaster)
 	SPerObjectShadow* pOS = GetPerObjectShadow(pCaster);
 	if (pOS)
 	{
-		FRAME_PROFILER("C3DEngine::RemovePerObjectShadow", GetSystem(), PROFILE_3DENGINE);
+		CRY_PROFILE_FUNCTION(PROFILE_3DENGINE);
 
 		size_t nIndex = (size_t)(pOS - m_lstPerObjectShadows.begin());
 		m_lstPerObjectShadows.Delete(nIndex);
 
-		ObjectsTreeMarkAsUncompiled(static_cast<IRenderNode*>(pCaster));
+		if (static_cast<IRenderNode*>(pCaster)->m_pOcNode)
+		{
+			static_cast<COctreeNode*>(static_cast<IRenderNode*>(pCaster)->m_pOcNode)->SetCompiled(IRenderNode::GetRenderNodeListId(pCaster->GetRenderNodeType()), false);
+		}
 	}
 }
 
@@ -758,7 +746,7 @@ void C3DEngine::GetCustomShadowMapFrustums(ShadowMapFrustum**& arrFrustums, int&
 	}
 }
 
-void C3DEngine::FreeLightSourceComponents(CDLight* pLight, bool bDeleteLight)
+void C3DEngine::FreeLightSourceComponents(SRenderLight* pLight, bool bDeleteLight)
 {
 	FUNCTION_PROFILER_3DENGINE;
 
@@ -774,7 +762,7 @@ void C3DEngine::FreeLightSourceComponents(CDLight* pLight, bool bDeleteLight)
 
 namespace
 {
-static inline bool CmpCastShadowFlag(const CDLight* p1, const CDLight* p2)
+static inline bool CmpCastShadowFlag(const SRenderLight* p1, const SRenderLight* p2)
 {
 	// move sun first
 	if ((p1->m_Flags & DLF_SUN) > (p2->m_Flags & DLF_SUN))
@@ -813,7 +801,7 @@ void C3DEngine::UpdateLightSources(const SRenderingPassInfo& passInfo)
 	// process lsources
 	for (int i = 0; i < m_lstDynLights.Count(); i++)
 	{
-		CDLight* pLight = m_lstDynLights[i];
+		SRenderLight* pLight = m_lstDynLights[i];
 
 		bool bDeleteNow = GetRenderer()->EF_UpdateDLight(pLight);
 
@@ -838,9 +826,10 @@ void C3DEngine::UpdateLightSources(const SRenderingPassInfo& passInfo)
 
 bool IsSphereInsideHull(const SPlaneObject* pHullPlanes, int nPlanesNum, const Sphere& objSphere);
 
-void C3DEngine::SetupLightScissors(CDLight* pLight, const SRenderingPassInfo& passInfo)
+void C3DEngine::SetupLightScissors(SRenderLight* pLight, const SRenderingPassInfo& passInfo)
 {
-	Vec3 vViewVec = pLight->m_Origin - passInfo.GetCamera().GetPosition();
+	const CCamera& pCam = passInfo.GetCamera();
+	Vec3 vViewVec = pLight->m_Origin - pCam.GetPosition();
 	float fDistToLS = vViewVec.GetLength();
 
 	// Use max of width/height for area lights.
@@ -858,15 +847,15 @@ void C3DEngine::SetupLightScissors(CDLight* pLight, const SRenderingPassInfo& pa
 		//optimization when we are inside light frustum
 		pLight->m_sX = 0;
 		pLight->m_sY = 0;
-		pLight->m_sWidth = GetRenderer()->GetWidth();
-		pLight->m_sHeight = GetRenderer()->GetHeight();
+		pLight->m_sWidth = pCam.GetViewSurfaceX();
+		pLight->m_sHeight = pCam.GetViewSurfaceZ();
 
 		return;
 	}
 
 	Matrix44 mProj, mView;
-	GetRenderer()->GetProjectionMatrix(mProj.GetData());
-	GetRenderer()->GetModelViewMatrix(mView.GetData());
+	mProj = pCam.GetRenderProjectionMatrix();
+	mView = pCam.GetRenderViewMatrix();
 
 	Vec3 vCenter = pLight->m_Origin;
 	float fRadius = fMaxRadius;
@@ -970,7 +959,7 @@ void C3DEngine::SetupLightScissors(CDLight* pLight, const SRenderingPassInfo& pa
 			planes[3].plane = Plane::CreatePlane(NormD, vCenter);
 			planes[4].plane = Plane::CreatePlane(-pDirFront, vCenter + pEdgeA);
 
-			Sphere CamPosSphere(passInfo.GetCamera().GetPosition(), 0.001f);
+			Sphere CamPosSphere(pCam.GetPosition(), 0.001f);
 
 			if (IsSphereInsideHull(planes, nPlanes, CamPosSphere))
 			{
@@ -1037,15 +1026,11 @@ void C3DEngine::SetupLightScissors(CDLight* pLight, const SRenderingPassInfo& pa
 
 		Vec4 vScreenPoint = Vec4(pBRectVertices[i], 1.0) * mProj;
 
-		//projection space clamping
+		// convert to NDC
 		vScreenPoint.w = max(vScreenPoint.w, 0.00000000000001f);
-		vScreenPoint.x = max(vScreenPoint.x, -(vScreenPoint.w));
-		vScreenPoint.x = min(vScreenPoint.x, vScreenPoint.w);
-		vScreenPoint.y = max(vScreenPoint.y, -(vScreenPoint.w));
-		vScreenPoint.y = min(vScreenPoint.y, vScreenPoint.w);
-
-		//NDC
 		vScreenPoint /= vScreenPoint.w;
+		vScreenPoint.x = max(-1.0f, min(1.0f, vScreenPoint.x));
+		vScreenPoint.y = max(-1.0f, min(1.0f, vScreenPoint.y));
 
 		//output coords
 		//generate viewport (x=0,y=0,height=1,width=1)
@@ -1076,8 +1061,8 @@ void C3DEngine::SetupLightScissors(CDLight* pLight, const SRenderingPassInfo& pa
 		}
 	}
 
-	int iWidth = GetRenderer()->GetWidth();
-	int iHeight = GetRenderer()->GetHeight();
+	int iWidth = pCam.GetViewSurfaceX();
+	int iHeight = pCam.GetViewSurfaceZ();
 	float fWidth = (float)iWidth;
 	float fHeight = (float)iHeight;
 
@@ -1119,8 +1104,8 @@ void C3DEngine::SetupLightScissors(CDLight* pLight, const SRenderingPassInfo& pa
 			newRenderFlags.SetMode2D3DFlag(e_Mode2D);
 			pAuxRenderer->SetRenderFlags(newRenderFlags);
 
-			const float screenWidth = (float)GetRenderer()->GetWidth();
-			const float screenHeight = (float)GetRenderer()->GetHeight();
+			const float screenWidth = float(pAuxRenderer->GetCamera().GetViewSurfaceX());
+			const float screenHeight = float(pAuxRenderer->GetCamera().GetViewSurfaceZ());
 
 			// Calc resolve area
 			const float left = pLight->m_sX / screenWidth;
@@ -1215,7 +1200,7 @@ float C3DEngine::GetLightAmountInRange(const Vec3& pPos, float fRange, bool bAcc
 
 	for (int l(0); l < m_lstStaticLights.Count(); ++l)
 	{
-		CDLight& pLight = m_lstStaticLights[l]->GetLightProperties();
+		SRenderLight& pLight = m_lstStaticLights[l]->GetLightProperties();
 
 		if ((pLight.m_Flags & (DLF_FAKE | DLF_VOLUMETRIC_FOG_ONLY)))
 		{
@@ -1330,7 +1315,7 @@ PodArray<struct ILightSource*>* C3DEngine::GetAffectingLights(const AABB& bbox, 
 	for (int i = 0; i < m_lstStaticLights.Count(); i++)
 	{
 		CLightEntity* pLightEntity = (CLightEntity*)m_lstStaticLights[i];
-		CDLight* pLight = &pLightEntity->m_light;
+		SRenderLight* pLight = &pLightEntity->GetLightProperties();
 		if (pLight->m_Flags & DLF_SUN)
 			continue;
 
@@ -1367,10 +1352,10 @@ void C3DEngine::UregisterLightFromAccessabilityCache(ILightSource* pLight)
 
 void C3DEngine::OnCasterDeleted(IShadowCaster* pCaster)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_3DENGINE);
+	CRY_PROFILE_FUNCTION(PROFILE_3DENGINE);
 	{
 		// make sure pointer to object will not be used somewhere in the renderer
-		PodArray<CDLight*>* pLigts = GetDynamicLightSources();
+		PodArray<SRenderLight*>* pLigts = GetDynamicLightSources();
 		for (int i = 0; i < pLigts->Count(); i++)
 		{
 			CLightEntity* pLigt = (CLightEntity*)(pLigts->GetAt(i)->m_pOwner);
@@ -1381,19 +1366,13 @@ void C3DEngine::OnCasterDeleted(IShadowCaster* pCaster)
 		if (m_pSun)
 			m_pSun->OnCasterDeleted(pCaster);
 
-		if (GetRenderer() && GetRenderer()->GetActiveGPUCount() > 1)
-		{
-			if (ShadowFrustumMGPUCache* pFrustumCache = GetRenderer()->GetShadowFrustumMGPUCache())
-				pFrustumCache->DeleteFromCache(pCaster);
-		}
-
 		// remove from per object shadows list
 		RemovePerObjectShadow(pCaster);
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-void C3DEngine::CheckAddLight(CDLight* pLight, const SRenderingPassInfo& passInfo)
+void C3DEngine::CheckAddLight(SRenderLight* pLight, const SRenderingPassInfo& passInfo)
 {
 	if (pLight->m_Id < 0)
 	{
@@ -1403,7 +1382,7 @@ void C3DEngine::CheckAddLight(CDLight* pLight, const SRenderingPassInfo& passInf
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-float C3DEngine::GetLightAmount(CDLight* pLight, const AABB& objBox)
+float C3DEngine::GetLightAmount(SRenderLight* pLight, const AABB& objBox)
 {
 	// find amount of light
 	float fDist = sqrt_tpl(Distance::Point_AABBSq(pLight->m_Origin, objBox));
@@ -1412,8 +1391,8 @@ float C3DEngine::GetLightAmount(CDLight* pLight, const AABB& objBox)
 		fLightAttenuation = 0;
 
 	float fLightAmount =
-		(pLight->m_Color.r + pLight->m_Color.g + pLight->m_Color.b) * 0.233f +
-		(pLight->GetSpecularMult()) * 0.1f;
+	  (pLight->m_Color.r + pLight->m_Color.g + pLight->m_Color.b) * 0.233f +
+	  (pLight->GetSpecularMult()) * 0.1f;
 
 	return fLightAmount * fLightAttenuation;
 }

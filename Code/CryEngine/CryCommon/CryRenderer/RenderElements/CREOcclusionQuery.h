@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __CREOCCLUSIONQUERY_H__
 #define __CREOCCLUSIONQUERY_H__
@@ -17,7 +17,7 @@ public:
 	Vec3          m_vBoxMin;
 	Vec3          m_vBoxMax;
 
-	UINT_PTR      m_nOcclusionID; //!< this will carry a pointer LPDIRECT3DQUERY9, so it needs to be 64-bit on Windows 64
+	UINT_PTR      m_nOcclusionID; //!< This will carry a pointer D3DOcclusionQuery, so it needs to be 64-bit on Windows 64
 
 	CRenderMesh*  m_pRMBox;
 	static uint32 m_nQueriesPerFrameCounter;
@@ -45,11 +45,8 @@ public:
 
 	virtual ~CREOcclusionQuery();
 
-	virtual void mfPrepare(bool bCheckOverflow);
-	virtual bool mfDraw(CShader* ef, SShaderPass* sfm);
 	virtual void mfReset();
-	virtual bool mfReadResult_Try(uint32 nDefaultNumSamples = 1);
-	virtual bool mfReadResult_Now();
+	virtual void mfReadResult_Try(uint32 nDefaultNumSamples = 1);
 
 	virtual void GetMemoryUsage(ICrySizer* pSizer) const
 	{

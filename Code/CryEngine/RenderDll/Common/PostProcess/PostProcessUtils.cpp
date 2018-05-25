@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*=============================================================================
    PostProcessUtils.cpp : Post processing common utilities
@@ -15,10 +15,8 @@
 // class CMipmapGenPass;
 #include "../../XRenderD3D9/GraphicsPipeline/Common/UtilityPasses.h"
 
-RECT SPostEffectsUtils::m_pScreenRect;
 ITimer* SPostEffectsUtils::m_pTimer;
 int SPostEffectsUtils::m_iFrameCounter = 0;
-SDepthTexture* SPostEffectsUtils::m_pCurDepthSurface;
 CShader* SPostEffectsUtils::m_pCurrShader;
 int SPostEffectsUtils::m_nColorMatrixFrameID;
 float SPostEffectsUtils::m_fWaterLevel;
@@ -32,172 +30,19 @@ Vec3 SPostEffectsUtils::m_vRT = Vec3(0, 0, 0);
 Vec3 SPostEffectsUtils::m_vLT = Vec3(0, 0, 0);
 Vec3 SPostEffectsUtils::m_vLB = Vec3(0, 0, 0);
 Vec3 SPostEffectsUtils::m_vRB = Vec3(0, 0, 0);
-int SPostEffectsUtils::m_nFrustrumFrameID = 0;
+int64 SPostEffectsUtils::m_nFrustrumFrameID = 0;
+CCamera SPostEffectsUtils::m_cachedRenderCamera;
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-bool SPostEffectsUtils::Create()
+static bool CompareRenderCamera(const CCamera& lrc, const CCamera& rrc)
 {
-	const SViewport& MainVp = gRenDev->m_MainViewport;
-	const bool bCreatePostAA = CRenderer::CV_r_AntialiasingMode && (!CTexture::IsTextureExist(CTexture::s_ptexPrevBackBuffer[0][0])) || (gRenDev->IsStereoEnabled() && !CTexture::s_ptexPrevBackBuffer[0][1]);
-	const bool bCreateCaustics = (CRenderer::CV_r_watervolumecaustics && CRenderer::CV_r_watercaustics && CRenderer::CV_r_watercausticsdeferred) && !CTexture::IsTextureExist(CTexture::s_ptexWaterCaustics[0]);
-	if (!CTexture::s_ptexBackBufferScaled[0] || m_pScreenRect.right != MainVp.nWidth || m_pScreenRect.bottom != MainVp.nHeight || bCreatePostAA || bCreateCaustics)
-	{
-		assert(gRenDev);
-
-		const int width  = gRenDev->GetWidth(),  width_r2  = (width  + 1) / 2, width_r4  = (width_r2  + 1) / 2, width_r8  = (width_r4  + 1) / 2;
-		const int height = gRenDev->GetHeight(), height_r2 = (height + 1) / 2, height_r4 = (height_r2 + 1) / 2, height_r8 = (height_r4 + 1) / 2;
-
-		// Update viewport info
-		m_pScreenRect.left = 0;
-		m_pScreenRect.top = 0;
-
-		m_pScreenRect.right = width;
-		m_pScreenRect.bottom = height;
-
-		if (CRenderer::CV_r_AntialiasingMode)
-		{
-			CreateRenderTarget("$PrevBackBuffer0", CTexture::s_ptexPrevBackBuffer[0][0], width, height, Clr_Unknown, 1, 0, eTF_R8G8B8A8, TO_PREVBACKBUFFERMAP0, FT_DONT_RELEASE | FT_USAGE_ALLOWREADSRGB);
-			CreateRenderTarget("$PrevBackBuffer1", CTexture::s_ptexPrevBackBuffer[1][0], width, height, Clr_Unknown, 1, 0, eTF_R8G8B8A8, TO_PREVBACKBUFFERMAP1, FT_DONT_RELEASE | FT_USAGE_ALLOWREADSRGB);
-			if (gRenDev->IsStereoEnabled())
-			{
-				CreateRenderTarget("$PrevBackBuffer0_R", CTexture::s_ptexPrevBackBuffer[0][1], width, height, Clr_Unknown, 1, 0, eTF_R8G8B8A8, -1, FT_DONT_RELEASE | FT_USAGE_ALLOWREADSRGB);
-				CreateRenderTarget("$PrevBackBuffer1_R", CTexture::s_ptexPrevBackBuffer[1][1], width, height, Clr_Unknown, 1, 0, eTF_R8G8B8A8, -1, FT_DONT_RELEASE | FT_USAGE_ALLOWREADSRGB);
-			}
-		}
-		else
-		{
-			SAFE_RELEASE(CTexture::s_ptexPrevBackBuffer[0][0]);
-			SAFE_RELEASE(CTexture::s_ptexPrevBackBuffer[1][0]);
-			SAFE_RELEASE(CTexture::s_ptexPrevBackBuffer[0][1]);
-			SAFE_RELEASE(CTexture::s_ptexPrevBackBuffer[1][1]);
-		}
-
-		CreateRenderTarget("$Cached3DHud", CTexture::s_ptexCached3DHud, width, height, Clr_Unknown, 1, 0, eTF_R8G8B8A8, -1, FT_DONT_RELEASE);
-		CreateRenderTarget("$Cached3DHudDownsampled", CTexture::s_ptexCached3DHudScaled, width_r4, height_r4, Clr_Unknown, 1, 0, eTF_R8G8B8A8, -1, FT_DONT_RELEASE);
-
-		// Scaled versions of the scene target
-		CreateRenderTarget("$BackBufferScaled_d2", CTexture::s_ptexBackBufferScaled[0], width_r2, height_r2, Clr_Unknown, 1, 0, eTF_R8G8B8A8, TO_BACKBUFFERSCALED_D2, FT_DONT_RELEASE);
-
-		// Ghosting requires data overframes, need to handle for each GPU in MGPU mode
-		CreateRenderTarget("$PrevFrameScaled", CTexture::s_ptexPrevFrameScaled, width_r2, height_r2, Clr_Unknown, 1, 0, eTF_R8G8B8A8, -1, FT_DONT_RELEASE);
-
-		CreateRenderTarget("$BackBufferScaledTemp_d2", CTexture::s_ptexBackBufferScaledTemp[0], width_r2, height_r2, Clr_Unknown, 1, 0, eTF_R8G8B8A8, -1, FT_DONT_RELEASE);
-		CreateRenderTarget("$WaterVolumeRefl", CTexture::s_ptexWaterVolumeRefl[0], width_r2, height_r2, Clr_Unknown, 1, true, eTF_R11G11B10F, TO_WATERVOLUMEREFLMAP, FT_DONT_RELEASE);
-		CreateRenderTarget("$WaterVolumeReflPrev", CTexture::s_ptexWaterVolumeRefl[1], width_r2, height_r2, Clr_Unknown, 1, true, eTF_R11G11B10F, TO_WATERVOLUMEREFLMAPPREV, FT_DONT_RELEASE);
-
-		//	CTexture::s_ptexWaterVolumeRefl[0]->DisableMgpuSync();
-		//	CTexture::s_ptexWaterVolumeRefl[1]->DisableMgpuSync();
-
-		CreateRenderTarget("$BackBufferScaled_d4", CTexture::s_ptexBackBufferScaled[1], width_r4, height_r4, Clr_Unknown, 1, 0, eTF_R8G8B8A8, TO_BACKBUFFERSCALED_D4, FT_DONT_RELEASE);
-		CreateRenderTarget("$BackBufferScaledTemp_d4", CTexture::s_ptexBackBufferScaledTemp[1], width_r4, height_r4, Clr_Unknown, 1, 0, eTF_R8G8B8A8, -1, FT_DONT_RELEASE);
-
-		CreateRenderTarget("$BackBufferScaled_d8", CTexture::s_ptexBackBufferScaled[2], width_r8, height_r8, Clr_Unknown, 1, 0, eTF_R8G8B8A8, TO_BACKBUFFERSCALED_D8, FT_DONT_RELEASE);
-
-		CreateRenderTarget("$RainDropsAccumRT_0", CTexture::s_ptexRainDropsRT[0], width_r4, height_r4, Clr_Unknown, 1, false, eTF_R8G8B8A8, -1, FT_DONT_RELEASE);
-		CreateRenderTarget("$RainDropsAccumRT_1", CTexture::s_ptexRainDropsRT[1], width_r4, height_r4, Clr_Unknown, 1, false, eTF_R8G8B8A8, -1, FT_DONT_RELEASE);
-
-		CreateRenderTarget("$RainSSOcclusion0", CTexture::s_ptexRainSSOcclusion[0], width_r8, height_r8, Clr_Unknown, 1, false, eTF_R8G8B8A8);
-		CreateRenderTarget("$RainSSOcclusion1", CTexture::s_ptexRainSSOcclusion[1], width_r8, height_r8, Clr_Unknown, 1, false, eTF_R8G8B8A8);
-
-		CreateRenderTarget("$RainOcclusion", CTexture::s_ptexRainOcclusion, RAIN_OCC_MAP_SIZE, RAIN_OCC_MAP_SIZE, Clr_Unknown, false, false, eTF_R8G8B8A8, -1, FT_DONT_RELEASE);
-
-		// Water phys simulation requires data overframes, need to handle for each GPU in MGPU mode
-		CreateRenderTarget("$WaterRipplesDDN_0", CTexture::s_ptexWaterRipplesDDN, 256, 256, Clr_Unknown, 1, true, eTF_R8G8B8A8);
-		//CTexture::s_ptexWaterRipplesDDN->DisableMgpuSync();
-		CreateRenderTarget("$WaterVolumeDDN", CTexture::s_ptexWaterVolumeDDN, 64, 64, Clr_Unknown, 1, true, eTF_R16G16B16A16F, TO_WATERVOLUMEMAP);
-		//CTexture::s_ptexWaterVolumeDDN->DisableMgpuSync();
-
-		if (CRenderer::CV_r_watervolumecaustics && CRenderer::CV_r_watercaustics && CRenderer::CV_r_watercausticsdeferred)
-		{
-			const int nCausticRes = clamp_tpl(CRenderer::CV_r_watervolumecausticsresolution, 256, 4096);
-			CreateRenderTarget("$WaterVolumeCaustics", CTexture::s_ptexWaterCaustics[0], nCausticRes, nCausticRes, Clr_Unknown, 1, false, eTF_R8G8B8A8, TO_WATERVOLUMECAUSTICSMAP);
-			CreateRenderTarget("$WaterVolumeCausticsTemp", CTexture::s_ptexWaterCaustics[1], nCausticRes, nCausticRes, Clr_Unknown, 1, false, eTF_R8G8B8A8, TO_WATERVOLUMECAUSTICSMAPTEMP);
-		}
-		else
-		{
-			SAFE_RELEASE(CTexture::s_ptexWaterCaustics[0]);
-			SAFE_RELEASE(CTexture::s_ptexWaterCaustics[1]);
-		}
-
-#if defined(VOLUMETRIC_FOG_SHADOWS)
-		int fogShadowBufDiv = (CRenderer::CV_r_FogShadows == 2) ? 4 : 2;
-		CreateRenderTarget("$VolFogShadowBuf0", CTexture::s_ptexVolFogShadowBuf[0], width / fogShadowBufDiv, height / fogShadowBufDiv, Clr_Unknown, 1, 0, eTF_R8G8B8A8, TO_VOLFOGSHADOW_BUF);
-		CreateRenderTarget("$VolFogShadowBuf1", CTexture::s_ptexVolFogShadowBuf[1], width / fogShadowBufDiv, height / fogShadowBufDiv, Clr_Unknown, 1, 0, eTF_R8G8B8A8);
-#endif
-
-		// TODO: Only create necessary RTs for minimal ring?
-		char str[256];
-		for (int i = 0; i < MAX_OCCLUSION_READBACK_TEXTURES; i++)
-		{
-			sprintf(str, "$FlaresOcclusion_%d", i);
-			CreateRenderTarget(str, CTexture::s_ptexFlaresOcclusionRing[i], CFlareSoftOcclusionQuery::s_nIDColMax, CFlareSoftOcclusionQuery::s_nIDRowMax, Clr_Unknown, 1, 0, eTF_R8G8B8A8, -1, FT_DONT_RELEASE | FT_STAGE_READBACK);
-		}
-
-		CreateRenderTarget("$FlaresGather", CTexture::s_ptexFlaresGather, CFlareSoftOcclusionQuery::s_nGatherTextureWidth, CFlareSoftOcclusionQuery::s_nGatherTextureHeight, Clr_Unknown, 1, 0, eTF_R8G8B8A8, -1, FT_DONT_RELEASE);
-	}
-
-	return 1;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-void SPostEffectsUtils::Release()
-{
-	SAFE_DELETE(CTexture::s_pMipperWaterVolumeDDN);
-	SAFE_DELETE(CTexture::s_pMipperWaterVolumeRefl[0]);
-	SAFE_DELETE(CTexture::s_pMipperWaterVolumeRefl[1]);
-	SAFE_DELETE(CTexture::s_pMipperWaterRipplesDDN);
-
-	SAFE_RELEASE(CTexture::s_ptexPrevBackBuffer[0][0]);
-	SAFE_RELEASE(CTexture::s_ptexPrevBackBuffer[1][0]);
-	SAFE_RELEASE(CTexture::s_ptexPrevBackBuffer[0][1]);
-	SAFE_RELEASE(CTexture::s_ptexPrevBackBuffer[1][1]);
-
-	SAFE_RELEASE(CTexture::s_ptexBackBufferScaled[0]);
-	SAFE_RELEASE(CTexture::s_ptexBackBufferScaled[1]);
-	SAFE_RELEASE(CTexture::s_ptexBackBufferScaled[2]);
-
-	SAFE_RELEASE(CTexture::s_ptexBackBufferScaledTemp[0]);
-	SAFE_RELEASE(CTexture::s_ptexBackBufferScaledTemp[1]);
-
-	SAFE_RELEASE(CTexture::s_ptexWaterVolumeDDN);
-	SAFE_RELEASE(CTexture::s_ptexWaterVolumeRefl[0]);
-	SAFE_RELEASE(CTexture::s_ptexWaterVolumeRefl[1]);
-	SAFE_RELEASE(CTexture::s_ptexWaterCaustics[0]);
-	SAFE_RELEASE(CTexture::s_ptexWaterCaustics[1]);
-
-	SAFE_RELEASE(CTexture::s_ptexCached3DHud);
-	SAFE_RELEASE(CTexture::s_ptexCached3DHudScaled);
-
-	SAFE_RELEASE(CTexture::s_ptexPrevFrameScaled);
-	SAFE_RELEASE(CTexture::s_ptexWaterRipplesDDN);
-
-	SAFE_RELEASE(CTexture::s_ptexRainDropsRT[0]);
-	SAFE_RELEASE(CTexture::s_ptexRainDropsRT[1]);
-
-	SAFE_RELEASE(CTexture::s_ptexRainSSOcclusion[0]);
-	SAFE_RELEASE(CTexture::s_ptexRainSSOcclusion[1]);
-	SAFE_RELEASE(CTexture::s_ptexRainOcclusion);
-
-#if defined(VOLUMETRIC_FOG_SHADOWS)
-	SAFE_RELEASE(CTexture::s_ptexVolFogShadowBuf[0]);
-	SAFE_RELEASE(CTexture::s_ptexVolFogShadowBuf[1]);
-#endif
-
-	for (int i = 0; i < MAX_OCCLUSION_READBACK_TEXTURES; i++)
-		SAFE_RELEASE(CTexture::s_ptexFlaresOcclusionRing[i]);
-	SAFE_RELEASE(CTexture::s_ptexFlaresGather);
+	return lrc.GetMatrix().IsEqual(rrc.GetMatrix());
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void SPostEffectsUtils::GetFullScreenTri(SVF_P3F_C4B_T2F pResult[3], int nTexWidth, int nTexHeight, float z, const RECT* pSrcRegion)
 {
-	if (gRenDev->m_RP.m_TI[gRenDev->m_RP.m_nProcessThreadID].m_PersFlags & RBPF_REVERSE_DEPTH)
-		z = 1.0f - z;
+	z = 1.0f - z;
 
 	pResult[0].xyz = Vec3(-0.0f, -0.0f, z);
 	pResult[0].color.dcolor = ~0U;
@@ -223,8 +68,7 @@ void SPostEffectsUtils::GetFullScreenTri(SVF_P3F_C4B_T2F pResult[3], int nTexWid
 
 void SPostEffectsUtils::GetFullScreenQuad(SVF_P3F_C4B_T2F pResult[4], int nTexWidth, int nTexHeight, float z, const RECT* pSrcRegion)
 {
-	if (gRenDev->m_RP.m_TI[gRenDev->m_RP.m_nProcessThreadID].m_PersFlags & RBPF_REVERSE_DEPTH)
-		z = 1.0f - z;
+	z = 1.0f - z;
 
 	pResult[0].xyz = Vec3(-0.0f, -0.0f, z);
 	pResult[0].color.dcolor = ~0U;
@@ -242,9 +86,9 @@ void SPostEffectsUtils::GetFullScreenQuad(SVF_P3F_C4B_T2F pResult[4], int nTexWi
 	if (pSrcRegion)
 	{
 		const Vec4 vTexCoordsRegion(float(pSrcRegion->left) / nTexWidth,
-			float(pSrcRegion->right) / nTexWidth,
-			float(pSrcRegion->top) / nTexHeight,
-			float(pSrcRegion->bottom) / nTexHeight);
+		                            float(pSrcRegion->right) / nTexWidth,
+		                            float(pSrcRegion->top) / nTexHeight,
+		                            float(pSrcRegion->bottom) / nTexHeight);
 		pResult[0].st = Vec2(vTexCoordsRegion.x, vTexCoordsRegion.z);
 		pResult[1].st = Vec2(vTexCoordsRegion.x, vTexCoordsRegion.w);
 		pResult[2].st = Vec2(vTexCoordsRegion.y, vTexCoordsRegion.z);
@@ -254,12 +98,14 @@ void SPostEffectsUtils::GetFullScreenQuad(SVF_P3F_C4B_T2F pResult[4], int nTexWi
 
 void SPostEffectsUtils::DrawFullScreenTri(int nTexWidth, int nTexHeight, float z, const RECT* pSrcRegion)
 {
+	//OLD PIPELINE
+	ASSERT_LEGACY_PIPELINE
 
-	CryStackAllocWithSizeVector(SVF_P3F_C4B_T2F, 4, screenQuad, CDeviceBufferManager::AlignBufferSizeForStreaming);
-	GetFullScreenQuad(screenQuad, nTexWidth, nTexHeight, z, pSrcRegion);
+	//CryStackAllocWithSizeVector(SVF_P3F_C4B_T2F, 4, screenQuad, CDeviceBufferManager::AlignBufferSizeForStreaming);
+	//GetFullScreenQuad(screenQuad, nTexWidth, nTexHeight, z, pSrcRegion);
 
-	CVertexBuffer strip(screenQuad, eVF_P3F_C4B_T2F);
-	gRenDev->DrawPrimitivesInternal(&strip, 4, eptTriangleStrip);
+	//CVertexBuffer strip(screenQuad, EDefaultInputLayouts::P3F_C4B_T2F);
+	//gRenDev->DrawPrimitivesInternal(&strip, 4, eptTriangleStrip);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -267,18 +113,36 @@ void SPostEffectsUtils::DrawFullScreenTri(int nTexWidth, int nTexHeight, float z
 
 void SPostEffectsUtils::DrawScreenQuad(int nTexWidth, int nTexHeight, float x0, float y0, float x1, float y1)
 {
-	const float z = (gRenDev->m_RP.m_TI[gRenDev->m_RP.m_nProcessThreadID].m_PersFlags & RBPF_REVERSE_DEPTH) ? 1.0f : 0.0f;
+	//OLD PIPELINE
+	ASSERT_LEGACY_PIPELINE
+
+	const float z = 1.0f;
 	CryStackAllocWithSizeVector(SVF_P3F_C4B_T2F, 4, pScreenQuad, CDeviceBufferManager::AlignBufferSizeForStreaming);
 
-	pScreenQuad[0] = { Vec3(x0, y0, z), { { 0 } }, Vec2(0, 0) };
-	pScreenQuad[1] = { Vec3(x0, y1, z), { { 0 } }, Vec2(0, 1) };
-	pScreenQuad[2] = { Vec3(x1, y0, z), { { 0 } }, Vec2(1, 0) };
-	pScreenQuad[3] = { Vec3(x1, y1, z), { { 0 } }, Vec2(1, 1) };
+	pScreenQuad[0] = {
+		Vec3(x0, y0,     z), {
+			{ 0 }
+		},       Vec2(0, 0)
+	};
+	pScreenQuad[1] = {
+		Vec3(x0, y1,     z), {
+			{ 0 }
+		},       Vec2(0, 1)
+	};
+	pScreenQuad[2] = {
+		Vec3(x1, y0,     z), {
+			{ 0 }
+		},       Vec2(1, 0)
+	};
+	pScreenQuad[3] = {
+		Vec3(x1, y1,     z), {
+			{ 0 }
+		},       Vec2(1, 1)
+	};
 
-	gRenDev->m_RP.m_PersFlags2 &= ~(RBPF2_COMMIT_PF);
-
-	CVertexBuffer strip(pScreenQuad, eVF_P3F_C4B_T2F);
-	gRenDev->DrawPrimitivesInternal(&strip, 4, eptTriangleStrip);
+	//gRenDev->m_RP.m_PersFlags2 &= ~(RBPF2_COMMIT_PF);
+	//CVertexBuffer strip(pScreenQuad, EDefaultInputLayouts::P3F_C4B_T2F);
+	//gRenDev->DrawPrimitivesInternal(&strip, 4, eptTriangleStrip);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -288,18 +152,36 @@ void SPostEffectsUtils::DrawQuad(int nTexWidth, int nTexHeight,
                                  const Vec2& vxA, const Vec2& vxB, const Vec2& vxC, const Vec2& vxD,
                                  const Vec2& uvA, const Vec2& uvB, const Vec2& uvC, const Vec2& uvD)
 {
-	const float z = (gRenDev->m_RP.m_TI[gRenDev->m_RP.m_nProcessThreadID].m_PersFlags & RBPF_REVERSE_DEPTH) ? 1.0f : 0.0f;
+	//OLD PIPELINE
+	ASSERT_LEGACY_PIPELINE
+	
+	const float z = 1.0f;
 	CryStackAllocWithSizeVector(SVF_P3F_C4B_T2F, 4, pScreenQuad, CDeviceBufferManager::AlignBufferSizeForStreaming);
 
-	pScreenQuad[0] = { Vec3(vxA.x, vxA.y, z), { { 0 } }, uvA };
-	pScreenQuad[1] = { Vec3(vxB.x, vxB.y, z), { { 0 } }, uvB };
-	pScreenQuad[2] = { Vec3(vxD.x, vxD.y, z), { { 0 } }, uvD };
-	pScreenQuad[3] = { Vec3(vxC.x, vxC.y, z), { { 0 } }, uvC };
+	pScreenQuad[0] = {
+		Vec3(vxA.x, vxA.y, z), {
+			{ 0 }
+		},          uvA
+	};
+	pScreenQuad[1] = {
+		Vec3(vxB.x, vxB.y, z), {
+			{ 0 }
+		},          uvB
+	};
+	pScreenQuad[2] = {
+		Vec3(vxD.x, vxD.y, z), {
+			{ 0 }
+		},          uvD
+	};
+	pScreenQuad[3] = {
+		Vec3(vxC.x, vxC.y, z), {
+			{ 0 }
+		},          uvC
+	};
 
-	gRenDev->m_RP.m_PersFlags2 &= ~(RBPF2_COMMIT_PF);
-
-	CVertexBuffer strip(pScreenQuad, eVF_P3F_C4B_T2F);
-	gRenDev->DrawPrimitivesInternal(&strip, 4, eptTriangleStrip);
+	//gRenDev->m_RP.m_PersFlags2 &= ~(RBPF2_COMMIT_PF);
+	//CVertexBuffer strip(pScreenQuad, EDefaultInputLayouts::P3F_C4B_T2F);
+	//gRenDev->DrawPrimitivesInternal(&strip, 4, eptTriangleStrip);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -309,8 +191,7 @@ void SPostEffectsUtils::GetFullScreenTriWPOS(SVF_P3F_T2F_T3F pResult[3], int nTe
 {
 	UpdateFrustumCorners();
 
-	if (gRenDev->m_RP.m_TI[gRenDev->m_RP.m_nProcessThreadID].m_PersFlags & RBPF_REVERSE_DEPTH)
-		z = 1.0f - z;
+	z = 1.0f - z;
 
 	pResult[0].p = Vec3(-0.0f, -0.0f, z);
 	pResult[0].st0 = Vec2(0, 0);
@@ -338,8 +219,7 @@ void SPostEffectsUtils::GetFullScreenQuadWPOS(SVF_P3F_T2F_T3F pResult[4], int nT
 {
 	UpdateFrustumCorners();
 
-	if (gRenDev->m_RP.m_TI[gRenDev->m_RP.m_nProcessThreadID].m_PersFlags & RBPF_REVERSE_DEPTH)
-		z = 1.0f - z;
+	z = 1.0f - z;
 
 	pResult[0].p = Vec3(-0.0f, -0.0f, z);
 	pResult[0].st0 = Vec2(0, 0);
@@ -357,9 +237,9 @@ void SPostEffectsUtils::GetFullScreenQuadWPOS(SVF_P3F_T2F_T3F pResult[4], int nT
 	if (pSrcRegion)
 	{
 		const Vec4 vTexCoordsRegion(float(pSrcRegion->left) / nTexWidth,
-			float(pSrcRegion->right) / nTexWidth,
-			float(pSrcRegion->top) / nTexHeight,
-			float(pSrcRegion->bottom) / nTexHeight);
+		                            float(pSrcRegion->right) / nTexWidth,
+		                            float(pSrcRegion->top) / nTexHeight,
+		                            float(pSrcRegion->bottom) / nTexHeight);
 		pResult[0].st0 = Vec2(vTexCoordsRegion.x, vTexCoordsRegion.z);
 		pResult[1].st0 = Vec2(vTexCoordsRegion.x, vTexCoordsRegion.w);
 		pResult[2].st0 = Vec2(vTexCoordsRegion.y, vTexCoordsRegion.z);
@@ -369,39 +249,28 @@ void SPostEffectsUtils::GetFullScreenQuadWPOS(SVF_P3F_T2F_T3F pResult[4], int nT
 
 void SPostEffectsUtils::DrawFullScreenTriWPOS(int nTexWidth, int nTexHeight, float z, const RECT* pSrcRegion)
 {
-	CryStackAllocWithSizeVector(SVF_P3F_T2F_T3F, 4, screenQuad, CDeviceBufferManager::AlignBufferSizeForStreaming);
-	GetFullScreenQuadWPOS(screenQuad, nTexWidth, nTexHeight, z, pSrcRegion);
+	//OLD PIPELINE
+	ASSERT_LEGACY_PIPELINE
 
-	CVertexBuffer strip(screenQuad, eVF_P3F_T2F_T3F);
-	gRenDev->DrawPrimitivesInternal(&strip, 4, eptTriangleStrip);
+	//CryStackAllocWithSizeVector(SVF_P3F_T2F_T3F, 4, screenQuad, CDeviceBufferManager::AlignBufferSizeForStreaming);
+	//GetFullScreenQuadWPOS(screenQuad, nTexWidth, nTexHeight, z, pSrcRegion);
+
+	//CVertexBuffer strip(screenQuad, EDefaultInputLayouts::P3F_T2F_T3F);
+	//gRenDev->DrawPrimitivesInternal(&strip, 4, eptTriangleStrip);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void SPostEffectsUtils::SetTexture(CTexture* pTex, int nStage, int nFilter, int nClamp, bool bSRGBLookup, DWORD dwBorderColor)
+void SPostEffectsUtils::SetTexture(CTexture* pTex, int nStage, int nFilter, ESamplerAddressMode eMode, bool bSRGBLookup, DWORD dwBorderColor)
 {
-	if (pTex)
-	{
-		STexState TS;
-		TS.SetFilterMode(nFilter);
-		TS.SetClampMode(nClamp, nClamp, nClamp);
-		if (nClamp == TADDR_BORDER)
-			TS.SetBorderColor(dwBorderColor);
-		TS.m_bSRGBLookup = bSRGBLookup;
-		int nTexState = CTexture::GetTexState(TS);
-		pTex->Apply(nStage, nTexState);
-	}
-	else
-	{
-		CTexture::ApplyForID(nStage, 0, -1, -1);
-	}
+	ASSERT_LEGACY_PIPELINE;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool SPostEffectsUtils::CreateRenderTarget(const char* szTexName, CTexture*& pTex, int nWidth, int nHeight, const ColorF& cClear, bool bUseAlpha, bool bMipMaps, ETEX_Format eTF, int nCustomID, int nFlags)
+bool SPostEffectsUtils::GetOrCreateRenderTarget(const char* szTexName, CTexture*& pTex, int nWidth, int nHeight, const ColorF& cClear, bool bUseAlpha, bool bMipMaps, ETEX_Format eTF, int nCustomID, int nFlags)
 {
 	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Texture, 0, "PostEffects CreateRenderTarget: %s", szTexName);
 
@@ -411,14 +280,14 @@ bool SPostEffectsUtils::CreateRenderTarget(const char* szTexName, CTexture*& pTe
 		return 0;
 	}
 
-	uint32 flags = nFlags;
+	uint32 flags = nFlags & ~(FT_USAGE_DEPTHSTENCIL);
 	flags |= FT_DONT_STREAM | FT_USAGE_RENDERTARGET | (bMipMaps ? FT_FORCE_MIPS : FT_NOMIPS);
 
 	// if texture doesn't exist yet, create it
 	if (!CTexture::IsTextureExist(pTex))
 	{
-		pTex = CTexture::CreateRenderTarget(szTexName, nWidth, nHeight, cClear, eTT_2D, flags, eTF, nCustomID);
-		if (pTex)
+		pTex = CTexture::GetOrCreateRenderTarget(szTexName, nWidth, nHeight, cClear, eTT_2D, flags, eTF, nCustomID);
+		if (pTex && !(pTex->GetFlags() & FT_FAILED))
 		{
 			// Clear render target surface before using it
 			pTex->Clear();
@@ -435,19 +304,47 @@ bool SPostEffectsUtils::CreateRenderTarget(const char* szTexName, CTexture*& pTe
 	return CTexture::IsTextureExist(pTex) ? 1 : 0;
 }
 
+bool SPostEffectsUtils::GetOrCreateDepthStencil(const char* szTexName, CTexture*& pTex, int nWidth, int nHeight, const ColorF& cClear, bool bUseAlpha, bool bMipMaps, ETEX_Format eTF, int nCustomID, int nFlags)
+{
+	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Texture, 0, "PostEffects CreateRenderTarget: %s", szTexName);
+
+	// check if parameters are valid
+	if (!nWidth || !nHeight)
+	{
+		return 0;
+	}
+
+	uint32 flags = nFlags & ~(FT_USAGE_RENDERTARGET);
+	flags |= FT_DONT_STREAM | FT_USAGE_DEPTHSTENCIL | (bMipMaps ? FT_FORCE_MIPS : FT_NOMIPS);
+
+	// if texture doesn't exist yet, create it
+	if (!CTexture::IsTextureExist(pTex))
+	{
+		pTex = CTexture::GetOrCreateDepthStencil(szTexName, nWidth, nHeight, cClear, eTT_2D, flags, eTF, nCustomID);
+		if (pTex && !(pTex->GetFlags() & FT_FAILED))
+		{
+			// Clear render target surface before using it
+			pTex->Clear();
+		}
+	}
+	else
+	{
+		pTex->SetFlags(flags);
+		pTex->SetWidth(nWidth);
+		pTex->SetHeight(nHeight);
+		pTex->CreateDepthStencil(eTF, cClear);
+	}
+
+	return CTexture::IsTextureExist(pTex) ? 1 : 0;
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 bool SPostEffectsUtils::ShBeginPass(CShader* pShader, const CCryNameTSCRC& TechName, uint32 nFlags)
 {
-	assert(pShader);
-
-	m_pCurrShader = pShader;
-
-	uint32 nPasses;
-	m_pCurrShader->FXSetTechnique(TechName);
-	m_pCurrShader->FXBegin(&nPasses, nFlags);
-	return m_pCurrShader->FXBeginPass(0);
+	ASSERT_LEGACY_PIPELINE
+	return false;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -455,12 +352,7 @@ bool SPostEffectsUtils::ShBeginPass(CShader* pShader, const CCryNameTSCRC& TechN
 
 void SPostEffectsUtils::ShEndPass()
 {
-	assert(m_pCurrShader);
-
-	m_pCurrShader->FXEndPass();
-	m_pCurrShader->FXEnd();
-
-	m_pCurrShader = 0;
+	ASSERT_LEGACY_PIPELINE
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -468,8 +360,7 @@ void SPostEffectsUtils::ShEndPass()
 
 void SPostEffectsUtils::ShSetParamVS(const CCryNameR& pParamName, const Vec4& pParam)
 {
-	assert(m_pCurrShader);
-	m_pCurrShader->FXSetVSFloat(pParamName, &pParam, 1);
+	ASSERT_LEGACY_PIPELINE
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -477,8 +368,7 @@ void SPostEffectsUtils::ShSetParamVS(const CCryNameR& pParamName, const Vec4& pP
 
 void SPostEffectsUtils::ShSetParamPS(const CCryNameR& pParamName, const Vec4& pParam)
 {
-	assert(m_pCurrShader);
-	m_pCurrShader->FXSetPSFloat(pParamName, &pParam, 1);
+	ASSERT_LEGACY_PIPELINE
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -486,28 +376,16 @@ void SPostEffectsUtils::ShSetParamPS(const CCryNameR& pParamName, const Vec4& pP
 
 void SPostEffectsUtils::ClearScreen(float r, float g, float b, float a)
 {
-	static CCryNameTSCRC pTechName("ClearScreen");
-	ShBeginPass(CShaderMan::s_shPostEffects, pTechName, FEF_DONTSETTEXTURES | FEF_DONTSETSTATES);
-
-	int iTempX, iTempY, iWidth, iHeight;
-	gRenDev->GetViewport(&iTempX, &iTempY, &iWidth, &iHeight);
-
-	Vec4 pClrScrParms = Vec4(r, g, b, a);
-	static CCryNameR pParamName("clrScrParams");
-	CShaderMan::s_shPostEffects->FXSetPSFloat(pParamName, &pClrScrParms, 1);
-
-	DrawFullScreenTri(iWidth, iHeight);
-
-	ShEndPass();
+	ASSERT_LEGACY_PIPELINE
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void SPostEffectsUtils::GetFrustumCorners(Vec3& vRT, Vec3& vLT, Vec3& vLB, Vec3& vRB, const CRenderCamera& rc, bool bMirrorCull)
+void SPostEffectsUtils::GetFrustumCorners(Vec3& vRT, Vec3& vLT, Vec3& vLB, Vec3& vRB, const CCamera& camera, bool bMirrorCull)
 {
 	Vec3 vCoords[8];
-	rc.CalcVerts(vCoords);
+	camera.CalcAsymmetricFrustumVertices(vCoords);
 
 	// Swap order when mirrored culling enabled
 	if (bMirrorCull)
@@ -531,14 +409,16 @@ void SPostEffectsUtils::GetFrustumCorners(Vec3& vRT, Vec3& vLT, Vec3& vLB, Vec3&
 
 void SPostEffectsUtils::UpdateFrustumCorners()
 {
-	int nFrameID = gRenDev->m_RP.m_TI[gRenDev->m_RP.m_nProcessThreadID].m_nFrameID;
-	if (m_nFrustrumFrameID != nFrameID || CRenderer::CV_r_StereoMode == 1)
+	int64 nFrameID = gRenDev->GetRenderFrameID();
+	const CCamera& camera = gcpRendD3D.GetGraphicsPipeline().GetCurrentRenderView()->GetCamera(CCamera::eEye_Left);
+
+	if (m_nFrustrumFrameID != nFrameID || gcpRendD3D->GetS3DRend().GetStereoMode() == EStereoMode::STEREO_MODE_DUAL_RENDERING || !CompareRenderCamera(camera, m_cachedRenderCamera))
 	{
-		auto& rc = gRenDev->GetRCamera();
-		bool bMirrorCull = (gRenDev->m_RP.m_TI[gRenDev->m_RP.m_nProcessThreadID].m_PersFlags & RBPF_MIRRORCULL) != 0;
-		GetFrustumCorners(m_vRT, m_vLT, m_vLB, m_vRB, rc, bMirrorCull);
+		bool bMirrorCull = gcpRendD3D.GetGraphicsPipeline().GetCurrentRenderView()->IsViewFlag(SRenderViewInfo::eFlags_MirrorCull);
+		GetFrustumCorners(m_vRT, m_vLT, m_vLB, m_vRB, camera, bMirrorCull);
 
 		m_nFrustrumFrameID = nFrameID;
+		m_cachedRenderCamera = camera;
 	}
 }
 
@@ -548,12 +428,12 @@ void SPostEffectsUtils::UpdateOverscanBorderAspectRatio()
 {
 	if (gRenDev)
 	{
-		const float screenWidth = (float)gRenDev->GetWidth();
-		const float screenHeight = (float)gRenDev->GetHeight();
+		const float screenWidth  = (float)CRendererResources::s_renderWidth;
+		const float screenHeight = (float)CRendererResources::s_renderHeight;
 		Vec2 overscanBorders = Vec2(0.0f, 0.0f);
 		gRenDev->EF_Query(EFQ_OverscanBorders, overscanBorders);
 
-		const float aspectX = (screenWidth * (1.0f - (overscanBorders.y * 2.0f)));
+		const float aspectX = (screenWidth  * (1.0f - (overscanBorders.y * 2.0f)));
 		const float aspectY = (screenHeight * (1.0f - (overscanBorders.x * 2.0f)));
 		m_fOverscanBorderAspectRatio = aspectX / max(aspectY, 0.001f);
 	}
@@ -565,7 +445,7 @@ void SPostEffectsUtils::UpdateOverscanBorderAspectRatio()
 Matrix44& SPostEffectsUtils::GetColorMatrix()
 {
 	CPostEffectsMgr* pPostMgr = PostEffectMgr();
-	int nFrameID = gRenDev->m_RP.m_TI[gRenDev->m_RP.m_nProcessThreadID].m_nFrameID;
+	int nFrameID = gRenDev->GetRenderFrameID();
 	if (m_nColorMatrixFrameID != nFrameID)
 	{
 		// Create color transformation matrices

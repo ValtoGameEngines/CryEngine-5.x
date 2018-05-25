@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __ANIMATEDCHARACTER_H__
 #define __ANIMATEDCHARACTER_H__
@@ -25,16 +25,16 @@
 
 //--------------------------------------------------------------------------------
 
-#define ANIMCHAR_PROFILE FUNCTION_PROFILER(GetISystem(), PROFILE_ACTION)
+#define ANIMCHAR_PROFILE CRY_PROFILE_FUNCTION(PROFILE_ACTION)
 
 #ifdef ANIMCHAR_PROFILE_HEAVY
-	#define ANIMCHAR_PROFILE_DETAILED FUNCTION_PROFILER(GetISystem(), PROFILE_ACTION)
+	#define ANIMCHAR_PROFILE_DETAILED CRY_PROFILE_FUNCTION(PROFILE_ACTION)
 #else
 	#define ANIMCHAR_PROFILE_DETAILED {}
 #endif
 
 #ifdef ANIMCHAR_PROFILE_HEAVY
-	#define ANIMCHAR_PROFILE_SCOPE(label) FRAME_PROFILER(label, GetISystem(), PROFILE_ACTION)
+	#define ANIMCHAR_PROFILE_SCOPE(label) CRY_PROFILE_REGION(PROFILE_ACTION, label)
 #else
 	#define ANIMCHAR_PROFILE_SCOPE(label) {}
 #endif
@@ -182,14 +182,14 @@ public:
 	virtual void                 Release();
 	virtual void                 FullSerialize(TSerialize ser);
 	virtual bool                 NetSerialize(TSerialize ser, EEntityAspects aspect, uint8 profile, int flags) { return true; }
-	virtual void                 ProcessEvent(SEntityEvent& event);
+	virtual void                 ProcessEvent(const SEntityEvent& event);
+	virtual uint64               GetEventMask() const;
 	virtual void                 PostSerialize();
 	virtual void                 SerializeSpawnInfo(TSerialize ser) {}
 	virtual ISerializableInfoPtr GetSpawnInfo()                     { return 0; }
 	virtual void                 Update(SEntityUpdateContext& ctx, int);
 	virtual void                 HandleEvent(const SGameObjectEvent&);
 	virtual void                 SetChannelId(uint16 id)     {}
-	virtual void                 SetAuthority(bool auth)     {}
 	virtual void                 PostUpdate(float frameTime) { CRY_ASSERT(false); }
 	virtual void                 PostRemoteSpawn()           {};
 	virtual void                 GetMemoryUsage(ICrySizer* s) const;

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -1248,7 +1248,7 @@ public:
 		float longestSequenceDuration = -1.0f;
 		for (int i = 0; i < 3; ++i)
 		{
-			longestSequenceDuration = MAX(longestSequenceDuration, GetIntroSequenceDuration(i));
+			longestSequenceDuration = std::max(longestSequenceDuration, GetIntroSequenceDuration(i));
 		}
 		// CryLog("OnDedicatedServerIntroStart() - Setting intro duration [%.3f]", longestSequenceDuration);
 		// -1.0f indicates no intros
@@ -1449,7 +1449,7 @@ public:
 			else
 			{
 				// We can now start as sooon as all entities we need are available to us
-				GetISystem()->GetISystemEventDispatcher()->RegisterListener(this);
+				GetISystem()->GetISystemEventDispatcher()->RegisterListener(this, "CRequestCinematicIntroSequence_Node");
 			}
 		}
 
@@ -1761,7 +1761,7 @@ public:
 		}
 	}
 
-	virtual void OnEntityEvent(IEntity* pEntity, SEntityEvent& event)
+	virtual void OnEntityEvent(IEntity* pEntity, const SEntityEvent& event)
 	{
 		if (event.event == ENTITY_EVENT_DONE)
 		{

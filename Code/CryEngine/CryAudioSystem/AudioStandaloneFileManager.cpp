@@ -1,170 +1,63 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "AudioStandaloneFileManager.h"
 #include "ATLAudioObject.h"
 #include "AudioCVars.h"
-#include <CryRenderer/IRenderAuxGeom.h>
 #include <IAudioImpl.h>
+#include <CryString/HashedString.h>
 
-using namespace CryAudio::Impl;
+#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
+	#include <CryRenderer/IRenderAuxGeom.h>
+#endif // INCLUDE_AUDIO_PRODUCTION_CODE
 
-//////////////////////////////////////////////////////////////////////////
-CAudioStandaloneFileManager::CAudioStandaloneFileManager(AudioStandaloneFileLookup& audioStandaloneFiles)
-	: m_audioStandaloneFiles(audioStandaloneFiles)
-	, m_audioStandaloneFilePool(g_audioCVars.m_audioStandaloneFilePoolSize, 1)
-	, m_pImpl(nullptr)
+namespace CryAudio
 {
-}
-
 //////////////////////////////////////////////////////////////////////////
 CAudioStandaloneFileManager::~CAudioStandaloneFileManager()
 {
-	if (m_pImpl != nullptr)
+	if (m_pIImpl != nullptr)
 	{
 		Release();
-	}
-
-	if (!m_audioStandaloneFilePool.m_reserved.empty())
-	{
-		for (auto const pStandaloneFile : m_audioStandaloneFilePool.m_reserved)
-		{
-			CRY_ASSERT(pStandaloneFile->m_pImplData == nullptr);
-			POOL_FREE(pStandaloneFile);
-		}
-
-		m_audioStandaloneFilePool.m_reserved.clear();
-	}
-
-	if (!m_audioStandaloneFiles.empty())
-	{
-		for (auto const& standaloneFilePair : m_audioStandaloneFiles)
-		{
-			CATLStandaloneFile* const pStandaloneFile = standaloneFilePair.second;
-			CRY_ASSERT(pStandaloneFile->m_pImplData == nullptr);
-			POOL_FREE(pStandaloneFile);
-		}
-
-		m_audioStandaloneFiles.clear();
 	}
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CAudioStandaloneFileManager::Init(IAudioImpl* const pImpl)
+void CAudioStandaloneFileManager::Init(Impl::IImpl* const pIImpl)
 {
-	m_pImpl = pImpl;
-
-	size_t const numPooledAudioStandaloneFiles = m_audioStandaloneFilePool.m_reserved.size();
-	size_t const numActiveAudioStandaloneFiles = m_audioStandaloneFiles.size();
-
-#if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
-	if ((numPooledAudioStandaloneFiles + numActiveAudioStandaloneFiles) > std::numeric_limits<size_t>::max())
-	{
-		CryFatalError("Exceeding numeric limits during CAudioStandaloneFileManager::Init");
-	}
-#endif // INCLUDE_AUDIO_PRODUCTION_CODE
-
-	size_t const numTotalAudioStandaloneFiles = numPooledAudioStandaloneFiles + numActiveAudioStandaloneFiles;
-	CRY_ASSERT(!(numTotalAudioStandaloneFiles > 0 && numTotalAudioStandaloneFiles < m_audioStandaloneFilePool.m_reserveSize));
-
-	if (m_audioStandaloneFilePool.m_reserveSize > numTotalAudioStandaloneFiles)
-	{
-		for (size_t i = 0; i < m_audioStandaloneFilePool.m_reserveSize - numActiveAudioStandaloneFiles; ++i)
-		{
-			AudioStandaloneFileId const id = m_audioStandaloneFilePool.GetNextID();
-			POOL_NEW_CREATE(CATLStandaloneFile, pNewStandaloneFile)(id, eAudioDataScope_Global);
-			m_audioStandaloneFilePool.m_reserved.push_back(pNewStandaloneFile);
-		}
-	}
-
-	for (auto const pStandaloneFile : m_audioStandaloneFilePool.m_reserved)
-	{
-		CRY_ASSERT(pStandaloneFile->m_pImplData == nullptr);
-		pStandaloneFile->m_pImplData = m_pImpl->NewAudioStandaloneFile();
-	}
-
-	for (auto const& standaloneFilePair : m_audioStandaloneFiles)
-	{
-		CATLStandaloneFile* const pStandaloneFile = standaloneFilePair.second;
-		CRY_ASSERT(pStandaloneFile->m_pImplData == nullptr);
-		pStandaloneFile->m_pImplData = m_pImpl->NewAudioStandaloneFile();
-	}
+	m_pIImpl = pIImpl;
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CAudioStandaloneFileManager::Release()
 {
-	for (auto const pStandaloneFile : m_audioStandaloneFilePool.m_reserved)
+	if (!m_constructedStandaloneFiles.empty())
 	{
-		m_pImpl->DeleteAudioStandaloneFile(pStandaloneFile->m_pImplData);
-		pStandaloneFile->m_pImplData = nullptr;
+		for (auto const pStandaloneFile : m_constructedStandaloneFiles)
+		{
+			m_pIImpl->DestructStandaloneFile(pStandaloneFile->m_pImplData);
+			delete pStandaloneFile;
+		}
+		m_constructedStandaloneFiles.clear();
 	}
 
-	for (auto const& standaloneFilePair : m_audioStandaloneFiles)
-	{
-		CATLStandaloneFile* const pStandaloneFile = standaloneFilePair.second;
-		m_pImpl->ResetAudioStandaloneFile(pStandaloneFile->m_pImplData);
-		m_pImpl->DeleteAudioStandaloneFile(pStandaloneFile->m_pImplData);
-		pStandaloneFile->m_pImplData = nullptr;
-	}
-
-	m_pImpl = nullptr;
+	m_pIImpl = nullptr;
 }
 
 //////////////////////////////////////////////////////////////////////////
-CATLStandaloneFile* CAudioStandaloneFileManager::GetStandaloneFile(char const* const szFile)
+CATLStandaloneFile* CAudioStandaloneFileManager::ConstructStandaloneFile(char const* const szFile, bool const bLocalized, Impl::ITrigger const* const pITrigger)
 {
-	CATLStandaloneFile* pStandaloneFile = nullptr;
+	CATLStandaloneFile* pStandaloneFile = new CATLStandaloneFile();
 
-	if (!m_audioStandaloneFilePool.m_reserved.empty())
-	{
-		pStandaloneFile = m_audioStandaloneFilePool.m_reserved.back();
-		m_audioStandaloneFilePool.m_reserved.pop_back();
-	}
-	else
-	{
-		AudioStandaloneFileId const instanceID = m_audioStandaloneFilePool.GetNextID();
-		POOL_NEW(CATLStandaloneFile, pStandaloneFile)(instanceID, eAudioDataScope_Global);
-
-		if (pStandaloneFile != nullptr)
-		{
-			pStandaloneFile->m_pImplData = m_pImpl->NewAudioStandaloneFile();
-		}
-		else
-		{
-			--m_audioStandaloneFilePool.m_idCounter;
-			g_audioLogger.Log(eAudioLogType_Warning, "Failed to create a new instance of a standalone file during CAudioStandaloneFileManager::GetStandaloneFile!");
-		}
-	}
-
-	if (pStandaloneFile != nullptr)
-	{
-		pStandaloneFile->m_id = static_cast<AudioStandaloneFileId>(AudioStringToId(szFile));
-		m_audioStandaloneFiles[pStandaloneFile->GetId()] = pStandaloneFile;
+	pStandaloneFile->m_pImplData = m_pIImpl->ConstructStandaloneFile(*pStandaloneFile, szFile, bLocalized, pITrigger);
+	pStandaloneFile->m_hashedFilename = CHashedString(szFile);
 
 #if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
-		pStandaloneFile->m_name = szFile;
+	pStandaloneFile->m_bLocalized = bLocalized;
+	pStandaloneFile->m_pITrigger = pITrigger;
 #endif // INCLUDE_AUDIO_PRODUCTION_CODE
-	}
 
-	return pStandaloneFile;
-}
-
-//////////////////////////////////////////////////////////////////////////
-CATLStandaloneFile* CAudioStandaloneFileManager::LookupId(AudioStandaloneFileId const instanceId) const
-{
-	CATLStandaloneFile* pStandaloneFile = nullptr;
-
-	if (instanceId != INVALID_AUDIO_STANDALONE_FILE_ID)
-	{
-		AudioStandaloneFileLookup::const_iterator const iter(m_audioStandaloneFiles.find(instanceId));
-
-		if (iter != m_audioStandaloneFiles.end())
-		{
-			pStandaloneFile = iter->second;
-		}
-	}
-
+	m_constructedStandaloneFiles.push_back(pStandaloneFile);
 	return pStandaloneFile;
 }
 
@@ -173,74 +66,86 @@ void CAudioStandaloneFileManager::ReleaseStandaloneFile(CATLStandaloneFile* cons
 {
 	if (pStandaloneFile != nullptr)
 	{
-		m_audioStandaloneFiles.erase(pStandaloneFile->GetId());
-		pStandaloneFile->Clear();
-
-		m_pImpl->ResetAudioStandaloneFile(pStandaloneFile->m_pImplData);
-		if (m_audioStandaloneFilePool.m_reserved.size() < m_audioStandaloneFilePool.m_reserveSize)
-		{
-			m_audioStandaloneFilePool.m_reserved.push_back(pStandaloneFile);
-		}
-		else
-		{
-			m_pImpl->DeleteAudioStandaloneFile(pStandaloneFile->m_pImplData);
-			POOL_FREE(pStandaloneFile);
-		}
+		m_constructedStandaloneFiles.remove(pStandaloneFile);
+		m_pIImpl->DestructStandaloneFile(pStandaloneFile->m_pImplData);
+		delete pStandaloneFile;
 	}
 }
 
 #if defined(INCLUDE_AUDIO_PRODUCTION_CODE)
 //////////////////////////////////////////////////////////////////////////
-void CAudioStandaloneFileManager::DrawDebugInfo(IRenderAuxGeom& auxGeom, float posX, float posY) const
+void CAudioStandaloneFileManager::DrawDebugInfo(IRenderAuxGeom& auxGeom, Vec3 const& listenerPosition, float posX, float posY) const
 {
-	static float const headerColor[4] = { 1.0f, 1.0f, 1.0f, 0.9f };
-	static float const itemPlayingColor[4] = { 0.1f, 0.6f, 0.1f, 0.9f };
+	static float const headerColor[4] = { 1.0f, 0.5f, 0.0f, 0.7f };
+	static float const itemPlayingColor[4] = { 0.1f, 0.7f, 0.1f, 0.9f };
 	static float const itemStoppingColor[4] = { 0.8f, 0.7f, 0.1f, 0.9f };
 	static float const itemLoadingColor[4] = { 0.9f, 0.2f, 0.2f, 0.9f };
 	static float const itemOtherColor[4] = { 0.8f, 0.8f, 0.8f, 0.9f };
 
-	auxGeom.Draw2dLabel(posX, posY, 1.6f, headerColor, false, "Standalone Files [%" PRISIZE_T "]", m_audioStandaloneFiles.size());
-	posX += 20.0f;
-	posY += 17.0f;
+	auxGeom.Draw2dLabel(posX, posY, 1.5f, headerColor, false, "Standalone Files [%" PRISIZE_T "]", m_constructedStandaloneFiles.size());
+	posY += 16.0f;
 
-	for (auto const& standaloneFilePair : m_audioStandaloneFiles)
+	CryFixedStringT<MaxControlNameLength> lowerCaseSearchString(g_cvars.m_pDebugFilter->GetString());
+	lowerCaseSearchString.MakeLower();
+
+	bool const bIsFilterNotSet = (lowerCaseSearchString.empty() || (lowerCaseSearchString == "0"));
+
+	for (auto const pStandaloneFile : m_constructedStandaloneFiles)
 	{
-		CATLStandaloneFile* const pStandaloneFile = standaloneFilePair.second;
+		Vec3 const& position = pStandaloneFile->m_pAudioObject->GetTransformation().GetPosition();
+		float const distance = position.GetDistance(listenerPosition);
 
-		float const* pColor = itemOtherColor;
-
-		switch (pStandaloneFile->m_state)
+		if (g_cvars.m_debugDistance <= 0.0f || (g_cvars.m_debugDistance > 0.0f && distance < g_cvars.m_debugDistance))
 		{
-		case eAudioStandaloneFileState_Playing:
-			{
-				pColor = itemPlayingColor;
+			char const* const szStandaloneFileName = pStandaloneFile->m_hashedFilename.GetText().c_str();
+			CryFixedStringT<MaxControlNameLength> lowerCaseStandaloneFileName(szStandaloneFileName);
+			lowerCaseStandaloneFileName.MakeLower();
+			char const* const szObjectName = pStandaloneFile->m_pAudioObject->m_name.c_str();
+			CryFixedStringT<MaxControlNameLength> lowerCaseObjectName(szObjectName);
+			lowerCaseObjectName.MakeLower();
 
-				break;
-			}
-		case eAudioStandaloneFileState_Loading:
-			{
-				pColor = itemLoadingColor;
+			bool const bDraw = bIsFilterNotSet ||
+				(lowerCaseStandaloneFileName.find(lowerCaseSearchString) != CryFixedStringT<MaxControlNameLength>::npos) ||
+				(lowerCaseObjectName.find(lowerCaseSearchString) != CryFixedStringT<MaxControlNameLength>::npos);
 
-				break;
-			}
-		case eAudioStandaloneFileState_Stopping:
+			if (bDraw)
 			{
-				pColor = itemStoppingColor;
+				float const* pColor = itemOtherColor;
 
-				break;
+				switch (pStandaloneFile->m_state)
+				{
+				case EAudioStandaloneFileState::Playing:
+				{
+					pColor = itemPlayingColor;
+
+					break;
+				}
+				case EAudioStandaloneFileState::Loading:
+				{
+					pColor = itemLoadingColor;
+
+					break;
+				}
+				case EAudioStandaloneFileState::Stopping:
+				{
+					pColor = itemStoppingColor;
+
+					break;
+				}
+				}
+
+				auxGeom.Draw2dLabel(posX, posY, 1.2f,
+					pColor,
+					false,
+					"%s on %s",
+					szStandaloneFileName,
+					szObjectName);
+
+				posY += 11.0f;
 			}
 		}
-
-		auxGeom.Draw2dLabel(posX, posY, 1.2f,
-		                    pColor,
-		                    false,
-		                    "%s on %s : %u",
-		                    pStandaloneFile->m_name.c_str(),
-		                    pStandaloneFile->m_pAudioObject->m_name.c_str(),
-		                    pStandaloneFile->GetId());
-
-		posY += 10.0f;
 	}
 }
 
 #endif // INCLUDE_AUDIO_PRODUCTION_CODE
+}      // namespace CryAudio

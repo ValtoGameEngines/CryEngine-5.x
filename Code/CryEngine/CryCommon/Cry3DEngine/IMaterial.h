@@ -1,15 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   IMaterial.h
-//  Version:     v1.00
-//  Created:     16/9/2004 by Timur.
-//  Compilers:   Visual Studio.NET 2003
-//  Description: IMaterial interface declaration.
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -79,7 +68,6 @@ enum EMaterialFlags
 	MTL_FLAG_RAYCAST_PROXY             = 0x100000,
 	MTL_FLAG_REQUIRE_NEAREST_CUBEMAP   = 0x200000,       //!< Materials with alpha blending requires special processing for shadows.
 	MTL_FLAG_CONSOLE_MAT               = 0x400000,
-	MTL_FLAG_DELETE_PENDING            = 0x800000,       //!< Internal use only.
 	MTL_FLAG_BLEND_TERRAIN             = 0x1000000,
 	MTL_FLAG_TRACEABLE_TEXTURE         = 0x2000000,      //!< Diffuse texture keeps low-res copy for raytracing (in decals, for instance)
 };
@@ -101,7 +89,7 @@ enum EPostEffectFlags
 };
 
 //! Bit offsets for shader layer flags.
-enum EMaterialLayerFlags
+enum EMaterialLayerFlags : uint32
 {
 	// Active layers flags
 	MTL_LAYER_FROZEN        = 0x0001,
@@ -236,6 +224,7 @@ struct IMaterialLayer
 	// </interfuscator:shuffle>
 };
 
+//! Represents an .mtl instance that can be applied to geometry in the scene
 struct IMaterial
 {
 	// TODO: Remove it!
@@ -247,6 +236,7 @@ struct IMaterial
 	virtual ~IMaterial() {};
 
 	// Reference counting.
+	virtual bool              IsValid() const = 0;
 	virtual void              AddRef() = 0;
 	virtual void              Release() = 0;
 	virtual int               GetNumRefs() = 0;
@@ -267,9 +257,9 @@ struct IMaterial
 	virtual int  GetFlags() const = 0;
 
 	//! Returns true if this is the default material.
-	virtual bool IsDefault() = 0;
+	virtual bool IsDefault() const = 0;
 
-	virtual int  GetSurfaceTypeId() = 0;
+	virtual int  GetSurfaceTypeId() const = 0;
 
 	//! Assign a different surface type to this material.
 	virtual void          SetSurfaceType(const char* sSurfaceTypeName) = 0;
@@ -359,11 +349,6 @@ struct IMaterial
 
 	virtual size_t GetResourceMemoryUsage(ICrySizer* pSizer) = 0;
 
-	//! Makes this specific material enter sketch mode.
-	//! \param mode Only the following modes are supported: 0=no sketch, 1=normal sketch mode, 2=fast sketch mode.
-	//! \see I3DEngine::LoadCGF
-	virtual void SetSketchMode(int mode) = 0;
-
 	// Debug routine.
 	//! Trace leaking materials by callstack.
 	virtual const char* GetLoadingCallstack() = 0;
@@ -396,6 +381,7 @@ struct IMaterial
 #endif
 };
 
+//! \cond INTERNAL
 //! IMaterialManagerListener is a callback interface to listen for special events of material manager, (used by Editor).
 struct IMaterialManagerListener
 {
@@ -409,6 +395,7 @@ struct IMaterialManagerListener
 	virtual void       OnDeleteMaterial(IMaterial* pMaterial) = 0;
 	// </interfuscator:shuffle>
 };
+//! \endcond
 
 //! IMaterialManager interface provide access to the material manager implemented in 3DEngine.
 struct IMaterialManager

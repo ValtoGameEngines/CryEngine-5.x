@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -50,7 +50,7 @@ CAnimActionBlendFromRagdoll::CAnimActionBlendFromRagdoll( int priority, CActor& 
 
 void CAnimActionBlendFromRagdoll::OnInitialise()
 {
-	::CryCreateClassInstance<IAnimationPoseMatching>("AnimationPoseModifier_PoseMatching", m_pPoseMatching); 
+	::CryCreateClassInstanceForInterface<IAnimationPoseMatching>(cryiidof<IAnimationPoseMatching>(), m_pPoseMatching);
 }
 
 void CAnimActionBlendFromRagdoll::Enter()

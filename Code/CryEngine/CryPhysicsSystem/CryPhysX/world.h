@@ -1,3 +1,5 @@
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
 #ifndef physicalworld_h
 #define physicalworld_h
 #pragma once
@@ -33,7 +35,8 @@ public:
 	virtual IGeomManager* GetGeomManager() { return this; }
 	virtual IPhysUtils*   GetPhysUtils() { return this; }
 
-	virtual void SetupEntityGrid(int axisz, Vec3 org, int nx, int ny, float stepx, float stepy, int log2PODscale = 0, int bCyclic = 0);
+	virtual IPhysicalEntity* SetupEntityGrid(int axisz, Vec3 org, int nx,int ny, float stepx,float stepy, int log2PODscale=0, int bCyclic=0, 
+		IPhysicalEntity* pHost=nullptr, const QuatT& posInHost=QuatT(IDENTITY));
 	virtual void Cleanup() {}
 	virtual void RegisterBBoxInPODGrid(const Vec3* BBox) {}
 	virtual void UnregisterBBoxInPODGrid(const Vec3* BBox) {}
@@ -126,6 +129,7 @@ public:
 
 	virtual void             AddEventClient(int type, int(*func)(const EventPhys*), int bLogged, float priority = 1.0f);
 	virtual int              RemoveEventClient(int type, int(*func)(const EventPhys*), int bLogged);
+	virtual int              NotifyEventClients(EventPhys* pEvent, int bLogged) { SendEvent(*pEvent,bLogged); return 1; }
 	virtual void             PumpLoggedEvents(); 
 	virtual uint32           GetPumpLoggedEventsTicks() { CRY_PHYSX_LOG_FUNCTION; _RETURN_INT_DUMMY_; }
 	virtual void             ClearLoggedEvents();
@@ -185,6 +189,7 @@ public:
 	int m_idStep = 0;
 	volatile int m_updated=0;
 	double m_time = 0;
+	std::vector<char> m_scratchBuf;
 
 	PxBatchQuery *m_batchQuery[2];
 	int m_nqRWItouches=0;
@@ -203,8 +208,8 @@ public:
 	int m_nCollEvents = 0;
 	std::vector<EventPhysCollision> m_collEvents[2];
 
-	template <class Event> void SendEvent(Event &evt, int bLogged) { 
-		auto &list = m_eventClients[Event::id][bLogged];
+	void SendEvent(EventPhys &evt, int bLogged) { 
+		auto &list = m_eventClients[evt.idval][bLogged];
 		std::find_if(list.begin(),list.end(), [&](auto client)->bool { return !client.OnEvent(&evt); });
 	}
 	EventPhys *AllocEvent(int id);
@@ -214,6 +219,7 @@ public:
 	virtual void onSleep(PxActor** actors, PxU32 count);
 	virtual void onContact(const PxContactPairHeader& pairHeader, const PxContactPair* pairs, PxU32 nbPairs);
 	virtual void onTrigger(PxTriggerPair* pairs, PxU32 count) {}
+	virtual void onAdvance(const PxRigidBody*const* bodyBuffer, const PxTransform* poseBuffer, const PxU32 count) {}
 
 	PxMaterial *GetSurfaceType(int i) { return m_mats[ (uint)i<(uint)NSURFACETYPES && m_mats[i] ? i : 0 ]; }
 	void UpdateProjectileState(PhysXProjectile *pent);
@@ -231,7 +237,7 @@ public:
 
 namespace cpx { 
 	namespace Helper {
-		inline int MatId(const physx::PxMaterial *mtl) { return (int)(INT_PTR)mtl->userData & 0xffff; }
+		inline int MatId(const physx::PxMaterial *mtl) { return mtl ? ((int)(INT_PTR)mtl->userData & 0xffff) : 0; }
 	}
 }
 

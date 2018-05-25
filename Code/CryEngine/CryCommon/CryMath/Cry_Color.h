@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef CRYTEK_CRYCOLOR_H
 #define CRYTEK_CRYCOLOR_H
@@ -13,7 +13,8 @@ template<class T> struct Color_tpl;
 typedef Color_tpl<uint8> ColorB; //!< [0, 255]
 typedef Color_tpl<float> ColorF; //!< [0.0, 1.0]
 
-//! RGBA Color structure.
+//! RGBA Color structure
+//! \see ColorB and ColorF
 template<class T> struct Color_tpl
 {
 	T r, g, b, a;
@@ -27,6 +28,7 @@ template<class T> struct Color_tpl
 	ILINE Color_tpl(const unsigned int abgr);
 	ILINE Color_tpl(const f32 c);
 	ILINE Color_tpl(const ColorF& c);
+	ILINE Color_tpl(const ColorB& c);
 	ILINE Color_tpl(const ColorF& c, float fAlpha);
 	ILINE Color_tpl(const Vec3& c, float fAlpha);
 
@@ -413,12 +415,20 @@ ILINE Color_tpl<uint8>::Color_tpl(const ColorF& c)
 }
 
 template<>
-ILINE Color_tpl<f32>::Color_tpl(const ColorF& c, float fAlpha)
+ILINE Color_tpl<f32>::Color_tpl(const ColorB& c)
+{
+	r = (f32)c.r / 255.f;
+	g = (f32)c.g / 255.f;
+	b = (f32)c.b / 255.f;
+	a = (f32)c.a / 255.f;
+}
+template<>
+ILINE Color_tpl<uint8>::Color_tpl(const ColorB& c)
 {
 	r = c.r;
 	g = c.g;
 	b = c.b;
-	a = fAlpha;
+	a = c.a;
 }
 
 template<>
@@ -429,21 +439,29 @@ ILINE Color_tpl<f32>::Color_tpl(const Vec3& c, float fAlpha)
 	b = c.z;
 	a = fAlpha;
 }
-
-template<>
-ILINE Color_tpl<uint8>::Color_tpl(const ColorF& c, float fAlpha)
-{
-	r = (uint8)(c.r * 255);
-	g = (uint8)(c.g * 255);
-	b = (uint8)(c.b * 255);
-	a = (uint8)(fAlpha * 255);
-}
 template<>
 ILINE Color_tpl<uint8>::Color_tpl(const Vec3& c, float fAlpha)
 {
 	r = (uint8)(c.x * 255);
 	g = (uint8)(c.y * 255);
 	b = (uint8)(c.z * 255);
+	a = (uint8)(fAlpha * 255);
+}
+
+template<>
+ILINE Color_tpl<f32>::Color_tpl(const ColorF& c, float fAlpha)
+{
+	r = c.r;
+	g = c.g;
+	b = c.b;
+	a = fAlpha;
+}
+template<>
+ILINE Color_tpl<uint8>::Color_tpl(const ColorF& c, float fAlpha)
+{
+	r = (uint8)(c.r * 255);
+	g = (uint8)(c.g * 255);
+	b = (uint8)(c.b * 255);
 	a = (uint8)(fAlpha * 255);
 }
 
@@ -464,6 +482,16 @@ template<class T>
 ILINE Color_tpl<T> operator*(T s, const Color_tpl<T>& v)
 {
 	return Color_tpl<T>(v.r * s, v.g * s, v.b * s, v.a * s);
+}
+
+ILINE ColorB operator*(const ColorB& v, float s)
+{
+	return ColorB(float_to_ufrac8(v.r * s), float_to_ufrac8(v.g * s), float_to_ufrac8(v.b * s), float_to_ufrac8(v.a * s));
+}
+
+ILINE ColorB operator*(float s, const ColorB& v)
+{
+	return v * s;
 }
 
 ///////////////////////////////////////////////
@@ -1004,7 +1032,6 @@ inline void Color_tpl<T >::grey(const Color_tpl<T>& c)
 	r = m;
 	g = m;
 	b = m;
-	a = a;
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////
@@ -1114,5 +1141,17 @@ inline void Color_tpl<T >::grey(const Color_tpl<T>& c)
 #define Clr_Unknown           ColorF(0.0f, 0.0f, 0.0f, 0.0f)
 #define Clr_Unused            ColorF(0.0f, 0.0f, 0.0f, 0.0f)
 #define Clr_Debug             ColorF(1.0f, 0.0f, 0.0f, 1.0f)
+
+
+inline ColorF ColorGammaToLinear(const ColorF& col)
+{
+	float r = col.r / 255.0f;
+	float g = col.g / 255.0f;
+	float b = col.b / 255.0f;
+
+	return ColorF((float)(r <= 0.04045 ? (r / 12.92) : pow(((double)r + 0.055) / 1.055, 2.4)),
+		(float)(g <= 0.04045 ? (g / 12.92) : pow(((double)g + 0.055) / 1.055, 2.4)),
+		(float)(b <= 0.04045 ? (b / 12.92) : pow(((double)b + 0.055) / 1.055, 2.4)));
+}
 
 #endif // CRYTEK_CRYCOLOR_H

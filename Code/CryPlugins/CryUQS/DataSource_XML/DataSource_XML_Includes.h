@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -9,3 +9,4 @@
 #include "datasource_xml/QueryBlueprintLoader_XML.h"
 #include "datasource_xml/QueryBlueprintSaver_XML.h"
 #include "datasource_xml/QueryBlueprintFileLibrary.h"
+#include "datasource_xml/XMLDatasource.h"

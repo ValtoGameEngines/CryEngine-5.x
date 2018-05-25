@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -187,10 +187,10 @@ public:
 
 		const char* tag = GetConnectorTypeLinkName(0);
 		if (tag)
-			pEnt->AddEntityLink(tag, 0);
+			pEnt->AddEntityLink(tag, 0,CryGUID::Null());
 	}
 
-	void OnEntityEvent(IEntity* pEntity, SEntityEvent& event)
+	void OnEntityEvent(IEntity* pEntity, const SEntityEvent& event)
 	{
 		if (!m_pGraph->IsEnabled() || m_pGraph->IsSuspended() || !m_pGraph->IsActive())
 			return;

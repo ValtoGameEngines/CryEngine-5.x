@@ -41,18 +41,28 @@ set(GCC_COMMON_FLAGS
 
 	-Wno-address
 
-	-fno-exceptions 
+	-fno-exceptions
+
+	# upgrade gcc 4.9 -> 7
+	-Wno-stringop-overflow
+	-Wno-misleading-indentation
+	-Wno-logical-not-parentheses
 )
 
 set(GCC_CPP_COMMON_FLAGS
 	-fno-rtti 
-	-std=gnu++11
+	-std=c++11
 	-Wno-invalid-offsetof
 	-Wno-reorder
 	-Wno-conversion-null
 	-Wno-overloaded-virtual
 	-Wno-c++0x-compat
 	-Wno-non-template-friend
+
+	# upgrade gcc 4.9 -> 7
+	-Wno-int-in-bool-context
+	-Wno-aligned-new
+	-Wno-ignored-attributes
 )
 
 string(REPLACE ";" " " GCC_COMMON_FLAGS "${GCC_COMMON_FLAGS}")
@@ -76,6 +86,6 @@ set(CMAKE_LINK_FLAGS "{$CMAKE_LINK_FLAGS} -Wl, --gc-sections")
 set(CMAKE_SHARED_LINKER_FLAGS_PROFILE ${CMAKE_SHARED_LINKER_FLAGS_DEBUG} CACHE STRING "Linker Library Profile Flags" FORCE)
 set(CMAKE_EXE_LINKER_FLAGS_PROFILE ${CMAKE_EXE_LINKER_FLAGS_DEBUG} CACHE STRING "Linker Executable Profile Flags" FORCE)
 
-function (wrap_whole_archive target source)
+function (wrap_whole_archive project target source)
 	set(${target} "-Wl,--whole-archive;${${source}};-Wl,--no-whole-archive" PARENT_SCOPE)
 endfunction()

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -528,7 +528,7 @@ void CDedicatedInput::HandleDeathAndSuicide(CGameRules* const pGameRules)
 
 			IGameRulesSpawningModule *pSpawningModule = pGameRules->GetSpawningModule();
 
-			if (pSpawningModule)
+			if (pSpawningModule && pSpawningModule->GetRemainingLives(m_pPlayer->GetEntityId()) > 0)
 			{
 				pSpawningModule->ClRequestRevive(m_pPlayer->GetEntityId());
 			}

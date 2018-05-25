@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -9,6 +9,8 @@
 #include <forward_list>
 
 #include "../XRenderD3D9/GraphicsPipeline/Common/PrimitiveRenderPass.h"
+
+#include <Common/Textures/TempDepthTexture.h>
 
 class CD3D9Renderer;
 class CShader;
@@ -65,19 +67,19 @@ struct SSF_ResourcesD3D
 
 	CShader* m_pShader;
 
-	EVertexFormat m_vertexDecls[IScaleformPlayback::Vertex_Num];
+	InputLayoutHandle m_vertexDecls[IScaleformPlayback::Vertex_Num];
 	D3DVertexDeclaration* m_pVertexDecls[IScaleformPlayback::Vertex_Num];
-	D3DQuery* m_pQuery;
+	DeviceFenceHandle m_fence;
 
-	int texStateID[8];
+	SamplerStateHandle samplerStateHandles[8];
 	std::vector<CTexture*> m_renderTargets;
 
 	SSF_ResourcesD3D(CD3D9Renderer* pRenderer);
 	~SSF_ResourcesD3D();
 
-	CShader* GetShader(CD3D9Renderer* pRenderer);
-	CTexture* GetColorSurface(CD3D9Renderer* pRenderer, int nWidth, int nHeight, ETEX_Format eFormat, int nMaxWidth = 1 << 30, int nMaxHeight = 1 << 30);
-	SDepthTexture* GetStencilSurface(CD3D9Renderer* pRenderer, int nWidth, int nHeight, ETEX_Format eFormat);
+	CShader*                                     GetShader(CD3D9Renderer* pRenderer);
+	CTexture*                                    GetColorSurface(CD3D9Renderer* pRenderer, int nWidth, int nHeight, ETEX_Format eFormat, int nMaxWidth = 1 << 30, int nMaxHeight = 1 << 30);
+	CResourcePool<STempDepthTexture>::value_type GetStencilSurface(CD3D9Renderer* pRenderer, int nWidth, int nHeight, ETEX_Format eFormat);
 
 	struct CRenderPrimitiveHeap
 	{
@@ -89,6 +91,7 @@ struct SSF_ResourcesD3D
 
 		CRenderPrimitive* GetUsablePrimitive(int key);
 		void FreeUsedPrimitives(int key);
+		void Clear();
 	}
 	m_PrimitiveHeap;
 

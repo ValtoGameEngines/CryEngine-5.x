@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   statobj.h
@@ -293,6 +293,9 @@ public:
 	// Default material.
 	_smart_ptr<IMaterial> m_pMaterial;
 
+	// Billboard material and mesh
+	_smart_ptr<IMaterial> m_pBillboardMaterial;
+
 	float m_fRadiusHors;
 	float m_fRadiusVert;
 
@@ -305,7 +308,7 @@ public:
 	float m_lastBooleanOpScale;
 
 	_smart_ptr<CStatObj>* m_pLODs;
-	_smart_ptr<CStatObj> m_pLod0;      // Level 0 stat object. (Pointer to the original object of the LOD)
+	CStatObj* m_pLod0;                 // Level 0 stat object. (Pointer to the original object of the LOD)
 	unsigned int m_nMinUsableLod0 : 8; // What is the minimal LOD that can be used as LOD0.
 	unsigned int m_nMaxUsableLod0 : 8; // What is the maximal LOD that can be used as LOD0.
 	unsigned int m_nMaxUsableLod  : 8; // What is the maximal LOD that can be used.
@@ -459,6 +462,8 @@ public:
 	virtual IMaterial* GetMaterial() const final { return m_pMaterial; }
 	//////////////////////////////////////////////////////////////////////////
 
+	IMaterial * GetBillboardMaterial() { return m_pBillboardMaterial; }
+
 	void RenderInternal(CRenderObject * pRenderObject, hidemask nSubObjectHideMask, const CLodValue &lodValue, const SRenderingPassInfo &passInfo);
 	void RenderObjectInternal(CRenderObject * pRenderObject, int nLod, uint8 uLodDissolveRef, bool dissolveOut, const SRenderingPassInfo &passInfo);
 	void RenderSubObject(CRenderObject * pRenderObject, int nLod,
@@ -497,7 +502,7 @@ public:
 	virtual AABB GetAABB() const final                  { return m_AABB; }
 
 	virtual float GetExtent(EGeomForm eForm) final;
-	virtual void GetRandomPos(PosNorm & ran, CRndGen & seed, EGeomForm eForm) const final;
+	virtual void GetRandomPoints(Array<PosNorm> points, CRndGen& seed, EGeomForm eForm) const final;
 
 	virtual Vec3 GetHelperPos(const char* szHelperName) final;
 	virtual const Matrix34& GetHelperTM(const char* szHelperName) final;
@@ -590,7 +595,7 @@ public:
 	virtual bool      IsSubObject() const final          { return m_bSubObject; };
 	virtual bool CopySubObject(int nToIndex, IStatObj * pFromObj, int nFromIndex) final;
 	virtual int PhysicalizeSubobjects(IPhysicalEntity * pent, const Matrix34 * pMtx, float mass, float density = 0.0f, int id0 = 0,
-	                                  strided_pointer<int> pJointsIdMap = 0, const char* szPropsOverride = 0) final;
+	                                  strided_pointer<int> pJointsIdMap = 0, const char* szPropsOverride = 0, int idbodyArtic = -1) final;
 	virtual IStatObj::SSubObject& AddSubObject(IStatObj* pStatObj) final;
 	virtual int Physicalize(IPhysicalEntity * pent, pe_geomparams * pgp, int id = -1, const char* szPropsOverride = 0) final;
 	//////////////////////////////////////////////////////////////////////////
@@ -643,8 +648,8 @@ public:
 
 	int GetMaxUsableLod();
 	int GetMinUsableLod();
-	void RenderStreamingDebugInfo(CRenderObject * pRenderObject);
-	void RenderCoverInfo(CRenderObject * pRenderObject);
+	void RenderStreamingDebugInfo(CRenderObject * pRenderObject, const SRenderingPassInfo& passInfo);
+	void RenderCoverInfo(CRenderObject * pRenderObject, const SRenderingPassInfo& passInfo);
 	int CountChildReferences();
 	void ReleaseStreamableContent() final;
 	int GetStreamableContentMemoryUsage(bool bJustForDebug = false) final;
@@ -718,6 +723,8 @@ protected:
 	}
 
 	bool CheckForStreamingDependencyLoop(const char* szFilenameDependancy) const;
+	void CheckCreateBillboardMaterial();
+	void CreateBillboardMesh(IMaterial* pMaterial);
 };
 
 //////////////////////////////////////////////////////////////////////////

@@ -1,9 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 #pragma once
 
 // CryEngine headers.
 
 #include <CryCore/Project/CryModuleDefs.h>
+#define eCryModule eCryM_Legacy
+
 #include <CryCore/Platform/platform.h>
 
 // MFC & XTToolkit Pro headers.
@@ -42,7 +44,6 @@
 
 #include <CrySchematyc/CoreAPI.h>
 
-IEditor*  GetIEditor();
-HINSTANCE GetHInstance();
 
-Q_DECLARE_METATYPE(Schematyc::SGUID);
+Q_DECLARE_METATYPE(CryGUID);
+

@@ -1,4 +1,4 @@
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -6,6 +6,10 @@
 #include "Common/PrimitiveRenderPass.h"
 #include "Common/FullscreenPass.h"
 //#include "Common/UtilityPasses.h"
+
+#if !CRY_PLATFORM_ORBIS
+	#define FEATURE_RENDER_CLIPVOLUME_GEOMETRY_SHADER
+#endif
 
 class CClipVolumesStage : public CGraphicsPipelineStage
 {
@@ -17,20 +21,32 @@ public:
 	CClipVolumesStage();
 	virtual ~CClipVolumesStage();
 
-	void Init();
-	void Prepare(CRenderView* pRenderView) final;
-	void Execute();
+	CGpuBuffer* GetClipVolumeInfoBuffer          ()       { return &m_clipVolumeInfoBuf; }
+	CTexture*   GetClipVolumeStencilVolumeTexture() const { return m_pClipVolumeStencilVolumeTex; }
 
-	void GetClipVolumeShaderParams(const Vec4*& pParams, uint32& paramCount)
+	bool        IsOutdoorVisible() const { CRY_ASSERT(m_bClipVolumesValid); return m_bOutdoorVisible; }
+
+	void Init();
+	void Destroy();
+	void Update() final;
+	bool IsStageActive(EShaderRenderingFlags flags) const final
 	{
-		CRY_ASSERT(m_bClipVolumesValid);
-		pParams = m_clipVolumeShaderParams;
-		paramCount = m_nShaderParamCount;
+		if (flags & EShaderRenderingFlags::SHDF_FORWARD_MINIMAL)
+			return false;
+
+		return true;
 	}
 
-	bool      IsOutdoorVisible() { CRY_ASSERT(m_bClipVolumesValid); return m_bOutdoorVisible; }
+	void Prepare();
+	void Execute();
 
-	CTexture* GetClipVolumeStencilVolumeTexture() const;
+public:
+	struct SClipVolumeInfo
+	{
+		float data;
+	};
+
+	void GenerateClipVolumeInfo();
 
 private:
 	void PrepareVolumetricFog();
@@ -41,27 +57,41 @@ private:
 	CPrimitiveRenderPass m_blendValuesPass;
 	CFullscreenPass      m_stencilResolvePass;
 
+#ifdef FEATURE_RENDER_CLIPVOLUME_GEOMETRY_SHADER
 	CPrimitiveRenderPass m_volumetricStencilPass;
-	CFullscreenPass      m_passWriteJitteredDepth;
+#else
+	std::vector<std::unique_ptr<CPrimitiveRenderPass>> m_volumetricStencilPassArray;
+	std::vector<std::unique_ptr<CFullscreenPass>>      m_resolveVolumetricStencilPassArray;
+#endif
+	std::vector<std::unique_ptr<CFullscreenPass>>      m_jitteredDepthPassArray;
 
-	CRenderPrimitive     m_stencilPrimitives[MaxDeferredClipVolumes * 2];
-	CRenderPrimitive     m_blendPrimitives[MaxDeferredClipVolumes];
+	CRenderPrimitive                m_stencilPrimitives[MaxDeferredClipVolumes * 2];
+	CRenderPrimitive                m_blendPrimitives[MaxDeferredClipVolumes];
+#ifdef FEATURE_RENDER_CLIPVOLUME_GEOMETRY_SHADER
+	CRenderPrimitive                m_stencilPrimitivesVolFog[MaxDeferredClipVolumes * 2];
+#endif
 
-	CRY_ALIGN(16) Vec4 m_clipVolumeShaderParams[MaxDeferredClipVolumes];
-	uint32                     m_nShaderParamCount;
+	CRY_ALIGN(16) Vec4              m_clipVolumeShaderParams[MaxDeferredClipVolumes];
+	uint32                          m_nShaderParamCount;
 
-	CTexture*                  m_pBlendValuesRT;
-	SDepthTexture*             m_pDepthTarget;
+	CGpuBuffer                      m_clipVolumeInfoBuf;
 
-	CTexture*                  m_pClipVolumeStencilVolumeTex;
-	SDepthTexture              m_depthTargetVolFog;
-	std::vector<SDepthTexture> m_depthTargetArrayVolFog;
+	CTexture*                       m_pBlendValuesRT;
+	CTexture*                       m_pDepthTarget;
 
-	int32                      m_cleared;
-	float                      m_nearDepth;
-	float                      m_raymarchDistance;
+	CTexture*                       m_pClipVolumeStencilVolumeTex;
+#ifdef FEATURE_RENDER_CLIPVOLUME_GEOMETRY_SHADER
+	CTexture*                       m_depthTargetVolFog;
+#else
+	std::vector<CTexture*>          m_pClipVolumeStencilVolumeTexArray;
+#endif
+	std::vector<ResourceViewHandle> m_depthTargetArrayVolFog;
 
-	bool                       m_bClipVolumesValid;
-	bool                       m_bBlendPassReady;
-	bool                       m_bOutdoorVisible;
+	int32                           m_cleared;
+	float                           m_nearDepth;
+	float                           m_raymarchDistance;
+
+	bool                            m_bClipVolumesValid;
+	bool                            m_bBlendPassReady;
+	bool                            m_bOutdoorVisible;
 };

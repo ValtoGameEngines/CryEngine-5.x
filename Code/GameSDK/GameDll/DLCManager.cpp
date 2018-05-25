@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -95,7 +95,10 @@ CDLCManager::CDLCManager()
 
 CDLCManager::~CDLCManager()
 {
-	gEnv->pSystem->GetPlatformOS()->RemoveListener(this);
+	if (IPlatformOS* pPlatformOS = gEnv->pSystem->GetPlatformOS())
+	{
+		gEnv->pSystem->GetPlatformOS()->RemoveListener(this);
+	}
 }
 
 void CDLCManager::LoadDownloadableContent( uint32 userIdOveride /*= INVALID_CONTROLLER_INDEX*/ )
@@ -598,10 +601,6 @@ bool CDLCManager::LevelExists(const char* pLevelName)
 
 bool CDLCManager::IsLevelStandard(const char * levelname)
 {
-#if defined(IS_EAAS)
-	// You can test the level name here, and return false if the map should not be available
-	return true;
-#else
 	// This function is currently only used for achievements and shouldn't be used as a robust way
 	// to check if a level is DLC or not
 	for ( int level = 0; level < eNOTDLC_NUM_LEVELS; level++ )
@@ -612,15 +611,10 @@ bool CDLCManager::IsLevelStandard(const char * levelname)
 		}
 	}
 	return false;
-#endif
 }
 
 bool CDLCManager::IsGameModeStandard(const char * gamemode)
 {
-#if defined(IS_EAAS)
-	// You can test the game mode here, and return false if the game mode should not be available
-	return true;
-#else
 	// This function is currently only used for achievements and shouldn't be used as a robust way
 	// to check if a game mode is DLC or not
 	for ( int gmidx = 0; gmidx < eNOTDLC_NUM_GAMEMODES; gmidx++ )
@@ -631,7 +625,6 @@ bool CDLCManager::IsGameModeStandard(const char * gamemode)
 		}
 	}
 	return false;
-#endif
 }
 
 uint32 CDLCManager::GetSquadCommonDLCs()

@@ -1,12 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
-namespace uqs
+namespace UQS
 {
-	namespace core
+	namespace Core
 	{
 
 		struct SItemIterationContext;
@@ -24,7 +24,7 @@ namespace uqs
 		class CBlueprintWithInputs
 		{
 		public:
-			bool                               InstantiateFunctionCallHierarchy(CFunctionCallHierarchy& out, const SQueryBlackboard& blackboard, shared::CUqsString& error) const;
+			bool                               InstantiateFunctionCallHierarchy(CFunctionCallHierarchy& out, const SQueryBlackboard& blackboard, Shared::CUqsString& error) const;
 
 		protected:
 			explicit                           CBlueprintWithInputs() {}

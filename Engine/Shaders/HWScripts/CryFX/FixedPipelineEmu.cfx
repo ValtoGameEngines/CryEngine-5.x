@@ -1,5 +1,4 @@
-// CRYENGINE Source Code File
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "Common.cfi"
 
@@ -39,8 +38,6 @@
 #define CO_SUBTRACT    23
 
 /// Un-Tweakables //////////////////////
-float4x4 compMatrix  : PI_Composite  < register = c0; >; // View*Projection
-float4   TFactor   : PB_TFactor;
 
 sampler2D Texture0 = sampler_state
 {
@@ -71,7 +68,7 @@ struct a2v
 
 struct v2f
 {
-  float4 Position  : POSITION;  //in projection space
+  float4 Position  : SV_POSITION;  //in projection space
 #if %_FT_DIFFUSE
   float4 Color     : COLOR0;
 #endif  
@@ -87,7 +84,7 @@ v2f FPVS(a2v IN)
 
   // Position in screen space.
   float4 vPos = IN.Position;
-  OUT.Position = mul(compMatrix, vPos);
+  OUT.Position = mul(CV_ViewProjMatr, vPos);
   
 #if %_FT_TEXTURE
   OUT.baseTC = IN.baseTC;
@@ -236,6 +233,8 @@ pixout FPPS(v2f IN)
   INDiffuse = IN.Color;
 #endif
 
+  float4 TFactor = float4(1.0,1.0,1.0,1.0);
+
   GetRGBArg(%_FT0_CARG1, Arg01, Arg01, baseTex, INDiffuse, INSpecular, TFactor);
   GetRGBArg(%_FT0_CARG2, Arg02, Arg02, baseTex, INDiffuse, INSpecular, TFactor);
   GetAlphaArg(%_FT0_AARG1, Arg01, Arg01, baseTex, INDiffuse, INSpecular, TFactor);
@@ -297,7 +296,7 @@ struct SInputLayout
   float4 Tangent  : TANGENT;
 #endif
 #if %_FT_TANGENT_STREAM
-  float4 Binormal : BINORMAL;
+  float4 Binormal : BITANGENT;
 #endif
 #if %_FT_SKIN_STREAM
   IN_SKIN_STREAM

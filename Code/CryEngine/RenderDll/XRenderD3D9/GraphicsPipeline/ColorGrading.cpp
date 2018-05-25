@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ColorGrading.h"
@@ -6,7 +6,7 @@
 #include "DriverD3D.h"
 #include "../Common/PostProcess/PostEffects.h"
 
-const char* COLORCHART_DEF_TEX = "EngineAssets/Textures/default_cch.tif";
+const char* COLORCHART_DEF_TEX = "%ENGINE%/EngineAssets/Textures/default_cch.tif";
 const ETEX_Format COLORCHART_FORMAT = eTF_R8G8B8A8;
 
 CColorGradingStage::CColorGradingStage()
@@ -14,19 +14,18 @@ CColorGradingStage::CColorGradingStage()
 	, m_pChartStatic(nullptr)
 	, m_pChartToUse(nullptr)
 	, m_slicesVertexBuffer(~0u)
-	, m_colorGradingPrimitive(CRenderPrimitive::eFlags_ReflectConstantBuffersFromShader)
-	, m_samplerStateLinear(0)
+	, m_colorGradingPrimitive(CRenderPrimitive::eFlags_ReflectShaderConstants)
 {
 	m_pMergeLayers.fill(nullptr);
 
 	// Preallocate 2 merge primitives (i.e. up to 8 blending layers)
-	m_mergeChartsPrimitives.emplace_back(CRenderPrimitive::eFlags_ReflectConstantBuffersFromShader);
-	m_mergeChartsPrimitives.emplace_back(CRenderPrimitive::eFlags_ReflectConstantBuffersFromShader);
+	m_mergeChartsPrimitives.emplace_back(CRenderPrimitive::eFlags_ReflectShaderConstants);
+	m_mergeChartsPrimitives.emplace_back(CRenderPrimitive::eFlags_ReflectShaderConstants);
 }
 
 void CColorGradingStage::Init()
 {
-	CColorGradingControllerD3D* pCtrl = gcpRendD3D->m_pColorGradingControllerD3D;
+	CColorGradingController* pCtrl = gcpRendD3D->m_pColorGradingControllerD3D;
 	const int chartSize = pCtrl->GetColorChartSize();
 
 	// load default color chart
@@ -47,7 +46,7 @@ void CColorGradingStage::Init()
 	{
 		const char* rtName = i == 0 ? "ColorGradingMergeLayer0" : "ColorGradingMergeLayer1";
 
-		CTexture* pRT = CTexture::CreateRenderTarget(rtName, chartSize*chartSize, chartSize, Clr_Empty, eTT_2D, FT_NOMIPS | FT_DONT_STREAM | FT_STATE_CLAMP, COLORCHART_FORMAT);
+		CTexture* pRT = CTexture::GetOrCreateRenderTarget(rtName, chartSize*chartSize, chartSize, Clr_Empty, eTT_2D, FT_NOMIPS | FT_DONT_STREAM | FT_STATE_CLAMP, COLORCHART_FORMAT);
 		if (CTexture::IsTextureExist(pRT))
 		{
 			m_pMergeLayers[i].Assign_NoAddRef(pRT);
@@ -105,30 +104,30 @@ void CColorGradingStage::Init()
 		m_slicesVertexBuffer = gcpRendD3D->m_DevBufMan.Create(BBT_VERTEX_BUFFER, BU_STATIC, m_vecSlicesData.size() * sizeof(m_vecSlicesData[0]));
 		gcpRendD3D->m_DevBufMan.UpdateBuffer(m_slicesVertexBuffer, m_vecSlicesData);
 	}
-
-	// sampler states
-	m_samplerStateLinear = CTexture::GetTexState(STexState(FILTER_LINEAR, true));
 }
 
-void CColorGradingStage::PreparePrimitives(CColorGradingControllerD3D& controller, const SColorGradingMergeParams& mergeParams)
+void CColorGradingStage::PreparePrimitives(CColorGradingController& controller, const SColorGradingMergeParams& mergeParams)
 {
 	m_pChartToUse = nullptr;
 
 	if (!m_pMergeLayers[0] || !m_pMergeLayers[1] || m_slicesVertexBuffer == ~0u)
 		return;
 
-	if (m_pChartToUse = m_pChartStatic)
+	m_pChartToUse = GetStaticColorChart();
+	if (m_pChartToUse != nullptr)
 		return;
 
 	// init passes
-	m_mergePass.ClearPrimitives();
-	m_colorGradingPass.ClearPrimitives();
+	m_mergePass.BeginAddingPrimitives();
+	m_colorGradingPass.BeginAddingPrimitives();
+
+	CryAutoCriticalSectionNoRecursive layersLock(controller.GetLayersLock());
 
 	// prepare chart blending primitives
 	{
 		const int numLayers = controller.m_layers.size();
 		for (int i = m_mergeChartsPrimitives.size(), end = numLayers/4+1; i < end; ++i)
-			m_mergeChartsPrimitives.emplace_back(CRenderPrimitive::eFlags_ReflectConstantBuffersFromShader);
+			m_mergeChartsPrimitives.emplace_back(CRenderPrimitive::eFlags_ReflectShaderConstants);
 
 		int numMergePasses = 0;
 		for (size_t curLayer = 0; curLayer < numLayers; )
@@ -161,22 +160,24 @@ void CColorGradingStage::PreparePrimitives(CColorGradingControllerD3D& controlle
 
 				CRenderPrimitive& prim = m_mergeChartsPrimitives[numMergePasses];
 				prim.SetTechnique(CShaderMan::s_shPostEffectsGame, techName, rtFlags);
+				prim.SetFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
 				prim.SetRenderState(GS_NODEPTHTEST | (numMergePasses ? GS_BLSRC_ONE | GS_BLDST_ONE : 0));
-				prim.SetCustomVertexStream(m_slicesVertexBuffer, eVF_P3F_C4B_T2F, sizeof(SVF_P3F_C4B_T2F));
+				prim.SetCustomVertexStream(m_slicesVertexBuffer, EDefaultInputLayouts::P3F_C4B_T2F, sizeof(SVF_P3F_C4B_T2F));
 				prim.SetDrawInfo(eptTriangleList, 0, 0, 6 * controller.GetColorChartSize());
 				for (int i = 0; i < numLayersPerPass; ++i)
 					prim.SetTexture(i, layerTex[i]);
+				prim.Compile(m_mergePass);
 
 				prim.GetConstantManager().BeginNamedConstantUpdate();
 
 				static CCryNameR nameLayerBlendAmount("LayerBlendAmount");
-				prim.GetConstantManager().SetNamedConstant(nameLayerBlendAmount, layerBlendAmount, eHWSC_Pixel);
-
 				static CCryNameR nameLayerSize("LayerSize");
+
+				prim.GetConstantManager().SetNamedConstant(nameLayerBlendAmount, layerBlendAmount, eHWSC_Pixel);
 				Vec4 layerSize((float)m_pMergeLayers[0]->GetWidth(), (float)m_pMergeLayers[0]->GetHeight(), 0, 0);
 				prim.GetConstantManager().SetNamedConstant(nameLayerSize, layerSize, eHWSC_Pixel);
 
-				prim.GetConstantManager().EndNamedConstantUpdate();
+				prim.GetConstantManager().EndNamedConstantUpdate(&m_mergePass.GetViewport());
 
 				m_mergePass.AddPrimitive(&prim);
 				++numMergePasses;
@@ -193,36 +194,35 @@ void CColorGradingStage::PreparePrimitives(CColorGradingControllerD3D& controlle
 		static CCryNameTSCRC techName("CombineColorGradingWithColorChart");
 		uint64 rtFlags = mergeParams.nFlagsShaderRT & ~g_HWSR_MaskBit[HWSR_SAMPLE1];
 
+		m_colorGradingPrimitive.SetFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_PS);
 		m_colorGradingPrimitive.SetTechnique(CShaderMan::s_shPostEffectsGame, techName, rtFlags);
 		m_colorGradingPrimitive.SetRenderState(GS_NODEPTHTEST);
-		m_colorGradingPrimitive.SetSampler(0, m_samplerStateLinear);
-		m_colorGradingPrimitive.SetCustomVertexStream(m_slicesVertexBuffer, eVF_P3F_C4B_T2F, sizeof(SVF_P3F_C4B_T2F));
+		m_colorGradingPrimitive.SetSampler(0, EDefaultSamplerStates::LinearClamp);
+		m_colorGradingPrimitive.SetPrimitiveType(CRenderPrimitive::ePrim_Custom);
+		m_colorGradingPrimitive.SetCustomVertexStream(m_slicesVertexBuffer, EDefaultInputLayouts::P3F_C4B_T2F, sizeof(SVF_P3F_C4B_T2F));
 		m_colorGradingPrimitive.SetDrawInfo(eptTriangleList, 0, 0, 6 * controller.GetColorChartSize());
 		m_colorGradingPrimitive.SetTexture(0, m_pChartToUse);
+		m_colorGradingPrimitive.Compile(m_colorGradingPass);
 
 		auto& constantManager = m_colorGradingPrimitive.GetConstantManager();
 
 		constantManager.BeginNamedConstantUpdate();
 
 		static CCryNameR pParamName0("ColorGradingParams0");
-		constantManager.SetNamedConstant(pParamName0, mergeParams.pLevels[0], eHWSC_Pixel);
-
 		static CCryNameR pParamName1("ColorGradingParams1");
-		constantManager.SetNamedConstant(pParamName1, mergeParams.pLevels[1], eHWSC_Pixel);
-
 		static CCryNameR pParamName2("ColorGradingParams2");
-		constantManager.SetNamedConstant(pParamName2, mergeParams.pFilterColor, eHWSC_Pixel);
-
 		static CCryNameR pParamName3("ColorGradingParams3");
-		constantManager.SetNamedConstant(pParamName3, mergeParams.pSelectiveColor[0], eHWSC_Pixel);
-
 		static CCryNameR pParamName4("ColorGradingParams4");
-		constantManager.SetNamedConstant(pParamName4, mergeParams.pSelectiveColor[1], eHWSC_Pixel);
-
 		static CCryNameR pParamMatrix("mColorGradingMatrix");
+
+		constantManager.SetNamedConstant(pParamName0, mergeParams.pLevels[0], eHWSC_Pixel);
+		constantManager.SetNamedConstant(pParamName1, mergeParams.pLevels[1], eHWSC_Pixel);
+		constantManager.SetNamedConstant(pParamName2, mergeParams.pFilterColor, eHWSC_Pixel);
+		constantManager.SetNamedConstant(pParamName3, mergeParams.pSelectiveColor[0], eHWSC_Pixel);
+		constantManager.SetNamedConstant(pParamName4, mergeParams.pSelectiveColor[1], eHWSC_Pixel);
 		constantManager.SetNamedConstantArray(pParamMatrix, mergeParams.pColorMatrix, 3, eHWSC_Pixel);
 
-		constantManager.EndNamedConstantUpdate();
+		constantManager.EndNamedConstantUpdate(&m_colorGradingPass.GetViewport());
 
 		m_colorGradingPass.AddPrimitive(&m_colorGradingPrimitive);
 
@@ -239,14 +239,14 @@ void CColorGradingStage::Execute()
 		return;
 	}
 	
-	if (CColorGrading* pColorGrading = (CColorGrading*)PostEffectMgr()->GetEffect(ePFX_ColorGrading))
+	if (CColorGrading* pColorGrading = (CColorGrading*)PostEffectMgr()->GetEffect(EPostEffectID::ColorGrading))
 	{
 		PROFILE_LABEL_SCOPE("COLORGRADING");
 
 		SColorGradingMergeParams mergeParams;
 		pColorGrading->UpdateParams(mergeParams, false);
 		
-		if (gEnv->IsCutscenePlaying() || (gRenDev->GetFrameID(false) % max(1, CRenderer::CV_r_ColorgradingChartsCache)) == 0)
+		if (gEnv->IsCutscenePlaying() || (RenderView()->GetFrameId() % max(1, CRenderer::CV_r_ColorgradingChartsCache)) == 0 || IsRenderPassesDirty())
 		{
 			PreparePrimitives(*gcpRendD3D->m_pColorGradingControllerD3D, mergeParams);
 		}
@@ -261,6 +261,22 @@ void CColorGradingStage::Execute()
 
 CVertexBuffer CColorGradingStage::GetSlicesVB() const
 { 
-	CVertexBuffer result((void*)&m_vecSlicesData[0], eVF_P3F_C4B_T2F, m_vecSlicesData.size());
+	CVertexBuffer result((void*)&m_vecSlicesData[0], EDefaultInputLayouts::P3F_C4B_T2F, m_vecSlicesData.size());
 	return result;
+}
+
+bool CColorGradingStage::IsRenderPassesDirty()
+{
+	bool isDirty = false;
+	if (m_colorGradingPrimitive.IsDirty())
+		isDirty = true;
+	for (auto& prim : m_mergeChartsPrimitives)
+	{
+		if (prim.IsDirty())
+		{
+			isDirty = true;
+			break;
+		}
+	}
+	return isDirty;
 }

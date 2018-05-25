@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -14,10 +14,12 @@ class CShadowMapStage : public CGraphicsPipelineStage
 {
 	enum EPerPassTexture
 	{
+		EPerPassTexture_PerlinNoiseMap = 25,
 		EPerPassTexture_TerrainElevMap = 26,
-		EPerPassTexture_WindGrid = 27,
+		EPerPassTexture_WindGrid       = 27,
+		EPerPassTexture_TerrainNormMap = 28,
 		EPerPassTexture_TerrainBaseMap = 29,
-		EPerPassTexture_DissolveNoise  = 31
+		EPerPassTexture_DissolveNoise  = 31,
 	};
 
 	enum EPass
@@ -33,12 +35,15 @@ class CShadowMapStage : public CGraphicsPipelineStage
 	};
 
 public:
-	virtual void Init() override;
-	virtual void Prepare(CRenderView* pRenderView) override;
+	CShadowMapStage();
 
-	void         Execute();
+	void Init() final;
+	void Prepare();
 
-	bool         CreatePipelineStates(DevicePipelineStatesArray* pStateArray, const SGraphicsPipelineStateDescription& stateDesc, CGraphicsPipelineStateLocalCache* pStateCache);
+	void ReAllocateResources();
+	void Execute();
+
+	bool CreatePipelineStates(DevicePipelineStatesArray* pStateArray, const SGraphicsPipelineStateDescription& stateDesc, CGraphicsPipelineStateLocalCache* pStateCache);
 
 private:
 	typedef char ProfileLabel[32];
@@ -56,21 +61,22 @@ private:
 
 	public:
 		CShadowMapPass(CShadowMapStage* pStage);
+		CShadowMapPass(CShadowMapPass&& other);
 
-		void                    PrepareResources(CRenderView* pMainView);
-		void                    PreRender();
+		bool                         PrepareResources(const CRenderView* pMainView);
+		void                         PreRender();
 
-		CDeviceResourceSetPtr   GetResources() { return m_pPerPassResources; }
-		SShadowFrustumToRender* GetFrustum()   { return m_pFrustumToRender; }
+		CDeviceResourceSetPtr        GetResources()       { return m_pPerPassResourceSet; }
+		SShadowFrustumToRender*      GetFrustum()         { return m_pFrustumToRender; }
+		const CDeviceRenderPassDesc& GetPassDesc()  const { return m_renderPassDesc; }
 
 		SShadowFrustumToRender*  m_pFrustumToRender;
 		int                      m_nShadowFrustumSide;
 		bool                     m_bRequiresRender;
 
-		SDepthTexture            m_currentDepthTarget;
-		std::array<CTexture*, 2> m_currentColorTarget;
 		CConstantBufferPtr       m_pPerPassConstantBuffer;
 		CConstantBufferPtr       m_pPerViewConstantBuffer;
+		CDeviceResourceSetDesc   m_perPassResources;
 		Matrix44A                m_ViewProjMatrix;
 		Matrix44A                m_ViewProjMatrixOrig;
 		Vec4                     m_FrustumInfo;
@@ -86,9 +92,7 @@ private:
 		typedef std::vector<CShadowMapPass> PassList;
 
 	public:
-		CShadowMapPassGroup() : m_PassCount(0){}
-
-		void                     Init(CShadowMapStage* pStage, int nSize);
+		void                     Init(CShadowMapStage* pStage, int nSize, CTexture* pDepthTarget, CTexture* pColorTarget0, CTexture* pColorTarget1);
 		void                     Reset()               { m_PassCount = 0; }
 		void                     Clear()               { m_Passes.clear(); }
 
@@ -101,21 +105,22 @@ private:
 		int                      GetCapacity() const   { return m_Passes.size(); }
 		CShadowMapPass&          operator[](int index) { return m_Passes[index]; }
 
-		CShadowMapPass&          AddPass()             { CRY_ASSERT(m_PassCount < m_Passes.size()); return m_Passes[m_PassCount++]; }
+		CShadowMapPass&          AddPass();
 		void                     UndoAddPass()         { CRY_ASSERT(m_PassCount > 0); --m_PassCount; }
 
 	private:
-		PassList m_Passes;
-		int      m_PassCount;
+		PassList         m_Passes;
+		int              m_PassCount = 0;
+		CShadowMapStage* m_pStage    = nullptr;
+
 	};
 
 private:
-	typedef std::array<CShadowMapPassGroup, CRenderView::eShadowFrustumRenderType_Count> PassGroupList;
+	typedef std::array<CShadowMapPassGroup, CShadowMapStage::ePass_Count> PassGroupList;
 
 	bool CreatePipelineState(const SGraphicsPipelineStateDescription& description, EPass passID, CDeviceGraphicsPSOPtr& outPSO);
 
-	void PrepareShadowPool(CRenderView* pMainView);
-	void PrepareShadowPasses(SShadowFrustumToRender& frustumToRender, CRenderView::eShadowFrustumRenderType frustumRenderType, CRenderView* pMainView);
+	void PrepareShadowPasses(SShadowFrustumToRender& frustumToRender, CRenderView::eShadowFrustumRenderType frustumRenderType);
 
 	void PreparePassIDForFrustum(const SShadowFrustumToRender& frustumToRender, CRenderView::eShadowFrustumRenderType frustumRenderType, EPass& passID, ProfileLabel& profileLabel) const;
 	void PrepareShadowPassForFrustum(const SShadowFrustumToRender& frustumToRender, int nSide, CShadowMapPass& targetPass) const;
@@ -126,6 +131,13 @@ private:
 	void CopyShadowMap(const CShadowMapPass& sourcePass, CShadowMapPass& targetPass);
 	void ClearShadowMaps(PassGroupList& shadowMapPasses);
 
+	ETEX_Format GetShadowTexFormat(EPass passID) const;
+
+	_smart_ptr<CTexture>     m_pRsmColorTex;
+	_smart_ptr<CTexture>     m_pRsmNormalTex;
+	_smart_ptr<CTexture>     m_pRsmPoolColorTex;
+	_smart_ptr<CTexture>     m_pRsmPoolNormalTex;
+	_smart_ptr<CTexture>     m_pRsmPoolDepth;
 
 	PassGroupList            m_ShadowMapPasses;
 	CFullscreenPass          m_CopyShadowMapPass;
@@ -133,5 +145,5 @@ private:
 	CClearRegionPass         m_ClearShadowPoolColorPass;
 	CClearRegionPass         m_ClearShadowPoolNormalsPass;
 	CDeviceResourceLayoutPtr m_pResourceLayout;
-	CDeviceResourceSetPtr    m_pPerPassResourceSetTemplate;
+	CDeviceResourceSetDesc   m_perPassResources;
 };

@@ -7,11 +7,11 @@ sources_platform(ALL)
 add_sources("NoUberFile"
 	SOURCE_GROUP "Root"
 		"ATLEntityData.h"
-		"AudioLogger.h"
+		"Logger.h"
 		"IAudioImpl.h"
 		"SharedAudioData.h"
-		"SoundAllocator.h"
-		"STLSoundAllocator.h"
+		"PoolObject.h"
+		"PoolObject_impl.h"
 )
 
 end_sources()

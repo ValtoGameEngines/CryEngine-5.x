@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   frameprofilerender.cpp
@@ -27,11 +27,11 @@ int profile_threads = 0;
 }
 
 CThreadProfiler::CThreadProfiler()
+	: m_bRenderEnabled(false)
+	, m_nUsers(0)
+	, m_nDisplayedThreads(0)
+	, m_pSampler(nullptr)
 {
-	m_bRenderEnabled = false;
-	m_nUsers = 0;
-	m_pSampler = 0;
-
 	// Register console var.
 	REGISTER_CVAR(profile_threads, 0, 0,
 	              "Enables Threads Profiler (should be deactivated for final product)\n"
@@ -120,7 +120,7 @@ void CThreadProfiler::Render()
 
 	int width = gEnv->pRenderer->GetWidth();
 	int height = gEnv->pRenderer->GetHeight();
-	gEnv->pRenderer->Set2DMode(true, width, height);
+	gEnv->pRenderer->GetIRenderAuxGeom()->SetOrthographicProjection(true, 0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f);
 
 	width -= 20; // End of thread graph.
 
@@ -251,7 +251,7 @@ void CThreadProfiler::Render()
 		m_nDisplayedThreads++;
 	}
 
-	gEnv->pRenderer->Set2DMode(false, 0, 0);
+	gEnv->pRenderer->GetIRenderAuxGeom()->SetOrthographicProjection(false);
 }
 
 void CThreadProfiler::Start()

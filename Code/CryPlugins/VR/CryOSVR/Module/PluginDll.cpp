@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "PluginDll.h"
@@ -24,7 +24,7 @@ CPlugin_Osvr::~CPlugin_Osvr()
 
 bool CPlugin_Osvr::Initialize(SSystemGlobalEnvironment& env, const SSystemInitParams& initParams)
 {
-	GetISystem()->GetISystemEventDispatcher()->RegisterListener(this);
+	GetISystem()->GetISystemEventDispatcher()->RegisterListener(this, "CPlugin_Osvr");
 
 	return true;
 }

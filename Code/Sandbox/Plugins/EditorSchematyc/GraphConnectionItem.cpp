@@ -1,12 +1,13 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
-
 #include "GraphConnectionItem.h"
+
+#include "GraphPinItem.h"
 
 #include "VariableStorage/AbstractVariableTypesModel.h"
 
-#include <Schematyc/Script/IScriptGraph.h>
+#include <CrySchematyc/Script/IScriptGraph.h>
 #include <NodeGraph/ConnectionWidget.h>
 
 #include <QColor>
@@ -24,15 +25,13 @@ CConnectionItem::CConnectionItem(Schematyc::IScriptGraphLink& scriptGraphLink, C
 	m_targetPin.AddConnection(*this);
 	// ~TODO
 
-	switch (m_sourcePin.GetPinType())
-	{
-	case EPinType::Execution:
-	case EPinType::Signal:
-		SetLineWidth(3.0f);
-		break;
-	default:
-		break;
-	}
+	const EPinType pinType = sourcePin.GetPinType();
+	if (pinType == EPinType::Data)
+		m_styleId = "Connection::Data";
+	else if (pinType == EPinType::Execution || pinType == EPinType::Signal)
+		m_styleId = "Connection::Execution";
+	else
+		m_styleId = "Connection";
 }
 
 CConnectionItem::~CConnectionItem()
@@ -59,14 +58,5 @@ bool CConnectionItem::HasId(QVariant id) const
 	return (&m_scriptGraphLink == pGraphLink);
 }
 
-const QColor& CConnectionItem::GetSourceColor() const
-{
-	return m_sourcePin.GetColor();
 }
 
-const QColor& CConnectionItem::GetTargetColor() const
-{
-	return m_targetPin.GetColor();
-}
-
-}

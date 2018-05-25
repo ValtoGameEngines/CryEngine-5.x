@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #if !defined(PCH_INCLUDE_GUARD_THINGIE)
 #define PCH_INCLUDE_GUARD_THINGIE
@@ -45,6 +45,23 @@
 #include <CryFlowGraph/IFlowSystem.h>
 
 #include <CryAudio/IAudioSystem.h>
+
+namespace MonoInternals
+{
+#include <mono/jit/jit.h>
+#include <mono/metadata/mono-gc.h>
+#include <mono/metadata/assembly.h>
+#include <mono/utils/mono-logger.h>
+#include <mono/metadata/mono-debug.h>
+#include <mono/metadata/debug-helpers.h>
+#include <mono/metadata/exception.h>
+#include <mono/metadata/object.h>
+#include <mono/metadata/class.h>
+#include <mono/metadata/exception.h>
+#include <mono/metadata/reflection.h>
+}
+
+#define HAVE_MONO_API
 
 #pragma warning(disable: 4018)	// conditional expression is constant
 #pragma warning(disable: 4018)	// conditional expression is constant

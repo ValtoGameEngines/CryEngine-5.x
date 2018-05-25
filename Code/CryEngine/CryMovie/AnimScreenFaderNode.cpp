@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "AnimScreenFaderNode.h"
@@ -50,11 +50,11 @@ bool CalculateIsolatedKeyColor(const SScreenFaderKey& key, SAnimTime time, Vec4&
 
 		if (key.m_fadeType == SScreenFaderKey::eFT_FadeIn)
 		{
-			colorOut.w = MAX(0.f, 1.f - floatRatio);
+			colorOut.w = std::max(0.f, 1.f - floatRatio);
 		}
 		else
 		{
-			colorOut.w = MIN(1.f, floatRatio);
+			colorOut.w = std::min(1.f, floatRatio);
 		}
 	}
 
@@ -62,7 +62,7 @@ bool CalculateIsolatedKeyColor(const SScreenFaderKey& key, SAnimTime time, Vec4&
 }
 
 CAnimScreenFaderNode::CAnimScreenFaderNode(const int id)
-	: CAnimNode(id), m_bActive(false), m_screenWidth(800.f), m_screenHeight(600.f), m_lastActivatedKey(-1), m_texPrecached(false)
+	: CAnimNode(id), m_bActive(false), m_lastActivatedKey(-1), m_texPrecached(false)
 {
 	m_startColor = Vec4(1, 1, 1, 1);
 	CAnimScreenFaderNode::Initialize();
@@ -134,7 +134,7 @@ void CAnimScreenFaderNode::Animate(SAnimContext& animContext)
 
 				if (ratio < 0.f) { ratio = 0.f; }
 
-				ratio = MIN(ratio, 1.f);
+				ratio = std::min(ratio, 1.f);
 
 				switch (key.m_fadeChangeType)
 				{
@@ -292,8 +292,11 @@ void CAnimScreenFaderNode::Render()
 				textureId = (pTrack->GetActiveTexture() != 0) ? pTrack->GetActiveTexture()->GetTextureID() : -1;
 			}
 
-			gEnv->pRenderer->SetState(GS_BLSRC_SRCALPHA | GS_BLDST_ONEMINUSSRCALPHA | GS_NODEPTHTEST);
-			gEnv->pRenderer->Draw2dImage(0, 0, m_screenWidth, m_screenHeight, textureId, 0.0f, 0.0f, 1.0f, 1.0f, 0.f,
+			IRenderAuxGeom *pAux = gEnv->pRenderer->GetIRenderAuxGeom();
+			const CCamera& rCamera = pAux->GetCamera();
+
+			IRenderAuxGeom::GetAux()->SetRenderFlags(e_Mode2D | e_AlphaBlended | e_CullModeBack | e_DepthTestOff);
+			IRenderAuxImage::Draw2dImage(0, 0, float(rCamera.GetViewSurfaceX()), float(rCamera.GetViewSurfaceZ()), textureId, 0.0f, 0.0f, 1.0f, 1.0f, 0.f,
 			                             pTrack->GetDrawColor().x, pTrack->GetDrawColor().y, pTrack->GetDrawColor().z, pTrack->GetDrawColor().w, 0.f);
 		}
 	}

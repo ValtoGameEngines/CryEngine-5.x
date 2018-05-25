@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*=============================================================================
    IShader.h : Shaders common interface.
@@ -17,23 +17,25 @@
 
 class CTexture;
 
+//! Texture types. Stored in files, can't change numeric value!
 enum ETEX_Type : uint8
 {
-	eTT_1D = 0,
-	eTT_2D,
-	eTT_3D,
-	eTT_Cube,
-	eTT_CubeArray,
-	eTT_Dyn2D,
-	eTT_User,
-	eTT_NearestCube,
+	// regular hardware supported/native types
+	eTT_1D          = 0,
+	eTT_2D          = 1,
+	eTT_2DArray     = 8,
+	eTT_2DMS        = 9,
+	eTT_3D          = 2,
+	eTT_Cube        = 3,
+	eTT_CubeArray   = 4,
 
-	eTT_2DArray,
-	eTT_2DMS,
+	// custom types
+	eTT_Dyn2D       = 5,
+	eTT_Auto2D      = 10,
+	eTT_User        = 6,
+	eTT_NearestCube = 7,
 
-	eTT_Auto2D,
-
-	eTT_MaxTexType,   //!< Not used.
+	eTT_MaxTexType  = 11,   //!< Not used.
 };
 
 //! Texture formats.
@@ -44,10 +46,10 @@ enum ETEX_Format : uint8
 	eTF_R8G8B8A8 = 2, //!< May be saved into file.
 
 	eTF_R1,
-	eTF_A8,
 	eTF_R8,
 	eTF_R8S,
 	eTF_R16,
+	eTF_R16S,
 	eTF_R16F,
 	eTF_R32F,
 	eTF_R8G8,
@@ -55,6 +57,7 @@ enum ETEX_Format : uint8
 	eTF_R16G16,
 	eTF_R16G16S,
 	eTF_R16G16F,
+	eTF_R32G32F,
 	eTF_R11G11B10F,
 	eTF_R10G10B10A2,
 	eTF_R16G16B16A16,
@@ -62,7 +65,6 @@ enum ETEX_Format : uint8
 	eTF_R16G16B16A16F,
 	eTF_R32G32B32A32F,
 
-	eTF_CTX1,
 	eTF_BC1 = 22, //!< May be saved into file.
 	eTF_BC2 = 23, //!< May be saved into file.
 	eTF_BC3 = 24, //!< May be saved into file.
@@ -73,24 +75,37 @@ enum ETEX_Format : uint8
 	eTF_BC6UH,
 	eTF_BC6SH,
 	eTF_BC7,
+	eTF_CTX1,
 	eTF_R9G9B9E5,
+	eTF_A8,
 
-	//! Hardware depth buffers.
+	//! Hardware depth/stencil buffers.
+	eTF_S8,
 	eTF_D16,
+	eTF_D16S8,
+	eTF_D24,
 	eTF_D24S8,
 	eTF_D32F,
 	eTF_D32FS8,
 
 	//! Only available as hardware format under DX11.1 with DXGI 1.2.
 	eTF_B5G6R5,
-	eTF_B5G5R5,
+	eTF_B5G5R5A1,
 	eTF_B4G4R4A4,
 
-	//! Only available as hardware format under OpenGL.
+	//! Only available as hardware format under Vulkan or XBO.
+	eTF_R4G4,
+	eTF_R4G4B4A4,
+
+	//! Only available as hardware format under OpenGL and Vulkan.
 	eTF_EAC_R11,
+	eTF_EAC_R11S,
 	eTF_EAC_RG11,
+	eTF_EAC_RG11S,
 	eTF_ETC2,
 	eTF_ETC2A,
+
+	eTF_ASTC_LDR_4x4,
 
 	//! Only available as hardware format under DX9.
 	eTF_A8L8,
@@ -112,6 +127,7 @@ enum ETEX_TileMode : uint8
 	eTM_None = 0,
 	eTM_LinearPadded,
 	eTM_Optimal,
+	eTM_Unspecified = 0xFF
 };
 
 //! T = applies to texture objects read from disk.
@@ -120,24 +136,24 @@ enum ETextureFlags
 {
 	FT_NOMIPS                  = BIT(0),  // TR: don't allocate or use any mip-maps (even if they exist)
 	FT_TEX_NORMAL_MAP          = BIT(1),  // T: indicator that a texture contains normal vectors (used for tracking statistics, debug messages and the default texture)
-	FT_TEX_WAS_NOT_PRE_TILED   = BIT(2),  // REMOVE
+	FT______________________00 = BIT(2),  // UNUSED
 	FT_USAGE_DEPTHSTENCIL      = BIT(3),  // R: use as depth-stencil render-target
 	FT_USAGE_ALLOWREADSRGB     = BIT(4),  // TR: allows the renderer to cast the texture-format to a sRGB type if available
 	FT_FILESINGLE              = BIT(5),  // T: suppress loading of additional files like _DDNDIF (faster, RC can tag the file for that)
 	FT_TEX_FONT                = BIT(6),  // T: indicator that a texture contains font glyphs (used solely for tracking statistics!)
 	FT_HAS_ATTACHED_ALPHA      = BIT(7),  // T: indicator that the texture has another texture attached (see FT_ALPHA)
 	FT_USAGE_UNORDERED_ACCESS  = BIT(8),  // R: allow write-only UAVs for the texture object
-	FT______________________   = BIT(9),  // UNUSED
+	FT______________________01 = BIT(9),  // UNUSED
 	FT_USAGE_MSAA              = BIT(10), // R: use as MSAA render-target
 	FT_FORCE_MIPS              = BIT(11), // TR: always allocate mips (even if normally this would be optimized away)
 	FT_USAGE_RENDERTARGET      = BIT(12), // R: use as render-target
-	FT_USAGE_DYNAMIC           = BIT(13), // R: indicator that the textures are provided by a generator (scaleform, procedual, ...)
+	FT______________________02 = BIT(13), // UNUSED
 	FT_STAGE_READBACK          = BIT(14), // R: allow read-back of the texture contents by the CPU through a persistent staging texture (otherwise the staging is dynamic)
 	FT_STAGE_UPLOAD            = BIT(15), // R: allow up-load of the texture contents by the CPU through a persistent staging texture (otherwise the staging is dynamic)
 	FT_DONT_RELEASE            = BIT(16), // TR: texture will not be freed automatically when ref counter goes to 0. Use ReleaseForce() to free the texture.
 	FT_ASYNC_PREPARE           = BIT(17), // T: run the streaming preparation of this texture asynchronously
 	FT_DONT_STREAM             = BIT(18), // T: prevent progressive streaming-in/out of the texture, it's fully loaded or not at all
-	FT_______________________  = BIT(19), // UNUSED
+	FT_DONT_READ               = BIT(19), // TR: the texture is write-only (backbuffers fe.)
 	FT_FAILED                  = BIT(20), // TR: indicator that the allocation of the texture failed the last time it has been tried, for render-targets this is fatal
 	FT_FROMIMAGE               = BIT(21), // T: indicator that the textures originates from disk
 	FT_STATE_CLAMP             = BIT(22), // T: set the sampling mode to clamp in the corresponding sampler-state
@@ -147,11 +163,65 @@ enum ETextureFlags
 	FT_KEEP_LOWRES_SYSCOPY     = BIT(26), // ?: keep low res copy in system memory for voxelization on CPU
 	FT_SPLITTED                = BIT(27), // T: indicator that the texture is available splitted on disk
 	FT_STREAMED_PREPARE        = BIT(28), // REMOVE
-	FT________________________ = BIT(29), // UNUSED
-	FT_COMPOSITE               = BIT(30), // T: indicator that a texture is a composition (array) of texture slices
+	FT_STREAMED_FADEIN         = BIT(29), // T: smoothly fade the texture in after MIPs have been added
+	FT______________________03 = BIT(30), // UNUSED
 	FT_USAGE_UAV_RWTEXTURE     = BIT(31), // R: enable RW usage for the UAV, otherwise UAVs are write-only (see FT_USAGE_UNORDERED_ACCESS)
 };
 
+DEFINE_ENUM_FLAG_OPERATORS(ETextureFlags);
+
+//////////////////////////////////////////////////////////////////////
+enum class EFilterPreset : uint8
+{
+	Unspecified    = 255,
+
+	Point          = 0,
+	Linear         = 1,
+	Bilinear       = 2,
+	Trilinear      = 3,
+	Anisotropic2x  = 4,
+	Anisotropic4x  = 5,
+	Anisotropic8x  = 6,
+	Anisotropic16x = 7
+};
+static_assert(EFilterPreset::Unspecified == EFilterPreset(~0), "Bad unspecified value");
+
+#define FILTER_NONE      -1
+#define FILTER_POINT     0
+#define FILTER_LINEAR    1
+#define FILTER_BILINEAR  2
+#define FILTER_TRILINEAR 3
+#define FILTER_ANISO2X   4
+#define FILTER_ANISO4X   5
+#define FILTER_ANISO8X   6
+#define FILTER_ANISO16X  7
+
+struct SamplerStateHandle
+{
+	typedef uint16 ValueType;
+	ValueType value;
+
+	constexpr SamplerStateHandle() : value(Unspecified) { }
+	constexpr SamplerStateHandle(ValueType v) : value(v) { }
+
+	// Test operators
+	template<typename T> bool operator ==(const T other) const { return value == other; }
+	template<typename T> bool operator !=(const T other) const { return value != other; }
+	// Range operators
+	template<typename T> bool operator <=(const T other) const { return value <= other; }
+	template<typename T> bool operator >=(const T other) const { return value >= other; }
+	// Sorting operators
+	template<typename T> bool operator < (const T other) const { return value <  other; }
+	template<typename T> bool operator > (const T other) const { return value >  other; }
+
+	// Auto cast for array access operator []
+	operator ValueType() const { return value; }
+
+	// Not an enum, because of SWIG
+	static constexpr ValueType Unspecified = ValueType(~0);
+};
+
+//////////////////////////////////////////////////////////////////////
 struct SDepthTexture;
 
 struct STextureStreamingStats
@@ -162,6 +232,7 @@ struct STextureStreamingStats
 		nCurrentPoolSize = 0;
 		nStreamedTexturesSize = 0;
 		nStaticTexturesSize = 0;
+		nNumStreamingRequests = 0;
 		nThroughput = 0;
 		nNumTexturesPerFrame = 0;
 		nRequiredStreamedTexturesSize = 0;
@@ -174,6 +245,7 @@ struct STextureStreamingStats
 	size_t     nCurrentPoolSize;
 	size_t     nStreamedTexturesSize;
 	size_t     nStaticTexturesSize;
+	size_t     nNumStreamingRequests;
 	uint32     nNumTexturesPerFrame;
 	size_t     nThroughput;
 	size_t     nRequiredStreamedTexturesSize;
@@ -182,6 +254,56 @@ struct STextureStreamingStats
 	uint32     bPoolOverflow        : 1;
 	uint32     bPoolOverflowTotally : 1;
 	const bool bComputeReuquiredTexturesPerFrame;
+};
+
+struct STexData
+{
+	uint8*      m_pData[6];
+	uint16      m_nWidth;
+	uint16      m_nHeight;
+	uint16      m_nDepth;
+protected:
+	uint8       m_reallocated;
+public:
+	ETEX_Format m_eFormat;
+	uint8       m_nMips;
+	int         m_nFlags;
+	float       m_fAvgBrightness;
+	ColorF      m_cMinColor;
+	ColorF      m_cMaxColor;
+	const char* m_pFilePath;
+
+	STexData()
+	{
+		m_pData[0] = m_pData[1] = m_pData[2] = m_pData[3] = m_pData[4] = m_pData[5] = 0;
+		m_nWidth = 0;
+		m_nHeight = 0;
+		m_nDepth = 1;
+		m_reallocated = 0;
+		m_eFormat = eTF_Unknown;
+		m_nMips = 0;
+		m_nFlags = 0;
+		m_fAvgBrightness = 1.0f;
+		m_cMinColor = 0.0f;
+		m_cMaxColor = 1.0f;
+		m_pFilePath = 0;
+	}
+	void AssignData(unsigned int i, uint8* pNewData)
+	{
+		assert(i < 6);
+		if (WasReallocated(i))
+			delete[] m_pData[i];
+		m_pData[i] = pNewData;
+		SetReallocated(i);
+	}
+	bool WasReallocated(unsigned int i) const
+	{
+		return (m_reallocated & (1 << i)) != 0;
+	}
+	void SetReallocated(unsigned int i)
+	{
+		m_reallocated |= (1 << i);
+	}
 };
 
 //! Texture object interface.
@@ -213,6 +335,9 @@ public:
 	virtual void            SetClamp(bool bEnable) = 0; //!< Texture addressing set.
 	virtual float           GetAvgBrightness() const = 0;
 
+	virtual bool            Clear() = 0;
+	virtual bool            Clear(const ColorF& color) = 0;
+
 	virtual int             StreamCalculateMipsSigned(float fMipFactor) const = 0;
 	virtual int             GetStreamableMipNumber() const = 0;
 	virtual int             GetStreamableMemoryUsage(int nStartMip) const = 0;
@@ -229,8 +354,6 @@ public:
 	virtual const int         GetCustomID() const = 0;
 	virtual void              SetCustomID(int nID) = 0;
 
-	virtual void              SetHighQualityFiltering(bool bState = true) = 0;
-
 	virtual const ETEX_Format GetTextureDstFormat() const = 0;
 	virtual const ETEX_Format GetTextureSrcFormat() const = 0;
 
@@ -240,9 +363,8 @@ public:
 	//! Get low res system memory (used for CPU voxelization).
 	virtual const ColorB* GetLowResSystemCopy(uint16& nWidth, uint16& nHeight, int** ppLowResSystemCopyAtlasId) { return 0; }
 
+	virtual void UpdateData(STexData &td, int flags) = 0;
 	// </interfuscator:shuffle>
-
-	virtual void SetRenderTargetTile(uint8 nTile = 0) = 0;
 
 	void         GetMemoryUsage(ICrySizer* pSizer) const
 	{
@@ -315,11 +437,7 @@ public:
 	virtual uint8     GetFlags() const = 0;
 	virtual void      SetFlags(uint8 flags) {}
 	virtual bool      Update(int nNewWidth, int nNewHeight) = 0;
-	virtual void      Apply(int nTUnit, int nTS = -1) = 0;
-	virtual bool      ClearRT() = 0;
-	virtual bool      SetRT(int nRT, bool bPush, struct SDepthTexture* pDepthSurf, bool bScreenVP = false) = 0;
 	virtual bool      SetRectStates() = 0;
-	virtual bool      RestoreRT(int nRT, bool bPop) = 0;
 	virtual ITexture* GetTexture() = 0;
 	virtual void      SetUpdateMask() = 0;
 	virtual void      ResetUpdateMask() = 0;
@@ -328,6 +446,7 @@ public:
 	// </interfuscator:shuffle>
 };
 
+//! \cond INTERNAL
 //! Animating Texture sequence definition.
 struct STexAnim
 {
@@ -409,12 +528,6 @@ struct STexAnim
 		return *this;
 	}
 };
-
-struct STexComposition
-{
-	_smart_ptr<ITexture> pTexture;
-	uint16               nSrcSlice;
-	uint16               nDstSlice;
-};
+//! \endcond
 
 #endif// _ITEXTURE_H_

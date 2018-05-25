@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   ParticleEmitter.h
@@ -14,10 +14,6 @@
 #ifndef __particleemitter_h__
 #define __particleemitter_h__
 #pragma once
-
-#if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_DURANGO
-	#pragma warning(disable: 4355)
-#endif
 
 #include "ParticleEffect.h"
 #include "ParticleEnviron.h"
@@ -43,7 +39,7 @@ public:
 	//////////////////////////////////////////////////////////////////////////
 	// IRenderNode implementation.
 	//////////////////////////////////////////////////////////////////////////
-	virtual void        ReleaseNode(bool bImmediate) { Register(false, bImmediate); Kill(); }
+	virtual void        ReleaseNode(bool bImmediate) { CRY_ASSERT((m_dwRndFlags & ERF_PENDING_DELETE) == 0); Register(false, bImmediate); Kill(); }
 	virtual EERType     GetRenderNodeType()          { return eERType_ParticleEmitter; }
 
 	virtual char const* GetName() const              { return m_pTopEffect ? m_pTopEffect->GetName() : ""; }
@@ -65,6 +61,7 @@ public:
 	}
 	ILINE float              GetViewDistRatioFloat() const { return m_fViewDistRatio; }
 	virtual float            GetMaxViewDist();
+	virtual void             UpdateStreamingPriority(const SUpdateStreamingPriorityContext& context);
 
 	virtual void             SetMatrix(Matrix34 const& mat)    { if (mat.IsValid()) SetLocation(QuatTS(mat)); }
 
@@ -107,7 +104,6 @@ public:
 	const SpawnParams&           GetSpawnParams() const                { return m_SpawnParams; }
 
 	virtual bool                 IsAlive() const;
-	virtual bool                 IsInstant() const;
 	virtual void                 Activate(bool bActive);
 	virtual void                 Kill();
 	virtual void                 Restart();
@@ -117,11 +113,13 @@ public:
 	virtual void                 SetEntity(IEntity* pEntity, int nSlot);
 	virtual void                 InvalidateCachedEntityData() final;
 	virtual void                 OffsetPosition(const Vec3& delta);
-	virtual bool                 UpdateStreamableComponents(float fImportance, const Matrix34A& objMatrix, IRenderNode* pRenderNode, float fEntDistance, bool bFullUpdate, int nLod);
 	virtual EntityId             GetAttachedEntityId();
 	virtual int                  GetAttachedEntitySlot()
 	{ return m_nEntitySlot; }
 	virtual IParticleAttributes& GetAttributes();
+
+	virtual void   SetOwnerEntity(IEntity* pEntity) final { m_pOwnerEntity = pEntity; }
+	virtual IEntity* GetOwnerEntity() const final         { return m_pOwnerEntity; }
 
 	//////////////////////////////////////////////////////////////////////////
 	// Other methods.
@@ -196,7 +194,6 @@ public:
 		}
 	}
 	void     RenderDebugInfo();
-	IEntity* GetEntity() const;
 	void     UpdateFromEntity();
 	bool     IsIndependent() const
 	{
@@ -211,23 +208,31 @@ public:
 		return GetAge() - m_fAgeLastRendered;
 	}
 
-	void GetCounts(SParticleCounts& counts) const
+	void GetCounts(SParticleCounts& counts, bool bClear = false) const
 	{
+		CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
+
+		counts.emitters.alloc += 1.f;
+		if (IsActive())
+		{
+			counts.emitters.alive += 1.f;
+			counts.emitters.updated += 1.f;
+		}
+		if (TimeNotRendered() == 0.f)
+			counts.emitters.rendered += 1.f;
+
 		for (const auto& c : m_Containers)
 		{
 			c.GetCounts(counts);
+			if (bClear)
+				non_const(c).ClearCounts();
 		}
 	}
 	void GetAndClearCounts(SParticleCounts& counts)
 	{
-		FUNCTION_PROFILER(GetISystem(), PROFILE_PARTICLE);
-		for (auto& c : m_Containers)
-		{
-			c.GetCounts(counts);
-			c.ClearCounts();
-		}
+		GetCounts(counts, true);
 	}
-
+	
 	ParticleList<CParticleContainer> const& GetContainers() const
 	{
 		return m_Containers;
@@ -238,9 +243,9 @@ public:
 #if CRY_PLATFORM_DESKTOP
 		if (gEnv->IsEditing())
 		{
-			if (IEntity* pEntity = GetEntity())
+			if (m_pOwnerEntity)
 			{
-				if (IEntityRender* pIEntityRender = pEntity->GetRenderInterface())
+				if (IEntityRender* pIEntityRender = m_pOwnerEntity->GetRenderInterface())
 				{
 					if (IRenderNode* pRenderNode = pIEntityRender->GetRenderNode())
 						return (pRenderNode->GetRndFlags() & ERF_SELECTED) != 0;
@@ -264,7 +269,6 @@ public:
 		m_Containers.clear();
 
 		// Release and remove external geom refs.
-		GeomRef::Release();
 		GeomRef::operator=(GeomRef());
 	}
 
@@ -317,7 +321,7 @@ private:
 
 	// Entity connection params.
 	int          m_nEntitySlot;
-
+	IEntity*     m_pOwnerEntity = 0;
 	uint32       m_nEmitterFlags;
 
 	SPhysEnviron m_PhysEnviron;                       // Common physical environment (uniform forces only) for emitter.

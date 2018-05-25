@@ -1,25 +1,36 @@
 {
-    "content": {
-        "assets": [
-            "Assets"
-        ],
-        "code": [
-            "Code"
-        ],
-        "libs": [
-            {
-                "name": "ThirdPersonShooterTemplate",
-                "shared": {
-                    "win_x64": "bin/win_x64/ThirdPersonShooterTemplate.dll",
-                    "win_x86": "bin/win_x86/ThirdPersonShooterTemplate.dll"
-                }
-            }
-        ]
-    },
-    "info": {
-        "name": "Third Person Game Template"
-    },
-    "require": {
-        "engine": "engine-5.3"
-    }
+	"version": 3,
+	"type": "",
+	"info": {
+		"name": "Third Person Shooter Game Template",
+		"guid": "e3865104-7321-f784-b95f-43e034a4e34b"
+	},
+	"content": {
+		"assets": [ "Assets" ],
+		"code": [ "Code" ],
+		"libs": [
+			{
+				"name": "Third Person Shooter Game Template",
+				"shared": { "any": "", "win_x64": "", "win_x86": "" }
+			}
+		]
+	},
+	"require": {
+		"engine": "engine-5.5",
+		"plugins": [
+			{ "type": "EPluginType::Native", "path": "CryDefaultEntities" },
+			{ "type": "EPluginType::Native", "path": "CrySensorSystem" },
+			{ "type": "EPluginType::Native", "path": "CryPerceptionSystem" },
+			{ "type": "EPluginType::Native", "path": "bin/win_x64/Game.dll" },
+			{
+				"type": "EPluginType::Native",
+				"path": "CryGamePlatform",
+				"platforms": [ "PS4" ]
+			}
+		]
+	},
+	"console_variables": [
+		{ "name": "sys_target_platforms", "value": "pc,ps4,xboxone,linux" }
+	],
+	"console_commands": [ ]
 }

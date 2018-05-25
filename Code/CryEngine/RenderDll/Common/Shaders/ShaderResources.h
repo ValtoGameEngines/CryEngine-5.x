@@ -1,51 +1,47 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
-enum EHWShaderClass
-{
-	eHWSC_Vertex   = 0,
-	eHWSC_Pixel    = 1,
-	eHWSC_Geometry = 2,
-	eHWSC_Compute  = 3,
-	eHWSC_Domain   = 4,
-	eHWSC_Hull     = 5,
-	eHWSC_Num      = 6
-};
+#include <atomic>
+
+class CConstantBuffer;
 
 //! This class provide all necessary resources to the shader extracted from material definition.
 class CShaderResources : public IRenderShaderResources, public SBaseShaderResources
 {
+public:
 	enum EFlags
 	{
-		eFlagInvalid = BIT(0),
-		eFlagRecreateResourceSet = BIT(1)
+		eFlagInvalid             = BIT(0),
+		eFlagRecreateResourceSet = BIT(1),
+		EFlags_DynamicUpdates    = BIT(2),
+		EFlags_AnimatedSequence  = BIT(3),
 	};
+
 public:
 	stl::aligned_vector<Vec4, 256> m_Constants;
-	SEfResTexture*                 m_Textures[EFTT_MAX]; // 48 bytes
-	SDeformInfo*                   m_pDeformInfo;        // 4 bytes
-	TArray<struct SHRenderTarget*> m_RTargets;           // 4
-	CCamera*                       m_pCamera;            // 4
-	SSkyInfo*                      m_pSky;               // 4
-	SDetailDecalInfo*              m_pDetailDecalInfo;   // 4
-	CConstantBuffer*               m_pCB;
-	uint16                         m_Id;      // 2 bytes
-	uint16                         m_IdGroup; // 2 bytes
+	SEfResTexture*                 m_Textures[EFTT_MAX];
+	SDeformInfo*                   m_pDeformInfo;
+	TArray<struct SHRenderTarget*> m_RTargets;
+	CCamera*                       m_pCamera;
+	SSkyInfo*                      m_pSky;
+	SDetailDecalInfo*              m_pDetailDecalInfo;
+	CConstantBufferPtr             m_pConstantBuffer;
+	uint16                         m_Id;
+	uint16                         m_IdGroup;
 
 	// @see EFlags
-	uint32 m_flags;
+	uint32            m_flags;
 
 	/////////////////////////////////////////////////////
 
 	float        m_fMinMipFactorLoad;
-	volatile int m_nRefCounter;
 	int          m_nLastTexture;
 	int          m_nFrameLoad;
 	uint32       m_nUpdateFrameID;
 
 	// Compiled resource set.
-	// For DX12 will prepare list of textures in the global heap.
+	CDeviceResourceSetDesc                                  m_resources;
 	std::shared_ptr<class CDeviceResourceSet>               m_pCompiledResourceSet;
 	std::shared_ptr<class CGraphicsPipelineStateLocalCache> m_pipelineStateCache;
 
@@ -92,7 +88,6 @@ public:
 	}
 
 	CShaderResources();
-	CShaderResources& operator=(const CShaderResources& src);
 	CShaderResources(struct SInputShaderResources* pSrc);
 
 	void                               PostLoad(CShader* pSH);
@@ -120,6 +115,7 @@ public:
 	virtual uint8 GetMtlLayerNoDrawFlags() const final       { return m_nMtlLayerNoDrawFlags; }
 
 	void          RT_UpdateConstants(IShader* pSH);
+	void          RT_UpdateResourceSet();
 	void          ReleaseConstants();
 	inline float  FurAmount()
 	{
@@ -156,10 +152,11 @@ public:
 		m_pDetailDecalInfo = NULL;
 		m_pCamera = NULL;
 		m_pSky = NULL;
-		m_pCB = NULL;
+		m_pConstantBuffer.reset();
 		m_nMtlLayerNoDrawFlags = 0;
 		m_flags = 0;
 		m_nUpdateFrameID = 0;
+		m_resources.ClearResources();
 	}
 	bool IsEmpty(int nTSlot) const
 	{
@@ -167,7 +164,10 @@ public:
 			return true;
 		return false;
 	}
+	bool                  HasChanges() const { return !!(m_flags & (eFlagRecreateResourceSet | EFlags_AnimatedSequence | EFlags_DynamicUpdates)) || m_resources.HasChanged() || !m_pCompiledResourceSet; }
 	bool                  HasDynamicTexModifiers() const;
+	bool                  HasDynamicUpdates() const { return !!(m_flags & EFlags_DynamicUpdates); }
+	bool                  HasAnimatedTextures() const { return !!(m_flags & EFlags_AnimatedSequence); }
 	bool                  HasLMConstants() const { return (m_Constants.size() > 0); }
 	virtual void          SetInputLM(const CInputLightMaterial& lm) final;
 	virtual void          ToInputLM(CInputLightMaterial& lm) final;
@@ -184,8 +184,8 @@ public:
 
 	~CShaderResources();
 	void                      RT_Release();
-	virtual void              Release() final;
-	virtual void              AddRef() final { CryInterlockedIncrement(&m_nRefCounter); }
+	virtual void              Release() const final;
+	virtual void              AddRef() const final { SBaseShaderResources::AddRef(); }
 	virtual void              ConvertToInputResource(SInputShaderResources* pDst) final;
 	virtual CShaderResources* Clone() const final;
 	virtual void              SetShaderParams(SInputShaderResources* pDst, IShader* pSH) final;
@@ -194,5 +194,10 @@ public:
 	virtual SDetailDecalInfo* GetDetailDecalInfo() final { return m_pDetailDecalInfo; }
 
 	void                      Cleanup();
+
+	void                      ClearPipelineStateCache();
+
+private:
+	CShaderResources(const CShaderResources& src);
 };
 typedef _smart_ptr<CShaderResources> CShaderResourcesPtr;

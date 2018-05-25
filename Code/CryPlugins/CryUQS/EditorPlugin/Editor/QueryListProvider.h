@@ -1,10 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 // TODO pavloi 2016.04.06: hack - somehow Explorer/EntryList.h includes Serialization.h not from EditorCommon, but from CryAction.
 // Until I figure out, how to fix it, there is a piece from proper Serialization.h
-#include <yasli/BinArchive.h>
+#include <CrySerialization/yasli/BinArchive.h>
 typedef yasli::BinOArchive MemoryOArchive;
 typedef yasli::BinIArchive MemoryIArchive;
 

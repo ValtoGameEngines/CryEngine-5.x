@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -116,7 +116,7 @@ GTextureXRender::~GTextureXRender()
 		if (ms_fontCacheTextureID == m_texID)
 			ms_fontCacheTextureID = 0;
 	#endif
-		pRenderer->RT_FlashRemoveTexture(pTexture);
+		pRenderer->FlashRemoveTexture(pTexture);
 	}
 }
 
@@ -206,9 +206,8 @@ bool GTextureXRender::InitTextureInternal(ETEX_Format texFmt, int32 width, int32
 {
 	IRenderer* pRenderer(gEnv->pRenderer);
 
-	bool rgba((pRenderer->GetFeatures() & RFT_RGBA) != 0 || pRenderer->GetRenderType() >= eRT_DX11);
-	// MapImageType returns BGR/BGRA for RGB/RGBA for lack of RGB-enum, cast BGR? to RGB? here
-	bool swapRB(texFmt == eTF_B8G8R8 || texFmt == eTF_B8G8R8X8 || texFmt == eTF_B8G8R8A8);
+	bool bRGBA((pRenderer->GetFeatures() & RFT_RGBA) != 0 || pRenderer->GetRenderType() >= ERenderType::Direct3D11);
+	bool bSwapRB(texFmt == eTF_B8G8R8 || texFmt == eTF_B8G8R8X8 || texFmt == eTF_B8G8R8A8);
 	ETEX_Format texFmtOrig(texFmt);
 
 	// expand RGB to RGBX if necessary
@@ -233,10 +232,10 @@ bool GTextureXRender::InitTextureInternal(ETEX_Format texFmt, int32 width, int32
 		texFmt = eTF_B8G8R8X8;
 	}
 
-	if (swapRB)
+	if (bSwapRB)
 	{
 		// software-swap if no RGBA layout supported
-		if (!rgba)
+		if (!bRGBA)
 			SwapRB(pData, width, height, pitch);
 		// otherwise swap by casting to swizzled format
 		else if (texFmt == eTF_B8G8R8X8 || texFmt == eTF_B8G8R8A8)
@@ -306,7 +305,7 @@ bool GTextureXRender::InitTextureInternal(ETEX_Format texFmt, int32 width, int32
 		SwapEndian(pData, width, height, pitch);
 	#endif
 
-	if (swapRB && !rgba)
+	if (bSwapRB && !bRGBA)
 		SwapRB(pData, width, height, pitch);
 
 	return m_texID > 0;
@@ -319,11 +318,7 @@ bool GTextureXRender::InitDynamicTexture(int width, int height, GImage::ImageFor
 	{
 		IRenderer* pRenderer(gEnv->pRenderer);
 		assert(m_texID == -1);
-		m_texID = pRenderer->SF_CreateTexture(width, height, mipmaps + 1, 0, MapImageType(format), FT_DONT_STREAM
-	#if CRY_PLATFORM_ORBIS
-		                                      | FT_USAGE_DYNAMIC
-	#endif
-		                                      );
+		m_texID = pRenderer->SF_CreateTexture(width, height, mipmaps + 1, 0, MapImageType(format), FT_DONT_STREAM);
 		if (m_texID > 0)
 		{
 			ITexture* pTexture(pRenderer->EF_GetTextureByID(m_texID));
@@ -346,7 +341,7 @@ bool GTextureXRender::InitDynamicTexture(int width, int height, GImage::ImageFor
 
 void GTextureXRender::Update(int level, int n, const UpdateRect* pRects, const GImageBase* pIm)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_SYSTEM);
+	CRY_PROFILE_FUNCTION(PROFILE_SYSTEM);
 
 	assert(m_texID > 0);
 	if (!pRects || !n || !pIm || m_texID <= 0)
@@ -454,7 +449,7 @@ GTextureXRenderYUV::~GTextureXRenderYUV()
 				CryInterlockedAdd(&ms_textureMemoryUsed, -size);
 			}
 	#endif
-			pRenderer->RT_FlashRemoveTexture(pTexture);
+			pRenderer->FlashRemoveTexture(pTexture);
 		}
 	}
 }
@@ -544,7 +539,7 @@ bool GTextureXRenderYUV::InitDynamicTexture(int width, int height, GImage::Image
 				{
 					ITexture* pTexture = pRenderer->EF_GetTextureByID(texId);
 					assert(pTexture);
-					pRenderer->RT_FlashRemoveTexture(pTexture);
+					pRenderer->FlashRemoveTexture(pTexture);
 				}
 				else
 					break;

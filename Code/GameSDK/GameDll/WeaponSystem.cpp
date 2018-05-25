@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -130,7 +130,7 @@ struct C##name##Creator : public IGameObjectExtensionCreatorBase	\
 { \
 	IGameObjectExtension* Create(IEntity *pEntity) \
 	{ \
-		return pEntity->CreateComponentClass<T>();\
+		return pEntity->GetOrCreateComponentClass<T>();\
 	} \
 	void GetGameObjectExtensionRMIData( void ** ppRMI, size_t * nCount ) \
 	{ \

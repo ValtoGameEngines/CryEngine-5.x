@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __ANIMSCREENFADERNODE_H__
 #define __ANIMSCREENFADERNODE_H__
@@ -43,7 +43,6 @@ private:
 
 	Vec4  m_startColor;
 	bool  m_bActive;
-	float m_screenWidth, m_screenHeight;
 	int   m_lastActivatedKey;
 	bool  m_texPrecached;
 };

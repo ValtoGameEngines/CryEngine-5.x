@@ -1,5 +1,4 @@
-// CRYENGINE Source Code File
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "Common.cfi"
 #include "ModificatorVT.cfi"
@@ -19,8 +18,6 @@ float4 SkyDome_NightMoonDirSize;
 float3 SkyDome_NightMoonTexGenRight;
 float3 SkyDome_NightMoonTexGenUp;
 
-sampler2D sceneMap0 : register(s0);
-
 struct a2v
 {
   float4 Position  : POSITION;
@@ -31,7 +28,7 @@ struct a2v
 
 struct v2f
 {
-  float4 Position  : POSITION;
+  float4 Position  : SV_POSITION;
   float2 QuadPos   : TEXCOORD;
   float4 Color     : COLOR;
 };
@@ -70,13 +67,13 @@ float GetMoonScale(float3 vPos)  // Remove stars that are in front of the moon
 
 v2f StarsVS(a2v IN)
 {
-  v2f OUT = (v2f)0;
+	v2f OUT = (v2f)0;
 
-  float4 pos = IN.Position;
-  OUT.Position = _pos_Common(pos);
+	float4 pos = IN.Position;
+	OUT.Position = mul(g_VS_ViewProjZeroMatr, pos);
 	
 #if %_RT_REVERSE_DEPTH
-	 OUT.Position.z = 0;
+	OUT.Position.z = 0;
 #else
 	OUT.Position.z = OUT.Position.w;
 #endif
@@ -147,4 +144,112 @@ technique Stars
     DestBlend = ONE;
     AlphaBlendEnable = true;        
   }
+}
+
+// TODO: Rename file and remove other Sky shaders when cleaning up old pipeline
+
+#include "PostEffectsLib.cfi"
+#include "ForwardShading.cfi"
+
+
+Texture2D<float4> SkyDome_Tex             : register(t0);
+Texture2D<float4> SkyDome_Moon            : register(t3);
+SamplerState SkyDome_TexSS                : register(s0);   // LinearClamp
+
+Texture2D<float4> SkyDome_Mie             : register(t1);
+Texture2D<float4> SkyDome_Rayleigh        : register(t2);
+SamplerState SkyDome_ScatSS               : register(s1);   // samplerStateLinearWrapU
+
+
+float3 SkyDome_PartialMieInScatteringConst;
+float3 SkyDome_PartialRayleighInScatteringConst;
+float3 SkyDome_SunDirection;
+float3 SkyDome_PhaseFunctionConstants;
+
+float3 SkyDome_NightSkyColBase;
+float3 SkyDome_NightSkyColDelta;
+float2 SkyDome_NightSkyZenithColShift;
+
+float4 SkyDome_NightMoonDirSize;
+float3 SkyDome_NightMoonTexGenRight;
+float3 SkyDome_NightMoonTexGenUp;
+float3 SkyDome_NightMoonColor;
+float4 SkyDome_NightMoonInnerCoronaColorScale;
+float4 SkyDome_NightMoonOuterCoronaColorScale;
+
+vtxOut SkyPassVS(vtxIn IN)
+{
+	vtxOut OUT = (vtxOut)0;
+
+	OUT.HPosition = float4(float2(IN.Position.x, 1 - IN.Position.y) * 2 - 1, 0, 1.0);  // Push triangle to far plane
+
+	return OUT;
+}
+
+pixout SkyPassPS(vtxOut IN)
+{
+	pixout OUT = (pixout)0;
+
+	const float3 cameraToWorldPos = ReconstructWorldPos(IN.WPos.xy, 1.0f, true);
+	const float3 worldPos = GetWorldViewPos() + cameraToWorldPos;
+
+	const float3 skyDir = normalize(cameraToWorldPos);
+	float2 langlatTC = float2(atan2(-skyDir.y, -skyDir.x) / PI * 0.5 + 0.5, asin(skyDir.z) / PI + 0.5);
+	langlatTC.y = (1 - langlatTC.y) * 2;
+
+#if %_RT_SAMPLE0
+	// Static skydome
+	OUT.Color.rgb = GetTexture2D(SkyDome_Tex, SkyDome_TexSS, langlatTC);
+	return OUT;
+#endif
+
+	// Day sky gradient
+	{
+		half4 ColorMie = GetTexture2D(SkyDome_Mie, SkyDome_ScatSS, langlatTC.xy);
+		half4 ColorRayleigh = GetTexture2D(SkyDome_Rayleigh, SkyDome_ScatSS, langlatTC.xy);
+		
+		float miePart_g_2 = SkyDome_PhaseFunctionConstants.x;  // = pow(miePart, -2/3) * ( -2*g )
+		float miePart_g2_1 = SkyDome_PhaseFunctionConstants.y; // = pow(miePart, -2/3) * ( 1 + g*g )
+		
+		float cosine = -dot(SkyDome_SunDirection, skyDir);
+		float cosine2 = cosine * cosine;
+
+		//float miePhase = miePart * ( 1.0 + cosine2 ) / pow( 1.0 + g2 - 2.0 * g * cosine, 1.5 );
+		float miePhase = ( 1.0 + cosine2 ) * pow( miePart_g2_1 + miePart_g_2 * cosine, -1.5 );
+		float rayleighPhase = 0.75 * ( 1.0 + cosine2 );
+		
+		OUT.Color.xyz = ColorMie * SkyDome_PartialMieInScatteringConst * miePhase + ColorRayleigh * SkyDome_PartialRayleighInScatteringConst * rayleighPhase;
+	}
+
+	// Horizontal night sky gradient
+	{
+		float gr = saturate(skyDir.z * SkyDome_NightSkyZenithColShift.x + SkyDome_NightSkyZenithColShift.y);
+		gr *= 2 - gr;
+		OUT.Color.xyz += SkyDome_NightSkyColBase + SkyDome_NightSkyColDelta * gr;
+	}
+
+	// Moon
+	{
+		float2 moonTC = float2(dot(SkyDome_NightMoonTexGenRight, skyDir), dot(SkyDome_NightMoonTexGenUp, skyDir)) * SkyDome_NightMoonDirSize.w + 0.5;
+		float4 moonAlbedo = GetTexture2D(SkyDome_Moon, SkyDome_TexSS, moonTC.xy);
+		OUT.Color.xyz += SkyDome_NightMoonColor.xyz * moonAlbedo.xyz * moonAlbedo.a;
+
+		// Add inner and outer moon corona
+		float m = 1 - dot(skyDir, SkyDome_NightMoonDirSize.xyz);
+		OUT.Color.xyz += SkyDome_NightMoonInnerCoronaColorScale.xyz * (1.0 / (1.05 + m * SkyDome_NightMoonInnerCoronaColorScale.w));
+		OUT.Color.xyz += SkyDome_NightMoonOuterCoronaColorScale.xyz * (1.0 / (1.05 + m * SkyDome_NightMoonOuterCoronaColorScale.w));
+	}
+
+	Fwd_ApplyFog(worldPos, cameraToWorldPos, IN.WPos, OUT.Color.xyz);
+
+	return OUT;
+}
+
+technique SkyPass
+{
+	pass p0
+	{
+		VertexShader = SkyPassVS();
+		PixelShader = SkyPassPS();
+	}
 }

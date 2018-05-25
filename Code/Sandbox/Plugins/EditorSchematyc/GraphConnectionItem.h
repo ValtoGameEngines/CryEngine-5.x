@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -24,21 +24,24 @@ public:
 
 	// CryGraphEditor::CAbstractConnectionItem
 	virtual CryGraphEditor::CConnectionWidget* CreateWidget(CryGraphEditor::CNodeGraphView& view) override;
+	virtual const char*                        GetStyleId() const                { return m_styleId; }
 
 	virtual CryGraphEditor::CAbstractPinItem&  GetSourcePinItem() const override { return m_sourcePin; }
 	virtual CryGraphEditor::CAbstractPinItem&  GetTargetPinItem() const override { return m_targetPin; }
 
 	virtual QVariant                           GetId() const override;
 	virtual bool                               HasId(QVariant id) const override;
-
-	virtual const QColor& GetSourceColor() const override;
-	virtual const QColor& GetTargetColor() const override;
 	// ~CryGraphEditor::CAbstractConnectionItem
+
+	Schematyc::IScriptGraphLink& GetScriptLink() const { return m_scriptGraphLink; }
 
 private:
 	Schematyc::IScriptGraphLink& m_scriptGraphLink;
 	CPinItem&                    m_sourcePin;
 	CPinItem&                    m_targetPin;
+
+	const char*                  m_styleId;
 };
 
 }
+

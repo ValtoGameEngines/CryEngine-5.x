@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -1391,8 +1391,8 @@ void CVehicleMovementArcadeWheeled::DebugDrawMovement(const float deltaTime)
 	
 	SVehiclePhysicsStatus* physStatus = &m_physStatus[k_mainThread];
 
-	const int width = pRenderer->GetWidth();
-	const int height = pRenderer->GetHeight();
+	const int width  = pRenderer->GetOverlayWidth();
+	const int height = pRenderer->GetOverlayHeight();
 
 
 	Matrix33 bodyRot( physStatus->q );
@@ -1580,7 +1580,7 @@ void CVehicleMovementArcadeWheeled::DebugDrawMovement(const float deltaTime)
 	//========================
 	// Draw Gears and RPM dial
 	//========================
-	pRenderer->Set2DMode(true, width, height);
+	pAuxGeom->SetOrthographicProjection(true, 0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f);
 	{
 		float radius = 40.f;
 		Vec3 centre (0.2f*(float)width, 0.8f*(float)height, 0.f);
@@ -1690,7 +1690,7 @@ void CVehicleMovementArcadeWheeled::DebugDrawMovement(const float deltaTime)
 		IRenderAuxText::Draw2dLabel(x-20.f, y+20.f, 1.3f, color, false, "FMOD Skid Value");
 	}
 
-	pRenderer->Set2DMode(false, width, height);
+	pAuxGeom->SetOrthographicProjection(false);
 	pAuxGeom->SetRenderFlags(oldFlags);
 }
 
@@ -1790,7 +1790,7 @@ void CVehicleMovementArcadeWheeled::GetCurrentWheelStatus(IPhysicalEntity* pPhys
 //------------------------------------------------------------------------
 void CVehicleMovementArcadeWheeled::Update(const float deltaTime)
 {
-	FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	IEntity* pEntity = m_pVehicle->GetEntity();
 	IPhysicalEntity* pPhysics = GetPhysics();
@@ -1978,7 +1978,7 @@ int CVehicleMovementArcadeWheeled::GetStatus(SVehicleMovementStatus* status)
 //------------------------------------------------------------------------
 void CVehicleMovementArcadeWheeled::UpdateSounds(const float deltaTime)
 {
-	FUNCTION_PROFILER( gEnv->pSystem, PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 	
 	if (m_isProbablyDistant)
 		return;
@@ -1996,7 +1996,7 @@ void CVehicleMovementArcadeWheeled::UpdateSounds(const float deltaTime)
 		float oscillation = m_gears.changedUp ? expf(-sqr(m_gears.timer*m_pSharedParams->gears.gearChangeSpeed2))*sinf(m_gears.timer*m_pSharedParams->gears.gearOscillationFrequency*gf_PI2) : 0.f;
 		m_rpmScale = clamp_tpl(m_gears.curRpm + m_pSharedParams->gears.gearOscillationAmp*oscillation, 0.f, 1.f);
 		if (pIEntityAudioComponent)
-			pIEntityAudioComponent->SetRtpcValue(m_audioControlIDs[eSID_VehicleRPM], m_rpmScale);
+			pIEntityAudioComponent->SetParameter(m_audioControlIDs[eSID_VehicleRPM], m_rpmScale);
 		//SetSoundParam(eSID_Run, "rpm_scale", m_rpmScale);
 		SetSoundParam(eSID_Run, "rpm_load", m_gears.rpmLoad);
 		SetSoundParam(eSID_Run, "clutch", clamp_tpl(m_gears.modulation + m_pSharedParams->gears.gearOscillationAmp2*oscillation, 0.f, 1.f));
@@ -2046,7 +2046,7 @@ void CVehicleMovementArcadeWheeled::UpdateSounds(const float deltaTime)
 	m_movementInfo.skidValue = clamp_tpl(m_movementInfo.skidValue, 0.f, 1.f);
 
 	if (pIEntityAudioComponent)
-		pIEntityAudioComponent->SetRtpcValue(m_audioControlIDs[eSID_VehicleSlip], m_movementInfo.skidValue);
+		pIEntityAudioComponent->SetParameter(m_audioControlIDs[eSID_VehicleSlip], m_movementInfo.skidValue);
 
 	// tire slip sound
 	{
@@ -2088,7 +2088,7 @@ void CVehicleMovementArcadeWheeled::UpdateSounds(const float deltaTime)
 //------------------------------------------------------------------------
 void CVehicleMovementArcadeWheeled::UpdateSuspension(const float deltaTime)
 {
-	FUNCTION_PROFILER( gEnv->pSystem, PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	float dt = max( deltaTime, 0.005f);
 
@@ -2226,7 +2226,7 @@ void CVehicleMovementArcadeWheeled::UpdateBrakes(const float deltaTime)
 //------------------------------------------------------------------------
 void CVehicleMovementArcadeWheeled::UpdateSuspensionSound(const float deltaTime)
 {
-	FUNCTION_PROFILER( gEnv->pSystem, PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	ReadLock lock(m_wheelStatusLock);
 
@@ -2271,7 +2271,7 @@ void CVehicleMovementArcadeWheeled::UpdateSuspensionSound(const float deltaTime)
 			const float fStroke = min(1.f, soundParams->bumpIntensityMult*m_compressionMax/soundParams->bumpMinSusp);
 			auto pIEntityAudioComponent = GetAudioProxy();
 			if (pIEntityAudioComponent)
-				pIEntityAudioComponent->SetRtpcValue(m_audioControlIDs[eSID_VehicleStroke], fStroke);
+				pIEntityAudioComponent->SetParameter(m_audioControlIDs[eSID_VehicleStroke], fStroke);
 			ExecuteTrigger(eSID_Bump);
 			m_lastBump = 0;    
 		}            
@@ -2293,7 +2293,7 @@ void CVehicleMovementArcadeWheeled::UpdateSuspensionSound(const float deltaTime)
 // NOTE: This function must be thread-safe. Before adding stuff contact MarcoC.
 void CVehicleMovementArcadeWheeled::ProcessAI(const float deltaTime)
 {
-	FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	float dt = max( deltaTime,0.005f);
 	SVehiclePhysicsStatus* physStatus = &m_physStatus[k_physicsThread];
@@ -2406,7 +2406,7 @@ void CVehicleMovementArcadeWheeled::ProcessAI(const float deltaTime)
 // NOTE: This function must be thread-safe. Before adding stuff contact MarcoC.
 void CVehicleMovementArcadeWheeled::ProcessMovement(const float deltaTime)
 {
-	FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	m_netActionSync.UpdateObject(this);
 
@@ -3606,7 +3606,7 @@ void CVehicleMovementArcadeWheeled::Boost(bool enable)
 //------------------------------------------------------------------------
 bool CVehicleMovementArcadeWheeled::RequestMovement(CMovementRequest& movementRequest)
 {
-	FUNCTION_PROFILER( gEnv->pSystem, PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	m_movementAction.isAI = true;
 	if (!m_isEnginePowered)
@@ -3787,7 +3787,7 @@ void CVehicleMovementArcadeWheeled::SetVehicleNetState(const SVehicleNetState& s
 //------------------------------------------------------------------------
 void CVehicleMovementArcadeWheeled::UpdateSurfaceEffects(const float deltaTime)
 { 
-	FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	if (0 == g_pGameCVars->v_pa_surface)
 	{
@@ -3799,7 +3799,7 @@ void CVehicleMovementArcadeWheeled::UpdateSurfaceEffects(const float deltaTime)
 	if (status.speed < 0.01f)
 		return;
 
-	float distSq = m_pVehicle->GetEntity()->GetWorldPos().GetSquaredDistance(gEnv->pRenderer->GetCamera().GetPosition());
+	float distSq = m_pVehicle->GetEntity()->GetWorldPos().GetSquaredDistance(GetISystem()->GetViewCamera().GetPosition());
 	if (distSq > sqr(300.f) || (distSq > sqr(50.f) && !m_isProbablyVisible ))
 		return;
 
@@ -3972,18 +3972,16 @@ void CVehicleMovementArcadeWheeled::UpdateSurfaceEffects(const float deltaTime)
 
 			if (pSurfaceType)
 			{
-				AudioSwitchStateId nSurfaceStateID = INVALID_AUDIO_SWITCH_STATE_ID;
 				string surfaceTypeName = pSurfaceType->GetName();
 
 				if (surfaceTypeName.find("mat_") != std::string::npos)
 				{
-					gEnv->pAudioSystem->GetAudioSwitchStateId(m_audioControlIDs[eSID_VehicleSurface], surfaceTypeName.substr(4), nSurfaceStateID);
+					CryAudio::SwitchStateId const surfaceStateId = CryAudio::StringToId(surfaceTypeName.substr(4).c_str());
+					auto pIEntityAudioComponent = GetAudioProxy();
 
-					if (nSurfaceStateID != INVALID_AUDIO_SWITCH_STATE_ID)
+					if (pIEntityAudioComponent != nullptr)
 					{
-						auto pIEntityAudioComponent = GetAudioProxy();
-						if (pIEntityAudioComponent)
-							pIEntityAudioComponent->SetSwitchState(m_audioControlIDs[eSID_VehicleSurface], nSurfaceStateID);
+						pIEntityAudioComponent->SetSwitchState(m_audioControlIDs[eSID_VehicleSurface], surfaceStateId);
 					}
 				}
 			}

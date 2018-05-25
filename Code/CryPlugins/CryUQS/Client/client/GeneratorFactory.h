@@ -1,14 +1,14 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
-namespace uqs
+namespace UQS
 {
-	namespace client
+	namespace Client
 	{
-		namespace internal
+		namespace Internal
 		{
 
 			//===================================================================================
@@ -17,17 +17,20 @@ namespace uqs
 			//
 			//===================================================================================
 
-			class CGeneratorFactoryBase : public IGeneratorFactory, public IParamsHolderFactory, public CFactoryBase<CGeneratorFactoryBase>
+			class CGeneratorFactoryBase : public IGeneratorFactory, public IParamsHolderFactory, public Shared::CFactoryBase<CGeneratorFactoryBase>
 			{
 			public:
 				// IGeneratorFactory
 				virtual const char*                       GetName() const override final;
+				virtual const CryGUID&                    GetGUID() const override final;
+				virtual const char*                       GetDescription() const override final;
 				virtual const IInputParameterRegistry&    GetInputParameterRegistry() const override final;
 				virtual IParamsHolderFactory&             GetParamsHolderFactory() const override final;
 				// ~IGeneratorFactory
 
 				// IGeneratorFactory: forward to derived class
-				virtual const shared::CTypeInfo&          GetTypeOfItemsToGenerate() const override = 0;
+				virtual const Shared::CTypeInfo*          GetTypeOfShuttledItemsToExpect() const override = 0;
+				virtual const Shared::CTypeInfo&          GetTypeOfItemsToGenerate() const override = 0;
 				virtual GeneratorUniquePtr                CreateGenerator(const void* pParams) override = 0;
 				virtual void                              DestroyGenerator(IGenerator* pGeneratorToDestroy) override = 0;
 				// ~IGeneratorFactory
@@ -38,17 +41,19 @@ namespace uqs
 				// ~IParamsHolderFactory
 
 			protected:
-				explicit                                  CGeneratorFactoryBase(const char* generatorName);
+				explicit                                  CGeneratorFactoryBase(const char* szGeneratorName, const CryGUID& guid, const char* szDescription);
 
 			protected:
 				CInputParameterRegistry                   m_inputParameterRegistry;
 
 			private:
+				string                                    m_description;
 				IParamsHolderFactory*                     m_pParamsHolderFactory;      // points to *this; it's a trick to allow GetParamsHolderFactory() return a non-const reference to *this
 			};
 
-			inline CGeneratorFactoryBase::CGeneratorFactoryBase(const char* generatorName)
-				: CFactoryBase(generatorName)
+			inline CGeneratorFactoryBase::CGeneratorFactoryBase(const char* szGeneratorName, const CryGUID& guid, const char* szDescription)
+				: CFactoryBase(szGeneratorName, guid)
+				, m_description(szDescription)
 			{
 				m_pParamsHolderFactory = this;
 			}
@@ -56,6 +61,16 @@ namespace uqs
 			inline const char* CGeneratorFactoryBase::GetName() const
 			{
 				return CFactoryBase::GetName();
+			}
+
+			inline const CryGUID& CGeneratorFactoryBase::GetGUID() const
+			{
+				return CFactoryBase::GetGUID();
+			}
+
+			inline const char* CGeneratorFactoryBase::GetDescription() const
+			{
+				return m_description.c_str();
 			}
 
 			inline const IInputParameterRegistry& CGeneratorFactoryBase::GetInputParameterRegistry() const
@@ -68,7 +83,31 @@ namespace uqs
 				return *m_pParamsHolderFactory;
 			}
 
-		} // namespace internal
+			//===================================================================================
+			//
+			// SShuttledItemTypeDeducer<>
+			//
+			//===================================================================================
+
+			template <class T>
+			struct SShuttledItemTypeDeducer
+			{
+				static const Shared::CTypeInfo* DeduceShuttledItemType()
+				{
+					return &Shared::SDataTypeHelper<T>::GetTypeInfo();
+				}
+			};
+
+			template <>
+			struct SShuttledItemTypeDeducer<void>
+			{
+				static const Shared::CTypeInfo* DeduceShuttledItemType()
+				{
+					return nullptr;
+				}
+			};
+
+		} // namespace Internal
 
 		//===================================================================================
 		//
@@ -76,14 +115,25 @@ namespace uqs
 		//
 		//===================================================================================
 
-		template <class TGenerator>
-		class CGeneratorFactory final : public internal::CGeneratorFactoryBase
+		template <class TGenerator, class TShuttledItemTypeToExpect = void>
+		class CGeneratorFactory final : public Internal::CGeneratorFactoryBase
 		{
 		public:
-			explicit                                  CGeneratorFactory(const char* generatorName);
+
+			struct SCtorParams
+			{
+				const char*                           szName = "";
+				CryGUID                               guid = CryGUID::Null();
+				const char*                           szDescription = "";
+			};
+
+		public:
+
+			explicit                                  CGeneratorFactory(const SCtorParams& ctorParams);
 
 			// IGeneratorFactory
-			virtual const shared::CTypeInfo&          GetTypeOfItemsToGenerate() const override;
+			virtual const Shared::CTypeInfo*          GetTypeOfShuttledItemsToExpect() const override;
+			virtual const Shared::CTypeInfo&          GetTypeOfItemsToGenerate() const override;
 			virtual GeneratorUniquePtr                CreateGenerator(const void* pParams) override;
 			virtual void                              DestroyGenerator(IGenerator* pGeneratorToDestroy) override;
 			// ~IGeneratorFactory
@@ -94,22 +144,28 @@ namespace uqs
 			// ~IParamsHolderFactory
 		};
 
-		template <class TGenerator>
-		CGeneratorFactory<TGenerator>::CGeneratorFactory(const char* generatorName)
-			: CGeneratorFactoryBase(generatorName)
+		template <class TGenerator, class TShuttledItemTypeToExpect>
+		CGeneratorFactory<TGenerator, TShuttledItemTypeToExpect>::CGeneratorFactory(const SCtorParams& ctorParams)
+			: CGeneratorFactoryBase(ctorParams.szName, ctorParams.guid, ctorParams.szDescription)
 		{
 			typedef typename TGenerator::SParams Params;
 			Params::Expose(m_inputParameterRegistry);
 		}
 
-		template <class TGenerator>
-		const shared::CTypeInfo& CGeneratorFactory<TGenerator>::GetTypeOfItemsToGenerate() const
+		template <class TGenerator, class TShuttledItemTypeToExpect>
+		const Shared::CTypeInfo* CGeneratorFactory<TGenerator, TShuttledItemTypeToExpect>::GetTypeOfShuttledItemsToExpect() const
 		{
-			return shared::SDataTypeHelper<typename TGenerator::ItemType>::GetTypeInfo();
+			return Internal::SShuttledItemTypeDeducer<TShuttledItemTypeToExpect>::DeduceShuttledItemType();
 		}
 
-		template <class TGenerator>
-		GeneratorUniquePtr CGeneratorFactory<TGenerator>::CreateGenerator(const void* pParams)
+		template <class TGenerator, class TShuttledItemTypeToExpect>
+		const Shared::CTypeInfo& CGeneratorFactory<TGenerator, TShuttledItemTypeToExpect>::GetTypeOfItemsToGenerate() const
+		{
+			return Shared::SDataTypeHelper<typename TGenerator::ItemType>::GetTypeInfo();
+		}
+
+		template <class TGenerator, class TShuttledItemTypeToExpect>
+		GeneratorUniquePtr CGeneratorFactory<TGenerator, TShuttledItemTypeToExpect>::CreateGenerator(const void* pParams)
 		{
 			const typename TGenerator::SParams* pActualParams = static_cast<const typename TGenerator::SParams*>(pParams);
 #if 0
@@ -118,26 +174,26 @@ namespace uqs
 			// notice: we assign the instantiated generator to its base class pointer to ensure that the generator type itself (and not accidentally another generator type) was injected at its class definition
 			CGeneratorBase<TGenerator, typename TGenerator::ItemType>* pGenerator = new TGenerator(*pActualParams);
 #endif
-			internal::CGeneratorDeleter deleter(*this);
+			Internal::CGeneratorDeleter deleter(*this);
 			return GeneratorUniquePtr(pGenerator, deleter);
 		}
 
-		template <class TGenerator>
-		void CGeneratorFactory<TGenerator>::DestroyGenerator(IGenerator* pGeneratorToDestroy)
+		template <class TGenerator, class TShuttledItemTypeToExpect>
+		void CGeneratorFactory<TGenerator, TShuttledItemTypeToExpect>::DestroyGenerator(IGenerator* pGeneratorToDestroy)
 		{
 			delete pGeneratorToDestroy;
 		}
 
-		template <class TGenerator>
-		ParamsHolderUniquePtr CGeneratorFactory<TGenerator>::CreateParamsHolder()
+		template <class TGenerator, class TShuttledItemTypeToExpect>
+		ParamsHolderUniquePtr CGeneratorFactory<TGenerator, TShuttledItemTypeToExpect>::CreateParamsHolder()
 		{
-			internal::CParamsHolder<typename TGenerator::SParams>* pParamsHolder = new internal::CParamsHolder<typename TGenerator::SParams>;
+			Internal::CParamsHolder<typename TGenerator::SParams>* pParamsHolder = new Internal::CParamsHolder<typename TGenerator::SParams>;
 			CParamsHolderDeleter deleter(*this);
 			return ParamsHolderUniquePtr(pParamsHolder, deleter);
 		}
 
-		template <class TGenerator>
-		void CGeneratorFactory<TGenerator>::DestroyParamsHolder(IParamsHolder* pParamsHolderToDestroy)
+		template <class TGenerator, class TShuttledItemTypeToExpect>
+		void CGeneratorFactory<TGenerator, TShuttledItemTypeToExpect>::DestroyParamsHolder(IParamsHolder* pParamsHolderToDestroy)
 		{
 			delete pParamsHolderToDestroy;
 		}

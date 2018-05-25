@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -24,6 +24,12 @@ static_assert(sizeof(IScaleformPlayback::VertexFormat) == sizeof(GRenderer::Vert
 static_assert(sizeof(IScaleformPlayback::IndexFormat) == sizeof(GRenderer::IndexFormat), "Bad IndexFormat used");
 static_assert(sizeof(IScaleformPlayback::BitmapDesc) == sizeof(GRenderer::BitmapDesc), "Bad BitmapDesc used");
 static_assert(sizeof(IScaleformPlayback::SubmitMaskMode) == sizeof(GRenderer::SubmitMaskMode), "Bad SubmitMaskMode used");
+
+static_assert(uint32(IScaleformPlayback::VertexFormat::Vertex_None) == uint32(GRenderer::VertexFormat::Vertex_None), "Bad VertexFormat index for Vertex_None");
+static_assert(uint32(IScaleformPlayback::VertexFormat::Vertex_XY16i) == uint32(GRenderer::VertexFormat::Vertex_XY16i), "Bad VertexFormat index for Vertex_XY16i");
+static_assert(uint32(IScaleformPlayback::VertexFormat::Vertex_XY32f) == uint32(GRenderer::VertexFormat::Vertex_XY32f), "Bad VertexFormat index for Vertex_XY32f");
+static_assert(uint32(IScaleformPlayback::VertexFormat::Vertex_XY16iC32) == uint32(GRenderer::VertexFormat::Vertex_XY16iC32), "Bad VertexFormat index for Vertex_XY16iC32");
+static_assert(uint32(IScaleformPlayback::VertexFormat::Vertex_XY16iCF32) == uint32(GRenderer::VertexFormat::Vertex_XY16iCF32), "Bad VertexFormat index for Vertex_XY16iCF32");
 
 #if defined(_DEBUG)
 
@@ -288,6 +294,15 @@ void CScaleformRecording::PushRenderTarget(const GRectF& /*frameRect*/, GRenderT
 void CScaleformRecording::PopRenderTarget()
 {
 #ifdef ENABLE_FLASH_FILTERS
+	// These are ref-initialized with 1, they need to be released
+	m_pTempRTsLL.top()->SetRT(nullptr);
+	m_pTempRTsLL.top()->Release();
+	m_pTempRTs.top()->Release();
+
+	// pop: Iterators and references to the erased element are invalidated. It is unspecified whether the past-the-end iterator is invalidated. Other references and iterators are not affected. 
+	m_pTempRTsLL.pop();
+	m_pTempRTs.pop();
+
 	_RECORD_CMD_PREFIX
 	  _RECORD_CMD(GRCBA_PopRenderTarget)
 	_RECORD_CMD_POSTFIX(CMD_VOID_RETURN)
@@ -299,8 +314,20 @@ void CScaleformRecording::PopRenderTarget()
 GTexture* CScaleformRecording::PushTempRenderTarget(const GRectF& _frameRect, UInt targetW, UInt targetH, bool wantStencil)
 {
 #ifdef ENABLE_FLASH_FILTERS
+	GTextureXRenderTempRTLockless* pTempRTLL;
+	GTextureXRenderTempRT* pTempRT;
+
 	// IScaleformPlayback::RectF := GRectF
 	const IScaleformPlayback::RectF& frameRect = *((IScaleformPlayback::RectF*)&_frameRect);
+
+	// These are ref-counted, they need to be free objects
+	pTempRTLL = new GTextureXRenderTempRTLockless(this);
+	pTempRT = new GTextureXRenderTempRT(this, -1, eTF_R8G8B8A8);
+	pTempRTLL->SetRT(pTempRT);
+
+	// emplace: All iterators, including the past-the-end iterator, are invalidated. No references are invalidated. 
+	m_pTempRTs.push(pTempRT);
+	m_pTempRTsLL.push(pTempRTLL);
 
 	_RECORD_CMD_PREFIX
 	GTextureXRenderTempRTLockless* pTempRTLL = new GTextureXRenderTempRTLockless(this);
@@ -315,7 +342,9 @@ GTexture* CScaleformRecording::PushTempRenderTarget(const GRectF& _frameRect, UI
 	_RECORD_CMD_POSTFIX(pTempRTLL)
 
 	int32 TempIRT = GetPlayback()->PushTempRenderTarget(frameRect, targetW, targetH, true, wantStencil);
-	return new GTextureXRenderTempRT(this, TempIRT, eTF_R8G8B8A8);
+	pTempRT->InitTextureFromTexId(TempIRT);
+
+	return pTempRT;
 #endif
 
 	return nullptr;
@@ -390,7 +419,7 @@ void CScaleformRecording::PopBlendMode()
 void CScaleformRecording::SetPerspective3D(const GMatrix3D& _projMatIn)
 {
 	// Matrix44 := GMatrix3D
-	const Matrix44& projMatIn = *((Matrix44*)&_projMatIn);
+	const Matrix44f& projMatIn = *((Matrix44f*)&_projMatIn);
 
 	RECORD_CMD_1ARG(GRCBA_SetPerspective3D, CMD_VOID_RETURN, projMatIn);
 
@@ -400,7 +429,7 @@ void CScaleformRecording::SetPerspective3D(const GMatrix3D& _projMatIn)
 void CScaleformRecording::SetView3D(const GMatrix3D& _viewMatIn)
 {
 	// Matrix44 := GMatrix3D
-	const Matrix44& viewMatIn = *((Matrix44*)&_viewMatIn);
+	const Matrix44f& viewMatIn = *((Matrix44f*)&_viewMatIn);
 
 	RECORD_CMD_1ARG(GRCBA_SetView3D, CMD_VOID_RETURN, viewMatIn);
 
@@ -410,7 +439,7 @@ void CScaleformRecording::SetView3D(const GMatrix3D& _viewMatIn)
 void CScaleformRecording::SetWorld3D(const GMatrix3D* _pWorldMatIn)
 {
 	// Matrix44 := GMatrix3D
-	const Matrix44* pWorldMatIn = reinterpret_cast<const Matrix44*>(_pWorldMatIn);
+	const Matrix44f* pWorldMatIn = reinterpret_cast<const Matrix44f*>(_pWorldMatIn);
 
 	_RECORD_CMD_PREFIX
 	if (_pWorldMatIn)
@@ -462,7 +491,11 @@ void CScaleformRecording::SetVertexData(const void* pVertices, int numVertices, 
 	GetPlayback()->SetVertexData(pDataStore->GetPtr());
 
 	if (!pCache)
-		m_pDataStore[0] = pDataStore; // Defer Release();
+	{
+		m_pDataStore[0] = pDataStore;
+		pDataStore->Release();
+	}
+		
 }
 
 static inline size_t IndexSize(GRenderer::IndexFormat idxf)
@@ -496,7 +529,10 @@ void CScaleformRecording::SetIndexData(const void* pIndices, int numIndices, Ind
 	GetPlayback()->SetIndexData(pDataStore->GetPtr());
 
 	if (!pCache)
-		m_pDataStore[1] = pDataStore; // Defer Release();
+	{
+		m_pDataStore[1] = pDataStore;
+		pDataStore->Release();
+	}
 }
 
 void CScaleformRecording::DrawIndexedTriList(int baseVertexIndex, int minVertexIndex, int numVertices, int startIndex, int triangleCount)
@@ -650,7 +686,10 @@ void CScaleformRecording::DrawBitmaps(BitmapDesc* pBitmapList, int listSize, int
 	GetPlayback()->DrawBitmaps(pDataStore->GetPtr(), startIndex, count, pTi, m);
 
 	if (!pCache)
-		m_pDataStore[2] = pDataStore; // Defer Release();
+	{
+		m_pDataStore[2] = pDataStore;
+		pDataStore->Release();
+	}
 }
 
 void CScaleformRecording::BeginSubmitMask(SubmitMaskMode _maskMode)
@@ -752,7 +791,7 @@ void CScaleformRecording::GetStats(GStatBag* /*pBag*/, bool /*reset*/)
 
 void CScaleformRecording::ReleaseResources()
 {
-	//GetPlayback()->ReleaseResources();
+	GetPlayback()->ReleaseResources();
 }
 
 namespace CScaleformRecordingClearInternal
@@ -769,6 +808,11 @@ namespace CScaleformRecordingClearInternal
 		}
 		float val;
 	};
+}
+
+void CScaleformRecording::SetClearFlags(uint32 clearFlags, ColorF clearColor)
+{
+	m_pPlayback->SetClearFlags(clearFlags, clearColor);
 }
 
 void CScaleformRecording::SetCompositingDepth(float depth)

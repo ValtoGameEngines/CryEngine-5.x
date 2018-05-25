@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -49,7 +49,11 @@ QToolWindowWrapper::QToolWindowWrapper(QToolWindowManager* manager, Qt::WindowFl
 
 QToolWindowWrapper::~QToolWindowWrapper()
 {
-	m_manager->removeWrapper(this);
+	if (m_manager)
+	{
+		m_manager->removeWrapper(this);
+		m_manager = nullptr;
+	}
 }
 
 void QToolWindowWrapper::closeEvent(QCloseEvent* event)
@@ -199,3 +203,15 @@ void QToolWindowWrapper::startDrag()
 	ReleaseCapture();
 	SendMessage((HWND)winId(), WM_NCLBUTTONDOWN, HTCAPTION, 0);
 }
+
+void QToolWindowWrapper::deferDeletion()
+{
+	if (m_manager)
+	{
+		m_manager->removeWrapper(this);
+		m_manager = nullptr;
+	}
+	setParent(nullptr);
+	deleteLater();
+}
+

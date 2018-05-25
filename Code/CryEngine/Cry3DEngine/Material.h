@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   Material.h
@@ -20,10 +20,6 @@
 #if CRY_PLATFORM_DESKTOP
 	#define TRACE_MATERIAL_LEAKS
 	#define SUPPORT_MATERIAL_EDITING
-#endif
-
-#ifndef _RELEASE
-	#define SUPPORT_MATERIAL_SKETCH
 #endif
 
 class CMaterialLayer : public IMaterialLayer
@@ -111,9 +107,9 @@ public:
 	~CMatInfo();
 
 	void         ShutDown();
+	virtual bool IsValid() const;
 
 	virtual void AddRef();
-	;
 	virtual void Release();
 
 	virtual int  GetNumRefs() { return m_nRefCount; };
@@ -121,7 +117,6 @@ public:
 	//////////////////////////////////////////////////////////////////////////
 	// IMaterial implementation
 	//////////////////////////////////////////////////////////////////////////
-	int                       Size();
 
 	virtual IMaterialHelpers& GetMaterialHelpers();
 	virtual IMaterialManager* GetMaterialManager();
@@ -133,9 +128,9 @@ public:
 	virtual int               GetFlags() const    { return m_Flags; };
 
 	// Returns true if this is the default material.
-	virtual bool          IsDefault();
+	virtual bool          IsDefault() const;
 
-	virtual int           GetSurfaceTypeId() { return m_nSurfaceTypeId; };
+	virtual int           GetSurfaceTypeId() const { return m_nSurfaceTypeId; };
 
 	virtual void          SetSurfaceType(const char* sSurfaceTypeName);
 	virtual ISurfaceType* GetSurfaceType();
@@ -216,8 +211,6 @@ public:
 	uint32 GetModificationId() const { return m_nModificationId; }
 
 	//////////////////////////////////////////////////////////////////////////
-	void SetSketchMode(int mode);
-	void SetTexelDensityDebug(int mode);
 
 	// Check for specific rendering conditions (forward rendering/nearest cubemap requirement)
 	bool IsForwardRenderingRequired();
@@ -277,17 +270,13 @@ private:
 	//! @see EMatInfoFlags
 	int         m_Flags;
 
-	bool        m_bDeleted;
+	bool m_bDeleted;
+	bool m_bDeletePending;
 
 	SShaderItem m_shaderItem;
 
 	// Used to detect the cases when dependent permanent render objects have to be updated
 	uint32 m_nModificationId;
-
-#ifdef SUPPORT_MATERIAL_SKETCH
-	_smart_ptr<IShader> m_pPreSketchShader;
-	int                 m_nPreSketchTechnique;
-#endif
 
 	//! Array of Sub materials.
 	typedef DynArray<_smart_ptr<CMatInfo>> SubMtls;

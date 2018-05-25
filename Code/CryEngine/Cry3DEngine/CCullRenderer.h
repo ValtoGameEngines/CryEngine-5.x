@@ -1,9 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __CCULLRENDERER__
 #define __CCULLRENDERER__
 
 #include "VMath.hpp"
+
+#include <CryThreading/IThreadManager.h>		// For CScopedFloatingPointException
 
 //#define CULL_RENDERER_REPROJ_DEBUG
 #define CULL_RENDERER_MINZ
@@ -19,7 +21,7 @@ namespace NAsyncCull
 namespace Debug
 {
 
-inline void Draw2DBox(float fX, float fY, float fHeigth, float fWidth, const ColorB& rColor, float fScreenHeigth, float fScreenWidth, IRenderAuxGeom* pAuxRenderer)
+inline SAuxVertex* Generate2DBox(SAuxVertex* pVertices, float fX, float fY, float fHeigth, float fWidth, const ColorB& rColor)
 {
 	float fPosition[4][2] =
 	{
@@ -29,22 +31,27 @@ inline void Draw2DBox(float fX, float fY, float fHeigth, float fWidth, const Col
 		{ fX + fWidth, fY           }
 	};
 
-	// compute normalized position from absolute points
-	Vec3 vPosition[4] =
-	{
-		Vec3(fPosition[0][0] / fScreenWidth, fPosition[0][1] / fScreenHeigth, 0.0f),
-		Vec3(fPosition[1][0] / fScreenWidth, fPosition[1][1] / fScreenHeigth, 0.0f),
-		Vec3(fPosition[2][0] / fScreenWidth, fPosition[2][1] / fScreenHeigth, 0.0f),
-		Vec3(fPosition[3][0] / fScreenWidth, fPosition[3][1] / fScreenHeigth, 0.0f)
-	};
+	SAuxVertex v = { { 0, 0, 0}, {{ rColor.pack_argb8888() }}, { 0, 0 } };
 
-	vtx_idx const anTriangleIndices[6] =
-	{
-		0, 1, 2,
-		0, 2, 3
-	};
+	pVertices[0] = v;
+	pVertices[0].xyz = Vec3(fPosition[0][0], fPosition[0][1], 0.0f);
 
-	pAuxRenderer->DrawTriangles(vPosition, 4, anTriangleIndices, 6, rColor);
+	pVertices[1] = v;
+	pVertices[1].xyz = Vec3(fPosition[1][0], fPosition[1][1], 0.0f);
+
+	pVertices[2] = v;
+	pVertices[2].xyz = Vec3(fPosition[2][0], fPosition[2][1], 0.0f);
+
+	pVertices[3] = v;
+	pVertices[3].xyz = Vec3(fPosition[0][0], fPosition[0][1], 0.0f);
+
+	pVertices[4] = v;
+	pVertices[4].xyz = Vec3(fPosition[2][0], fPosition[2][1], 0.0f);
+
+	pVertices[5] = v;
+	pVertices[5].xyz = Vec3(fPosition[3][0], fPosition[3][1], 0.0f);
+
+	return pVertices + 6;
 }
 
 } // namesapce Debug
@@ -76,7 +83,8 @@ private:
 	uint32    m_SizeX4;
 	Matrix44A m_Reproject;
 	uint32    m_nNumWorker;
-	tdZexel*  m_ZBuffer;
+	tdZexel*  m_ZInput;
+	tdZexel*  m_ZOutput;
 
 	tdZexel** m_ZBufferSwap;
 
@@ -284,7 +292,7 @@ private:
 			vec4 Py = Madd(X20, dy4, Y2x);
 			vec4 Pz = Sub(Sub(Vec4One(), Py), Px);
 
-			vec4* pDstZ = reinterpret_cast<vec4*>(&m_ZBuffer[MinX + y * (uint16)SIZEX]);
+			vec4* pDstZ = reinterpret_cast<vec4*>(&m_ZOutput[MinX + y * (uint16)SIZEX]);
 			y++;
 			uint16 x = MinX;
 			do
@@ -400,7 +408,7 @@ private:
 			vec4 P3x = Sub(Y13x, Mul(X13, dy4));
 			vec4 P3y = Sub(Mul(X23, dy4), Y23x);
 			uint16 x = MinX;
-			vec4* pDstZ = reinterpret_cast<vec4*>(&m_ZBuffer[MinX + y * (uint16)SIZEX]);
+			vec4* pDstZ = reinterpret_cast<vec4*>(&m_ZOutput[MinX + y * (uint16)SIZEX]);
 			do
 			{
 				Prefetch<ECL_LVL1>(pDstZ);
@@ -436,7 +444,8 @@ public:
 	// cppcheck-suppress uninitMemberVar
 	inline CCullRenderer()
 	{
-		m_ZBuffer = m_ZBufferMainMemory;
+		m_ZInput = m_ZBufferMainMemory;
+		m_ZOutput = m_ZBufferMainMemory;
 		m_DebugRender = 0;
 		m_nNumWorker = 0;
 		m_ZBufferSwap = NULL;
@@ -471,7 +480,7 @@ public:
 		m_VMaxXY = NVMath::int32Tofloat(NVMath::Vec4(SIZEX, SIZEY, SIZEX, SIZEY));
 		for (uint32 a = 0, S = SIZEX * SIZEY; a < S; a++)
 		{
-			m_ZBuffer[a] = 9999999999.f;
+			m_ZOutput[a] = 9999999999.f;
 		}
 		m_DrawCall = 0;
 		m_PolyCount = 0;
@@ -479,16 +488,16 @@ public:
 
 	bool DownLoadHWDepthBuffer(float nearPlane, float farPlane, float nearestMax, float Bias)
 	{
-		Matrix44A& Reproject = m_Reproject;
-
 		m_VMaxXY = NVMath::int32Tofloat(NVMath::Vec4(SIZEX, SIZEY, SIZEX, SIZEY));
 
-		Matrix44 Dummy;
-		if (!gEnv->pRenderer->GetOcclusionBuffer((uint16*)&m_ZBuffer[0], SizeX(), SizeY(), &Dummy, reinterpret_cast<Matrix44*>(&Reproject)))
+		tdZexel* pPinned = gEnv->pRenderer->PinOcclusionBuffer(m_Reproject);
+		if (!pPinned)
 		{
+			m_ZInput = m_ZBufferMainMemory;
 			return false;
 		}
 
+		m_ZInput = pPinned;
 		for (uint32 i = 0; i < m_nNumWorker; ++i)
 		{
 			memset(m_ZBufferSwap[i], 0, SIZEX * SIZEY * sizeof(float));
@@ -496,6 +505,15 @@ public:
 		memset(m_ZBufferSwapMerged, 0, SIZEX * SIZEY * sizeof(float));
 
 		return true;
+	}
+
+	void DetachHWDepthBuffer()
+	{
+		if (m_ZInput != m_ZBufferMainMemory)
+		{
+			gEnv->pRenderer->UnpinOcclusionBuffer();
+			m_ZInput = m_ZBufferMainMemory;
+		}
 	}
 
 	void ReprojectHWDepthBuffer(const Matrix44A& rCurrent, float nearPlane, float farPlane, float nearestMax, float Bias, int nStartLine, int nNumLines)
@@ -560,8 +578,10 @@ public:
 			const vec4 vfOne = NVMath::Vec4One();
 			const vec4 vZero = NVMath::Vec4Zero();
 
-			vec4* pSrcZ = reinterpret_cast<vec4*>(&m_ZBuffer[nStartLine * sizeX]);
+			vec4* pSrcZ = reinterpret_cast<vec4*>(&m_ZInput[nStartLine * sizeX]);
 
+			// Disable fp exceptions in the loop
+			CScopedFloatingPointException fpExceptionScope(eFPE_None);
 			for (y = nStartLine, fY = static_cast<float>(nStartLine); y < nStartLine + nNumLines; y++, fY += 1.0f)
 			{
 				const vec4 vYYYY = NVMath::Vec4(fY);
@@ -608,7 +628,7 @@ public:
 						float newDepth = Vec4float<2>(vNewDepth);
 #endif
 						// It is faster to use simple non-vectorized code to write the depth in the buffer
-
+						// The comparison will always test false if newDepth is NaN
 						if (newDepth > 0.f)
 						{
 							int X;
@@ -685,7 +705,7 @@ public:
 
 		float* pZBufferSwap = m_ZBufferSwapMerged;
 		vec4* pSwap = reinterpret_cast<vec4*>(&pZBufferSwap[0]);
-		vec4* pDst = reinterpret_cast<vec4*>(&m_ZBuffer[nStartLine * sizeX]);
+		vec4* pDst = reinterpret_cast<vec4*>(&m_ZOutput[nStartLine * sizeX]);
 
 		const vec4 vBiasAdd = NVMath::Vec4(Bias < 0.f ? -Bias : 0.f);
 		const vec4 vBiasMul = NVMath::Vec4(Bias > 0.f ? Bias : 0.f);
@@ -821,7 +841,7 @@ public:
 		//	m_ZBuffer[a+12],m_ZBuffer[a+13],m_ZBuffer[a+14],m_ZBuffer[a+15]);
 
 #ifdef CULL_RENDERER_REPROJ_DEBUG
-		memcpy(&pZBufferSwap[nStartLine * sizeX], &m_ZBuffer[nStartLine * sizeX], sizeX * nNumLines * sizeof(float));
+		memcpy(&pZBufferSwap[nStartLine * sizeX], &m_ZOutput[nStartLine * sizeX], sizeX * nNumLines * sizeof(float));
 #endif
 
 #ifdef SCALE_DEPTH
@@ -1471,6 +1491,8 @@ public:
 	{
 		// project buffer to the screen
 #if defined(CULLING_ENABLE_DEBUG_OVERLAY)
+		IRenderAuxGeom* pAux = pRenderer->GetIRenderAuxGeom();
+
 		nStep %= 32;
 		if (!nStep)
 		{
@@ -1480,29 +1502,31 @@ public:
 		//if(!m_DebugRender)
 		//	return;
 
-		const float FarPlaneInv = 255.f / pRenderer->GetCamera().GetFarPlane();
+		const float FarPlaneInv = 255.f / GetISystem()->GetViewCamera().GetFarPlane();
 
 		SAuxGeomRenderFlags oFlags(e_Def2DPublicRenderflags);
 		oFlags.SetDepthTestFlag(e_DepthTestOff);
 		oFlags.SetDepthWriteFlag(e_DepthWriteOff);
 		oFlags.SetCullMode(e_CullModeNone);
 		oFlags.SetAlphaBlendMode(e_AlphaNone);
-		pRenderer->GetIRenderAuxGeom()->SetRenderFlags(oFlags);
+		SAuxGeomRenderFlags prevFlags = pAux->SetRenderFlags(oFlags);
 
-		int nScreenHeight = gEnv->pRenderer->GetHeight();
-		int nScreenWidth = gEnv->pRenderer->GetWidth();
-
-		float fScreenHeight = (float)nScreenHeight;
-		float fScreenWidth = (float)nScreenWidth;
+		const float fScreenWidth  = float(pAux->GetCamera().GetViewSurfaceX());
+		const float fScreenHeight = float(pAux->GetCamera().GetViewSurfaceZ());
 
 		float fTopOffSet = 35.0f;
 		float fSideOffSet = 35.0f;
+
+		std::vector<SAuxVertex> vertices;
+		vertices.resize(SIZEX*SIZEY * 6);
+		
+		SAuxVertex* __restrict pVertices = vertices.data();
 
 		// draw z-buffer after reprojection (unknown parts are red)
 		fTopOffSet += 200.0f;
 		for (uint32 y = 0; y < SIZEY; y += 1)
 		{
-			const float* __restrict pVMemZ = alias_cast<float*>(&m_ZBuffer[y * SIZEX]);
+			const float* __restrict pVMemZ = &m_ZOutput[y * SIZEX];
 			float fY = fTopOffSet + (y * 3);
 			for (uint32 x = 0; x < SIZEX; x += 4)
 			{
@@ -1510,20 +1534,6 @@ public:
 				float fX1 = fSideOffSet + ((x + 1) * 3);
 				float fX2 = fSideOffSet + ((x + 2) * 3);
 				float fX3 = fSideOffSet + ((x + 3) * 3);
-
-				//ColorB ValueColor0  = ((ColorB*)pVMemZ)[x+0];
-				//ColorB ValueColor1  = ((ColorB*)pVMemZ)[x+1];
-				//ColorB ValueColor2  = ((ColorB*)pVMemZ)[x+2];
-				//ColorB ValueColor3  = ((ColorB*)pVMemZ)[x+3];
-				////ColorB color0=ColorB(ValueColor0,ValueColor0,ValueColor0,222);
-				////ColorB color1=ColorB(ValueColor1,ValueColor1,ValueColor1,222);
-				////ColorB color2=ColorB(ValueColor2,ValueColor2,ValueColor2,222);
-				////ColorB color3=ColorB(ValueColor3,ValueColor3,ValueColor3,222);
-				//
-				//NAsyncCull::Debug::Draw2DBox(fX0,fY,3.0f,3.0f,ValueColor0, fScreenHeight,fScreenWidth,pRenderer->GetIRenderAuxGeom());
-				//NAsyncCull::Debug::Draw2DBox(fX1,fY,3.0f,3.0f,ValueColor1, fScreenHeight,fScreenWidth,pRenderer->GetIRenderAuxGeom());
-				//NAsyncCull::Debug::Draw2DBox(fX2,fY,3.0f,3.0f,ValueColor2, fScreenHeight,fScreenWidth,pRenderer->GetIRenderAuxGeom());
-				//NAsyncCull::Debug::Draw2DBox(fX3,fY,3.0f,3.0f,ValueColor3, fScreenHeight,fScreenWidth,pRenderer->GetIRenderAuxGeom());
 
 				uint32 ValueColor0 = (uint32)(pVMemZ[x + 0]);
 				uint32 ValueColor1 = (uint32)(pVMemZ[x + 1]);
@@ -1534,12 +1544,17 @@ public:
 				ColorB Color2(ValueColor2, ValueColor2 * 16, ValueColor2 * 256, 222);
 				ColorB Color3(ValueColor3, ValueColor3 * 16, ValueColor3 * 256, 222);
 
-				NAsyncCull::Debug::Draw2DBox(fX0, fY, 3.0f, 3.0f, Color0, fScreenHeight, fScreenWidth, pRenderer->GetIRenderAuxGeom());
-				NAsyncCull::Debug::Draw2DBox(fX1, fY, 3.0f, 3.0f, Color1, fScreenHeight, fScreenWidth, pRenderer->GetIRenderAuxGeom());
-				NAsyncCull::Debug::Draw2DBox(fX2, fY, 3.0f, 3.0f, Color2, fScreenHeight, fScreenWidth, pRenderer->GetIRenderAuxGeom());
-				NAsyncCull::Debug::Draw2DBox(fX3, fY, 3.0f, 3.0f, Color3, fScreenHeight, fScreenWidth, pRenderer->GetIRenderAuxGeom());
+				pVertices = NAsyncCull::Debug::Generate2DBox(pVertices, fX0, fY, 3.0f, 3.0f, Color0);
+				pVertices = NAsyncCull::Debug::Generate2DBox(pVertices, fX1, fY, 3.0f, 3.0f, Color1);
+				pVertices = NAsyncCull::Debug::Generate2DBox(pVertices, fX2, fY, 3.0f, 3.0f, Color2);
+				pVertices = NAsyncCull::Debug::Generate2DBox(pVertices, fX3, fY, 3.0f, 3.0f, Color3);
+
+				CRY_ASSERT(pVertices <= vertices.data() + vertices.size());
 			}
 		}
+
+		pAux->DrawBuffer(vertices.data(), vertices.size(), false);
+		pAux->SetRenderFlags(prevFlags);
 #endif
 	}
 

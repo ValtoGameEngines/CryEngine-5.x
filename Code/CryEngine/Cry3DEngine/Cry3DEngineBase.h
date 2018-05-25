@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   cry3denginebase.h
@@ -36,7 +36,6 @@ class C3DEngine;
 class CParticleManager;
 class CDecalManager;
 class CRainManager;
-class CCloudsManager;
 class CSkyLightManager;
 class CWaterWaveManager;
 class CRenderMeshMerger;
@@ -73,7 +72,6 @@ struct Cry3DEngineBase
 	static std::shared_ptr<pfx2::IParticleSystem> m_pParticleSystem;
 	static IOpticsManager*                        m_pOpticsManager;
 	static CDecalManager*                         m_pDecalManager;
-	static CCloudsManager*                        m_pCloudsManager;
 	static CVisAreaManager*                       m_pVisAreaManager;
 	static CClipVolumeManager*                    m_pClipVolumeManager;
 	static CMatMan*                               m_pMatMan;
@@ -118,7 +116,6 @@ struct Cry3DEngineBase
 	inline static CVisAreaManager*   GetVisAreaManager()         { return m_pVisAreaManager; }
 	inline static ICryPak*           GetPak()                    { return m_pCryPak; }
 	inline static CMatMan*           GetMatMan()                 { return m_pMatMan; }
-	inline static CCloudsManager*    GetCloudsManager()          { return m_pCloudsManager; }
 	inline static CWaterWaveManager* GetWaterWaveManager()       { return m_pWaterWaveManager; };
 	inline static CRenderMeshMerger* GetSharedRenderMeshMerger() { return m_pRenderMeshMerger; };
 	inline static CTemporaryPool*    GetTemporaryPool()          { return CTemporaryPool::Get(); };
@@ -130,8 +127,6 @@ struct Cry3DEngineBase
 	inline static int GetMergedMeshesPoolSize()                               { return m_mergedMeshesPoolSize; }
 	ILINE static bool IsRenderNodeTypeEnabled(EERType rnType)                 { return m_bRenderTypeEnabled[(int)rnType]; }
 	ILINE static void SetRenderNodeTypeEnabled(EERType rnType, bool bEnabled) { m_bRenderTypeEnabled[(int)rnType] = bEnabled; }
-
-	inline static int GetDefSID()                                             { return DEFAULT_SID; };
 
 	static float      GetCurTimeSec();
 	static float      GetCurAsyncTimeSec();
@@ -145,12 +140,12 @@ struct Cry3DEngineBase
 	static void    Error(const char* format, ...) PRINTF_PARAMS(1, 2);
 	static void    FileWarning(int flags, const char* file, const char* format, ...) PRINTF_PARAMS(3, 4);
 
-	CRenderObject* GetIdentityCRenderObject(int nThreadID)
+	CRenderObject* GetIdentityCRenderObject(const SRenderingPassInfo &passInfo)
 	{
-		CRenderObject* pCRenderObject = GetRenderer()->EF_GetObject_Temp(nThreadID);
+		CRenderObject* pCRenderObject = passInfo.GetIRenderView()->AllocateTemporaryRenderObject();
 		if (!pCRenderObject)
 			return NULL;
-		pCRenderObject->m_II.m_Matrix.SetIdentity();
+		pCRenderObject->SetMatrix(Matrix34::CreateIdentity(), passInfo);
 		return pCRenderObject;
 	}
 

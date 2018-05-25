@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -177,9 +177,9 @@ public:
 	};
 
 	//IEntityEvent
-	virtual void                   ProcessEvent(SEntityEvent& entityEvent) final;
+	virtual void                   ProcessEvent(const SEntityEvent& entityEvent) final;
 	virtual uint64                 GetEventMask() const final;
-	virtual ComponentEventPriority GetEventPriority(const int eventID) const final;
+	virtual ComponentEventPriority GetEventPriority() const final;
 	//~IEntityEvent
 
 	// IVehicle
@@ -218,7 +218,6 @@ public:
 	virtual void                        UpdatePassenger(float frameTime, EntityId playerId = 0);
 
 	virtual void                        SetChannelId(uint16 id) {};
-	virtual void                        SetAuthority(bool auth);
 
 	virtual void                        FullSerialize(TSerialize ser);
 	virtual bool                        NetSerialize(TSerialize ser, EEntityAspects aspect, uint8 profile, int flags);

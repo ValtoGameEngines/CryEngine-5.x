@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   TimeOfDay.cpp
@@ -469,7 +469,8 @@ Vec3 ConvertIlluminanceToLightColor(float illuminance, Vec3 colorRGB)
 
 //////////////////////////////////////////////////////////////////////////
 CTimeOfDay::CTimeOfDay()
-	: m_timeOfDayRtpcId(INVALID_AUDIO_CONTROL_ID)
+	: m_timeOfDayRtpcId(CryAudio::InvalidControlId)
+	, m_listeners(16)
 {
 	m_pTimer = 0;
 	SetTimer(gEnv->pTimer);
@@ -518,7 +519,7 @@ CTimeOfDay::CTimeOfDay()
 
 	m_pCurrentPreset = NULL;
 
-	gEnv->pAudioSystem->GetAudioRtpcId("time_of_day", m_timeOfDayRtpcId);
+	m_timeOfDayRtpcId = CryAudio::StringToId("time_of_day");
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -567,11 +568,18 @@ bool CTimeOfDay::SetCurrentPreset(const char* szPresetName)
 		if (m_pCurrentPreset != newPreset)
 		{
 			m_pCurrentPreset = newPreset;
+			m_currentPresetName = szPresetName;
 			Update(true, true);
+			NotifyOnChange(IListener::EChangeType::CurrentPresetChanged, szPresetName);
 		}
 		return true;
 	}
 	return false;
+}
+
+const char* CTimeOfDay::GetCurrentPresetName() const
+{
+	return m_currentPresetName.c_str();
 }
 
 bool CTimeOfDay::AddNewPreset(const char* szPresetName)
@@ -585,7 +593,9 @@ bool CTimeOfDay::AddNewPreset(const char* szPresetName)
 		if (insertResult.second)
 		{
 			m_pCurrentPreset = &(insertResult.first->second);
+			m_currentPresetName = szPresetName;
 			Update(true, true);
+			NotifyOnChange(IListener::EChangeType::PresetAdded, szPresetName);
 		}
 		return true;
 	}
@@ -598,14 +608,22 @@ bool CTimeOfDay::RemovePreset(const char* szPresetName)
 	if (it != m_presets.end())
 	{
 		if (m_pCurrentPreset == &(it->second))
+		{
 			m_pCurrentPreset = NULL;
+			m_currentPresetName.clear();
+		}
 
 		m_presets.erase(it);
 
 		if (!m_pCurrentPreset && m_presets.size())
-			m_pCurrentPreset = &(m_presets.begin()->second);
+		{
+			const auto it = m_presets.begin();
+			m_pCurrentPreset = &(it->second);
+			m_currentPresetName = it->first;
+		}
 
 		Update(true, true);
+		NotifyOnChange(IListener::EChangeType::PresetRemoved, szPresetName);
 	}
 	return true;
 }
@@ -646,7 +664,9 @@ bool CTimeOfDay::LoadPreset(const char* szFilePath)
 		}
 
 		m_pCurrentPreset = &preset;
+		m_currentPresetName = insertResult.first->first;
 		Update(true, true);
+		NotifyOnChange(IListener::EChangeType::PresetLoaded, m_currentPresetName.c_str());
 		return true;
 	}
 
@@ -793,7 +813,7 @@ void CTimeOfDay::ResetVariables()
 		return;
 
 	m_pCurrentPreset->ResetVariables();
-	
+
 	for (int i = 0; i < PARAM_TOTAL; ++i)
 	{
 		const CTimeOfDayVariable* presetVar = m_pCurrentPreset->GetVar((ETimeOfDayParamID)i);
@@ -869,6 +889,17 @@ void CTimeOfDay::LoadInternalState(struct IDataReadStream& reader)
 }
 
 //////////////////////////////////////////////////////////////////////////
+bool CTimeOfDay::RegisterListenerImpl(IListener* const pListener, const char* const szDbgName, const bool staticName)
+{
+	return m_listeners.Add(pListener, szDbgName, staticName);
+}
+
+void CTimeOfDay::UnRegisterListenerImpl(IListener* const pListener)
+{
+	m_listeners.Remove(pListener);
+}
+
+//////////////////////////////////////////////////////////////////////////
 // Time of day is specified in hours.
 void CTimeOfDay::SetTime(float fHour, bool bForceUpdate)
 {
@@ -881,16 +912,9 @@ void CTimeOfDay::SetTime(float fHour, bool bForceUpdate)
 	Update(true, bForceUpdate);
 
 	// Inform audio of this change.
-	if (m_timeOfDayRtpcId != INVALID_AUDIO_CONTROL_ID)
+	if (m_timeOfDayRtpcId != CryAudio::InvalidControlId)
 	{
-		const bool isMainThread = (gEnv->mMainThreadId == CryGetCurrentThreadId());
-		SAudioRequest request;
-		request.flags = isMainThread ? eAudioRequestFlags_None : eAudioRequestFlags_ThreadSafePush;
-		SAudioObjectRequestData<eAudioObjectRequestType_SetRtpcValue> requestData;
-		requestData.audioRtpcId = m_timeOfDayRtpcId;
-		requestData.value = m_fTime;
-		request.pData = &requestData;
-		gEnv->pAudioSystem->PushRequest(request);
+		gEnv->pAudioSystem->SetParameter(m_timeOfDayRtpcId, m_fTime);
 	}
 
 	gEnv->pSystem->GetISystemEventDispatcher()->OnSystemEvent(ESYSTEM_EVENT_TIME_OF_DAY_SET, 0, 0);
@@ -906,7 +930,7 @@ void CTimeOfDay::SetSunPos(float longitude, float latitude)
 //////////////////////////////////////////////////////////////////////////
 void CTimeOfDay::Update(bool bInterpolate, bool bForceUpdate)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_3DENGINE);
+	CRY_PROFILE_FUNCTION(PROFILE_3DENGINE);
 
 	if (bInterpolate)
 	{
@@ -1354,6 +1378,7 @@ void CTimeOfDay::Serialize(XmlNodeRef& node, bool bLoading)
 			m_pTimeOfDaySpeedCVar->Set(m_advancedInfo.fAnimSpeed);
 
 		m_pCurrentPreset = NULL;
+		m_currentPresetName.clear();
 		m_presets.clear();
 		if (XmlNodeRef presetsNode = node->findChild("Presets"))
 		{
@@ -1378,7 +1403,10 @@ void CTimeOfDay::Serialize(XmlNodeRef& node, bool bLoading)
 						if (LoadPresetFromXML(preset, name))
 						{
 							if (presetNode->haveAttr("Default"))
+							{
 								m_pCurrentPreset = &preset;
+								m_currentPresetName = presetName;
+							}
 						}
 						else
 						{
@@ -1410,9 +1438,14 @@ void CTimeOfDay::Serialize(XmlNodeRef& node, bool bLoading)
 		}
 
 		if (!m_pCurrentPreset && m_presets.size())
-			m_pCurrentPreset = &(m_presets.begin()->second);
+		{
+			const auto it = m_presets.begin();
+			m_pCurrentPreset = &(it->second);
+			m_currentPresetName = it->first;
+		}
 
 		SetTime(m_fTime, false);
+		NotifyOnChange(IListener::EChangeType::CurrentPresetChanged, m_currentPresetName.c_str());
 	}
 	else //if (bLoading)
 	{
@@ -1558,4 +1591,13 @@ void CTimeOfDay::Tick()
 			SetTime(fTime);
 		}
 	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CTimeOfDay::NotifyOnChange(const IListener::EChangeType changeType, const char* const szPresetName)
+{
+	m_listeners.ForEachListener([changeType, szPresetName](IListener* pListener)
+	{
+		pListener->OnChange(changeType, szPresetName);
+	});
 }

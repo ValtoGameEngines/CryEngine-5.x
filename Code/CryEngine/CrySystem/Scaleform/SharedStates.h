@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef _SHARED_STATES_H_
 #define _SHARED_STATES_H_
@@ -68,7 +68,7 @@ private:
 //////////////////////////////////////////////////////////////////////////
 // CryGFxTextClipboard
 
-class CryGFxTextClipboard : public GFxTextClipboard, IWindowMessageHandler, ISystemEventListener
+class CryGFxTextClipboard : public GFxTextClipboard, IWindowMessageHandler
 {
 public:
 	void OnTextStore(const wchar_t* szText, UPInt length) override;
@@ -78,10 +78,13 @@ public:
 #if CRY_PLATFORM_WINDOWS
 	bool HandleMessage(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, LRESULT* pResult) override;
 #endif // CRY_PLATFORM_WINDOWS
-	void OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR lparam) override;
 
 private:
 	CryGFxTextClipboard();
+
+#if CRY_PLATFORM_WINDOWS
+	bool m_bSyncingClipboardFromWindows;
+#endif // CRY_PLATFORM_WINDOWS
 };
 
 //////////////////////////////////////////////////////////////////////////

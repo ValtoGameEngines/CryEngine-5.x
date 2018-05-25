@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "PlanningTextureStreamer.h"
@@ -29,8 +29,8 @@ static int GetTexReqStreamSizePreClamped(const SPlanningTextureOrderKey& key, in
 		uint32 nFormatSlices = code.sizes[nCodeMip].alignSlices ? nPoTSlices : nSlices;
 		nTotalSize = n1SliceSize * nFormatSlices;
 
-#if defined(PLAN_TEXSTRM_DEBUG) && defined(TEXSTRM_STORE_DEVSIZES)
-		int nTotalSizeTest = key.pTexture->StreamComputeDevDataSize(reqMip);
+#if defined(PLAN_TEXSTRM_DEBUG)
+		int nTotalSizeTest = key.pTexture->StreamComputeSysDataSize(reqMip);
 
 		if (nTotalSizeTest != nTotalSize)
 			__debugbreak();
@@ -38,17 +38,7 @@ static int GetTexReqStreamSizePreClamped(const SPlanningTextureOrderKey& key, in
 	}
 	else
 	{
-#if defined(TEXSTRM_STORE_DEVSIZES)
-		nTotalSize = key.pTexture->StreamComputeDevDataSize(reqMip);
-#else
-		nTotalSize = CDeviceTexture::TextureDataSize(
-		  max(1, key.nWidth >> reqMip),
-		  max(1, key.nHeight >> reqMip),
-		  1,
-		  key.nMips - reqMip,
-		  key.nSlicesMinus1 + 1,
-		  (ETEX_Format)key.eTF);
-#endif
+		nTotalSize = key.pTexture->StreamComputeSysDataSize(reqMip);
 	}
 
 	return nTotalSize - key.nPersistentSize;
@@ -212,7 +202,7 @@ static T* QuickSelectSum(T* p, size_t mn, size_t mx, ptrdiff_t targetSum, const 
 
 void CPlanningTextureStreamer::Job_UpdateEntry()
 {
-	FUNCTION_PROFILER_RENDERER;
+	FUNCTION_PROFILER_RENDERER();
 
 	m_state = S_Updating;
 
@@ -245,9 +235,9 @@ void CPlanningTextureStreamer::Job_UpdateMip(CTexture* pTexture, const float fMi
 
 	const int nZoneId = (nFlags & FPR_SINGLE_FRAME_PRIORITY_UPDATE) ? 0 : 1;
 
-	STexStreamingInfo* pStrmInfo = pTexture->m_pFileTexMips;
+	STexStreamingInfo* const pStrmInfo = pTexture->m_pFileTexMips;
 
-	if (fMipFactor < pStrmInfo->m_fMinMipFactor)
+	if (pStrmInfo && (fMipFactor < pStrmInfo->m_fMinMipFactor))
 	{
 		STexStreamZoneInfo& rZoneInfo = pStrmInfo->m_arrSPInfo[nZoneId];
 		STexStreamRoundInfo& rRoundInfo = pTexture->m_streamRounds[nZoneId];
@@ -256,7 +246,7 @@ void CPlanningTextureStreamer::Job_UpdateMip(CTexture* pTexture, const float fMi
 
 		if (rRoundInfo.nRoundUpdateId != nUpdateId)
 		{
-			STATIC_CHECK(MAX_PREDICTION_ZONES == 2, THIS_CODE_IS_OPTIMISED_ASSUMING_THIS_EQUALS_2);
+			STATIC_CHECK(MAX_STREAM_PREDICTION_ZONES == 2, THIS_CODE_IS_OPTIMISED_ASSUMING_THIS_EQUALS_2);
 
 			// reset mip factor and save the accumulated value into history and compute final mip factor
 			float fFinalMipFactor = fMipFactor;
@@ -293,25 +283,11 @@ void CPlanningTextureStreamer::Job_UpdateMip(CTexture* pTexture, const float fMi
 		CTexture::s_TextureUpdates += 1;
 #endif
 	}
-
-	// And source textures for composition
-	if (pTexture->CTexture::GetFlags() & FT_COMPOSITE)
-	{
-		DynArray<STexComposition>& composition = pTexture->m_composition;
-
-		for (int i = 0, c = composition.size(); i != c; ++i)
-		{
-			CTexture* pTexFrame = (CTexture*)&*composition[i].pTexture;
-
-			if (pTexFrame->IsStreamed())
-				Job_UpdateMip(pTexFrame, fMipFactor, nFlags, nUpdateId);
-		}
-	}
 }
 
 int CPlanningTextureStreamer::Job_Bias(SPlanningSortState& sortState, SPlanningTextureOrderKey* pKeys, size_t nNumPrecachedTexs, size_t nStreamLimit)
 {
-	FUNCTION_PROFILER_RENDERER;
+	FUNCTION_PROFILER_RENDERER();
 
 	int fpSortStateBias = sortState.nBias;
 	const int fpSortStateMinBias = sortState.fpMinBias;
@@ -356,7 +332,7 @@ int CPlanningTextureStreamer::Job_Bias(SPlanningSortState& sortState, SPlanningT
 
 size_t CPlanningTextureStreamer::Job_Plan(SPlanningSortState& sortState, const SPlanningTextureOrderKey* pKeys, size_t nTextures, size_t nNumPrecachedTexs, size_t nBalancePoint, int nMinMip, int fpSortStateBias)
 {
-	FUNCTION_PROFILER_RENDERER;
+	FUNCTION_PROFILER_RENDERER();
 
 	static_assert(MAX_PREDICTION_ZONES == 2, "Invalid maximum prediction zone value!");
 
@@ -404,7 +380,7 @@ size_t CPlanningTextureStreamer::Job_Plan(SPlanningSortState& sortState, const S
 					bool bOnlyNeedsTopMip = cacheMip == 0 && cachedMip == 1;
 
 					uint32 nSortKey =
-					  (!key.nIsComposite << 31)
+					  (1 << 31)
 					  | ((int)(cachedMip < (max(0, key.GetFpMinMipCur()) >> 8)) << 30)
 					  | ((int)!key.IsHighPriority() << 29)
 					  | ((int)bOnlyNeedsTopMip << 28)
@@ -464,7 +440,7 @@ size_t CPlanningTextureStreamer::Job_Plan(SPlanningSortState& sortState, const S
 				if (nRequests < MaxRequests)  // Persistent mips should always be present - needed in case stream unload occurred
 				{
 					uint32 nSortKey =
-					  (!key.nIsComposite << 31)
+					  (1 << 31)
 					  | ((int)(cachedMip < (max(0, key.GetFpMinMipCur()) >> 8)) << 30)
 					  | ((int)!key.IsHighPriority() << 29)
 					  | ((int)!key.IsVisible() << 27)
@@ -502,7 +478,7 @@ size_t CPlanningTextureStreamer::Job_Plan(SPlanningSortState& sortState, const S
 
 void CPlanningTextureStreamer::Job_Sort()
 {
-	FUNCTION_PROFILER_RENDERER;
+	FUNCTION_PROFILER_RENDERER();
 
 	SPlanningSortState& sortState = m_sortState;
 
@@ -551,7 +527,7 @@ void CPlanningTextureStreamer::Job_Sort()
 
 void CPlanningTextureStreamer::Job_InitKeys(SPlanningTextureOrderKey* pKeys, CTexture** pTexs, size_t nTextures, int nFrameId, const int nZoneIds[])
 {
-	FUNCTION_PROFILER_RENDERER;
+	FUNCTION_PROFILER_RENDERER();
 
 	for (size_t i = 0; i < nTextures; ++i)
 	{
@@ -580,10 +556,10 @@ void CPlanningTextureStreamer::Job_CheckEnqueueForStreaming(CTexture* pTexture, 
 	const int nMipIdSigned = fpMipIdSigned >> 8;
 
 	if (CRenderer::CV_r_TexturesStreamingDebug == 2)
-		iLog->Log("Updating mips: %s - Current: %i, Previous: %i", pTexture->m_SrcName.c_str(), pTexture->GetRequiredMipNonVirtual(), nNewMip);
+		iLog->Log("Updating mips: %s - Current: %i, Previous: %i", pTexture->m_SrcName.c_str(), pTexture->GetRequiredMip(), nNewMip);
 
 #if defined(ENABLE_TEXTURE_STREAM_LISTENER)
-	if (pTexture->GetRequiredMipNonVirtual() != nNewMip)
+	if (pTexture->GetRequiredMip() != nNewMip)
 	{
 		ITextureStreamListener* pListener = CTexture::s_pStreamListener;
 		if (pListener)

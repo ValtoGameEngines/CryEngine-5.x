@@ -1,12 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
-namespace uqs
+namespace UQS
 {
-	namespace core
+	namespace Core
 	{
 
 		//===================================================================================
@@ -33,8 +33,9 @@ namespace uqs
 			struct SRunningQueryInfo
 			{
 				explicit                                               SRunningQueryInfo();
-				std::shared_ptr<CQueryBase>                            query;
-				Functor1<const SQueryResult&>                          callback;
+				std::shared_ptr<CQueryBase>                            pQuery;
+				std::shared_ptr<const CQueryBlueprint>                 pQueryBlueprint;
+				Functor1<const SQueryResult&>                          pCallback;
 			};
 
 			//===================================================================================
@@ -47,11 +48,12 @@ namespace uqs
 
 			struct SFinishedQueryInfo
 			{
-				explicit                                               SFinishedQueryInfo(const std::shared_ptr<CQueryBase>& _query, const Functor1<const SQueryResult&>& _callback, const CQueryID& _queryID, bool _queryFinishedWithSuccess, const string& _errorIfAny);
-				std::shared_ptr<CQueryBase>                            query;
-				Functor1<const SQueryResult&>                          callback;
+				explicit                                               SFinishedQueryInfo(const std::shared_ptr<CQueryBase>& _pQuery, const std::shared_ptr<const CQueryBlueprint>& _pQueryBlueprint, const Functor1<const SQueryResult&>& _pCallback, const CQueryID& _queryID, bool _bQueryFinishedWithSuccess, const string& _errorIfAny);
+				std::shared_ptr<CQueryBase>                            pQuery;
+				std::shared_ptr<const CQueryBlueprint>                 pQueryBlueprint;
+				Functor1<const SQueryResult&>                          pCallback;
 				CQueryID                                               queryID;
-				bool                                                   queryFinishedWithSuccess;
+				bool                                                   bQueryFinishedWithSuccess;
 				string                                                 errorIfAny;
 			};
 
@@ -65,10 +67,10 @@ namespace uqs
 
 			struct SHistoryQueryInfo2D
 			{
-				explicit                                               SHistoryQueryInfo2D(const CQueryID &_queryID, const CQueryBase::SStatistics& _statistics, bool _queryFinishedWithSuccess, const CTimeValue& _timestamp);
+				explicit                                               SHistoryQueryInfo2D(const CQueryID &_queryID, const CQueryBase::SStatistics& _statistics, bool _bQueryFinishedWithSuccess, const CTimeValue& _timestamp);
 				CQueryID                                               queryID;
 				CQueryBase::SStatistics                                statistics;
-				bool                                                   queryFinishedWithSuccess;
+				bool                                                   bQueryFinishedWithSuccess;
 				CTimeValue                                             finishedTimestamp;     // time of when the query was finished; for fading out after a short moment
 			};
 
@@ -76,16 +78,17 @@ namespace uqs
 			explicit                                                   CQueryManager(CQueryHistoryManager& queryHistoryManager);
 
 			// IQueryManager
-			virtual CQueryID                                           StartQuery(const client::SQueryRequest& request, shared::IUqsString& errorMessage) override;
+			virtual CQueryID                                           StartQuery(const Client::SQueryRequest& request, Shared::IUqsString& errorMessage) override;
 			virtual void                                               CancelQuery(const CQueryID& idOfQueryToCancel) override;
-			virtual void                                               AddItemMonitorToQuery(const CQueryID& queryID, client::ItemMonitorUniquePtr&& pItemMonitorToInstall) override;
+			virtual void                                               AddItemMonitorToQuery(const CQueryID& queryID, Client::ItemMonitorUniquePtr&& pItemMonitorToInstall) override;
 			// ~IQueryManager
 
-			CQueryID                                                   StartQueryInternal(const CQueryID& parentQueryID, std::shared_ptr<const CQueryBlueprint> qbp, const shared::IVariantDict& runtimeParams, const char* querierName, Functor1<const core::SQueryResult&> callback, std::unique_ptr<CItemList>& potentialResultingItemsFromPreviousQuery, shared::IUqsString& errorMessage);
+			CQueryID                                                   StartQueryInternal(const CQueryID& parentQueryID, std::shared_ptr<const CQueryBlueprint> pQueryBlueprint, const Shared::IVariantDict& runtimeParams, const char* szQuerierName, Functor1<const Core::SQueryResult&> callback, const std::shared_ptr<CItemList>& pPotentialResultingItemsFromPreviousQuery, Shared::IUqsString& errorMessage);
 			CQueryBase*                                                FindQueryByQueryID(const CQueryID& queryID);
 			void                                                       Update();
 			void                                                       DebugDrawRunningQueriesStatistics2D() const;
 			void                                                       PrintRunningQueriesToConsole(CLogger& logger) const;
+			void                                                       CancelAllRunningQueriesDueToUpcomingTearDownOfHub();
 
 		private:
 			                                                           UQS_NON_COPYABLE(CQueryManager);
@@ -93,6 +96,7 @@ namespace uqs
 			void                                                       UpdateQueries();
 			void                                                       ExpireDebugDrawStatisticHistory2D();
 
+			static void                                                NotifyCallbackOfFinishedQuery(const SFinishedQueryInfo& finishedQueryInfo);
 			static void                                                DebugPrintQueryStatistics(CLogger& logger, const CQueryBase& query, const CQueryID& queryID);
 			static int                                                 DebugDrawQueryStatistics(const CQueryBase::SStatistics& statisticsToDraw, const CQueryID& queryID, int row, const ColorF& color);
 

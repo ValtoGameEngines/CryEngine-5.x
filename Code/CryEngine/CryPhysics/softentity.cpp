@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -448,7 +448,7 @@ int CSoftEntity::SetParams(pe_params *_params, int bThreadSafe)
 				}
 				/*if (!(m_flags & sef_skeleton))*/ for(j=0;j<m_nAttachedVtx;j++) {
 					Vec3 offs; quaternionf q; float scale; i=m_vtx[j].idx;
-					m_vtx[i].pContactEnt->GetLocTransform(m_vtx[i].iContactPart, offs,q,scale);
+					m_vtx[i].pContactEnt->GetLocTransform(m_vtx[i].iContactPart, offs,q,scale, this);
 					m_vtx[i].ptAttach = (m_vtx[i].pos+m_pos-offs)*q;
 				}
 				m_offs0 = m_vtx[m_vtx[0].idx].pos;
@@ -674,7 +674,7 @@ void CSoftEntity::AttachPoints(pe_action_attach_points *action, CPhysicalEntity 
 				int ismin = -isneg(dist.x*mindist.y-mindist.x*dist.y);
 				ipart += j-ipart & ismin; mindist.x -= (dist.x-mindist.x)*ismin; mindist.y -= (dist.y-mindist.y)*ismin;
 			}
-			pent->GetLocTransform(ipart,offs,q,dist.x);
+			pent->GetLocTransform(ipart,offs,q,dist.x,this);
 		}
 		m_vtx[action->piVtx[i]].iContactPart = ipart;
 		if (m_vtx[action->piVtx[i]].bAttached = bAttached) {
@@ -778,7 +778,7 @@ int CSoftEntity::Action(pe_action *_action, int bThreadSafe)
 			action->piVtx = new int[m_nVtx];
 			for(int ient=0;ient<nents;ient++) for(int j=0;j<pents[ient]->GetUsedPartsCount(iCaller);j++) {
 				ipart = pents[ient]->GetUsedPart(iCaller,j);
-				pents[ient]->GetLocTransform(ipart, offs,q,scale);
+				pents[ient]->GetLocTransform(ipart, offs,q,scale, this);
 				float rscale = 1.0f/scale;
 				for(i=action->nPoints=0;i<m_nVtx;i++) if (!m_vtx[i].bAttached) {
 					action->piVtx[action->nPoints] = i;
@@ -809,7 +809,7 @@ int CSoftEntity::Action(pe_action *_action, int bThreadSafe)
 			if (pent && pent->m_iSimClass==4 && pent->GetType()!=PE_ROPE)
 				(m_collTypes &= ~ent_living) |= ent_independent;
 			if (bAttached)
-				pent->GetLocTransform(ipart, offs,q,scale);
+				pent->GetLocTransform(ipart, offs,q,scale, this);
 
 			if (pent && action->nPoints==0)	{
 				for(i=0;i<m_nVtx;i++) if (m_vtx[i].bAttached && m_vtx[i].pContactEnt==pent) {
@@ -871,8 +871,8 @@ int CSoftEntity::Action(pe_action *_action, int bThreadSafe)
 		pe_action_target_vtx *action = (pe_action_target_vtx*)_action;
 		if (is_unused(action->points) || !action->points)	{
 			float scale=1.0f;
-			if (is_unused(action->posHost) && m_vtx[m_vtx[0].idx].pContactEnt)
-				m_vtx[m_vtx[0].idx].pContactEnt->GetLocTransform(m_vtx[m_vtx[0].idx].iContactPart,action->posHost,action->qHost,scale);
+			if (is_unused(action->posHost) && m_nVtx && m_vtx[m_vtx[0].idx].pContactEnt)
+				m_vtx[m_vtx[0].idx].pContactEnt->GetLocTransform(m_vtx[m_vtx[0].idx].iContactPart,action->posHost,action->qHost,scale,this);
 			for(int i=0; i<m_nVtx; i++) if (!m_vtx[i].bAttached) 
 				m_vtx[i].ptAttach = (m_vtx[i].pos-action->posHost)*action->qHost;
 		} else {
@@ -1419,10 +1419,10 @@ int CSoftEntity::Step(float time_interval)
 	if (m_nVtx<=0 || !m_bAwake || !m_nConnectedVtx)
 		return 1;
 
+	int iCaller = get_iCaller_int();
 	if (m_flags & (pef_invisible|pef_disabled)) {
 	report_step0:
-		EventPhysPostStep event;
-		event.pEntity=this; event.pForeignData=m_pForeignData; event.iForeignData=m_iForeignData;
+		EventPhysPostStep event; InitEvent(&event,this,iCaller);
 		event.dt=time_interval; event.pos=m_pos; event.q=m_qrot; event.idStep=m_pWorld->m_idStep;
 		m_pWorld->OnEvent(m_flags,&event);
 		return 1;
@@ -1443,10 +1443,9 @@ int CSoftEntity::Step(float time_interval)
 	plane waterPlane; 
 	Vec3 waterFlow(ZERO);
 	float waterDensity=0,ktimeBack;
-	int iCaller = get_iCaller_int();
 	{ ReadLock lock(m_lockSoftBody);
 
-	FUNCTION_PROFILER( GetISystem(),PROFILE_PHYSICS );
+	CRY_PROFILE_FUNCTION(PROFILE_PHYSICS );
 	PHYS_ENTITY_PROFILER
 
 	if ((g_lastqHost|g_lastqHost)>0) {
@@ -1521,7 +1520,7 @@ int CSoftEntity::Step(float time_interval)
 	for(i1=0,pentlist[i]->m_bProcessed_aux=nCheckParts<<24; i1<pentlist[i]->GetUsedPartsCount(iCaller); i1++) 
 	if (pentlist[i]->m_parts[j=pentlist[i]->GetUsedPart(iCaller,i1)].flags & m_parts[0].flagsCollider &&
 			!(pentlist[i]->m_parts[j].flags & geom_no_coll_response)) 
-	{	pentlist[i]->GetLocTransformLerped(j, checkParts[nCheckParts].offset,lastqHost,kr,ktimeBack);
+	{	pentlist[i]->GetLocTransformLerped(j, checkParts[nCheckParts].offset,lastqHost,kr,ktimeBack,this);
 		boxent.Basis = Matrix33(lastqHost);
 		boxent.center = (center-checkParts[nCheckParts].offset)*boxent.Basis;
 		if (pentlist[i]->m_parts[j].pPhysGeomProxy->pGeom->GetType()!=GEOM_HEIGHTFIELD) {
@@ -1544,7 +1543,7 @@ int CSoftEntity::Step(float time_interval)
 				1.0f/checkParts[nCheckParts].scale;
 			checkParts[nCheckParts].pGeom->PrepareForRayTest(m_thickness*2*checkParts[nCheckParts].rscale);
 			checkParts[nCheckParts].offset -= m_pos+m_offs0;
-			pbody = pentlist[i]->GetRigidBodyData(&rbody,j);
+			pbody = pentlist[i]->GetRigidBodyTrans(&rbody,j,this,2);
 			checkParts[nCheckParts].vbody = pbody->v-(pbody->w^pbody->pos);
 			checkParts[nCheckParts].wbody = pbody->w;
 			checkParts[nCheckParts].posBody = pbody->pos;
@@ -1602,8 +1601,8 @@ int CSoftEntity::Step(float time_interval)
 	for(i0=i1=0,center.zero(); i0<m_nAttachedVtx; i0++) {
 		i = m_vtx[i0].idx;
 		if (m_vtx[i1].pContactEnt!=m_vtx[i].pContactEnt || m_vtx[i1].iContactPart!=(m_vtx[i].iContactPart|nhostPt-1>>31)) {
-			pbody = m_vtx[i].pContactEnt->GetRigidBodyData(&rbody,m_vtx[i].iContactPart);
-			m_vtx[i].pContactEnt->GetLocTransformLerped(m_vtx[i].iContactPart, lastposHost,lastqHost,kr,ktimeBack);
+			pbody = m_vtx[i].pContactEnt->GetRigidBodyTrans(&rbody,m_vtx[i].iContactPart,this,2);
+			m_vtx[i].pContactEnt->GetLocTransformLerped(m_vtx[i].iContactPart, lastposHost,lastqHost,kr,ktimeBack, this);
 			vHost+=pbody->v; wHost+=pbody->w;	center+=pbody->pos; i1=i; nhostPt++;
 		}
 		m_vtx[i].pos = lastposHost+lastqHost*m_vtx[i].ptAttach;
@@ -1688,15 +1687,14 @@ int CSoftEntity::Step(float time_interval)
 		}
 		m_bMeshUpdated = 1;
 		m_bSkinReady = 0;
-		AtomicAdd(&m_pWorld->m_lockGrid,-bGridLocked);
+		m_pWorld->UnlockGrid(this,-bGridLocked);
 		m_lastposHost=lastposHost-m_pos; m_lastqHost=lastqHost;
 		m_lastPos = m_pos;
 	}
 	//for(i=0;i<pMesh->m_nTris;i++)
 	//	MARK_UNUSED pMesh->m_pNormals[i];
 
-	EventPhysPostStep epps;
-	epps.pEntity=this; epps.pForeignData=m_pForeignData; epps.iForeignData=m_iForeignData;
+	EventPhysPostStep epps;	InitEvent(&epps,this,iCaller);
 	epps.dt=time_interval; epps.pos=m_pos; epps.q=m_qrot; epps.idStep=m_pWorld->m_idStep;
 	m_pWorld->OnEvent(m_flags&pef_monitor_poststep, &epps);
 	if (m_pWorld->m_iLastLogPump==m_iLastLog && m_pEvent) {
@@ -1756,20 +1754,21 @@ int CSoftEntity::RayTrace(SRayTraceRes& rtr)
 		prim_inters inters;
 		triangle atri;
 		int i,j;
+		float mindist=1e10f, dist;
 
 		for(i=0;i<pMesh->m_nTris;i++) {
 			for(j=0;j<3;j++) atri.pt[j] = m_vtx[pMesh->m_pIndices[i*3+j]].pos+m_pos+m_offs0;
 			atri.n = atri.pt[1]-atri.pt[0] ^ atri.pt[2]-atri.pt[0];
-			if (ray_tri_intersection(&rtr.pRay->m_ray,&atri,&inters)) {
+			if (ray_tri_intersection(&rtr.pRay->m_ray,&atri,&inters) && (dist = (inters.pt[0]-rtr.pRay->m_ray.origin)*rtr.pRay->m_dirn) < mindist) {
 				rtr.pcontacts = &g_SoftContact[get_iCaller()];
 				rtr.pcontacts->pt = inters.pt[0];
-				rtr.pcontacts->t = (inters.pt[0]-rtr.pRay->m_ray.origin)*rtr.pRay->m_dirn;
+				rtr.pcontacts->t = mindist = dist;
 				rtr.pcontacts->id[0] = pMesh->m_pIds ? pMesh->m_pIds[i] : m_parts[0].surface_idx;
 				rtr.pcontacts->iNode[0] = i;
 				rtr.pcontacts->n = atri.n.normalized()*-sgnnz(atri.n*rtr.pRay->m_dirn);
-				return 1;
 			}
 		}
+		return mindist < 1e10f;
 	}
 
 	return 0;
@@ -1807,14 +1806,18 @@ int CSoftEntity::SetStateFromSnapshot(CStream &stm, int flags)
 
 int CSoftEntity::GetStateSnapshot(TSerialize ser, float time_back, int flags)
 {
-	if (m_flags & sef_skeleton)
+	if (m_flags & sef_skeleton || flags & 16)
 		if (ser.BeginOptionalGroup("updated", m_bMeshUpdated != 0)) {
 			ser.Value("pos", m_pos);
 			ser.Value("q", m_qrot);
 			ser.Value("q0", m_qrot0);
+			bool awake = m_bAwake!=0;
+			ser.Value("awake", awake);
 			for(int i=0; i<m_nVtx; i++) {
 				ser.BeginGroup("vtx");
 				ser.Value("pos",m_vtx[i].pos);
+				if (m_bAwake)
+					ser.Value("vel",m_vtx[i].vel);
 				ser.EndGroup();
 			}
 			ser.EndGroup();
@@ -1824,14 +1827,18 @@ int CSoftEntity::GetStateSnapshot(TSerialize ser, float time_back, int flags)
 
 int CSoftEntity::SetStateFromSnapshot(TSerialize ser, int flags)
 {
-	if (m_flags & sef_skeleton) {
+	if (m_flags & sef_skeleton || flags & 16) {
 		if (m_bMeshUpdated = ser.BeginOptionalGroup("updated", true)) {
 			ser.Value("pos", m_pos);
 			ser.Value("q", m_qrot);
 			ser.Value("q0", m_qrot0);
+			bool awake; ser.Value("awake", awake);
+			m_bAwake = awake ? 1:0;
 			int i; for(i=0; i<m_nVtx; i++) {
 				ser.BeginGroup("vtx");
 				ser.Value("pos",m_vtx[i].pos);
+				if (m_bAwake)
+					ser.Value("vel",m_vtx[i].vel);
 				ser.EndGroup();
 			}
 			CTriMesh *pMesh = (CTriMesh*)m_parts[0].pPhysGeomProxy->pGeom;
@@ -1879,12 +1886,16 @@ void CSoftEntity::DrawHelperInformation(IPhysRenderer *pRenderer, int flags)
 
 void CSoftEntity::GetMemoryStatistics(ICrySizer *pSizer) const
 {
-	CPhysicalEntity::GetMemoryStatistics(pSizer);
 	if (GetType()==PE_SOFT)
 		pSizer->AddObject((CSoftEntity*)this, sizeof(CSoftEntity));
+	CPhysicalEntity::GetMemoryStatistics(pSizer);
 	pSizer->AddObject(m_vtx, m_nVtx*sizeof(m_vtx[0]));
 	pSizer->AddObject(m_edges, m_nEdges*sizeof(m_edges[0]));
 	pSizer->AddObject(m_pVtxEdges, m_nEdges*2*sizeof(m_pVtxEdges[0]));
+	if (m_parts[0].pLattice) {
+		pSizer->AddObject(m_pTetrEdges, m_parts[0].pLattice->m_nTetr*6*sizeof(m_pTetrEdges[0]));
+		pSizer->AddObject(m_pTetrQueue, m_parts[0].pLattice->m_nTetr*sizeof(m_pTetrQueue[0]));
+	}
 }
 
 #undef CMemStream

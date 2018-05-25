@@ -1,15 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   SubstitutionProxy.cpp
-//  Version:     v1.00
-//  Created:     7/6/2005 by Timur.
-//  Compilers:   Visual Studio.NET
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "SubstitutionProxy.h"
@@ -17,6 +6,11 @@
 #include <CryNetwork/ISerialize.h>
 
 CRYREGISTER_CLASS(CEntityComponentSubstitution);
+
+CEntityComponentSubstitution::CEntityComponentSubstitution()
+{
+	m_componentFlags.Add(EEntityComponentFlags::NoSave);
+}
 
 //////////////////////////////////////////////////////////////////////////
 CEntityComponentSubstitution::~CEntityComponentSubstitution()
@@ -31,7 +25,7 @@ CEntityComponentSubstitution::~CEntityComponentSubstitution()
 void CEntityComponentSubstitution::Done()
 {
 	// Substitution proxy does not need to be restored if entity system is being rested.
-	if (m_pSubstitute && !g_pIEntitySystem->m_bReseting)
+	if (m_pSubstitute)
 	{
 		//gEnv->pLog->Log("CRYSIS-3502: CSubstitutionProxy::Done: Ptr=%d", (int)m_pSubstitute);
 		//gEnv->pLog->Log("CRYSIS-3502: CSubstitutionProxy::Done: %s", m_pSubstitute->GetName());
@@ -62,7 +56,7 @@ bool CEntityComponentSubstitution::NeedGameSerialize()
 	return m_pSubstitute != 0;
 };
 
-void CEntityComponentSubstitution::ProcessEvent(SEntityEvent& event)
+void CEntityComponentSubstitution::ProcessEvent(const SEntityEvent& event)
 {
 	switch (event.event)
 	{
@@ -74,7 +68,7 @@ void CEntityComponentSubstitution::ProcessEvent(SEntityEvent& event)
 //////////////////////////////////////////////////////////////////////////
 uint64 CEntityComponentSubstitution::GetEventMask() const
 {
-	return BIT64(ENTITY_EVENT_DONE);
+	return ENTITY_EVENT_BIT(ENTITY_EVENT_DONE) | ENTITY_EVENT_BIT(ENTITY_EVENT_PHYSICAL_TYPE_CHANGED) | ENTITY_EVENT_BIT(ENTITY_EVENT_ENABLE_PHYSICS);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -90,7 +84,7 @@ void CEntityComponentSubstitution::GameSerialize(TSerialize ser)
 			IPhysicalEntity** pents;
 			m_pSubstitute = 0;
 			int i = gEnv->pPhysicalWorld->GetEntitiesInBox(center - Vec3(0.05f), center + Vec3(0.05f), pents, ent_static);
-			for (--i; i >= 0 && !((m_pSubstitute = (IRenderNode*)pents[i]->GetForeignData(PHYS_FOREIGN_ID_STATIC)) &&
+			for (--i; i >= 0 && !((m_pSubstitute = static_cast<IRenderNode*>(pents[i]->GetForeignData(PHYS_FOREIGN_ID_STATIC))) &&
 			                      (m_pSubstitute->GetPos() - pos).len2() < sqr(0.03f) &&
 			                      (m_pSubstitute->GetBBox().GetCenter() - center).len2() < sqr(0.03f)); i--)
 				;

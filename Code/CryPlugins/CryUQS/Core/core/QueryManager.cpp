@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "QueryManager.h"
@@ -6,9 +6,9 @@
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
-namespace uqs
+namespace UQS
 {
-	namespace core
+	namespace Core
 	{
 
 		//===================================================================================
@@ -18,8 +18,9 @@ namespace uqs
 		//===================================================================================
 
 		CQueryManager::SRunningQueryInfo::SRunningQueryInfo()
-			: query()
-			, callback(0)
+			: pQuery()
+			, pQueryBlueprint()
+			, pCallback(0)
 		{}
 
 		//===================================================================================
@@ -28,11 +29,12 @@ namespace uqs
 		//
 		//===================================================================================
 
-		CQueryManager::SFinishedQueryInfo::SFinishedQueryInfo(const std::shared_ptr<CQueryBase>& _query, const Functor1<const SQueryResult&>& _callback, const CQueryID& _queryID, bool _queryFinishedWithSuccess, const string& _errorIfAny)
-			: query(_query)
-			, callback(_callback)
+		CQueryManager::SFinishedQueryInfo::SFinishedQueryInfo(const std::shared_ptr<CQueryBase>& _pQuery, const std::shared_ptr<const CQueryBlueprint>& _pQueryBlueprint, const Functor1<const SQueryResult&>& _pCallback, const CQueryID& _queryID, bool _bQueryFinishedWithSuccess, const string& _errorIfAny)
+			: pQuery(_pQuery)
+			, pQueryBlueprint(_pQueryBlueprint)
+			, pCallback(_pCallback)
 			, queryID(_queryID)
-			, queryFinishedWithSuccess(_queryFinishedWithSuccess)
+			, bQueryFinishedWithSuccess(_bQueryFinishedWithSuccess)
 			, errorIfAny(_errorIfAny)
 		{}
 
@@ -42,10 +44,10 @@ namespace uqs
 		//
 		//===================================================================================
 
-		CQueryManager::SHistoryQueryInfo2D::SHistoryQueryInfo2D(const CQueryID &_queryID, const CQueryBase::SStatistics& _statistics, bool _queryFinishedWithSuccess, const CTimeValue& _timestamp)
+		CQueryManager::SHistoryQueryInfo2D::SHistoryQueryInfo2D(const CQueryID &_queryID, const CQueryBase::SStatistics& _statistics, bool _bQueryFinishedWithSuccess, const CTimeValue& _timestamp)
 			: queryID(_queryID)
 			, statistics(_statistics)
-			, queryFinishedWithSuccess(_queryFinishedWithSuccess)
+			, bQueryFinishedWithSuccess(_bQueryFinishedWithSuccess)
 			, finishedTimestamp(_timestamp)
 		{}
 
@@ -66,7 +68,7 @@ namespace uqs
 			// nothing
 		}
 
-		CQueryID CQueryManager::StartQuery(const client::SQueryRequest& request, shared::IUqsString& errorMessage)
+		CQueryID CQueryManager::StartQuery(const Client::SQueryRequest& request, Shared::IUqsString& errorMessage)
 		{
 			if (!request.queryBlueprintID.IsOrHasBeenValid())
 			{
@@ -75,7 +77,7 @@ namespace uqs
 				return CQueryID::CreateInvalid();
 			}
 
-			std::shared_ptr<const CQueryBlueprint> qbp = g_hubImpl->GetQueryBlueprintLibrary().GetQueryBlueprintByIDInternal(request.queryBlueprintID);
+			std::shared_ptr<const CQueryBlueprint> qbp = g_pHub->GetQueryBlueprintLibrary().GetQueryBlueprintByIDInternal(request.queryBlueprintID);
 			if (!qbp)
 			{
 				errorMessage.Format("CQueryManager::StartQuery: the blueprint '%s' was once in the library, but has been removed and not been (successfully) reloaded since then", request.queryBlueprintID.GetQueryBlueprintName());
@@ -83,8 +85,8 @@ namespace uqs
 			}
 
 			static const CQueryID noParentQueryID = CQueryID::CreateInvalid();
-			std::unique_ptr<CItemList> emptyResultSinceThereIsNoPreviousQuery;
-			return StartQueryInternal(noParentQueryID, qbp, request.runtimeParams, request.querierName, request.callback, emptyResultSinceThereIsNoPreviousQuery, errorMessage);
+			std::shared_ptr<CItemList> pEmptyResultSinceThereIsNoPreviousQuery;
+			return StartQueryInternal(noParentQueryID, qbp, request.runtimeParams, request.szQuerierName, request.callback, pEmptyResultSinceThereIsNoPreviousQuery, errorMessage);
 		}
 
 		void CQueryManager::CancelQuery(const CQueryID& idOfQueryToCancel)
@@ -92,13 +94,13 @@ namespace uqs
 			auto it = m_queries.find(idOfQueryToCancel);
 			if (it != m_queries.end())
 			{
-				CQueryBase* pQueryToCancel = it->second.query.get();
+				CQueryBase* pQueryToCancel = it->second.pQuery.get();
 				pQueryToCancel->Cancel();
 				m_queries.erase(it);
 			}
 		}
 
-		void CQueryManager::AddItemMonitorToQuery(const CQueryID& queryID, client::ItemMonitorUniquePtr&& pItemMonitorToInstall)
+		void CQueryManager::AddItemMonitorToQuery(const CQueryID& queryID, Client::ItemMonitorUniquePtr&& pItemMonitorToInstall)
 		{
 			assert(pItemMonitorToInstall);
 
@@ -108,7 +110,7 @@ namespace uqs
 			}
 		}
 
-		CQueryID CQueryManager::StartQueryInternal(const CQueryID& parentQueryID, std::shared_ptr<const CQueryBlueprint> qbp, const shared::IVariantDict& runtimeParams, const char* querierName, Functor1<const core::SQueryResult&> callback, std::unique_ptr<CItemList>& potentialResultingItemsFromPreviousQuery, shared::IUqsString& errorMessage)
+		CQueryID CQueryManager::StartQueryInternal(const CQueryID& parentQueryID, std::shared_ptr<const CQueryBlueprint> pQueryBlueprint, const Shared::IVariantDict& runtimeParams, const char* szQuerierName, Functor1<const Core::SQueryResult&> pCallback, const std::shared_ptr<CItemList>& pPotentialResultingItemsFromPreviousQuery, Shared::IUqsString& errorMessage)
 		{
 			// generate a new query ID (even if the query fails to start)
 			const CQueryID id = ++m_queryIDProvider;
@@ -117,16 +119,16 @@ namespace uqs
 			HistoricQuerySharedPtr pOptionalHistoryEntry;
 			if (SCvars::logQueryHistory)
 			{
-				pOptionalHistoryEntry = m_queryHistoryManager.AddNewLiveHistoricQuery(id, querierName, parentQueryID);
+				pOptionalHistoryEntry = m_queryHistoryManager.AddNewLiveHistoricQuery(id, szQuerierName, parentQueryID);
 			}
 
 			// create a new query instance through the query-blueprint
-			const CQueryBase::SCtorContext queryCtorContext(id, querierName, pOptionalHistoryEntry, potentialResultingItemsFromPreviousQuery);
-			std::unique_ptr<CQueryBase> q = qbp->CreateQuery(queryCtorContext);
+			const CQueryBase::SCtorContext queryCtorContext(id, szQuerierName, pOptionalHistoryEntry, pPotentialResultingItemsFromPreviousQuery);
+			std::unique_ptr<CQueryBase> q = pQueryBlueprint->CreateQuery(queryCtorContext);
 
 			// instantiate that query (cannot be done in the query's ctor as it needs to return success/failure)
-			shared::CUqsString error;
-			if (!q->InstantiateFromQueryBlueprint(qbp, runtimeParams, error))
+			Shared::CUqsString error;
+			if (!q->InstantiateFromQueryBlueprint(pQueryBlueprint, runtimeParams, error))
 			{
 				errorMessage.Format("CQueryManager::StartQueryInternal: %s", error.c_str());
 				return CQueryID::CreateInvalid();
@@ -134,8 +136,9 @@ namespace uqs
 
 			// keep track of and update the new query from now on
 			SRunningQueryInfo newEntry;
-			newEntry.query = std::move(q);
-			newEntry.callback = callback;
+			newEntry.pQuery = std::move(q);
+			newEntry.pQueryBlueprint = pQueryBlueprint;
+			newEntry.pCallback = pCallback;
 			m_queries[id] = newEntry;
 
 			return id;
@@ -144,11 +147,13 @@ namespace uqs
 		CQueryBase* CQueryManager::FindQueryByQueryID(const CQueryID& queryID)
 		{
 			auto it = m_queries.find(queryID);
-			return (it == m_queries.end()) ? nullptr : it->second.query.get();
+			return (it == m_queries.end()) ? nullptr : it->second.pQuery.get();
 		}
 
 		void CQueryManager::Update()
 		{
+			CRY_PROFILE_FUNCTION(UQS_PROFILED_SUBSYSTEM_TO_USE);
+
 			UpdateQueries();
 
 			ExpireDebugDrawStatisticHistory2D();
@@ -174,7 +179,7 @@ namespace uqs
 			{
 				const CTimeValue age = (now - historyEntry.finishedTimestamp);
 				const float alpha = (age < s_delayBeforeFadeOut) ? 1.0f : clamp_tpl(1.0f - (age - s_delayBeforeFadeOut).GetSeconds() / s_fadeOutDuration.GetSeconds(), 0.0f, 1.0f);
-				const ColorF color = historyEntry.queryFinishedWithSuccess ? ColorF(0.0f, 1.0f, 0.0f, alpha) : ColorF(1.0f, 0.0f, 0.0f, alpha);
+				const ColorF color = historyEntry.bQueryFinishedWithSuccess ? ColorF(0.0f, 1.0f, 0.0f, alpha) : ColorF(1.0f, 0.0f, 0.0f, alpha);
 				row = DebugDrawQueryStatistics(historyEntry.statistics, historyEntry.queryID, row, color);
 				++row;
 			}
@@ -188,7 +193,7 @@ namespace uqs
 				const CQueryID& queryID = pair.first;
 				const SRunningQueryInfo& runningInfo = pair.second;
 				CQueryBase::SStatistics stats;
-				runningInfo.query->GetStatistics(stats);
+				runningInfo.pQuery->GetStatistics(stats);
 				row = DebugDrawQueryStatistics(stats, queryID, row, Col_White);
 				++row;
 			}
@@ -218,10 +223,12 @@ namespace uqs
 					// to the remaining queries (this happens implicitly).
 					//
 
-					CQueryBase* q = it->second.query.get();
+					CQueryBase* pQuery = it->second.pQuery.get();
 					CTimeValue timeBudgetForThisQuery;   // 0.0 seconds by default
 
-					if (q->RequiresSomeTimeBudgetForExecution())
+					const bool bThisQueryRequiresSomeTimeBudgetForExecution = pQuery->RequiresSomeTimeBudgetForExecution();
+
+					if (bThisQueryRequiresSomeTimeBudgetForExecution)
 					{
 						size_t numRemainingQueriesThatRequireSomeTimeBudget = 1;
 
@@ -230,8 +237,8 @@ namespace uqs
 						++it2;
 						for (; it2 != m_queries.cend(); ++it2)
 						{
-							const CQueryBase* q2 = it2->second.query.get();
-							if (q2->RequiresSomeTimeBudgetForExecution())
+							const CQueryBase* pQuery2 = it2->second.pQuery.get();
+							if (pQuery2->RequiresSomeTimeBudgetForExecution())
 							{
 								++numRemainingQueriesThatRequireSomeTimeBudget;
 							}
@@ -247,9 +254,9 @@ namespace uqs
 					// - keep track of the used time for donating unused time to the whole pool (so that the upcoming queries can benefit from it)
 					//
 
-					shared::CUqsString error;
+					Shared::CUqsString error;
 					const CTimeValue timestampBeforeQueryUpdate = gEnv->pTimer->GetAsyncTime();
-					const CQueryBase::EUpdateState queryState = q->Update(timeBudgetForThisQuery, error);
+					const CQueryBase::EUpdateState queryState = pQuery->Update(timeBudgetForThisQuery, error);
 					const CTimeValue timestampAfterQueryUpdate = gEnv->pTimer->GetAsyncTime();
 
 					//
@@ -264,21 +271,23 @@ namespace uqs
 
 					case CQueryBase::EUpdateState::Finished:
 						{
-							const std::shared_ptr<CQueryBase>& query = it->second.query;
-							const Functor1<const SQueryResult&>& callback = it->second.callback;
+							const std::shared_ptr<CQueryBase>& pQuery = it->second.pQuery;
+							const std::shared_ptr<const CQueryBlueprint>& pQueryBlueprint = it->second.pQueryBlueprint;
+							const Functor1<const SQueryResult&>& pCallback = it->second.pCallback;
 							const CQueryID& queryID = it->first;
-							const bool queryFinishedWithSuccess = true;
-							finishedOnes.emplace_back(query, callback, queryID, queryFinishedWithSuccess, "");
+							const bool bQueryFinishedWithSuccess = true;
+							finishedOnes.emplace_back(pQuery, pQueryBlueprint, pCallback, queryID, bQueryFinishedWithSuccess, "");
 						}
 						break;
 
 					case CQueryBase::EUpdateState::ExceptionOccurred:
 						{
-							const std::shared_ptr<CQueryBase>& query = it->second.query;
-							const Functor1<const SQueryResult&>& callback = it->second.callback;
+							const std::shared_ptr<CQueryBase>& pQuery = it->second.pQuery;
+							const std::shared_ptr<const CQueryBlueprint>& pQueryBlueprint = it->second.pQueryBlueprint;
+							const Functor1<const SQueryResult&>& pCallback = it->second.pCallback;
 							const CQueryID& queryID = it->first;
-							const bool queryFinishedWithSuccess = false;
-							finishedOnes.emplace_back(query, callback, queryID, queryFinishedWithSuccess, error.c_str());
+							const bool bQueryFinishedWithSuccess = false;
+							finishedOnes.emplace_back(pQuery, pQueryBlueprint, pCallback, queryID, bQueryFinishedWithSuccess, error.c_str());
 						}
 						break;
 
@@ -297,6 +306,21 @@ namespace uqs
 						const CTimeValue unusedTime = timeBudgetForThisQuery - timeUsedByThisQuery;
 						totalRemainingTimeBudget += unusedTime;
 					}
+					else if (bThisQueryRequiresSomeTimeBudgetForExecution)
+					{
+						//
+						// check for having exceeded the granted time by some percentage
+						// -> if this is the case, then issue a warning to the console and to the query history
+						//
+
+						const float allowedTimeBudgetExcess = (SCvars::timeBudgetExcessThresholdInPercentBeforeWarning * 0.01f) * timeBudgetForThisQuery.GetMilliSeconds();
+						const bool bExceededTimeBudgetTooMuch = (timeUsedByThisQuery - timeBudgetForThisQuery).GetMilliSeconds() > allowedTimeBudgetExcess;
+
+						if (bExceededTimeBudgetTooMuch)
+						{
+							it->second.pQuery->EmitTimeExcessWarningToConsoleAndQueryHistory(timeBudgetForThisQuery, timeUsedByThisQuery);
+						}
+					}
 				}
 
 				//
@@ -308,28 +332,17 @@ namespace uqs
 					// first, notify all listeners that these queries have finished
 					for (const SFinishedQueryInfo& entry : finishedOnes)
 					{
-						if (entry.callback)
+						if (entry.pCallback)
 						{
-							if (entry.queryFinishedWithSuccess)
-							{
-								QueryResultSetUniquePtr pResultSet = entry.query->ClaimResultSet();
-								const SQueryResult result = SQueryResult::CreateSuccess(entry.queryID, pResultSet);
-								entry.callback(result);
-							}
-							else
-							{
-								QueryResultSetUniquePtr pResultSetDummy = entry.query->ClaimResultSet();
-								const SQueryResult result = SQueryResult::CreateError(entry.queryID, pResultSetDummy, entry.errorIfAny.c_str());
-								entry.callback(result);
-							}
+							NotifyCallbackOfFinishedQuery(entry);
 						}
 
 						// add a new entry to the debug history for 2D on-screen rendering
 						if (SCvars::debugDraw)
 						{
 							CQueryBase::SStatistics stats;
-							entry.query->GetStatistics(stats);
-							SHistoryQueryInfo2D newHistoryEntry(entry.queryID, stats, entry.queryFinishedWithSuccess, gEnv->pTimer->GetAsyncTime());
+							entry.pQuery->GetStatistics(stats);
+							SHistoryQueryInfo2D newHistoryEntry(entry.queryID, stats, entry.bQueryFinishedWithSuccess, gEnv->pTimer->GetAsyncTime());
 							m_debugDrawHistory2D.push_back(std::move(newHistoryEntry));
 						}
 					}
@@ -344,6 +357,24 @@ namespace uqs
 						}
 					}
 				}
+			}
+		}
+
+		void CQueryManager::NotifyCallbackOfFinishedQuery(const SFinishedQueryInfo& finishedQueryInfo)
+		{
+			CRY_PROFILE_FUNCTION_ARG(UQS_PROFILED_SUBSYSTEM_TO_USE, finishedQueryInfo.pQueryBlueprint->GetName());
+
+			if (finishedQueryInfo.bQueryFinishedWithSuccess)
+			{
+				QueryResultSetUniquePtr pResultSet = finishedQueryInfo.pQuery->ClaimResultSet();
+				const SQueryResult result = SQueryResult::CreateSuccess(finishedQueryInfo.queryID, pResultSet);
+				finishedQueryInfo.pCallback(result);
+			}
+			else
+			{
+				QueryResultSetUniquePtr pResultSetDummy;
+				const SQueryResult result = SQueryResult::CreateError(finishedQueryInfo.queryID, pResultSetDummy, finishedQueryInfo.errorIfAny.c_str());
+				finishedQueryInfo.pCallback(result);
 			}
 		}
 
@@ -366,7 +397,7 @@ namespace uqs
 			for (const auto& pair : m_queries)
 			{
 				const CQueryID& queryID = pair.first;
-				const CQueryBase& query = *pair.second.query;
+				const CQueryBase& query = *pair.second.pQuery;
 
 				logger.Printf("");
 				DebugPrintQueryStatistics(logger, query, queryID);
@@ -376,12 +407,36 @@ namespace uqs
 			logger.Printf("");
 		}
 
+		void CQueryManager::CancelAllRunningQueriesDueToUpcomingTearDownOfHub()
+		{
+			// operate on a copy in case the query's callback cancels queries recursively (happens in hierarchical queries)
+			std::map<CQueryID, SRunningQueryInfo> copyOfRunningQueries;
+			copyOfRunningQueries.swap(m_queries);
+
+			for (auto it = copyOfRunningQueries.begin(); it != copyOfRunningQueries.end(); ++it)
+			{
+				const SRunningQueryInfo& runningQueryInfo = it->second;
+
+				// notify the originator of the query that we're prematurely canceling the query
+				if (runningQueryInfo.pCallback)
+				{
+					const CQueryID& queryID = it->first;
+					QueryResultSetUniquePtr pDummyResultSet;
+					const SQueryResult result = SQueryResult::CreateCanceledByHubTearDown(queryID, pDummyResultSet);
+					runningQueryInfo.pCallback(result);
+				}
+
+				// now cancel it (this might attempt to do some recursive cancelations, but they will effectively end up in CancelQuery() as a NOP since m_queries has already been emptied)
+				runningQueryInfo.pQuery->Cancel();
+			}
+		}
+
 		void CQueryManager::DebugPrintQueryStatistics(CLogger& logger, const CQueryBase& query, const CQueryID& queryID)
 		{
 			CQueryBase::SStatistics stats;
 			query.GetStatistics(stats);
 
-			shared::CUqsString queryIdAsString;
+			Shared::CUqsString queryIdAsString;
 			queryID.ToString(queryIdAsString);
 			logger.Printf("--- UQS query #%s ('%s': '%s') ---", queryIdAsString.c_str(), stats.querierName.c_str(), stats.queryBlueprintName.c_str());
 
@@ -433,15 +488,16 @@ namespace uqs
 
 		int CQueryManager::DebugDrawQueryStatistics(const CQueryBase::SStatistics& statisticsToDraw, const CQueryID& queryID, int row, const ColorF& color)
 		{
-			shared::CUqsString queryIDAsString;
+			Shared::CUqsString queryIDAsString;
 			queryID.ToString(queryIDAsString);
 
-			CDrawUtil2d::DrawLabel(row, color, "#%s: '%s' / '%s' (%i/%i)",
+			CDrawUtil2d::DrawLabel(row, color, "#%s: '%s' / '%s' (%i/%i) still to inspect: %i",
 				queryIDAsString.c_str(),
 				statisticsToDraw.querierName.c_str(),
 				statisticsToDraw.queryBlueprintName.c_str(),
-				(int)statisticsToDraw.numRemainingItemsToInspect,
-				(int)statisticsToDraw.numGeneratedItems);
+				(int)statisticsToDraw.numItemsInFinalResultSet,
+				(int)statisticsToDraw.numGeneratedItems,
+				(int)statisticsToDraw.numRemainingItemsToInspect);
 			++row;
 
 			return row;

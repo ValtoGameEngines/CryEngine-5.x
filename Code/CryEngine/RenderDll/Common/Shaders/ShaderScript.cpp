@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*=============================================================================
    ShaderScript.cpp : loading/reloading/hashing of shader scipts.
@@ -96,7 +96,8 @@ bool CShaderMan::mfReloadShaderIncludes(const char* szPath, int nFlags)
 				continue;
 			if (!stricmp(&nmf[len], ".cfi"))
 			{
-				fpStripExtension(fileinfo.name, nmf);
+				cry_strcpy(nmf, fileinfo.name);
+				PathUtil::RemoveExtension(nmf);
 				bool bCh = false;
 				SShaderBin* pBin = m_Bin.GetBinShader(nmf, true, 0, &bCh);
 				if (bCh)
@@ -124,11 +125,10 @@ bool CShaderMan::mfReloadAllShaders(int nFlags, uint32 nFlagsHW)
 
 	if (!gRenDev->IsShaderCacheGenMode())
 	{
-		gRenDev->m_pRT->RC_ResetToDefault();
 		gRenDev->FlushRTCommands(true, true, true);
 	}
 
-	CDebugAllowFileAccess ignoreInvalidFileAccess;
+	SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
 
 	// Check include changing
 	if (m_ShadersPath && !CRenderer::CV_r_shadersignoreincludeschanging)
@@ -192,7 +192,15 @@ bool CShaderMan::mfReloadAllShaders(int nFlags, uint32 nFlagsHW)
 	gRenDev->FlushRTCommands(true, true, true);
 	CHWShader::mfFlushPendedShadersWait(-1);
 
-	CCryDeviceWrapper::GetObjectFactory().ReloadPipelineStates();
+	for (auto pShaderResources : CShader::s_ShaderResources_known)
+	{
+		if (pShaderResources)
+		{
+			pShaderResources->ClearPipelineStateCache();
+		}
+	}
+
+	GetDeviceObjectFactory().ReloadPipelineStates();
 
 	return bState;
 }
@@ -246,8 +254,8 @@ bool CShaderMan::mfReloadFile(const char* szPath, const char* szName, int nFlags
 
 	m_nFrameForceReload++;
 
-	const char* szExt = fpGetExtension(szName);
-	if (!stricmp(szExt, ".cfx"))
+	const char* szExt = PathUtil::GetExt(szName);
+	if (!stricmp(szExt, "cfx"))
 	{
 		m_bReload = true;
 		char szShaderName[256];
@@ -263,7 +271,7 @@ bool CShaderMan::mfReloadFile(const char* szPath, const char* szName, int nFlags
 		}
 		m_bReload = false;
 	}
-	else if (!stricmp(szExt, ".cfi"))
+	else if (!stricmp(szExt, "cfi"))
 	{
 		CCryNameTSCRC Name = CShader::mfGetClassName();
 		SResourceContainer* pRL = CBaseResource::GetResourcesForClass(Name);
@@ -488,7 +496,7 @@ bool CShaderMan::mfModifyGenFlags(CShader* efGen, const CShaderResources* pRes, 
 			{
 				// during shader cache gen, disable the special features in non D3D11 mode, and just accept
 				// the lines as they come in D3D11 mode
-				if (CParserBin::m_nPlatform != SF_D3D11 && CParserBin::m_nPlatform != SF_DURANGO && CParserBin::m_nPlatform != SF_GL4)
+				if ((CParserBin::m_nPlatform & (SF_D3D11 | SF_DURANGO | SF_GL4 | SF_VULKAN)) == 0)
 				{
 					if (pBit->m_nDependencySet & SHGD_HW_WATER_TESSELLATION)
 						nAndMaskHW &= ~pBit->m_Mask;
@@ -651,6 +659,8 @@ CShader* CShaderMan::mfForName(const char* nameSh, int flags, const CShaderResou
 		strcat(nameRes, "(O)");
 	else if (CParserBin::m_nPlatform == SF_DURANGO)
 		cry_strcat(nameRes, "(D)");
+	else if (CParserBin::m_nPlatform == SF_VULKAN)
+		cry_strcat(nameRes, "(VK)");
 
 	CShader* efGen = nullptr;
 
@@ -753,8 +763,13 @@ CShader* CShaderMan::mfForName(const char* nameSh, int flags, const CShaderResou
 	cry_sprintf(nameNew, "%sCryFX/%s.cfx", m_ShadersPath, nameEf);
 	ef->m_NameFile = nameNew;
 	ef->m_Flags |= flags;
-	gRenDev->m_pRT->RC_ParseShader(ef, nMaskGen | nMaskGenHW, flags, (CShaderResources*)Res);
-	return ef;
+	
+	_smart_ptr<CShader> pShader(ef);
+	_smart_ptr<CShaderResources> pResources( const_cast<CShaderResources*>(Res) );
+	gRenDev->ExecuteRenderThreadCommand(
+		[=]{ this->RT_ParseShader(pShader, nMaskGen | nMaskGenHW, flags, pResources); },
+		ERenderCommandFlags::LevelLoadingThread_defer
+	);
 
 	return ef;
 }
@@ -813,7 +828,7 @@ void CShaderMan::RT_ParseShader(CShader* pSH, uint64 nMaskGen, uint32 flags, CSh
 {
 	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "ParseShader");
 
-	CDebugAllowFileAccess ignoreInvalidFileAccess;
+	SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
 
 	bool bSuccess = false;
 #ifdef SHADERS_SERIALIZING

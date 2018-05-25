@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -110,6 +110,7 @@ class CHUDMissionObjectiveSystem; // TODO : Remove me?
 class CGameBrowser;
 class CGameLobby;
 class CGameLobbyManager;
+class CGameStateRecorder;
 #if IMPLEMENT_PC_BLADES
 class CGameServerLists;
 #endif //IMPLEMENT_PC_BLADES
@@ -223,17 +224,6 @@ enum EDifficulty
 	eDifficulty_PostHuman,
 
 	eDifficulty_COUNT,
-};
-
-//! Platform defines
-enum EPlatform
-{
-	ePlatform_Unknown = 0,
-	ePlatform_PC,
-	ePlatform_XBoxOne,
-	ePlatform_PS4,
-
-	ePlatform_COUNT,
 };
 
 //! Controller layout types
@@ -387,8 +377,6 @@ public:
 	virtual IGame::ExportFilesInfo ExportLevelData(const char* levelName, const char* missionName) const;
 	virtual void                   LoadExportedLevelData(const char* levelName, const char* missionName);
 
-	virtual void                   RegisterGameFlowNodes();
-	void                           UnregisterGameFlowNodes();
 	// ~IGame
 
 	// IGameFrameworkListener
@@ -645,6 +633,9 @@ public:
 	const GUID* GetPlayerSessionId() const { return &m_playerSessionId; }
 #endif
 
+	void RegisterPhysicsCallbacks();
+	void UnregisterPhysicsCallbacks();
+
 protected:
 
 	//! Difficulty config loading helper
@@ -690,7 +681,7 @@ protected:
 		EPlatform platformId;
 		BYTE      devices;      // Devices to use when registering actions
 
-		SPlatformInfo(EPlatform _platformId = ePlatform_Unknown) : platformId(_platformId), devices(eAID_KeyboardMouse | eAID_XboxPad | eAID_PS4Pad) {}
+		SPlatformInfo(EPlatform _platformId = EPlatform::Current) : platformId(_platformId), devices(eAID_KeyboardMouse | eAID_XboxPad | eAID_PS4Pad) {}
 	};
 	SPlatformInfo m_platformInfo;
 
@@ -750,7 +741,9 @@ protected:
 	static void CmdFlyCamSetPoint(IConsoleCmdArgs* pArgs);
 	static void CmdFlyCamPlay(IConsoleCmdArgs* pArgs);
 
+#if defined(USE_CRY_ASSERT)
 	static void CmdIgnoreAllAsserts(IConsoleCmdArgs* pArgs);
+#endif
 
 	static void CmdReloadPlayer(IConsoleCmdArgs* cmdArgs);
 
@@ -843,6 +836,7 @@ protected:
 	CMatchmakingTelemetry*    m_pMatchMakingTelemetry;
 	CDataPatchDownloader*     m_pDataPatchDownloader;
 	CGameLocalizationManager* m_pGameLocalizationManager;
+	CGameStateRecorder*       m_pGameStateRecorder;
 #if USE_LAGOMETER
 	CLagOMeter*               m_pLagOMeter;
 #endif
@@ -903,6 +897,8 @@ public:
 	TStringStringMap* GetVariantOptions() { return &m_variantOptions; }
 
 private:
+	static int OnCreatePhysicalEntityLogged(const EventPhys* pEvent);
+
 	TStringStringMap m_variantOptions;
 
 	typedef std::map<CryFixedStringT<128>, int> TRichPresenceMap;

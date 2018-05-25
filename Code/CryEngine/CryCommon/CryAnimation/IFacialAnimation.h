@@ -1,15 +1,6 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// -------------------------------------------------------------------------
-//  File name:   IFacialAnimation.h
-//  Version:     v1.00
-//  Created:     7/10/2005 by Timur.
-//  Compilers:   Visual Studio.NET 2003
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
+//! \cond INTERNAL
 
 #pragma once
 
@@ -539,7 +530,7 @@ struct IFacialAnimSequence
 		FLAG_RANGE_FROM_SOUND = 0x00001,  //!< Take time range from the sound length.
 	};
 
-	enum ESerializationFlags
+	enum ESerializationFlags : uint32
 	{
 		SFLAG_SOUND_ENTRIES = 0x00000001,
 		SFLAG_CAMERA_PATH   = 0x00000002,
@@ -609,3 +600,5 @@ struct IFacialAnimSequence
 
 static const float FACIAL_EDITOR_FPS = 30.0f;
 inline float FacialEditorSnapTimeToFrame(float time) { return int((time * FACIAL_EDITOR_FPS) + 0.5f) * (1.0f / FACIAL_EDITOR_FPS); }
+
+//! \endcond

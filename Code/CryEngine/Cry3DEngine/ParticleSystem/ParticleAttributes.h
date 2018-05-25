@@ -1,104 +1,132 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef PARTICLEATTRIBUTES_H
 #define PARTICLEATTRIBUTES_H
 
 #pragma once
 
+#include "Features/ParamTraits.h"
 #include <CrySerialization/Color.h>
 #include <CrySerialization/Enum.h>
+#include <CryCore/CryVariant.h>
+#include <CryString/CryName.h>
 
 namespace pfx2
 {
 
-SERIALIZATION_ENUM_DECLARE(EAttributeType, ,
-                           Boolean = IParticleAttributes::ET_Boolean,
-                           Integer = IParticleAttributes::ET_Integer,
-                           Float = IParticleAttributes::ET_Float,
-                           Color = IParticleAttributes::ET_Color
-                           )
-
-SERIALIZATION_ENUM_DECLARE(EAttributeScope, ,
-                           PerEmitter,
-                           PerEffect
-                           )
-
-struct SAttribute
+// Description of an attribute, including default value
+struct SAttributeDesc
 {
-	SAttribute();
+	void Serialize(IArchive& ar);
 
-	void Serialize(Serialization::IArchive& ar);
+	CCryName                     m_name;
+	IParticleAttributes::TValue  m_defaultValue;
 
-	string          m_name;
-	EAttributeType  m_type;
-	EAttributeScope m_scope;
-	ColorB          m_asColor;
-	float           m_minInt;
-	float           m_maxInt;
-	float           m_asFloat;
-	float           m_minFloat;
-	float           m_maxFloat;
-	int             m_asInt;
-	bool            m_asBoolean;
-	bool            m_useMin;
-	bool            m_useMax;
+	TValue<int, TDefaultMin<>>   m_minInt;
+	TValue<int, TDefaultMax<>>   m_maxInt;
+	TValue<float, TDefaultMin<>> m_minFloat;
+	TValue<float, TDefaultMax<>> m_maxFloat;
+
+	IParticleAttributes::EType	GetType() const { return m_defaultValue.Type(); }
 };
 
+// Instance of an attribute value
+struct SAttributeEdit
+{
+	SAttributeEdit()
+		{}
+	SAttributeEdit(const CCryName& name, const IParticleAttributes::TValue& value)
+		: m_name(name), m_value(value){}
+
+	CCryName                    m_name;
+	IParticleAttributes::TValue m_value;
+
+	void Serialize(IArchive& ar);
+};
+
+// List of attribute descriptions
 class CAttributeTable
 {
 public:
-	size_t            GetNumAttributes() const       { return m_attributes.size(); }
-	const SAttribute& GetAttribute(size_t idx) const { return m_attributes[idx]; }
-	void              Serialize(Serialization::IArchive& ar);
+	CAttributeTable()
+		: m_enumDesc(yasli::TypeID::get<CAttributeTable>()) {}
+                    
+	uint                  GetNumAttributes() const       { return m_attributes.size(); }
+	const SAttributeDesc& GetAttribute(uint index) const { return m_attributes[index]; }
+	int                   FindAttributeIdByName(const CCryName& name) const;
+
+	void                  Serialize(IArchive& ar);
+	bool                  SerializeName(IArchive& ar, CCryName& value, cstr name, cstr label) const;
+
+	void                  AddAttribute(const SAttributeDesc& desc) { m_attributes.push_back(desc);  }
 
 private:
-	std::vector<SAttribute> m_attributes;
+	std::vector<SAttributeDesc> m_attributes;
+	yasli::EnumDescription      m_enumDesc; // TODO: Streamline, pass name list to archive more directly
 };
 
+typedef std::shared_ptr<const CAttributeTable> TAttributeTablePtr;
+
+// List of attribute value instances
 class CAttributeInstance : public IParticleAttributes
 {
-private:
-	struct SData
-	{
-		union
-		{
-			bool  m_asBool;
-			int   m_asInt;
-			float m_asFloat;
-			UCol  m_asColor;
-		};
-	};
-
 public:
-	CAttributeInstance();
+	CAttributeInstance() {}
+	CAttributeInstance(TAttributeTablePtr pTable) { Reset(pTable); }
 
 	// IParticleAttributes
-	virtual void         UpdateScriptTable(const SmartScriptTable& scriptTable);
-	virtual TAttributeId FindAttributeIdByName(cstr name) const;
-	virtual uint         GetNumAttributes() const;
-	virtual cstr         GetAttributeName(uint idx) const;
-	virtual EType        GetAttributeType(uint idx) const;
-	virtual bool         GetAsBoolean(TAttributeId id, bool defaultValue) const;
-	virtual int          GetAsInteger(TAttributeId id, int defaultValue) const;
-	virtual float        GetAsFloat(TAttributeId id, float defaultValue) const;
-	virtual ColorB       GetAsColorB(TAttributeId id, ColorB defaultValue) const;
-	virtual ColorF       GetAsColorF(TAttributeId id, ColorF defaultValue) const;
-	virtual void         SetAsBoolean(TAttributeId id, bool value);
-	virtual int          SetAsInteger(TAttributeId id, int value);
-	virtual float        SetAsFloat(TAttributeId id, float value);
-	virtual void         SetAsColor(TAttributeId id, ColorB value);
-	virtual void         SetAsColor(TAttributeId id, ColorF value);
+	void          Reset(const IParticleAttributes* pCopySource = nullptr) override;
+	void          Serialize(IArchive& ar) override;
+	void          TransferInto(IParticleAttributes* pReceiver) const override;
+	TAttributeId  FindAttributeIdByName(cstr name) const override { return FindAttributeIdByName(CCryName(name)); }
+	uint          GetNumAttributes() const override;
+	cstr          GetAttributeName(TAttributeId idx) const override;
+	EType         GetAttributeType(TAttributeId idx) const override;
+	const TValue& GetValue(TAttributeId idx) const override;
+	TValue        GetValue(TAttributeId idx, const TValue& defaultVal) const override;
+	bool          SetValue(TAttributeId idx, const TValue& value) override;
 	// ~IParticleAttributes
 
-	void              Reset();
-	void              Reset(const CAttributeTable* pTable, EAttributeScope scope);
-	const SAttribute& GetAttribute(TAttributeId attributeId) const;
+	void                   Reset(TAttributeTablePtr pTable);
+	void                   ResetValue(TAttributeId id);
+	SAttributeEdit*        FindEditById(TAttributeId id);
+	const SAttributeEdit*  FindEditById(TAttributeId id) const { return non_const(this)->FindEditById(id); }
+	const SAttributeDesc&  GetDesc(TAttributeId attributeId) const;
+
+	void                   AddAttribute(const SAttributeEdit& edit) { m_attributesEdit.push_back(edit); }
+	TAttributeId           FindAttributeIdByName(const CCryName& name) const;
+	
+	bool                   WasChanged() { return m_changed && ((m_changed = false), true); }
 
 private:
-	std::vector<uint>      m_attributeIndices;
-	std::vector<SData>     m_data;
-	const CAttributeTable* m_pAttributeTable;
+	std::vector<SAttributeEdit>          m_attributesEdit;
+	std::weak_ptr<const CAttributeTable> m_pAttributeTable;
+	bool                                 m_changed = true;
 };
+
+class CAttributeReference
+{
+public:
+	const CCryName& Name() const { return m_name; }
+
+	bool Serialize(Serialization::IArchive& ar, cstr name, cstr label);
+
+	template<typename T>
+	T GetValueAs(const CAttributeInstance& attributes, T defaultValue) const
+	{
+		auto id = attributes.FindAttributeIdByName(m_name);
+		return attributes.GetValueAs(id, defaultValue);
+	}
+
+private:
+	CCryName m_name;
+};
+
+inline bool Serialize(Serialization::IArchive& ar, CAttributeReference& attr, cstr name, cstr label)
+{
+	return attr.Serialize(ar, name, label);
+}
+
 
 }
 

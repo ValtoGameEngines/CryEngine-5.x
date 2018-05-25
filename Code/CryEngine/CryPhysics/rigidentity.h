@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef rigidentity_h
 #define rigidentity_h
@@ -20,7 +20,6 @@ struct constraint_info {
 	float sensorRadius;
 	CPhysicalEntity *pConstraintEnt;
 	int bActive;
-	quaternionf qprev[2];
 	float limit;
 	float hardness;
 };
@@ -122,7 +121,6 @@ class CRigidEntity : public CPhysicalEntity {
 	virtual void OnContactResolved(entity_contact *pContact, int iop, int iGroupId);
 
 	virtual RigidBody *GetRigidBody(int ipart=-1,int bWillModify=0) { return &m_body; }
-	virtual void GetContactMatrix(const Vec3 &pt, int ipart, Matrix33 &K) { m_body.GetContactMatrix(pt-m_body.pos,K); }
 	virtual float GetMassInv() { return m_flags & aef_recorded_physics ? 0:m_body.Minv; }
 
 	enum snapver { SNAPSHOT_VERSION = 9 };
@@ -136,6 +134,8 @@ class CRigidEntity : public CPhysicalEntity {
 	virtual void SetNetworkAuthority(int authoritive, int paused);
 	int WriteContacts(CStream &stm,int flags);
 	int ReadContacts(CStream &stm,int flags);
+	int WriteContacts(TSerialize ser);
+	int ReadContacts(TSerialize ser);
 
 	virtual void StartStep(float time_interval);
 	virtual float GetMaxTimeStep(float time_interval);
@@ -150,6 +150,11 @@ class CRigidEntity : public CPhysicalEntity {
 	virtual float GetMaxFriction() { return m_maxFriction; }
 	virtual void GetSleepSpeedChange(int ipart, Vec3 &v,Vec3 &w) { v=m_vSleep; w=m_wSleep; }
 
+	virtual bool OnSweepHit(geom_contact &cnt, int icnt, float &dt, Vec3 &vel, int &nsweeps) {
+		if (m_nColliders)
+			m_minFriction = 3.0f;
+		return false;
+	}
 	virtual void CheckAdditionalGeometry(float time_interval) {}
 	virtual void AddAdditionalImpulses(float time_interval) {}
 	virtual void RecomputeMassDistribution(int ipart=-1,int bMassChanged=1);
@@ -177,12 +182,11 @@ class CRigidEntity : public CPhysicalEntity {
 		entity_contact *&pResContact, Vec3 &n,float &maxDist, const Vec3 &ptTest, const Vec3 &dirTest) const;
 	void ComputeBBoxRE(coord_block_BBox *partCoord);
 	void UpdatePosition(int bGridLocked);
-	int PostStepNotify(float time_interval,pe_params_buoyancy *pb,int nMaxBuoys);
+	int PostStepNotify(float time_interval,pe_params_buoyancy *pb,int nMaxBuoys,int iCaller);
 	masktype MaskIgnoredColliders(int iCaller, int bScheduleForStep=0);
 	void UnmaskIgnoredColliders(masktype constraint_mask, int iCaller);
 	void FakeRayCollision(CPhysicalEntity *pent, float dt);
 	int ExtractConstraintInfo(int i, masktype constraintMask, pe_action_add_constraint &aac);
-	void SaveConstraintFrames(int bRestore=0);
 	EventPhysJointBroken &ReportConstraintBreak(EventPhysJointBroken &epjb, int i);
 	virtual bool IgnoreCollisionsWith(const CPhysicalEntity *pent, int bCheckConstraints=0) const;
 	virtual void OnNeighbourSplit(CPhysicalEntity *pentOrig, CPhysicalEntity *pentNew);
@@ -224,10 +228,11 @@ class CRigidEntity : public CPhysicalEntity {
 
 	unsigned int m_bAwake              : 8;
 	unsigned int m_nSleepFrames        : 5;
-	unsigned int m_nFutileUnprojFrames : 4;
+	unsigned int m_nFutileUnprojFrames : 3;
 	unsigned int m_nEvents             : 5;
 	unsigned int m_nMaxEvents          : 5;
 	unsigned int m_icollMin            : 5;
+	unsigned int m_alwaysSweep         : 1;
 
 	entity_contact **m_pColliderContacts;
 	masktype *m_pColliderConstraints;
@@ -267,10 +272,13 @@ class CRigidEntity : public CPhysicalEntity {
 	quaternionf m_prevq;
 	float m_E0,m_Estep;
 	float m_timeCanopyFallen;
-	int m_bCanopyContact : 8;
-	int m_nCanopyContactsLost : 24;
+	unsigned int m_bCanopyContact : 8;
+	unsigned int m_nCanopyContactsLost : 15;
+	unsigned int m_sequenceOffset : 8;
+	unsigned int m_hasAuthority : 1;
 	Vec3 m_Psoft,m_Lsoft;
 	Vec3 m_forcedMove;
+	float m_sweepGap;
 
 	EventPhysCollision **m_pEventsColl;
 	int m_iLastLogColl;
@@ -287,31 +295,15 @@ class CRigidEntity : public CPhysicalEntity {
 	volatile int m_lockConstraintIdx;
 	volatile int m_lockContacts;
 	volatile int m_lockStep;
-#if USE_IMPROVED_RIGID_ENTITY_SYNCHRONISATION
-	mutable volatile int m_lockNetInterp;
-#endif
-
-	checksum_item m_checksums[NCHECKSUMS];
-	int m_iLastChecksum;
-
-#if USE_IMPROVED_RIGID_ENTITY_SYNCHRONISATION
-	SRigidEntityNetStateHistory* m_pNetStateHistory;
-	uint8 m_sequenceOffset;
-	bool m_hasAuthority;
-#endif
+	union {
+		mutable volatile int m_lockNetInterp;
+		int m_iLastChecksum;
+	};
+	union {
+		checksum_item m_checksums[NCHECKSUMS];
+		struct SRigidEntityNetStateHistory* m_pNetStateHistory;
+	};
 };
-
-inline Vec3 Loc2Glob(const entity_contact &cnt, const Vec3 &ptloc, int i)
-{
-	return cnt.pent[i]->m_pNewCoords->pos+cnt.pent[i]->m_pNewCoords->q*(
-		cnt.pent[i]->m_parts[cnt.ipart[i]].pNewCoords->q*ptloc*cnt.pent[i]->m_parts[cnt.ipart[i]].scale + 
-		cnt.pent[i]->m_parts[cnt.ipart[i]].pNewCoords->pos);
-}
-inline Vec3 Glob2Loc(const entity_contact &cnt, int i)
-{
-	return ((cnt.pt[i]-cnt.pent[i]->m_pos)*cnt.pent[i]->m_qrot - cnt.pent[i]->m_parts[cnt.ipart[i]].pos)*
-		cnt.pent[i]->m_parts[cnt.ipart[i]].q*(1.0f/cnt.pent[i]->m_parts[cnt.ipart[i]].scale);
-}
 
 struct REdata {
 	CPhysicalEntity *CurColliders[128];

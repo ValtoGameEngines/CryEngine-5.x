@@ -1,11 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <QWidget>
 
 class QFilteringPanel;
-class QTreeView;
+class QAdvancedTreeView;
 class QAttributeFilterProxyModel;
 class QToolButton;
 class QItemSelection;
@@ -19,12 +19,14 @@ namespace CrySchematycEditor {
 class CComponentItem;
 class CAbstractComponentsModel;
 
+class CMainWindow;
+
 class CComponentsWidget : public QWidget
 {
 	Q_OBJECT;
 
 public:
-	CComponentsWidget(QWidget* pParent = nullptr);
+	CComponentsWidget(CMainWindow& editor, QWidget* pParent = nullptr);
 	~CComponentsWidget();
 
 	CAbstractComponentsModel* GetModel() const { return m_pModel; }
@@ -51,10 +53,11 @@ private:
 	virtual void customEvent(QEvent* pEvent) override;
 
 private:
+	CMainWindow*                m_pEditor;
 	CAbstractComponentsModel*   m_pModel;
 
 	QFilteringPanel*            m_pFilter;
-	QTreeView*                  m_pComponentsList;
+	QAdvancedTreeView*          m_pComponentsList;
 	QAttributeFilterProxyModel* m_pFilterProxy;
 	QToolButton*                m_pAddButton;
 	QPopupWidget*               m_pContextMenu;
@@ -62,3 +65,4 @@ private:
 };
 
 }
+

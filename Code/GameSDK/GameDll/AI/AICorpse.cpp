@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "AICorpse.h"
@@ -584,7 +584,7 @@ void CAICorpseManager::RemoveSomeCorpses()
 	const uint32 corspeCount = (uint32)m_corpsesArray.size();
 	assert(corspeCount > AI_CORPSES_MINIMUM);
 
-	const uint32 maxCorpsesToRemove = MIN((corspeCount / AI_CORPSES_MINIMUM), 8);
+	const uint32 maxCorpsesToRemove = std::min((corspeCount / AI_CORPSES_MINIMUM), (uint32)8);
 	assert(maxCorpsesToRemove > 0);
 
 	std::vector<SCorpseRemovalScore> corpseScoresInfo;

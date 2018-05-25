@@ -1,219 +1,195 @@
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
 #include "StdAfx.h"
 #include "MonoDomain.h"
 
 #include "MonoRuntime.h"
 #include "MonoLibrary.h"
-
-#include <mono/jit/jit.h>
-#include <mono/metadata/mono-debug.h>
-#include <mono/metadata/debug-helpers.h>
+#include "MonoString.h"
+#include "RootMonoDomain.h"
 
 #include <CrySystem/IProjectManager.h>
 
-CMonoDomain::CMonoDomain()
-{
-	char executableFolder[_MAX_PATH];
-	CryGetExecutableFolder(_MAX_PATH, executableFolder);
-
-	string sDirectory = executableFolder;
-	PathUtil::UnifyFilePath(sDirectory);
-
-	m_binaryDirectories.push_back(sDirectory);
-}
-
 CMonoDomain::~CMonoDomain()
 {
+	UnloadAssemblies();
+
 	// Destroy libraries in reverse order, to resolve dependency issues
 	for (auto it = m_loadedLibraries.rbegin(); it != m_loadedLibraries.rend(); ++it)
 	{
 		// Delete the CMonoLibrary object
-		it->pLibrary.reset();
+		it->reset();
 	}
 
 	// Destroy the domain
 	Unload();
+
+	CleanTempDirectory();
 }
 
 bool CMonoDomain::Activate(bool bForce)
 {
-	return mono_domain_set(m_pDomain, bForce) != 0;
+	return MonoInternals::mono_domain_set(m_pDomain, bForce) != 0;
 }
 
 bool CMonoDomain::IsActive() const
 {
-	return m_pDomain == mono_domain_get(); 
+	return m_pDomain == MonoInternals::mono_domain_get(); 
 }
 
-MonoString* CMonoDomain::CreateString(const char *text)
+std::shared_ptr<CMonoString> CMonoDomain::CreateString(const char* szString)
 {
-	return mono_string_new(m_pDomain, text);
+	return std::make_shared<CMonoString>(m_pDomain, szString);
+}
+
+std::shared_ptr<CMonoString> CMonoDomain::CreateString(MonoInternals::MonoString* pManagedString)
+{
+	return std::make_shared<CMonoString>(pManagedString);
+}
+
+string CMonoDomain::TempDirectoryPath()
+{
+#ifdef CRY_PLATFORM_WINDOWS 
+	TCHAR tempPath[MAX_PATH];
+	GetTempPathA(MAX_PATH, tempPath);
+
+	string folderName = PathUtil::Make(tempPath, "CE_ManagedBinaries");
+	int instance = gEnv->pSystem->GetApplicationInstance();
+
+	if (instance != 0)
+	{
+		return folderName.AppendFormat("(%d)\\", instance);
+	}
+	else
+	{
+		return folderName.Append("\\");
+	}
+#else
+#pragma error("TODO: Implement for other platforms");
+#endif
 }
 
 void CMonoDomain::Unload()
 {
-	if (!m_bNativeAssembly)
+	// Make sure we don't try to unload a domain that came from the managed side
+	if (!m_bNativeDomain)
 		return;
 
-	if (m_pDomain == mono_get_root_domain())
+	if (m_pDomain == MonoInternals::mono_get_root_domain())
 	{
-		mono_jit_cleanup(m_pDomain);
+		MonoInternals::mono_jit_cleanup(m_pDomain);
 	}
 	else
 	{
 		if (IsActive())
 		{
 			// Fall back to the root domain
-			mono_domain_set(mono_get_root_domain(), true);
+			MonoInternals::mono_domain_set(MonoInternals::mono_get_root_domain(), true);
 		}
 
-		//mono_domain_finalize(m_pDomain, 2000);
+		MonoInternals::mono_domain_finalize(m_pDomain, 2000);
 
-		MonoObject *pException;
+		MonoInternals::MonoObject *pException;
 		try
 		{
-			mono_domain_try_unload(m_pDomain, &pException);
+			MonoInternals::mono_domain_try_unload(m_pDomain, &pException);
 		}
 		catch (char *ex)
 		{
 			CryWarning(VALIDATOR_MODULE_SYSTEM, VALIDATOR_ERROR, "An exception was raised during AppDomain unload: %s", ex);
 		}
 
-		if (pException)
+		if (pException != nullptr)
 		{
-			static_cast<CMonoRuntime*>(gEnv->pMonoRuntime)->HandleException(pException);
+			GetMonoRuntime()->HandleException((MonoInternals::MonoException*)pException);
 		}
 	}
 }
 
-CMonoLibrary* CMonoDomain::LoadLibrary(const char* path, bool bRefOnly)
+void CMonoDomain::CacheObjectMethods()
 {
-	string sFilePath = path;
+	std::shared_ptr<CMonoClass> pObjectClass = GetMonoRuntime()->GetRootDomain()->GetNetCoreLibrary().GetTemporaryClass("System", "Object");
+	m_pReferenceEqualsMethod = pObjectClass->FindMethod("ReferenceEquals", 2);
 
-	if (strcmp("dll", PathUtil::GetExt(sFilePath.c_str())))
+	if (std::shared_ptr<CMonoMethod> pReferenceEqualsMethod = m_pReferenceEqualsMethod.lock())
 	{
-		sFilePath.append(".dll");
+		m_referenceEqualsThunk = static_cast<ReferenceEqualsFunction>(pReferenceEqualsMethod->GetUnmanagedThunk());
+	}
+	else
+	{
+		m_referenceEqualsThunk = nullptr;
+	}
+}
+
+CMonoLibrary* CMonoDomain::LoadLibrary(const char* path, int loadIndex)
+{
+	string sPath = path;
+	if (strcmp("dll", PathUtil::GetExt(sPath.c_str())))
+	{
+		sPath.append(".dll");
 	}
 
-	// First try loading the direct path passed in
-	FILE* pFileHandle = gEnv->pCryPak->FOpen(sFilePath, "rb", ICryPak::FLAGS_PATH_REAL);
+	PathUtil::UnifyFilePath(sPath);
 
-	if (pFileHandle == nullptr)
+	for(const std::unique_ptr<CMonoLibrary>& pLibrary : m_loadedLibraries)
 	{
-		string binaryFileName = PathUtil::GetFile(sFilePath);
-
-		for (auto it = m_binaryDirectories.begin(); it != m_binaryDirectories.end(); ++it)
+		if (!stricmp(pLibrary->GetPath(), sPath))
 		{
-			sFilePath = PathUtil::Make(*it, binaryFileName);
-
-			pFileHandle = gEnv->pCryPak->FOpen(sFilePath, "rb", ICryPak::FLAGS_PATH_REAL);
-			if (pFileHandle != nullptr)
-			{
-				break;
-			}
-		}
-
-		if (pFileHandle == nullptr)
-		{
-			return nullptr;
-		}
-	}
-
-	PathUtil::UnifyFilePath(sFilePath);
-
-	for (auto it = m_loadedLibraries.begin(); it != m_loadedLibraries.end(); ++it)
-	{
-		if (!strcmp(it->filePath, sFilePath))
-		{
-			// Might return null here in case Mono callbacks result in recursive load
-			return it->pLibrary.get();
+			return pLibrary.get();
 		}
 	}
 
-	string binaryDirectory = PathUtil::GetPathWithoutFilename(sFilePath);
-	stl::push_back_unique(m_binaryDirectories, binaryDirectory);
-
-	// Insert the path early (but pLibrary set to null) since LoadMonoAssembly can result in an attempt to load twice
-	auto loadedLibraryIndex = m_loadedLibraries.size();
-	m_loadedLibraries.emplace_back(sFilePath);
-
-	char* imageData;
-	mono_byte* debugDatabaseData = nullptr;
-
-	if (MonoAssembly* pAssembly = LoadMonoAssembly(sFilePath, pFileHandle, &imageData, &debugDatabaseData, bRefOnly))
+	m_loadedLibraries.emplace_back(stl::make_unique<CMonoLibrary>(sPath, this));
+	
+	// Pass image data to the library, it has to be deleted when the assembly is done
+	if (m_loadedLibraries.back()->Load(loadIndex))
 	{
-		gEnv->pCryPak->FClose(pFileHandle);
-
-		// Pass image data to the library, it has to be deleted when the assembly is done
-		m_loadedLibraries[loadedLibraryIndex].pLibrary = std::unique_ptr<CMonoLibrary>(new CMonoLibrary(pAssembly, sFilePath, this, imageData));
-
-	#ifndef _RELEASE
-		if (debugDatabaseData != nullptr)
-		{
-			m_loadedLibraries[loadedLibraryIndex].pLibrary->SetDebugData(debugDatabaseData);
-		}
-	#endif
-
-		return m_loadedLibraries[loadedLibraryIndex].pLibrary.get();
+		return m_loadedLibraries.back().get();
+	}
+	else
+	{
+		m_loadedLibraries.pop_back();
 	}
 
-	gEnv->pCryPak->FClose(pFileHandle);
 	return nullptr;
 }
 
-CMonoLibrary* CMonoDomain::GetLibraryFromMonoAssembly(MonoAssembly* pAssembly)
+CMonoLibrary& CMonoDomain::GetLibraryFromMonoAssembly(MonoInternals::MonoAssembly* pAssembly, MonoInternals::MonoImage* pImage)
 {
-	for (auto it = m_loadedLibraries.begin(); it != m_loadedLibraries.end(); ++it)
+	for (const std::unique_ptr<CMonoLibrary>& pLibrary : m_loadedLibraries)
 	{
-		if (it->pLibrary.get()->GetAssembly() == pAssembly)
+		if (pLibrary.get()->GetAssembly() == pAssembly)
 		{
-			return it->pLibrary.get();
+			return *pLibrary.get();
+		}
+		else if (pLibrary.get()->GetImage() == pImage)
+		{
+			if (pAssembly != nullptr && pLibrary.get()->GetAssembly() == nullptr)
+			{
+				pLibrary.get()->SetAssembly(pAssembly);
+			}
+
+			return *pLibrary.get();
 		}
 	}
 
-	MonoAssemblyName* pAssemblyName = mono_assembly_get_name(pAssembly);
-	string assemblyPath = mono_assembly_name_get_name(pAssemblyName);
+	MonoInternals::MonoAssemblyName* pAssemblyName = MonoInternals::mono_assembly_get_name(pAssembly);
+	string assemblyPath = MonoInternals::mono_assembly_name_get_name(pAssemblyName);
 	
-	m_loadedLibraries.emplace_back(new CMonoLibrary(pAssembly, assemblyPath, this), assemblyPath);
-	return m_loadedLibraries.back().pLibrary.get();
+	m_loadedLibraries.emplace_back(stl::make_unique<CMonoLibrary>(pAssembly, pImage, assemblyPath, this));
+	return *m_loadedLibraries.back().get();
 }
 
-MonoAssembly* CMonoDomain::LoadMonoAssembly(const char* path, FILE* pFile, char** pImageDataOut, mono_byte** pDebugDataOut, bool bRefOnly)
+void CMonoDomain::UnloadAssemblies()
 {
-	size_t imageSize = gEnv->pCryPak->FGetSize(pFile);
-	*pImageDataOut = new char[imageSize];
-	gEnv->pCryPak->FRead(*pImageDataOut, imageSize, pFile);
-
-	MonoImageOpenStatus status = MONO_IMAGE_ERROR_ERRNO;
-
-	// Load the assembly image, note the third argument being true.
-	// We have to instruct mono to make a copy of imageData, otherwise they try to run 'free' on it later on.
-	MonoImage* pAssemblyImage = mono_image_open_from_data_with_name(*pImageDataOut, imageSize, true, &status, bRefOnly, path);
-
-	// Make sure to load references this image requires before loading the assembly itself
-	for (int i = 0; i < mono_image_get_table_rows(pAssemblyImage, MONO_TABLE_ASSEMBLYREF); ++i) 
+	for (auto it = m_loadedLibraries.rbegin(); it != m_loadedLibraries.rend(); ++it)
 	{
-		mono_assembly_load_reference(pAssemblyImage, i);
+		it->get()->Unload();
 	}
+}
 
-	gEnv->pLog->LogWithType(IMiniLog::eMessage, "[Mono] Load Library: %s", path);
-
-	// load debug information
-#ifndef _RELEASE
-	string sDebugDatabasePath = path;
-	sDebugDatabasePath.append(".mdb");
-
-	FILE* pDebugFile = gEnv->pCryPak->FOpen(sDebugDatabasePath, "rb", ICryPak::FLAGS_PATH_REAL);
-	if (pDebugFile != nullptr)
-	{
-		size_t debugDatabaseSize = gEnv->pCryPak->FGetSize(pDebugFile);
-		*pDebugDataOut = new mono_byte[debugDatabaseSize];
-		gEnv->pCryPak->FRead(*pDebugDataOut, debugDatabaseSize, pDebugFile);
-
-		mono_debug_open_image_from_memory(pAssemblyImage, *pDebugDataOut, debugDatabaseSize);
-
-		gEnv->pCryPak->FClose(pDebugFile);
-	}
-#endif
-	
-	return mono_assembly_load_from_full(pAssemblyImage, path, &status, bRefOnly);
+void CMonoDomain::CleanTempDirectory()
+{
+	string tempDirectory = TempDirectoryPath();
+	gEnv->pCryPak->RemoveDir(tempDirectory.c_str(), true);
 }

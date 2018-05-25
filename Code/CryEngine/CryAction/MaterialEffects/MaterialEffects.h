@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 #pragma once
 
 #include <CryAction/IMaterialEffects.h>
@@ -90,7 +90,7 @@ public:
 	virtual void                SetCustomParameter(TMFXEffectId effectId, const char* customParameter, const SMFXCustomParamValue& customParameterValue);
 	virtual void                CompleteInit();
 	virtual void                ReloadMatFXFlowGraphs();
-	virtual int                 GetMatFXFlowGraphCount() const;
+	virtual size_t              GetMatFXFlowGraphCount() const;
 	virtual IFlowGraphPtr       GetMatFXFlowGraph(int index, string* pFileName = NULL) const;
 	virtual IFlowGraphPtr       LoadNewMatFXFlowGraph(const string& filename);
 	virtual void                EnumerateEffectNames(EnumerateMaterialEffectsDataCallback& callback, const char* szLibraryName) const;

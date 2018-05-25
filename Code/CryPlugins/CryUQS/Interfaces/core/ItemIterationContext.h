@@ -1,12 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
-namespace uqs
+namespace UQS
 {
-	namespace core
+	namespace Core
 	{
 
 		//===================================================================================
@@ -20,7 +20,7 @@ namespace uqs
 
 		struct SItemIterationContext
 		{
-			explicit                 SItemIterationContext(const IItemList& _items);
+			explicit                 SItemIterationContext(const IItemList& _generatedItems);
 			const IItemList&         generatedItems;        // the list of items a generator has produced and that we will iterate on in the evaluation phase
 		};
 

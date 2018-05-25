@@ -1,12 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
-namespace uqs
+namespace UQS
 {
-	namespace core
+	namespace Core
 	{
 
 		//===================================================================================
@@ -81,18 +81,18 @@ namespace uqs
 
 			//
 			// - 3D debug rendering of the items and general debug primitives
-			// - figures out which item is currently focused by the camera and fires according event(s)
+			// - if given SDebugCameraView is a valid pointer, it will also figure out which item is currently focused by the camera and fires according event(s)
 			//
 
-			virtual void                    UpdateDebugRendering3D(const SDebugCameraView& view, const SEvaluatorDrawMasks& evaluatorDrawMasks) = 0;
+			virtual void                    UpdateDebugRendering3D(const SDebugCameraView* pOptionalView, const SEvaluatorDrawMasks& evaluatorDrawMasks) = 0;
 
 			//
 			// Saving of the "live" query history and loading a previously saved one back into memory. When loading one back, the "live" one will *not* be affected and just keep
 			// growing during gameplay.
 			//
 
-			virtual bool                    SerializeLiveQueryHistory(const char* xmlFilePath, shared::IUqsString& error) = 0;
-			virtual bool                    DeserializeQueryHistory(const char* xmlFilePath, shared::IUqsString& error) = 0;
+			virtual bool                    SerializeLiveQueryHistory(const char* szXmlFilePath, Shared::IUqsString& error) = 0;
+			virtual bool                    DeserializeQueryHistory(const char* szXmlFilePath, Shared::IUqsString& error) = 0;
 
 			//
 			// selects the query history from which we will be able to select one of its historic queries for rendering their debug primitives in the 3D world
@@ -111,6 +111,12 @@ namespace uqs
 			//
 
 			virtual void                    ClearQueryHistory(EHistoryOrigin whichHistory) = 0;
+
+			//
+			// outputs information of given query to the receiver
+			//
+
+			virtual void                    EnumerateSingleHistoricQuery(EHistoryOrigin whichHistory, const CQueryID& queryIDToEnumerate, IQueryHistoryConsumer& receiver) const = 0;
 
 			//
 			// outputs a list of all historic queries of given query history into the receiver
@@ -163,6 +169,12 @@ namespace uqs
 			//
 
 			virtual size_t                  GetHistoricQueriesCount(EHistoryOrigin whichHistory) const = 0;
+
+			//
+			// ideal camera position and orientation for a given historic query considering an already existing camera view
+			//
+
+			virtual SDebugCameraView        GetIdealDebugCameraView(EHistoryOrigin whichHistory, const CQueryID& queryID, const SDebugCameraView& currentCameraView) const = 0;
 		};
 
 		inline IQueryHistoryManager::SEvaluatorDrawMasks::SEvaluatorDrawMasks(evaluatorsBitfield_t _maskInstantEvaluators, evaluatorsBitfield_t _maskDeferredEvaluators)

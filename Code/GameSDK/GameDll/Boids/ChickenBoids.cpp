@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   ChickenBoids.cpp
@@ -67,12 +67,6 @@ void CChickenFlock::CreateBoids( SBoidsCreateContext &ctx )
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CChickenFlock::OnAIEvent(EAIStimulusType type, const Vec3& pos, float radius, float threat, EntityId sender)
-{
-	CFlock::OnAIEvent(type,pos,radius,threat,sender);
-}
-
-//////////////////////////////////////////////////////////////////////////
 CChickenBoid::CChickenBoid(SBoidContext &bc)
 	: CBoidBird(bc)
 	, m_lastRayCastFrame(0)
@@ -135,7 +129,7 @@ void CChickenBoid::OnPickup( bool bPickup,float fSpeed )
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CChickenBoid::OnCollision( SEntityEvent &event )
+void CChickenBoid::OnCollision( const SEntityEvent &event )
 {
 	if (m_bThrown)
 	{

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "AnimatedCharacter.h"
@@ -12,6 +12,8 @@
 
 #include "CryActionCVars.h"
 #include "Mannequin/MannequinAGState.h"
+
+#include "Animation/PoseAligner/PoseAligner.h"
 
 #include <IViewSystem.h>
 
@@ -210,7 +212,7 @@ CAnimatedCharacter::CAnimatedCharacter() : m_listeners(1)
 
 	m_debugHistoryManager = gEnv->pGameFramework->CreateDebugHistoryManager();
 
-	CryCreateClassInstance("AnimationPoseAlignerC3", m_pPoseAligner);
+	CryCreateClassInstance(CPoseAlignerC3::GetCID(), m_pPoseAligner);
 }
 
 CAnimatedCharacter::~CAnimatedCharacter()
@@ -579,7 +581,7 @@ void CAnimatedCharacter::PostSerialize()
 
 void CAnimatedCharacter::Update(SEntityUpdateContext& ctx, int slot)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	//assert(!m_simplifyMovement); // If we have simplified movement, the this GameObject extension should not be updated here.
 
@@ -1151,9 +1153,9 @@ void CAnimatedCharacter::UpdateCharacterPtrs()
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CAnimatedCharacter::ProcessEvent(SEntityEvent& event)
+void CAnimatedCharacter::ProcessEvent(const SEntityEvent& event)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	switch (event.event)
 	{
@@ -1275,6 +1277,11 @@ void CAnimatedCharacter::ProcessEvent(SEntityEvent& event)
 		}
 		break;
 	}
+}
+
+uint64 CAnimatedCharacter::GetEventMask() const
+{
+	return ENTITY_EVENT_BIT(ENTITY_EVENT_PRE_SERIALIZE) | ENTITY_EVENT_BIT(ENTITY_EVENT_ANIM_EVENT) | ENTITY_EVENT_BIT(ENTITY_EVENT_XFORM) | ENTITY_EVENT_BIT(ENTITY_EVENT_SCRIPT_REQUEST_COLLIDERMODE) | ENTITY_EVENT_BIT(ENTITY_EVENT_DONE) | ENTITY_EVENT_BIT(ENTITY_EVENT_INIT) | ENTITY_EVENT_BIT(ENTITY_EVENT_RESET);
 }
 
 float CAnimatedCharacter::FilterView(SViewParams& viewParams) const

@@ -1,31 +1,185 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "AIActor.h"
 #include "PipeUser.h"
-#include "GoalOp.h"
-#include "SelectionTree/SelectionTreeManager.h"
-#include <CryAISystem/BehaviorTree/IBehaviorTree.h>
-#include <CryAISystem/BehaviorTree/Node.h>
-#include <CryAISystem/BehaviorTree/XmlLoader.h>
-#include "BehaviorTree/BehaviorTreeNodes_AI.h"
+
 #include "TargetSelection/TargetTrackManager.h"
 #include "Navigation/NavigationSystem/NavigationSystem.h"
 #include "Group/GroupManager.h"
 #include "Factions/FactionMap.h"
+#include "Formation/FormationManager.h"
 #include <CryCore/CryCrc32.h>
 #include <CryEntitySystem/IEntity.h>
 
+#include <CryAISystem/BehaviorTree/IBehaviorTree.h>
 #include <CryAISystem/VisionMapTypes.h>
-#include "SelectionTree/SelectionTreeDebugger.h"
-#include <limits>
 
-#define GET_READY_TO_CHANGE_BEHAVIOR_SIGNAL "OnBehaviorChangeRequest"
+#include <limits>
 
 //#pragma optimize("", off)
 //#pragma inline_depth(0)
 
 static const float UNINITIALIZED_COS_CACHE = 2.0f;
+
+//////////////////////////////////////////////////////////////////////////
+// AI Actor Collision Avoidance
+//////////////////////////////////////////////////////////////////////////
+
+CActorCollisionAvoidance::CActorCollisionAvoidance(CAIActor* pActor)
+	: m_pActor(pActor)
+	, m_radiusIncrement(0.0f)
+{
+	gAIEnv.pCollisionAvoidanceSystem->RegisterAgent(this);
+}
+
+CActorCollisionAvoidance::~CActorCollisionAvoidance()
+{
+	gAIEnv.pCollisionAvoidanceSystem->UnregisterAgent(this);
+}
+
+void CActorCollisionAvoidance::Reset()
+{
+	m_radiusIncrement = 0.0f;
+}
+
+void CActorCollisionAvoidance::Serialize(TSerialize ser)
+{
+	ser.BeginGroup("CollisionAvoidance");
+	{
+		ser.Value("m_radiusIncrement", m_radiusIncrement);
+	}
+	ser.EndGroup();
+}
+
+NavigationAgentTypeID CActorCollisionAvoidance::GetNavigationTypeId() const
+{
+	return m_pActor->GetNavigationTypeID();
+}
+
+const INavMeshQueryFilter* CActorCollisionAvoidance::GetNavigationQueryFilter() const
+{
+	return nullptr;
+}
+
+const char* CActorCollisionAvoidance::GetName() const
+{
+	return m_pActor->GetName();
+}
+
+ICollisionAvoidanceAgent::TreatType CActorCollisionAvoidance::GetTreatmentType() const
+{
+	if (!m_pActor->IsEnabled() || !m_pActor->GetMovementAbility().collisionAvoidanceParticipation)
+		return ICollisionAvoidanceAgent::TreatType::None;
+
+	uint16 aiType = m_pActor->GetAIType();
+	if (aiType == AIOBJECT_PLAYER)
+	{
+		// player is always treated only as obstacle
+		return ICollisionAvoidanceAgent::TreatType::Obstacle;
+	}
+
+	if ((aiType == AIOBJECT_ALIENTICK) || (aiType == AIOBJECT_ACTOR) || (aiType == AIOBJECT_INFECTED))
+	{
+		const float targetCutoff = gAIEnv.CVars.CollisionAvoidanceTargetCutoffRange;
+		const float pathEndCutoff = gAIEnv.CVars.CollisionAvoidancePathEndCutoffRange;
+		const float smartObjectCutoff = gAIEnv.CVars.CollisionAvoidanceSmartObjectCutoffRange;
+
+		CPipeUser* pPipeUser = m_pActor->CastToCPipeUser();
+
+		bool bIsMoving = (fabs_tpl(m_pActor->m_State.fDesiredSpeed) > 0.0001f);
+		bool bCuttoff = (m_pActor->m_State.fDistanceFromTarget < targetCutoff)
+			|| (m_pActor->m_State.fDistanceToPathEnd < pathEndCutoff)
+			|| (pPipeUser && pPipeUser->GetPendingSmartObjectID() && (m_pActor->m_State.fDistanceToPathEnd < smartObjectCutoff));
+
+		return (bIsMoving && !bCuttoff) ? ICollisionAvoidanceAgent::TreatType::Agent : ICollisionAvoidanceAgent::TreatType::Obstacle;
+	}
+	return ICollisionAvoidanceAgent::TreatType::None;
+}
+
+void CActorCollisionAvoidance::InitializeCollisionAgent(CCollisionAvoidanceSystem::SAgentParams& agent) const
+{
+	const float forcedSpeed = gAIEnv.CVars.DebugCollisionAvoidanceForceSpeed;
+	const bool bUseForcedSpeed = fabs_tpl(forcedSpeed) > 0.0001f;
+
+	float minSpeed;
+	float maxSpeed;
+	float normalSpeed;
+
+	m_pActor->GetMovementSpeedRange(m_pActor->m_State.fMovementUrgency, false, normalSpeed, minSpeed, maxSpeed);
+
+	agent.radius = m_pActor->m_Parameters.m_fPassRadius + gAIEnv.CVars.CollisionAvoidanceAgentExtraFat;
+	if (gAIEnv.CVars.CollisionAvoidanceEnableRadiusIncrement)
+		agent.radius += m_radiusIncrement;
+	agent.maxSpeed = min(m_pActor->m_State.fDesiredSpeed, maxSpeed);
+	agent.maxAcceleration = min(agent.maxAcceleration, m_pActor->m_movementAbility.maxAccel);
+	agent.currentLocation = m_pActor->GetPhysicsPos();
+	agent.currentVelocity = Vec2(m_pActor->GetVelocity());
+
+	agent.desiredVelocity = bUseForcedSpeed ? Vec2(m_pActor->GetMoveDir() * forcedSpeed) : Vec2(m_pActor->m_State.vMoveDir * m_pActor->m_State.fDesiredSpeed);
+	agent.currentLookDirection = Vec2(agent.desiredVelocity);
+}
+
+void CActorCollisionAvoidance::InitializeCollisionObstacle(CCollisionAvoidanceSystem::SObstacleParams& obstacle) const
+{
+	obstacle.currentLocation = m_pActor->GetPhysicsPos();
+	obstacle.currentVelocity = Vec2(m_pActor->GetVelocity());
+	obstacle.radius = m_pActor->m_Parameters.m_fPassRadius + gAIEnv.CVars.CollisionAvoidanceAgentExtraFat;
+}
+	
+
+void CActorCollisionAvoidance::ApplyComputedVelocity(const Vec2& avoidanceVelocity, float updateTime)
+{
+	m_pActor->m_State.allowStrafing = false;
+	m_pActor->ResetBodyTargetDir();
+
+	const Vec3 currentVelocity(m_pActor->m_State.vMoveDir * m_pActor->m_State.fDesiredSpeed);
+	const Vec3 avoidanceVelocity3D(avoidanceVelocity.x, avoidanceVelocity.y, currentVelocity.z);
+
+	if ((avoidanceVelocity - Vec2(currentVelocity)).GetLength2() >= 0.000001f)
+	{
+		float speedSq = avoidanceVelocity3D.len2();
+
+		if (m_pActor->m_State.bodyOrientationMode != FullyTowardsAimOrLook)
+		{
+			m_pActor->m_State.allowStrafing = true;
+			m_pActor->SetBodyTargetDir(m_pActor->m_State.vMoveDir);
+		}
+
+		if (speedSq > 0.000001f)
+		{
+			float speed = sqrt_tpl(speedSq);
+
+			m_pActor->m_State.vMoveDir = avoidanceVelocity3D / speed;
+			m_pActor->m_State.fDesiredSpeed = speed;
+		}
+		else
+		{
+			m_pActor->m_State.vMoveDir.zero();
+			m_pActor->m_State.fDesiredSpeed = 0.0f;
+		}
+
+		m_pActor->m_State.vMoveTarget.zero();
+	}
+
+	if (gAIEnv.CVars.CollisionAvoidanceEnableRadiusIncrement)
+	{
+		if (m_pActor->m_State.fDesiredSpeed > 0.5f)
+		{
+			m_radiusIncrement = min(
+				m_radiusIncrement + (m_pActor->m_movementAbility.collisionAvoidanceRadiusIncrement * gAIEnv.CVars.CollisionAvoidanceRadiusIncrementIncreaseRate * updateTime),
+				m_pActor->m_movementAbility.collisionAvoidanceRadiusIncrement
+			);
+		}
+		else
+		{
+			m_radiusIncrement = max(
+				m_radiusIncrement - (m_pActor->m_movementAbility.collisionAvoidanceRadiusIncrement * gAIEnv.CVars.CollisionAvoidanceRadiusIncrementDecreaseRate * updateTime),
+				0.0f
+			);
+		}
+	}
+}
 
 //////////////////////////////////////////////////////////////////////
 // Construction/Destruction
@@ -33,7 +187,6 @@ static const float UNINITIALIZED_COS_CACHE = 2.0f;
 
 #define _ser_value_(val) ser.Value( # val, val)
 
-#pragma warning (disable : 4355)
 CAIActor::CAIActor()
 	: m_bCheckedBody(true)
 #ifdef CRYAISYSTEM_DEBUG
@@ -41,12 +194,10 @@ CAIActor::CAIActor()
 #endif
 	, m_lightLevel(AILL_LIGHT)
 	, m_usingCombatLight(false)
-	, m_perceptionDisabled(0)
 	, m_cachedWaterOcclusionValue(0.0f)
 	, m_vLastFullUpdatePos(ZERO)
 	, m_lastFullUpdateStance(STANCE_NULL)
 	, m_observer(false)
-	, m_bCloseContact(false)
 	, m_FOVPrimaryCos(UNINITIALIZED_COS_CACHE)
 	, m_FOVSecondaryCos(UNINITIALIZED_COS_CACHE)
 	, m_territoryShape(0)
@@ -55,21 +206,21 @@ CAIActor::CAIActor()
 	, m_stimulusStartTime(-100.f)
 	, m_activeCoordinationCount(0)
 	, m_navigationTypeID(0)
-	, m_behaviorTreeEvaluationMode(EvaluateWhenVariablesChange)
-	, m_currentCollisionAvoidanceRadiusIncrement(0.0f)
 	, m_runningBehaviorTree(false)
+	, m_collisionAvoidanceAgent(this)
 {
 	_fastcast_CAIActor = true;
 
 	AILogComment("CAIActor (%p)", this);
 }
-#pragma warning (default : 4355)
 
 CAIActor::~CAIActor()
 {
 	StopBehaviorTree();
 
 	AILogComment("~CAIActor  %s (%p)", GetName(), this);
+
+	m_proxy.reset();
 
 	gAIEnv.pGroupManager->RemoveGroupMember(GetGroupId(), GetAIObjectID());
 
@@ -93,20 +244,6 @@ CAIActor::~CAIActor()
 
 void CAIActor::SetBehaviorVariable(const char* variableName, bool value)
 {
-	if (m_behaviorSelectionTree.get())
-	{
-		SelectionVariableID variableID =
-		  m_behaviorSelectionTree->GetTemplate().GetVariableDeclarations().GetVariableID(variableName);
-		assert(m_behaviorSelectionTree->GetTemplate().GetVariableDeclarations().IsDeclared(variableID));
-#ifndef _RELEASE
-		if (!m_behaviorSelectionTree->GetTemplate().GetVariableDeclarations().IsDeclared(variableID))
-		{
-			CryWarning(VALIDATOR_MODULE_AI, VALIDATOR_WARNING, "Variable \"%s\" missing from %s's Behaviour Selection Tree.", variableName, GetName());
-		}
-#endif
-		m_behaviorSelectionVariables->SetVariable(variableID, value);
-	}
-
 	{
 		Variables::Collection* variableCollection = GetAISystem()->GetIBehaviorTreeManager()->GetBehaviorVariableCollection_Deprecated(GetEntityID());
 		const Variables::Declarations* variableDeclarations = GetAISystem()->GetIBehaviorTreeManager()->GetBehaviorVariableDeclarations_Deprecated(GetEntityID());
@@ -124,42 +261,20 @@ void CAIActor::SetBehaviorVariable(const char* variableName, bool value)
 
 bool CAIActor::GetBehaviorVariable(const char* variableName) const
 {
+	Variables::Collection* variableCollection = GetAISystem()->GetIBehaviorTreeManager()->GetBehaviorVariableCollection_Deprecated(GetEntityID());
+	const Variables::Declarations* variableDeclarations = GetAISystem()->GetIBehaviorTreeManager()->GetBehaviorVariableDeclarations_Deprecated(GetEntityID());
+	if (!variableCollection || !variableDeclarations)
+		return false;
+
+	Variables::VariableID variableID = Variables::GetVariableID(variableName);
+
 	bool value = false;
+	if (variableDeclarations->IsDeclared(variableID))
+		variableCollection->GetVariable(variableID, &value);
+	else
+		AIWarning("Variable '%s' missing from %s's Behavior Tree.", variableName, GetName());
 
-	if (m_behaviorSelectionTree.get())
-	{
-		SelectionVariableID variableID =
-		  m_behaviorSelectionTree->GetTemplate().GetVariableDeclarations().GetVariableID(variableName);
-
-		m_behaviorSelectionVariables->GetVariable(variableID, &value);
-		return value;
-	}
-
-	{
-		Variables::Collection* variableCollection = GetAISystem()->GetIBehaviorTreeManager()->GetBehaviorVariableCollection_Deprecated(GetEntityID());
-		const Variables::Declarations* variableDeclarations = GetAISystem()->GetIBehaviorTreeManager()->GetBehaviorVariableDeclarations_Deprecated(GetEntityID());
-		if (!variableCollection || !variableDeclarations)
-			return false;
-
-		Variables::VariableID variableID = Variables::GetVariableID(variableName);
-
-		if (variableDeclarations->IsDeclared(variableID))
-			variableCollection->GetVariable(variableID, &value);
-		else
-			AIWarning("Variable '%s' missing from %s's Behavior Tree.", variableName, GetName());
-
-		return value;
-	}
-}
-
-SelectionTree* CAIActor::GetBehaviorSelectionTree() const
-{
-	return m_behaviorSelectionTree.get();
-}
-
-SelectionVariables* CAIActor::GetBehaviorSelectionVariables() const
-{
-	return m_behaviorSelectionVariables.get();
+	return value;
 }
 
 void CAIActor::ResetModularBehaviorTree(EObjectResetType type)
@@ -196,130 +311,6 @@ void CAIActor::ResetModularBehaviorTree(EObjectResetType type)
 	}
 }
 
-void CAIActor::ResetBehaviorSelectionTree(EObjectResetType type)
-{
-	m_behaviorTreeEvaluationMode = EvaluateWhenVariablesChange;
-
-	bool bRemoveBehaviorSelectionTree = (type == AIOBJRESET_SHUTDOWN);
-	IAIActorProxy* proxy = GetProxy();
-
-	if (!bRemoveBehaviorSelectionTree && proxy)
-	{
-		// Try to load a Selection Tree
-		const char* behaviorSelectionTreeName = proxy->GetBehaviorSelectionTreeName();
-
-		MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Other, 0, "Behavior Selection Tree: %s", behaviorSelectionTreeName);
-
-		bool treeChanged = ((behaviorSelectionTreeName && !m_behaviorSelectionTree.get()) ||
-		                    (behaviorSelectionTreeName != 0 && stricmp(m_behaviorSelectionTree->GetTemplate().GetName(), behaviorSelectionTreeName)));
-
-		if (treeChanged)
-		{
-			SelectionTreeTemplateID templateID = gAIEnv.pSelectionTreeManager->GetTreeTemplateID(behaviorSelectionTreeName);
-
-			if (gAIEnv.pSelectionTreeManager->HasTreeTemplate(templateID))
-			{
-				const SelectionTreeTemplate& treeTemplate = gAIEnv.pSelectionTreeManager->GetTreeTemplate(templateID);
-				if (treeTemplate.Valid())
-				{
-					m_behaviorSelectionTree.reset(new SelectionTree(treeTemplate.GetSelectionTree()));
-					m_behaviorSelectionVariables.reset(new SelectionVariables(treeTemplate.GetVariableDeclarations().GetDefaults()));
-					m_behaviorSelectionVariables->ResetChanged(true);
-				}
-			}
-			else
-			{
-				bRemoveBehaviorSelectionTree = true;
-			}
-		}
-	}
-
-	if (bRemoveBehaviorSelectionTree)
-	{
-		m_behaviorSelectionTree.reset();
-		m_behaviorSelectionVariables.reset();
-	}
-}
-
-bool CAIActor::ProcessBehaviorSelectionTreeSignal(const char* signalName, uint32 signalCRC)
-{
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
-
-	if (m_behaviorSelectionVariables.get())
-	{
-#if defined(CRYAISYSTEM_DEBUG)
-		m_behaviorSelectionVariables->DebugTrackSignalHistory(signalName);
-#endif
-
-		const SelectionTreeTemplate& treeTemplate = m_behaviorSelectionTree->GetTemplate();
-		return treeTemplate.GetSignalVariables().ProcessSignal(signalName, signalCRC, *m_behaviorSelectionVariables);
-	}
-
-	return false;
-}
-
-bool CAIActor::UpdateBehaviorSelectionTree()
-{
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
-
-	if (m_behaviorSelectionTree.get())
-	{
-		const bool evaluateTree =
-		  m_behaviorSelectionVariables.get() &&
-		  m_behaviorSelectionVariables->Changed() &&
-		  m_behaviorTreeEvaluationMode == EvaluateWhenVariablesChange;
-
-		if (evaluateTree)
-		{
-			const char* behaviorName = "";
-
-			SelectionNodeID currentNodeID = m_behaviorSelectionTree->GetCurrentNodeID();
-			BST_DEBUG_START_EVAL(this, *m_behaviorSelectionTree.get(), *m_behaviorSelectionVariables.get());
-			SelectionNodeID selectedNodeID = m_behaviorSelectionTree->Evaluate(*m_behaviorSelectionVariables.get());
-			BST_DEBUG_END_EVAL(this, selectedNodeID);
-			if (selectedNodeID)
-			{
-				m_behaviorSelectionVariables->ResetChanged();
-
-				if (currentNodeID == selectedNodeID)
-					return false;
-
-				const SelectionTreeNode& node = m_behaviorSelectionTree->GetNode(selectedNodeID);
-				behaviorName = node.GetName();
-
-				const SelectionTreeTemplate& treeTemplate = m_behaviorSelectionTree->GetTemplate();
-				if (const char* translatedName = treeTemplate.GetTranslator().GetTranslation(selectedNodeID))
-					behaviorName = translatedName;
-			}
-
-			IAIActorProxy* pProxy = GetProxy();
-			assert(pProxy);
-			if (pProxy)
-				pProxy->SetBehaviour(behaviorName);
-
-			return true;
-		}
-	}
-
-	return false;
-}
-
-#if defined(CRYAISYSTEM_DEBUG)
-
-void CAIActor::DebugDrawBehaviorSelectionTree()
-{
-	if (m_behaviorSelectionVariables.get())
-	{
-		const SelectionTreeTemplate& treeTemplate = m_behaviorSelectionTree->GetTemplate();
-		m_behaviorSelectionVariables->DebugDraw(true, treeTemplate.GetVariableDeclarations());
-	}
-
-	if (m_behaviorSelectionTree.get())
-		m_behaviorSelectionTree->DebugDraw();
-}
-
-#endif
-
 const SAIBodyInfo& CAIActor::QueryBodyInfo()
 {
 	m_proxy->QueryBodyInfo(m_bodyInfo);
@@ -340,29 +331,33 @@ void CAIActor::SetPos(const Vec3& pos, const Vec3& dirFwrd)
 
 	if (IAIActorProxy* pProxy = GetProxy())
 	{
+		//Overwrite parameters by values from body info if possible
 		SAIBodyInfo bodyInfo;
-		pProxy->QueryBodyInfo(bodyInfo);
+		if (pProxy->QueryBodyInfo(bodyInfo))
+		{
+			assert(bodyInfo.vEyeDir.IsValid());
+			assert(bodyInfo.vEyePos.IsValid());
+			assert(bodyInfo.vFireDir.IsValid());
+			assert(bodyInfo.vFirePos.IsValid());
 
-		assert(bodyInfo.vEyeDir.IsValid());
-		assert(bodyInfo.vEyePos.IsValid());
-		assert(bodyInfo.vFireDir.IsValid());
-		assert(bodyInfo.vFirePos.IsValid());
+			position = bodyInfo.vEyePos;
 
-		position = bodyInfo.vEyePos;
-		vEyeDir = bodyInfo.GetEyeDir();
-		assert(vEyeDir.IsUnit());
+			vEyeDir = bodyInfo.GetEyeDir();
 
-		SetViewDir(vEyeDir);
-		SetBodyDir(bodyInfo.GetBodyDir());
+			assert(vEyeDir.IsUnit());
 
-		SetFirePos(bodyInfo.vFirePos);
-		SetFireDir(bodyInfo.vFireDir);
-		SetMoveDir(bodyInfo.vMoveDir);
-		SetEntityDir(bodyInfo.GetBodyDir());
+			SetViewDir(vEyeDir);
+			SetBodyDir(bodyInfo.GetBodyDir());
 
-		assert(bodyInfo.vFireDir.IsUnit());
-		assert(bodyInfo.vMoveDir.IsUnit() || bodyInfo.vMoveDir.IsZero());
-		assert(bodyInfo.vEntityDir.IsUnit() || bodyInfo.vEntityDir.IsZero());
+			SetFirePos(bodyInfo.vFirePos);
+			SetFireDir(bodyInfo.vFireDir);
+			SetMoveDir(bodyInfo.vMoveDir);
+			SetEntityDir(bodyInfo.GetBodyDir());
+
+			assert(bodyInfo.vFireDir.IsUnit());
+			assert(bodyInfo.vMoveDir.IsUnit() || bodyInfo.vMoveDir.IsZero());
+			assert(bodyInfo.vEntityDir.IsUnit() || bodyInfo.vEntityDir.IsZero());
+		}
 	}
 
 	CAIObject::SetPos(position, vEyeDir); // can set something else than passed position
@@ -432,21 +427,17 @@ void CAIActor::Reset(EObjectResetType type)
 	IEntity* pEntity(GetEntity());
 	if (pEntity)
 	{
-		m_bEnabled = pEntity->IsActive();
+		m_bEnabled = pEntity->IsActivatedForUpdates();
 		SetPos(pEntity->GetPos());
 	}
 
 	m_lightLevel = AILL_LIGHT;
 	m_usingCombatLight = false;
-	assert(m_perceptionDisabled == 0);
-	m_perceptionDisabled = 0;
 
 	m_cachedWaterOcclusionValue = 0.0f;
 
 	m_vLastFullUpdatePos.zero();
 	m_lastFullUpdateStance = STANCE_NULL;
-
-	m_probableTargets.clear();
 
 	m_blackBoard.Clear();
 	m_blackBoard.GetForScript()->SetValue("Owner", this->GetName());
@@ -454,7 +445,6 @@ void CAIActor::Reset(EObjectResetType type)
 	m_perceptionHandlerModifiers.clear();
 
 	ResetPersonallyHostiles();
-	ResetBehaviorSelectionTree(type);
 
 	ResetModularBehaviorTree(type);
 
@@ -482,35 +472,13 @@ void CAIActor::Reset(EObjectResetType type)
 		SetObservable(type == AIOBJRESET_INIT);
 	}
 
-	m_bCloseContact = false;
 	m_stimulusStartTime = -100.f;
 
 	m_bodyInfo = SAIBodyInfo();
 
 	m_activeCoordinationCount = 0;
 
-	m_currentCollisionAvoidanceRadiusIncrement = 0.0f;
-}
-
-void CAIActor::EnablePerception(bool enable)
-{
-	if (enable)
-		--m_perceptionDisabled;
-	else
-		++m_perceptionDisabled;
-
-	assert(m_perceptionDisabled >= 0); // Below zero? More disables then enables!
-	assert(m_perceptionDisabled < 16); // Just a little sanity check
-}
-
-bool CAIActor::IsPerceptionEnabled() const
-{
-	return m_perceptionDisabled <= 0;
-}
-
-void CAIActor::ResetPerception()
-{
-	m_probableTargets.clear();
+	m_collisionAvoidanceAgent.Reset();
 }
 
 //
@@ -556,25 +524,14 @@ void CAIActor::OnObjectRemoved(CAIObject* pObject)
 		}
 	}
 
-	for (unsigned i = 0; i < m_probableTargets.size(); )
-	{
-		if (m_probableTargets[i] == pObject)
-		{
-			m_probableTargets[i] = m_probableTargets.back();
-			m_probableTargets.pop_back();
-		}
-		else
-			++i;
-	}
-
 	RemovePersonallyHostile(pObject->GetAIObjectID());
 }
 
 //
 //------------------------------------------------------------------------------------------------------------------------
-void CAIActor::Update(EObjectUpdate type)
+void CAIActor::Update(IAIObject::EUpdateType type)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	IAIActorProxy* pAIActorProxy = GetProxy();
 
@@ -612,14 +569,13 @@ void CAIActor::Update(EObjectUpdate type)
 
 	QueryBodyInfo();
 
-	UpdateBehaviorSelectionTree();
 	UpdateCloakScale();
 
 	CAISystem* pAISystem = GetAISystem();
 
 	// Determine if position has changed
 	const Vec3& vPos = GetPos();
-	if (type == AIUPDATE_FULL)
+	if (type == EUpdateType::Full)
 	{
 		if (!IsEquivalent(m_vLastFullUpdatePos, vPos, 1.f))
 		{
@@ -628,12 +584,6 @@ void CAIActor::Update(EObjectUpdate type)
 
 			m_vLastFullUpdatePos = vPos;
 			m_lastFullUpdateStance = m_bodyInfo.stance;
-		}
-
-		// update close contact info
-		if (m_bCloseContact && ((pAISystem->GetFrameStartTime() - m_CloseContactTime).GetMilliSecondsAsInt64() > 1500))
-		{
-			m_bCloseContact = false;
 		}
 	}
 
@@ -653,7 +603,7 @@ void CAIActor::Update(EObjectUpdate type)
 
 	if (!CastToCPipeUser())
 	{
-		if (type == AIUPDATE_FULL)
+		if (type == EUpdateType::Full)
 		{
 			m_lightLevel = pAISystem->GetLightManager()->GetLightLevelAt(GetPos(), this, &m_usingCombatLight);
 		}
@@ -739,7 +689,7 @@ void CAIActor::Update(EObjectUpdate type)
 	m_bUpdatedOnce = true;
 }
 
-void CAIActor::UpdateProxy(EObjectUpdate type)
+void CAIActor::UpdateProxy(EUpdateType type)
 {
 	IAIActorProxy* pAIActorProxy = GetProxy();
 
@@ -751,7 +701,7 @@ void CAIActor::UpdateProxy(EObjectUpdate type)
 	// (MATT) Try avoiding UpdateMind, which triggers script, signal and behaviour code, if only a dry update {2009/12/06}
 	assert(pAIActorProxy);
 	if (pAIActorProxy)
-		pAIActorProxy->Update(m_State, (type == AIUPDATE_FULL));
+		pAIActorProxy->Update(m_State, (type == EUpdateType::Full));
 }
 
 //
@@ -763,9 +713,9 @@ void CAIActor::UpdateCloakScale()
 
 //
 //------------------------------------------------------------------------------------------------------------------------
-void CAIActor::UpdateDisabled(EObjectUpdate type)
+void CAIActor::UpdateDisabled(EUpdateType type)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	// (MATT) I'm assuming that AIActor should always have a proxy, or this could be bad for performance {2009/04/03}
 	IAIActorProxy* pProxy = GetProxy();
@@ -867,8 +817,6 @@ void CAIActor::OnAIHandlerSentSignal(const char* signalText, uint32 crc)
 
 	if (gAIEnv.CVars.LogSignals)
 		gEnv->pLog->Log("OnAIHandlerSentSignal: '%s' [%s].", signalText, GetName());
-
-	ProcessBehaviorSelectionTreeSignal(signalText, crc);
 
 	if (IsRunningBehaviorTree())
 	{
@@ -1003,7 +951,7 @@ void CAIActor::SetSignal(int nSignalID, const char* szText, IEntity* pSender, IA
 //====================================================================
 bool CAIActor::IsHostile(const IAIObject* pOtherAI, bool bUsingAIIgnorePlayer) const
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	bool hostile = false;
 
@@ -1122,7 +1070,7 @@ void CAIActor::Event(unsigned short eType, SAIEVENT* pEvent)
 
 			pAISystem->RemoveFromGroup(GetGroupId(), this);
 
-			pAISystem->ReleaseFormationPoint(this);
+			gAIEnv.pFormationManager->ReleaseFormationPoint(this);
 			CancelRequestedPath(false);
 			ReleaseFormation();
 
@@ -1351,44 +1299,6 @@ void CAIActor::Serialize(TSerialize ser)
 	else
 		AIWarning("CAIActor::Serialize Missing proxy for \'%s\' after loading", GetName());
 
-	assert((m_behaviorSelectionTree.get() != NULL) == (m_behaviorSelectionVariables.get() != NULL));
-
-	ser.EnumValue("m_behaviorTreeEvaluationMode", m_behaviorTreeEvaluationMode, FirstBehaviorTreeEvaluationMode, BehaviorTreeEvaluationModeCount);
-
-	if (ser.BeginOptionalGroup("BehaviorSelectionTree", m_behaviorSelectionTree.get() != NULL))
-	{
-		if (ser.IsReading())
-			ResetBehaviorSelectionTree(AIOBJRESET_INIT);
-
-		assert(m_behaviorSelectionTree.get() != NULL);
-		assert(m_behaviorSelectionVariables.get() != NULL);
-
-		if (m_behaviorSelectionTree.get() != NULL)
-			m_behaviorSelectionTree->Serialize(ser);
-		else
-			AIWarning("CAIActor::Serialize Missing Behavior Selection Tree for \'%s\' after loading", GetName());
-
-		if (m_behaviorSelectionVariables.get() != NULL)
-			m_behaviorSelectionVariables->Serialize(ser);
-		else
-			AIWarning("CAIActor::Serialize Missing Behavior Selection Variables for \'%s\' after loading", GetName());
-
-		if (ser.IsReading())
-			UpdateBehaviorSelectionTree();
-
-		ser.EndGroup();
-	}
-	else if (ser.IsReading())
-	{
-		m_behaviorSelectionTree.reset();
-		m_behaviorSelectionVariables.reset();
-	}
-
-	if (ser.IsReading())
-	{
-		ResetBehaviorSelectionTree(AIOBJRESET_INIT);
-	}
-
 	if (ser.IsReading())
 	{
 		ResetModularBehaviorTree(AIOBJRESET_INIT);
@@ -1408,7 +1318,6 @@ void CAIActor::Serialize(TSerialize ser)
 
 		ReactionChanged(0, IFactionMap::Hostile);
 
-		m_probableTargets.clear();
 		m_usingCombatLight = false;
 		m_lightLevel = AILL_LIGHT;
 	}
@@ -1428,8 +1337,6 @@ void CAIActor::Serialize(TSerialize ser)
 		SetAttentionTarget(NILREF);
 	}
 
-	ser.Value("m_bCloseContact", m_bCloseContact);
-
 	// Territory
 	ser.Value("m_territoryShapeName", m_territoryShapeName);
 	if (ser.IsReading())
@@ -1446,10 +1353,10 @@ void CAIActor::Serialize(TSerialize ser)
 		m_navigationTypeID = NavigationAgentTypeID(navigationTypeId);
 	}
 
-	ser.Value("m_currentCollisionAvoidanceRadiusIncrement", m_currentCollisionAvoidanceRadiusIncrement);
-
 	ser.Value("m_initialPosition.isValid", m_initialPosition.isValid);
 	ser.Value("m_initialPosition.pos", m_initialPosition.pos);
+
+	m_collisionAvoidanceAgent.Serialize(ser);
 }
 
 void CAIActor::SetAttentionTarget(CWeakRef<CAIObject> refTarget)
@@ -1470,33 +1377,6 @@ Vec3 CAIActor::GetFloorPosition(const Vec3& pos)
 	Vec3 floorPos = pos;
 	return (GetFloorPos(floorPos, pos, WalkabilityFloorUpDist, WalkabilityFloorDownDist, WalkabilityDownRadius, AICE_STATIC))
 	       ? floorPos : pos;
-}
-
-void CAIActor::CheckCloseContact(IAIObject* pTarget, float distSq)
-{
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
-	if (!m_bCloseContact && distSq < sqr(GetParameters().m_fMeleeRange))
-	{
-		SetSignal(1, "OnCloseContact", pTarget->GetEntity(), 0, gAIEnv.SignalCRCs.m_nOnCloseContact);
-		SetCloseContact(true);
-	}
-}
-
-void CAIActor::SetCloseContact(bool bCloseContact)
-{
-	if (bCloseContact && !m_bCloseContact)
-		m_CloseContactTime = GetAISystem()->GetFrameStartTime();
-	m_bCloseContact = bCloseContact;
-}
-
-IAIObject::EFieldOfViewResult CAIActor::IsObjectInFOV(CAIObject* pTarget, float fDistanceScale) const
-{
-	CCCPOINT(CAIActor_IsObjectInFOVCone);
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
-
-	const Vec3& vTargetPos = pTarget->GetPos();
-	const float fSightRange = GetMaxTargetVisibleRange(pTarget) * fDistanceScale;
-	return (fSightRange > 0.0f ? CheckPointInFOV(vTargetPos, fSightRange) : eFOV_Outside);
 }
 
 CWeakRef<CAIActor> CAIActor::GetLiveTarget(const CWeakRef<CAIObject>& refTarget)
@@ -1849,34 +1729,9 @@ Vec3 CAIActor::GetPathAgentVelocity() const
 	return GetVelocity();
 }
 
-void CAIActor::GetPathAgentNavigationBlockers(NavigationBlockers& navigationBlockers, const struct PathfindRequest* pRequest)
-{
-
-}
-
-size_t CAIActor::GetNavNodeIndex() const
-{
-	if (m_lastNavNodeIndex)
-		return (m_lastNavNodeIndex < ~0ul) ? m_lastNavNodeIndex : 0;
-
-	m_lastNavNodeIndex = ~0ul;
-
-	return 0;
-}
-
 const AgentMovementAbility& CAIActor::GetPathAgentMovementAbility() const
 {
 	return m_movementAbility;
-}
-
-unsigned int CAIActor::GetPathAgentLastNavNode() const
-{
-	return GetNavNodeIndex();
-}
-
-void CAIActor::SetPathAgentLastNavNode(unsigned int lastNavNode)
-{
-	m_lastNavNodeIndex = lastNavNode;
 }
 
 void CAIActor::SetPathToFollow(const char* pathName)
@@ -1887,22 +1742,6 @@ void CAIActor::SetPathToFollow(const char* pathName)
 void CAIActor::SetPathAttributeToFollow(bool bSpline)
 {
 
-}
-
-void CAIActor::SetPFBlockerRadius(int blockerType, float radius)
-{
-
-}
-
-ETriState CAIActor::CanTargetPointBeReached(CTargetPointRequest& request)
-{
-	request.SetResult(eTS_false);
-	return eTS_false;
-}
-
-bool CAIActor::UseTargetPointRequest(const CTargetPointRequest& request)
-{
-	return false;
 }
 
 IPathFollower* CAIActor::GetPathFollower() const
@@ -2079,19 +1918,9 @@ IAIActorProxy* CAIActor::GetProxy() const
 	return m_proxy;
 }
 
-void CAIActor::ClearProbableTargets()
-{
-	m_probableTargets.clear();
-}
-
-void CAIActor::AddProbableTarget(CAIObject* pTarget)
-{
-	m_probableTargets.push_back(pTarget);
-}
-
 IAIObject::EFieldOfViewResult CAIActor::CheckPointInFOV(const Vec3& point, float sightRange) const
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	const Vec3& eyePosition = GetPos();
 	const Vec3 eyeToPointDisplacement = point - eyePosition;
@@ -2130,7 +1959,7 @@ void CAIActor::HandlePathDecision(MNMPathRequestResult& result)
 
 void CAIActor::HandleVisualStimulus(SAIEVENT* pAIEvent)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	const float fGlobalVisualPerceptionScale = gEnv->pAISystem->GetGlobalVisualScale(this);
 	const float fVisualPerceptionScale = m_Parameters.m_PerceptionParams.perceptionScale.visual * fGlobalVisualPerceptionScale;
@@ -2172,7 +2001,7 @@ void CAIActor::HandleVisualStimulus(SAIEVENT* pAIEvent)
 
 void CAIActor::HandleSoundEvent(SAIEVENT* pAIEvent)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	const float fGlobalAudioPerceptionScale = gEnv->pAISystem->GetGlobalAudioScale(this);
 	const float fAudioPerceptionScale = m_Parameters.m_PerceptionParams.perceptionScale.audio * fGlobalAudioPerceptionScale;
@@ -2216,7 +2045,7 @@ void CAIActor::HandleSoundEvent(SAIEVENT* pAIEvent)
 
 void CAIActor::HandleBulletRain(SAIEVENT* pAIEvent)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (gAIEnv.CVars.IgnoreBulletRainStimulus || m_Parameters.m_bAiIgnoreFgNode)
 		return;
@@ -2240,10 +2069,20 @@ void CAIActor::CancelRequestedPath(bool actorRemoved)
 
 IAIObject::EFieldOfViewResult CAIActor::IsPointInFOV(const Vec3& vPos, float fDistanceScale) const
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	const float fSightRange = m_Parameters.m_PerceptionParams.sightRange * fDistanceScale;
 	return CheckPointInFOV(vPos, fSightRange);
+}
+
+IAIObject::EFieldOfViewResult CAIActor::IsObjectInFOV(const IAIObject* pTarget, float fDistanceScale) const
+{
+	CCCPOINT(CAIActor_IsObjectInFOVCone);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
+
+	const Vec3& vTargetPos = pTarget->GetPos();
+	const float fSightRange = GetMaxTargetVisibleRange(pTarget) * fDistanceScale;
+	return (fSightRange > 0.0f ? CheckPointInFOV(vTargetPos, fSightRange) : eFOV_Outside);
 }
 
 void CAIActor::GetMovementSpeedRange(float fUrgency, bool bSlowForStrafe, float& normalSpeed, float& minSpeed, float& maxSpeed) const

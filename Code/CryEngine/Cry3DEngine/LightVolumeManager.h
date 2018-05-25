@@ -1,9 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
-#define LV_MAX_COUNT                256
-#define LV_LIGHTS_MAX_COUNT         64
+#define LV_MAX_COUNT                255
+#define LV_CELL_MAX_LIGHTS          64
+#define LV_MAX_LIGHTS               2048
 
 #define LV_WORLD_BUCKET_SIZE        512
 #define LV_LIGHTS_WORLD_BUCKET_SIZE 512
@@ -36,7 +37,7 @@ public:
 	void   Init();
 	void   Reset();
 	uint16 RegisterVolume(const Vec3& vPos, f32 fRadius, uint8 nClipVolumeRef, const SRenderingPassInfo& passInfo);
-	void   RegisterLight(const CDLight& pDL, uint32 nLightID, const SRenderingPassInfo& passInfo);
+	void   RegisterLight(const SRenderLight& pDL, uint32 nLightID, const SRenderingPassInfo& passInfo);
 	void   Update(const SRenderingPassInfo& passInfo);
 	void   Clear(const SRenderingPassInfo& passInfo);
 	void   GetLightVolumes(threadID nThreadID, SLightVolume*& pLightVols, uint32& nNumVols);
@@ -64,7 +65,7 @@ private:
 		{
 		};
 
-		uint16 nLightID[LV_LIGHTS_MAX_COUNT];
+		uint16 nLightID[LV_CELL_MAX_LIGHTS];
 		uint8  nLightCount;
 	};
 

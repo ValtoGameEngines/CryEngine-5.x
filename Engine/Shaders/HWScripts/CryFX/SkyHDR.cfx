@@ -1,5 +1,4 @@
-// CRYENGINE Source Code File
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "Common.cfi"
 #include "ModificatorVT.cfi"
@@ -34,7 +33,7 @@ struct a2v
 
 struct v2f_hdr
 {
-  float4 Position   : POSITION;  //in projection space
+  float4 Position   : SV_POSITION;  //in projection space
 
 #if !%NO_DAY_SKY_GRADIENT && !%NO_MOON
   float4 packedTC   : TEXCOORDN;
@@ -118,7 +117,7 @@ v2f_hdr SkyHDRVS(a2v IN)
 #if %_RT_FOG
 
   float3 viewDirNorm = IN.Position.xyz;
-  float viewDirCorrection = 1.0 / dot(viewDirNorm, -miscCamFront.xyz);
+  float viewDirCorrection = 1.0 / dot(viewDirNorm, -CV_CameraFrontVector.xyz);
   float3 vWorldPos  = vfViewPos.xyz + g_VS_NearFarClipDist.y * viewDirNorm * viewDirCorrection;
 #if !%_RT_VOLUMETRIC_FOG
   OUT.localFogColor = GetVolumetricFogColor( vWorldPos );
@@ -227,7 +226,7 @@ v2fZ SkyZVS(a2v IN)
 
   // Position in screen space.
   float4 vPos = IN.Position;
-  OUT.Position = mul(vpMatrix, vPos);
+  OUT.Position = mul(CV_ViewProjMatr, vPos);
   OUT.Position.z = OUT.Position.w;
 
   return OUT;
@@ -240,7 +239,12 @@ pixout_gbuffer SkyZPS(v2fZ IN)
 	
 	MaterialAttribsCommon attribs = MaterialAttribsDefault();
 	attribs.Albedo = 0;  // Output black albedo for emissive surface
+	
+#if %_RT_SAMPLE0
+	EncodeMicroGBuffer( attribs, OUT.GBufferA, IN.Position.xy );
+#else
 	EncodeGBuffer( attribs, OUT.GBufferA, OUT.GBufferB, OUT.GBufferC );
+#endif
 
   return OUT;
 }

@@ -1,8 +1,8 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
-#include <Schematyc/Utils/IString.h>
+#include <CrySchematyc/Utils/IString.h>
 
 namespace CrySchematycEditor {
 namespace Utils {
@@ -15,3 +15,4 @@ bool     ValidateClipboardContents(const char* szPrefix);
 
 }
 }
+

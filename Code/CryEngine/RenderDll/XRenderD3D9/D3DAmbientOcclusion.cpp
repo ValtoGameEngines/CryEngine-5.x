@@ -1,26 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-/*=============================================================================
-   D3DAmbientOcclusion.cpp : implementation of ambient occlusion related features.
-
-   Revision history:
-* Created by Vladimir Kajalin
-
-   =============================================================================*/
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "DriverD3D.h"
 #include <Cry3DEngine/I3DEngine.h>
 #include "D3DPostProcess.h"
 #include "../Common/Textures/TextureHelpers.h"
-
-#if defined(USE_NV_API)
-	#include NV_API_HEADER
-#endif
-
-#if defined(USE_AMD_EXT)
-	#include <AMD/AMD_Extensions/AmdDxExtDepthBoundsApi.h>
-#endif
 
 // TODO: Unify with other deferred primitive implementation
 const t_arrDeferredMeshVertBuff& CD3D9Renderer::GetDeferredUnitBoxVertexBuffer() const
@@ -81,39 +65,13 @@ void CD3D9Renderer::CreateDeferredUnitBox(t_arrDeferredMeshIndBuff& indBuff, t_a
 	}
 }
 
-void CD3D9Renderer::SetDepthBoundTest(float fMin, float fMax, bool bEnable)
-{
-	if (!m_bDeviceSupports_NVDBT)
-		return;
-#if DURANGO_ENABLE_ASYNC_DIPS
-	WaitForAsynchronousDevice();
+#if defined(USE_NV_API)
+	#include NV_API_HEADER
+#endif
+#if defined(USE_AMD_API)
+	#include <AMD/AGS Lib/inc/amd_ags.h>
+#endif
+#if defined(USE_AMD_EXT)
+	#include <AMD/AMD_Extensions/AmdDxExtDepthBoundsApi.h>
 #endif
 
-	m_bDepthBoundsEnabled = bEnable;
-	if (bEnable)
-	{
-		m_fDepthBoundsMin = fMin;
-		m_fDepthBoundsMax = fMax;
-#if defined(OPENGL) && !DXGL_FULL_EMULATION
-		DXGLSetDepthBoundsTest(true, fMin, fMax);
-#elif CRY_PLATFORM_ORBIS
-		ORBIS_TO_IMPLEMENT;
-#elif defined(USE_NV_API) //transparent execution without NVDB
-		NvAPI_Status status = NvAPI_D3D11_SetDepthBoundsTest(GetDevice().GetRealDevice(), bEnable, fMin, fMax);
-		assert(status == NVAPI_OK);
-#endif
-	}
-	else // disable depth bound test
-	{
-		m_fDepthBoundsMin = 0;
-		m_fDepthBoundsMax = 1.0f;
-#if defined(OPENGL) && !DXGL_FULL_EMULATION
-		DXGLSetDepthBoundsTest(false, 0.0f, 1.0f);
-#elif CRY_PLATFORM_ORBIS
-		ORBIS_TO_IMPLEMENT;
-#elif defined(USE_NV_API)
-		NvAPI_Status status = NvAPI_D3D11_SetDepthBoundsTest(GetDevice().GetRealDevice(), bEnable, fMin, fMax);
-		assert(status == NVAPI_OK);
-#endif
-	}
-}

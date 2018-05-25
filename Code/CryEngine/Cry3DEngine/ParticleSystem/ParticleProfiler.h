@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -60,6 +60,7 @@ public:
 public:
 	CParticleProfiler();
 
+	bool IsEnabled() const { return Cry3DEngineBase::GetCVars()->e_ParticlesProfiler != 0; }
 	void Reset();
 	void Display();
 	void SaveToFile();
@@ -67,12 +68,14 @@ public:
 	void AddEntry(CParticleComponentRuntime* pRuntime, EProfileStat type, uint value = 1);
 
 private:
+	static CVars* GetCVars() { return Cry3DEngineBase::GetCVars(); }
 	void SortEntries();
 	void WriteEntries(CCSVFileOutput& output) const;
 
-	void DrawStats();
+	void DrawPerfomanceStats();
 	void DrawStatsCounts(CStatisticsDisplay& output, Vec2 pos, uint budget);
 	void DrawStats(CStatisticsDisplay& output, Vec2 pos, EProfileStat stat, uint budget, cstr statName);
+	void DrawMemoryStats();
 
 	std::vector<TEntries> m_entries;
 };

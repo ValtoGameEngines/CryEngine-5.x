@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "FlashUI.h"
@@ -12,6 +12,7 @@
 #include <CryString/StringUtils.h>
 #include <CrySystem/VR/IHMDManager.h>
 #include <CryRenderer/IStereoRenderer.h>
+#include <CryRenderer/IScaleform.h>
 #include <CrySystem/Scaleform/IScaleformHelper.h>
 
 #define FLASH_UIELEMENTS_FOLDER "UIElements"
@@ -135,7 +136,6 @@ bool CFlashUI::PostInit()
 			notifier->Init();
 
 		PreloadTextures();
-		gEnv->pRenderer->InitSystemResources(FRR_SYSTEM_RESOURCES);
 	}
 	return res;
 }
@@ -166,6 +166,8 @@ void CFlashUI::Shutdown()
 
 	SAFE_DELETE(m_pUIActionManager);
 	SAFE_DELETE(m_pFlashUIActionEvents);
+
+	gEnv->pFlashUI = nullptr;
 }
 
 //------------------------------------------------------------------------------------
@@ -192,7 +194,7 @@ void CFlashUI::RegisterListeners()
 	CRY_ASSERT_MESSAGE(gEnv->pSystem, "Unable to register as system listener!");
 	if (gEnv->pSystem)
 	{
-		gEnv->pSystem->GetISystemEventDispatcher()->RegisterListener(this);
+		gEnv->pSystem->GetISystemEventDispatcher()->RegisterListener(this, "CFlashUI");
 	}
 }
 
@@ -263,7 +265,7 @@ void CFlashUI::ReloadAll()
 //-------------------------------------------------------------------
 void CFlashUI::Update(float fDeltaTime)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	if (m_bLoadtimeThread)
 		return;
@@ -272,7 +274,6 @@ void CFlashUI::Update(float fDeltaTime)
 
 	if (!isEditor || gEnv->pGameFramework->IsGameStarted())
 	{
-
 		if (CV_gfx_reloadonlanguagechange == 1)
 			CheckLanguageChanged();
 
@@ -468,7 +469,6 @@ void CFlashUI::OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR lpara
 			if (m_systemState == eSS_Unloading)
 			{
 				StopRenderThread();
-				gEnv->pRenderer->InitSystemResources(FRR_SYSTEM_RESOURCES);
 				PreloadTextures();
 
 				m_pFlashUIActionEvents->OnUnloadComplete();
@@ -569,7 +569,7 @@ void CFlashUI::OnLoadingProgress(ILevelInfo* pLevel, int progressAmount)
 			gEnv->pRenderer->EF_Query(EFQ_RecurseLevel, nRecursionLevel);
 			const bool bStandAlone = (nRecursionLevel <= 0);
 			if (bStandAlone)
-				gEnv->pSystem->RenderBegin();
+				gEnv->pSystem->RenderBegin({});
 
 			const float currTime = gEnv->pTimer->GetAsyncCurTime();
 			OnPostUpdate(currTime - m_fLastAdvance);
@@ -618,11 +618,6 @@ void CFlashUI::LoadtimeUpdate(float fDeltaTime)
 	{
 		(*it)->Advance(fDeltaTime);
 	}
-
-	if (IHmdManager* pHmdManager = gEnv->pSystem->GetHmdManager())
-	{
-		pHmdManager->UpdateTracking(eVRComponent_Hmd);
-	}
 }
 
 //------------------------------------------------------------------------------------
@@ -630,21 +625,26 @@ void CFlashUI::LoadtimeRender()
 {
 	LOADING_TIME_PROFILE_SECTION
 
-	gEnv->pRenderer->ClearTargetsImmediately(FRT_CLEAR);
-
 	if (CV_gfx_draw == 1)
 	{
-		if (IStereoRenderer* pStereoRenderer = gEnv->pRenderer->GetIStereoRenderer())
-		{
-			if (IHmdRenderer* pHmdRender = pStereoRenderer->GetIHmdRenderer())
-			{
-				pHmdRender->PrepareFrame();
-			}
-		}
+		IStereoRenderer* stereoRenderer = gEnv->pRenderer->GetIStereoRenderer();
+
+		if (stereoRenderer->GetStereoEnabled())
+			stereoRenderer->PrepareFrame();
 
 		for (TPlayerList::const_iterator it = m_loadtimePlayerList.begin(); it != m_loadtimePlayerList.end(); ++it)
 		{
-			(*it)->Render(gEnv->pRenderer->IsStereoEnabled());
+			IFlashPlayer* pFlashPlayer = (*it);
+
+			pFlashPlayer->SetClearFlags(FRT_CLEAR_COLOR, Clr_Transparent);
+			gEnv->pRenderer->FlashRenderPlayer(pFlashPlayer);
+		}
+
+		if (stereoRenderer->GetStereoEnabled())
+		{
+			if (!stereoRenderer->IsMenuModeEnabled())
+				stereoRenderer->DisplaySocialScreen();
+			stereoRenderer->SubmitFrameToHMD();
 		}
 	}
 }
@@ -750,7 +750,7 @@ void CFlashUI::SetHudElementsVisible(bool bVisible)
 //-------------------------------------------------------------------
 void CFlashUI::OnHardwareMouseEvent(int iX, int iY, EHARDWAREMOUSEEVENT eHardwareMouseEvent, int wheelDelta)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	if (gEnv->pConsole->GetStatus())   // disable UI inputs when console is open
 		return;
@@ -785,7 +785,7 @@ void CFlashUI::OnHardwareMouseEvent(int iX, int iY, EHARDWAREMOUSEEVENT eHardwar
 //-------------------------------------------------------------------
 bool CFlashUI::OnInputEvent(const SInputEvent& event)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	if (gEnv->pConsole->GetStatus())   // disable UI inputs when console is open
 		return false;
@@ -831,7 +831,7 @@ bool CFlashUI::OnInputEvent(const SInputEvent& event)
 //------------------------------------------------------------------------------------
 bool CFlashUI::OnInputEventUI(const SUnicodeEvent& event)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	if (gEnv->pConsole->GetStatus())   // disable UI inputs when console is open
 		return false;
@@ -1007,7 +1007,7 @@ template<EUIObjectType T> bool IsTemplate()                     { return false; 
 template<> bool                IsTemplate<eUOT_MovieClipTmpl>() { return true; }
 
 template<EUIObjectType Type, class Item>
-void CreateMCFunctionNodes(CFlashUI::TUIFlowNodes& nodelist, IUIElement* pElement, Item* pItem, const string& path, bool fill = false)
+static void CreateMCFunctionNodes(std::vector<CFlashUiFlowNodeFactory*>& nodelist, IUIElement* pElement, Item* pItem, const string& path, bool fill = false)
 {
 	// prevent to fill "first row"
 	if (fill)
@@ -1022,7 +1022,7 @@ void CreateMCFunctionNodes(CFlashUI::TUIFlowNodes& nodelist, IUIElement* pElemen
 			category += pDesc->sDisplayName;
 
 			CFlashUIFunctionNode* pNode = new CFlashUIFunctionNode(pElement, category, pDesc, IsTemplate<Type>());
-			CAutoRegUIFlowNode* pFlowNode = new CAutoRegUIFlowNode(pNode->GetCategory(), pNode);
+			CFlashUiFlowNodeFactory* pFlowNode = new CFlashUiFlowNodeFactory(pNode->GetCategory(), pNode);
 			nodelist.push_back(pFlowNode);
 		}
 	}
@@ -1052,14 +1052,14 @@ void CFlashUI::CreateNodes()
 		while (const SUIEventDesc* pDesc = (*iter)->GetEventDesc(i++))
 		{
 			CFlashUIEventNode* pNode = new CFlashUIEventNode(*iter, CreateDisplayName("UI:Events:%s:%s", (*iter)->GetName(), pDesc->sDisplayName), pDesc);
-			CAutoRegUIFlowNode* pFlowNode = new CAutoRegUIFlowNode(pNode->GetCategory(), pNode);
+			CFlashUiFlowNodeFactory* pFlowNode = new CFlashUiFlowNodeFactory(pNode->GetCategory(), pNode);
 			m_UINodes.push_back(pFlowNode);
 		}
 		i = 0;
 		while (const SUIEventDesc* pDesc = (*iter)->GetFunctionDesc(i++))
 		{
 			CFlashUIFunctionNode* pNode = new CFlashUIFunctionNode(*iter, CreateDisplayName("UI:Functions:%s:%s", (*iter)->GetName(), pDesc->sDisplayName), pDesc, false);
-			CAutoRegUIFlowNode* pFlowNode = new CAutoRegUIFlowNode(pNode->GetCategory(), pNode);
+			CFlashUiFlowNodeFactory* pFlowNode = new CFlashUiFlowNodeFactory(pNode->GetCategory(), pNode);
 			m_UINodes.push_back(pFlowNode);
 		}
 
@@ -1076,7 +1076,7 @@ void CFlashUI::CreateNodes()
 		while (const SUIEventDesc* pDesc = pEventSystem->GetEventDesc(i++))
 		{
 			CFlashUIBaseNodeCategory* pNode = new CFlashUIEventSystemEventNode(pEventSystem, CreateDisplayName("UI:Events:%s:%s", name.c_str(), pDesc->sDisplayName), pDesc);
-			CAutoRegUIFlowNode* pFlowNode = new CAutoRegUIFlowNode(pNode->GetCategory(), pNode);
+			CFlashUiFlowNodeFactory* pFlowNode = new CFlashUiFlowNodeFactory(pNode->GetCategory(), pNode);
 			m_UINodes.push_back(pFlowNode);
 		}
 	}
@@ -1089,9 +1089,15 @@ void CFlashUI::CreateNodes()
 		while (const SUIEventDesc* pDesc = pEventSystem->GetEventDesc(i++))
 		{
 			CFlashUIBaseNodeCategory* pNode = new CFlashUIEventSystemFunctionNode(pEventSystem, CreateDisplayName("UI:Functions:%s:%s", name.c_str(), pDesc->sDisplayName), pDesc);
-			CAutoRegUIFlowNode* pFlowNode = new CAutoRegUIFlowNode(pNode->GetCategory(), pNode);
+			CFlashUiFlowNodeFactory* pFlowNode = new CFlashUiFlowNodeFactory(pNode->GetCategory(), pNode);
 			m_UINodes.push_back(pFlowNode);
 		}
+	}
+
+	// Do nodes registration with flow graph system
+	for (auto pNodeFactory : m_UINodes)
+	{
+		gEnv->pFlowSystem->RegisterType(pNodeFactory->GetNodeTypeName(),pNodeFactory);
 	}
 }
 
@@ -1252,8 +1258,10 @@ void CFlashUI::ReloadScripts()
 //-------------------------------------------------------------------
 void CFlashUI::ClearNodes()
 {
-	for (TUIFlowNodes::iterator iter = m_UINodes.begin(); iter != m_UINodes.end(); ++iter)
-		SAFE_RELEASE(*iter);
+	for (auto pNodeFactory : m_UINodes)
+	{
+		gEnv->pFlowSystem->UnregisterType(pNodeFactory->GetNodeTypeName());
+	}
 
 	m_UINodes.clear();
 }
@@ -1519,7 +1527,6 @@ void CFlashUI::StartRenderThread()
 		}
 		m_bLoadtimeThread = true;
 		gEnv->pCryPak->LockReadIO(true);
-		gEnv->pRenderer->InitSystemResources(FRR_SYSTEM_RESOURCES);
 		gEnv->pRenderer->StartLoadtimeFlashPlayback(this);
 		UIACTION_LOG("Loadtime Render Thread: Started");
 	}
@@ -1553,11 +1560,13 @@ IUIEventSystemIteratorPtr CFlashUI::CreateEventSystemIterator(IUIEventSystem::EE
 }
 
 //-------------------------------------------------------------------
-IUIElement* CFlashUI::GetUIElementByInstanceStr(const char* sUIInstanceStr) const
+std::pair<string, int> CFlashUI::GetUIIdentifiersByInstanceStr(const char* sUIInstanceStr) const
 {
-	assert(sUIInstanceStr != NULL);
-	if (sUIInstanceStr == NULL)
-		return NULL;
+	std::pair<string, int> result = std::make_pair<string, int>("", 0);
+
+	CRY_ASSERT(sUIInstanceStr != nullptr);
+	if (sUIInstanceStr == nullptr)
+		return result;
 
 	string tmpName(sUIInstanceStr);
 	PathUtil::RemoveExtension(tmpName);
@@ -1567,7 +1576,7 @@ IUIElement* CFlashUI::GetUIElementByInstanceStr(const char* sUIInstanceStr) cons
 
 	const char* pExt = PathUtil::GetExt(sUIInstanceStr);
 	if (*pExt != '\0' && strcmpi(pExt, "ui"))
-		return NULL;
+		return result;
 
 	uint instanceId = 0;
 
@@ -1581,19 +1590,39 @@ IUIElement* CFlashUI::GetUIElementByInstanceStr(const char* sUIInstanceStr) cons
 			name[index] = '\0';
 			id_index = index + 1;
 		}
+
 		index++;
 	}
+
+	result.first = name;
+
 	if (id_index != -1 && id_index < str_length)
 	{
-		instanceId = atoi(name + id_index);
+		result.second = atoi(name + id_index);
 	}
 
-	IUIElement* pElement = GetUIElement(name);
-	if (pElement)
+	return result;
+}
+
+std::pair<IUIElement*, IUIElement*> CFlashUI::GetUIElementsByInstanceStr(const char* sUIInstanceStr) const
+{
+	std::pair<IUIElement*, IUIElement*> result = std::make_pair<IUIElement*, IUIElement*>(nullptr, nullptr);
+	std::pair<string, int> identifiers = GetUIIdentifiersByInstanceStr(sUIInstanceStr);
+
+	if (identifiers.first == "")
+		return result;
+
+	if (result.second = result.first = GetUIElement(identifiers.first))
 	{
-		pElement = pElement->GetInstance(instanceId);
+		result.second = result.first->GetInstance(identifiers.second);
 	}
-	return pElement;
+
+	return result;
+}
+
+IUIElement* CFlashUI::GetUIElementByInstanceStr(const char* sUIInstanceStr) const
+{
+	return CFlashUI::GetUIElementsByInstanceStr(sUIInstanceStr).second;
 }
 
 //-------------------------------------------------------------------
@@ -1689,10 +1718,11 @@ void CFlashUI::CheckLanguageChanged()
 //------------------------------------------------------------------------------------
 void CFlashUI::CheckResolutionChange()
 {
-	int width, height, x, y;
-	if (!gEnv->IsEditor())
+	int width = 0, height = 0;
+	if (!gEnv->IsEditor() && gEnv->pRenderer)
 	{
-		gEnv->pRenderer->GetViewport(&x, &y, &width, &height);
+		width  = gEnv->pRenderer->GetOverlayWidth();
+		height = gEnv->pRenderer->GetOverlayHeight();
 	}
 	else
 	{
@@ -1732,10 +1762,10 @@ void CFlashUI::GetScreenSize(int& width, int& height)
 	{
 		m_ScreenSizeCB(width, height);
 	}
-	else
+	else if (gEnv->pRenderer)
 	{
-		int x, y;
-		gEnv->pRenderer->GetViewport(&x, &y, &width, &height);
+		width  = gEnv->pRenderer->GetOverlayWidth();
+		height = gEnv->pRenderer->GetOverlayHeight();
 	}
 }
 
@@ -2083,7 +2113,7 @@ void RenderDebugInfo()
 		// Render debug view
 		if (pPost3DRendererTexture != NULL)
 		{
-			gEnv->pRenderer->Draw2dImage(0, 0, 200, 200, pPost3DRendererTexture->GetTextureID());
+			IRenderAuxImage::Draw2dImage(0, 0, 200, 200, pPost3DRendererTexture->GetTextureID());
 		}
 		/////////////////
 	}

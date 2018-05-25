@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   LipSync_FacialInstance.h
@@ -21,18 +21,18 @@ public:
 	explicit CLipSyncProvider_FacialInstance(EntityId entityId);
 
 	// ILipSyncProvider
-	virtual void RequestLipSync(IEntityAudioComponent* pProxy, const AudioControlId audioTriggerId, const ELipSyncMethod lipSyncMethod) override;
-	virtual void StartLipSync(IEntityAudioComponent* pProxy, const AudioControlId audioTriggerId, const ELipSyncMethod lipSyncMethod) override;
-	virtual void PauseLipSync(IEntityAudioComponent* pProxy, const AudioControlId audioTriggerId, const ELipSyncMethod lipSyncMethod) override;
-	virtual void UnpauseLipSync(IEntityAudioComponent* pProxy, const AudioControlId audioTriggerId, const ELipSyncMethod lipSyncMethod) override;
-	virtual void StopLipSync(IEntityAudioComponent* pProxy, const AudioControlId audioTriggerId, const ELipSyncMethod lipSyncMethod) override;
-	virtual void UpdateLipSync(IEntityAudioComponent* pProxy, const AudioControlId audioTriggerId, const ELipSyncMethod lipSyncMethod) override;
+	virtual void RequestLipSync(IEntityAudioComponent* pProxy, const CryAudio::ControlId audioTriggerId, const ELipSyncMethod lipSyncMethod) override;
+	virtual void StartLipSync(IEntityAudioComponent* pProxy, const CryAudio::ControlId audioTriggerId, const ELipSyncMethod lipSyncMethod) override;
+	virtual void PauseLipSync(IEntityAudioComponent* pProxy, const CryAudio::ControlId audioTriggerId, const ELipSyncMethod lipSyncMethod) override;
+	virtual void UnpauseLipSync(IEntityAudioComponent* pProxy, const CryAudio::ControlId audioTriggerId, const ELipSyncMethod lipSyncMethod) override;
+	virtual void StopLipSync(IEntityAudioComponent* pProxy, const CryAudio::ControlId audioTriggerId, const ELipSyncMethod lipSyncMethod) override;
+	virtual void UpdateLipSync(IEntityAudioComponent* pProxy, const CryAudio::ControlId audioTriggerId, const ELipSyncMethod lipSyncMethod) override;
 	// ~ILipSyncProvider
 
 	void FullSerialize(TSerialize ser);
 
 private:
-	void LipSyncWithSound(const AudioControlId audioTriggerId, bool bStop = false);
+	void LipSyncWithSound(const CryAudio::ControlId audioTriggerId, bool bStop = false);
 	EntityId m_entityId;
 };
 DECLARE_SHARED_POINTERS(CLipSyncProvider_FacialInstance);
@@ -56,10 +56,9 @@ public:
 	virtual ISerializableInfoPtr GetSpawnInfo() override;
 	virtual void                 Update(SEntityUpdateContext& ctx, int updateSlot) override;
 	virtual void                 HandleEvent(const SGameObjectEvent& event) override;
-	virtual void                 ProcessEvent(SEntityEvent& event) override;
+	virtual void                 ProcessEvent(const SEntityEvent& event) override;
 	virtual uint64               GetEventMask() const override;
 	virtual void                 SetChannelId(uint16 id) override;
-	virtual void                 SetAuthority(bool auth) override;
 	virtual void                 PostUpdate(float frameTime) override;
 	virtual void                 PostRemoteSpawn() override;
 	// ~IGameObjectExtension

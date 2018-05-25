@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -14,11 +14,6 @@ public:
 
 	void Init();
 	void Execute();
-	void PrepareResources();
-
-private:
-	void PrepareLightVolumeInfo();
-	bool ExecuteVolumeListGen(uint32 dispatchSizeX, uint32 dispatchSizeY);
 
 private:
 	enum EVolumeTypes
@@ -40,16 +35,18 @@ private:
 	};
 
 private:
-	int                   m_samplerTrilinearClamp;
-	int                   m_samplerCompare;
-	
+	CGpuBuffer            m_lightVolumeInfoBuf;
+
+	_smart_ptr<CTexture>  m_pTexGiDiff;
+	_smart_ptr<CTexture>  m_pTexGiSpec;
+
+	SVolumeGeometry       m_volumeMeshes[eVolumeType_Count];
+
+	CConstantBufferPtr    m_pPerViewConstantBuffer = nullptr;
 	CComputeRenderPass    m_passCullingShading;
 	
 	CFullscreenPass       m_passCopyDepth;
 	CPrimitiveRenderPass  m_passLightVolumes;
 	CRenderPrimitive      m_volumePasses[eVolumeType_Count * 2];  // Inside and outside of volume for each type
 	uint32                m_numVolumesPerPass[eVolumeType_Count * 2];
-
-	CGpuBuffer            m_lightVolumeInfoBuf;
-	SVolumeGeometry       m_volumeMeshes[eVolumeType_Count];
 };

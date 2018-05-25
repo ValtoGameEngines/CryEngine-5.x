@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "D3DColorGradingController.h"
@@ -16,29 +16,29 @@ const uint32 COLORCHART_TEXFLAGS = FT_NOMIPS | FT_DONT_STREAM | FT_STATE_CLAMP;
 
 
 
-CColorGradingControllerD3D::CColorGradingControllerD3D(CD3D9Renderer* pRenderer)
+CColorGradingController::CColorGradingController()
 	: m_layers()
-	, m_pRenderer(pRenderer)
 	, m_pChartIdentity(nullptr)
 	, m_pChartStatic(nullptr)
 	, m_pChartToUse(nullptr)
 {
-	assert(m_pRenderer);
 }
 
-CColorGradingControllerD3D::~CColorGradingControllerD3D()
+CColorGradingController::~CColorGradingController()
 {
 }
 
-void CColorGradingControllerD3D::FreeMemory()
+void CColorGradingController::FreeMemory()
 {
+	CryAutoCriticalSectionNoRecursive lock(m_layersLock);
+
 	stl::reconstruct(m_layers);
 	m_pChartToUse = nullptr;
 	m_pChartStatic = nullptr;
 	m_pChartIdentity = nullptr;
 }
 
-bool CColorGradingControllerD3D::ValidateColorChart(const CTexture* pChart) const
+bool CColorGradingController::ValidateColorChart(const CTexture* pChart) const
 {
 	if (!CTexture::IsTextureExist(pChart))
 		return false;
@@ -52,12 +52,12 @@ bool CColorGradingControllerD3D::ValidateColorChart(const CTexture* pChart) cons
 	return true;
 }
 
-CTexture* CColorGradingControllerD3D::LoadColorChartInt(const char* pChartFilePath) const
+CTexture* CColorGradingController::LoadColorChartInt(const char* pChartFilePath) const
 {
 	if (!pChartFilePath || !pChartFilePath[0])
 		return 0;
 
-	CTexture* pChart = (CTexture*) m_pRenderer->EF_LoadTexture(pChartFilePath, COLORCHART_TEXFLAGS);
+	CTexture* pChart = (CTexture*)gRenDev->EF_LoadTexture(pChartFilePath, COLORCHART_TEXFLAGS);
 	if (!ValidateColorChart(pChart))
 	{
 		SAFE_RELEASE(pChart);
@@ -66,25 +66,22 @@ CTexture* CColorGradingControllerD3D::LoadColorChartInt(const char* pChartFilePa
 	return pChart;
 }
 
-int CColorGradingControllerD3D::LoadColorChart(const char* pChartFilePath) const
+int CColorGradingController::LoadColorChart(const char* pChartFilePath) const
 {
 	CTexture* pChart = LoadColorChartInt(pChartFilePath);
 	return pChart ? pChart->GetID() : -1;
 }
 
-void CColorGradingControllerD3D::UnloadColorChart(int texID) const
+void CColorGradingController::UnloadColorChart(int texID) const
 {
 	CTexture* pChart = CTexture::GetByID(texID);
 	SAFE_RELEASE(pChart);
 }
 
-void CColorGradingControllerD3D::SetLayers(const SColorChartLayer* pLayers, uint32 numLayers)
+void CColorGradingController::SetLayers(const SColorChartLayer* pLayerInfo, uint32 numLayers) threadsafe
 {
-	gRenDev->m_pRT->RC_CGCSetLayers(this, pLayers, numLayers);
-}
+	CryAutoCriticalSectionNoRecursive lock(m_layersLock);
 
-void CColorGradingControllerD3D::RT_SetLayers(const SColorChartLayer* pLayerInfo, uint32 numLayers)
-{
 	m_layers.reserve(numLayers);
 	m_layers.resize(0);
 
@@ -120,9 +117,9 @@ void CColorGradingControllerD3D::RT_SetLayers(const SColorChartLayer* pLayerInfo
 	}
 }
 
-bool CColorGradingControllerD3D::InitResources()
+bool CColorGradingController::InitResources()
 {
-	auto pColorGradingStage = reinterpret_cast<CColorGradingStage*>(m_pRenderer->GetGraphicsPipeline().GetStage(eStage_ColorGrading));
+	auto pColorGradingStage = static_cast<CColorGradingStage*>(gRenDev->GetGraphicsPipeline().GetStage(eStage_ColorGrading));
 
 	m_pChartIdentity  = pColorGradingStage->GetIdentityColorChart();
 	m_pChartStatic    = pColorGradingStage->GetStaticColorChart();
@@ -135,11 +132,11 @@ bool CColorGradingControllerD3D::InitResources()
 	return true;
 }
 
-bool CColorGradingControllerD3D::Update(const SColorGradingMergeParams* pMergeParams)
+bool CColorGradingController::Update(const SColorGradingMergeParams* pMergeParams)
 {
 	m_pChartToUse = nullptr;
 
-	if (!m_pRenderer->CV_r_colorgrading_charts)
+	if (!gRenDev->CV_r_colorgrading_charts)
 		return true;
 
 	if (m_pChartToUse = m_pChartStatic)
@@ -153,15 +150,17 @@ bool CColorGradingControllerD3D::Update(const SColorGradingMergeParams* pMergePa
 
 	gRenDev->m_cEF.mfRefreshSystemShader("PostEffectsGame", CShaderMan::s_shPostEffectsGame);
 
-	static const int texStatePntID = CTexture::GetTexState(STexState(FILTER_POINT, true));
-	static const int texStateLinID = CTexture::GetTexState(STexState(FILTER_LINEAR, true));
-
 	const uint64 sample0 = g_HWSR_MaskBit[HWSR_SAMPLE0];
 	const uint64 sample1 = g_HWSR_MaskBit[HWSR_SAMPLE1];
 	const uint64 sample2 = g_HWSR_MaskBit[HWSR_SAMPLE2];
 	const uint64 sample5 = g_HWSR_MaskBit[HWSR_SAMPLE5];
 
-	auto pColorGradingStage = reinterpret_cast<CColorGradingStage*>(m_pRenderer->GetGraphicsPipeline().GetStage(eStage_ColorGrading));
+	auto pColorGradingStage = static_cast<CColorGradingStage*>(gRenDev->GetGraphicsPipeline().GetStage(eStage_ColorGrading));
+
+	// OLD PIPELINE
+	ASSERT_LEGACY_PIPELINE
+
+		/*
 
 	// merge layers
 	const size_t numLayers = m_layers.size();
@@ -172,7 +171,7 @@ bool CColorGradingControllerD3D::Update(const SColorGradingMergeParams* pMergePa
 	else
 	{
 		CTexture* pNewMergeResult = m_pMergeLayers[0];
-		m_pRenderer->FX_PushRenderTarget(0, pNewMergeResult, 0);
+		gRenDev->FX_PushRenderTarget(0, pNewMergeResult, 0);
 
 		int numMergePasses = 0;
 		for (size_t curLayer = 0; curLayer < numLayers; )
@@ -189,7 +188,7 @@ bool CColorGradingControllerD3D::Update(const SColorGradingMergeParams* pMergePa
 			if (numLayersPerPass)
 			{
 				const uint64 nResetFlags = ~(sample0 | sample1 | sample2);
-				m_pRenderer->m_RP.m_FlagsShader_RT &= nResetFlags;
+				gRenDev->m_RP.m_FlagsShader_RT &= nResetFlags;
 				if ((numLayersPerPass - 1) & 1)
 					gRenDev->m_RP.m_FlagsShader_RT |= sample0;
 				if ((numLayersPerPass - 1) & 2)
@@ -206,7 +205,7 @@ bool CColorGradingControllerD3D::Update(const SColorGradingMergeParams* pMergePa
 				{
 					const SColorChartLayer& l = m_layers[mergeLayerIdx[i]];
 					CTexture* pChart = CTexture::GetByID(l.m_texID);
-					pChart->Apply(i, texStatePntID);
+					pChart->Apply(i, EDefaultSamplerStates::PointClamp);
 					layerBlendAmount[i] = l.m_blendAmount;
 				}
 
@@ -217,8 +216,8 @@ bool CColorGradingControllerD3D::Update(const SColorGradingMergeParams* pMergePa
 				Vec4 layerSize((float)pNewMergeResult->GetWidth(), (float)pNewMergeResult->GetHeight(), 0, 0);
 				SD3DPostEffectsUtils::ShSetParamPS(semLayerSize, layerSize);
 
-				m_pRenderer->FX_SetState(GS_NODEPTHTEST | (numMergePasses ? GS_BLSRC_ONE | GS_BLDST_ONE : 0));
-				m_pRenderer->SetCullMode(R_CULL_NONE);
+				gRenDev->FX_SetState(GS_NODEPTHTEST | (numMergePasses ? GS_BLSRC_ONE | GS_BLDST_ONE : 0));
+				gRenDev->SetCullMode(R_CULL_NONE);
 
 				auto slicesVB = pColorGradingStage->GetSlicesVB();
 				gcpRendD3D->DrawPrimitivesInternal(&slicesVB, COLORCHART_SIZE * 6, eptTriangleList);
@@ -226,13 +225,13 @@ bool CColorGradingControllerD3D::Update(const SColorGradingMergeParams* pMergePa
 				SD3DPostEffectsUtils::ShEndPass();
 				++numMergePasses;
 
-				m_pRenderer->m_RP.m_FlagsShader_RT &= nResetFlags;
+				gRenDev->m_RP.m_FlagsShader_RT &= nResetFlags;
 			}
 		}
 
 		m_pChartToUse = numMergePasses ? pNewMergeResult : m_pChartIdentity;
 
-		m_pRenderer->FX_PopRenderTarget(0);
+		gRenDev->FX_PopRenderTarget(0);
 	}
 
 	// combine merged layers with color grading stuff
@@ -245,13 +244,13 @@ bool CColorGradingControllerD3D::Update(const SColorGradingMergeParams* pMergePa
 		gRenDev->m_RP.m_FlagsShader_RT &= ~(sample1 | sample5);
 
 		CTexture* pNewMergeResult = m_pMergeLayers[1];
-		m_pRenderer->FX_PushRenderTarget(0, pNewMergeResult, 0);
+		gRenDev->FX_PushRenderTarget(0, pNewMergeResult, 0);
 		CShader* pSh = CShaderMan::s_shPostEffectsGame;
 
 		static CCryNameTSCRC techName("CombineColorGradingWithColorChart");
 		SD3DPostEffectsUtils::ShBeginPass(pSh, techName, FEF_DONTSETTEXTURES | FEF_DONTSETSTATES);
 
-		m_pChartToUse->Apply(0, texStateLinID);
+		m_pChartToUse->Apply(0, EDefaultSamplerStates::LinearClamp);
 
 		static CCryNameR pParamName0("ColorGradingParams0");
 		static CCryNameR pParamName1("ColorGradingParams1");
@@ -267,8 +266,8 @@ bool CColorGradingControllerD3D::Update(const SColorGradingMergeParams* pMergePa
 		pSh->FXSetPSFloat(pParamName4, &pMergeParams->pSelectiveColor[1], 1);
 		pSh->FXSetPSFloat(pParamMatrix, &pMergeParams->pColorMatrix[0], 3);
 
-		m_pRenderer->FX_SetState(GS_NODEPTHTEST);
-		m_pRenderer->SetCullMode(R_CULL_NONE);
+		gRenDev->FX_SetState(GS_NODEPTHTEST);
+		gRenDev->SetCullMode(R_CULL_NONE);
 
 		auto slicesVB = pColorGradingStage->GetSlicesVB();
 		gcpRendD3D->DrawPrimitivesInternal(&slicesVB, COLORCHART_SIZE * 6, eptTriangleList);
@@ -277,29 +276,27 @@ bool CColorGradingControllerD3D::Update(const SColorGradingMergeParams* pMergePa
 
 		m_pChartToUse = pNewMergeResult;
 
-		m_pRenderer->FX_PopRenderTarget(0);
+		gRenDev->FX_PopRenderTarget(0);
 
 		gRenDev->m_RP.m_FlagsShader_RT = nSaveFlagsShader_RT;
 	}
+	*/
 
 	return m_pChartToUse != 0;
 }
 
-CTexture* CColorGradingControllerD3D::GetColorChart() const
+CTexture* CColorGradingController::GetColorChart() const
 {
-	if (m_pRenderer->m_nGraphicsPipeline == 0)
-	{
-		return m_pChartToUse;
-	}
-	else
-	{
-		auto pColorGradingStage = reinterpret_cast<CColorGradingStage*>(m_pRenderer->GetGraphicsPipeline().GetStage(eStage_ColorGrading));
-		return pColorGradingStage->GetColorChart();
-	}
+	auto pColorGradingStage = static_cast<CColorGradingStage*>(gRenDev->GetGraphicsPipeline().GetStage(eStage_ColorGrading));
+	return pColorGradingStage->GetColorChart();
 }
 
-void CColorGradingControllerD3D::DrawLayer(float x, float y, float w, float h, CTexture* pChart, float blendAmount, const char* pLayerName) const
+void CColorGradingController::DrawLayer(float x, float y, float w, float h, CTexture* pChart, float blendAmount, const char* pLayerName) const
 {
+	// OLD PIPELINE
+	ASSERT_LEGACY_PIPELINE
+
+	/*
 #if !defined(_RELEASE)
 	CShader* pSh = CShaderMan::s_shPostEffectsGame;
 
@@ -312,9 +309,8 @@ void CColorGradingControllerD3D::DrawLayer(float x, float y, float w, float h, C
 	static CCryNameTSCRC techName("DisplayColorCharts");
 	SD3DPostEffectsUtils::ShBeginPass(pSh, techName, FEF_DONTSETTEXTURES | FEF_DONTSETSTATES);
 
-	static const int texStateID = CTexture::GetTexState(STexState(FILTER_POINT, true));
 	if (pChart)
-		pChart->Apply(0, texStateID);
+		pChart->Apply(0, EDefaultSamplerStates::PointClamp);
 
 	// NOTE: Get aligned stack-space (pointer and size aligned to manager's alignment requirement)
 	CryStackAllocWithSizeVector(SVF_P3F_C4B_T2F, 4, pVerts, CDeviceBufferManager::AlignBufferSizeForStreaming);
@@ -331,14 +327,14 @@ void CColorGradingControllerD3D::DrawLayer(float x, float y, float w, float h, C
 	pVerts[3].xyz = Vec3(x + w, y + h, 0);
 	pVerts[3].st = Vec2(1, 0);
 
-	m_pRenderer->FX_Commit();
-	m_pRenderer->FX_SetState(GS_NODEPTHTEST);
-	m_pRenderer->SetCullMode(R_CULL_NONE);
+	gRenDev->FX_Commit();
+	gRenDev->FX_SetState(GS_NODEPTHTEST);
+	gRenDev->SetCullMode(R_CULL_NONE);
 
 	TempDynVB<SVF_P3F_C4B_T2F>::CreateFillAndBind(pVerts, 4, 0);
 
-	if (!FAILED(m_pRenderer->FX_SetVertexDeclaration(0, eVF_P3F_C4B_T2F)))
-		m_pRenderer->FX_DrawPrimitive(eptTriangleStrip, 0, 4);
+	if (!FAILED(gRenDev->FX_SetVertexDeclaration(0, EDefaultInputLayouts::P3F_C4B_T2F)))
+		gRenDev->FX_DrawPrimitive(eptTriangleStrip, 0, 4);
 
 	SD3DPostEffectsUtils::ShEndPass();
 
@@ -346,15 +342,16 @@ void CColorGradingControllerD3D::DrawLayer(float x, float y, float w, float h, C
 	IRenderAuxText::Draw2dLabel(x + w + 10.0f, y, 1.35f, color, false, "%2.1f%%", blendAmount * 100.0f);
 	IRenderAuxText::Draw2dLabel(x + w + 55.0f, y, 1.35f, color, false, "%s", pLayerName);
 #endif // #if !defined(_RELEASE)
+*/
 }
 
-void CColorGradingControllerD3D::DrawDebugInfo() const
+void CColorGradingController::DrawDebugInfo() const
 {
 #if !defined(_RELEASE)
-	if (m_pRenderer->CV_r_colorgrading_charts < 2)
+	if (gRenDev->CV_r_colorgrading_charts < 2)
 		return;
 
-	m_pRenderer->Set2DMode(true, m_pRenderer->GetWidth(), m_pRenderer->GetHeight());
+	CryAutoCriticalSectionNoRecursive lock(m_layersLock);
 
 	const float w = (float) COLORCHART_WIDTH;
 	const float h = (float) COLORCHART_HEIGHT;
@@ -376,29 +373,33 @@ void CColorGradingControllerD3D::DrawDebugInfo() const
 	}
 	else
 		DrawLayer(x, y, w, h, m_pChartStatic, 1, PathUtil::GetFile(m_pChartStatic->GetName()));
-
-	m_pRenderer->Set2DMode(false, 0, 0);
 #endif // #if !defined(_RELEASE)
 }
 
-bool CColorGradingControllerD3D::LoadStaticColorChart(const char* pChartFilePath)
+bool CColorGradingController::LoadStaticColorChart(const char* pChartFilePath)
 {
+	bool bResult = true;
+	
 	SAFE_RELEASE(m_pChartStatic);
 	if (pChartFilePath && pChartFilePath[0] != '\0')
 	{
 		m_pChartStatic = LoadColorChartInt(pChartFilePath);
-		return m_pChartStatic != 0;
+		bResult = m_pChartStatic != nullptr;	
 	}
-	return true;
+
+	auto pColorGradingStage = static_cast<CColorGradingStage*>(gRenDev->GetGraphicsPipeline().GetStage(eStage_ColorGrading));
+	pColorGradingStage->SetStaticColorChart(m_pChartStatic);
+
+	return bResult;
 }
 
-const CTexture* CColorGradingControllerD3D::GetStaticColorChart() const
+const CTexture* CColorGradingController::GetStaticColorChart() const
 {
-	auto pColorGradingStage = reinterpret_cast<CColorGradingStage*>(m_pRenderer->GetGraphicsPipeline().GetStage(eStage_ColorGrading));
+	auto pColorGradingStage = static_cast<CColorGradingStage*>(gRenDev->GetGraphicsPipeline().GetStage(eStage_ColorGrading));
 	return pColorGradingStage->GetStaticColorChart();
 }
 
-int CColorGradingControllerD3D::GetColorChartSize() const
+int CColorGradingController::GetColorChartSize() const
 {
 	return COLORCHART_SIZE;
 }

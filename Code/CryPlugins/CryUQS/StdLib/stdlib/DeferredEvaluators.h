@@ -1,33 +1,38 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
-namespace uqs
+namespace UQS
 {
-	namespace stdlib
+	namespace StdLib
 	{
 
 		//===================================================================================
 		//
 		// CDeferredEvaluator_TestRaycast
 		//
+		// - Tests a raycast between 2 given positions.
+		// - Whether success or failure of the raycast counts as overall success or failure of the evalutor can be specified by a parameter.
+		//
+		// - NOTICE: The underlying raycaster uses global timer to limit the number of raycasts per second!
+		//
 		//===================================================================================
 
-		class CDeferredEvaluator_TestRaycast : public client::IDeferredEvaluator
+		class CDeferredEvaluator_TestRaycast : public Client::IDeferredEvaluator
 		{
 		public:
 			struct SParams
 			{
-				Vec3                   from;
-				Vec3                   to;
+				Pos3                   from;
+				Pos3                   to;
 				bool                   raycastShallSucceed;
 
 				UQS_EXPOSE_PARAMS_BEGIN
-					UQS_EXPOSE_PARAM("from", from);
-					UQS_EXPOSE_PARAM("to", to);
-					UQS_EXPOSE_PARAM("raycastShallSucceed", raycastShallSucceed);
+					UQS_EXPOSE_PARAM("from", from, "FROM", "Start position of the raycast");
+					UQS_EXPOSE_PARAM("to", to, "TO  ", "End position of the raycast");
+					UQS_EXPOSE_PARAM("raycastShallSucceed", raycastShallSucceed, "SUCC", "Whether the raycast shall succeed or fail in order for the whole evaluator to accept or discard the item");
 				UQS_EXPOSE_PARAMS_END
 			};
 
@@ -35,13 +40,12 @@ namespace uqs
 			class CRaycastRegulator
 			{
 			public:
-				explicit               CRaycastRegulator(int maxRequestsPerFrame);
+				explicit               CRaycastRegulator(int maxRequestsPerSecond);
 				bool                   RequestRaycast();
 
 			private:
-				const int              m_maxRequestsPerFrame;
-				int                    m_currentFrame;
-				int                    m_numRequestsInCurrentFrame;
+				const int              m_maxRequestsPerSecond;
+				float                  m_timeLastFiredRaycast;
 			};
 
 		private:

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef AICONSOLEVARIABLES_H
 #define AICONSOLEVARIABLES_H
@@ -17,10 +17,13 @@ struct AIConsoleVars
 	DeclareConstIntCVar(DebugDrawCover, 0);
 	DeclareConstIntCVar(DebugDrawCoverOccupancy, 0);
 	DeclareConstIntCVar(DebugDrawNavigation, 0);
+	DeclareConstIntCVar(DebugTriangleOnCursor, 0);
 	DeclareConstIntCVar(IslandConnectionsSystemProfileMemory, 0);
 	DeclareConstIntCVar(DebugDrawNavigationWorldMonitor, 0);
 	DeclareConstIntCVar(NavigationSystemMT, 1);
 	DeclareConstIntCVar(NavGenThreadJobs, 1);
+	float NavmeshStabilizationTimeToUpdate;
+	float NavmeshTileDistanceDraw;
 	DeclareConstIntCVar(DebugDrawCoverPlanes, 0);
 	DeclareConstIntCVar(DebugDrawCoverLocations, 0);
 	DeclareConstIntCVar(DebugDrawCoverSampler, 0);
@@ -32,8 +35,6 @@ struct AIConsoleVars
 	DeclareConstIntCVar(DebugDrawDynamicHideObjectsRange, 0);
 	DeclareConstIntCVar(DebugDrawVolumeVoxels, 0);
 	DeclareConstIntCVar(DebugPathFinding, 0);
-	DeclareConstIntCVar(DebugCheckWalkability, 0);
-	DeclareConstIntCVar(DebugWalkabilityCache, 0);
 	DeclareConstIntCVar(DebugDrawBannedNavsos, 0);
 	DeclareConstIntCVar(DebugDrawGroups, 0);
 	DeclareConstIntCVar(DebugDrawCoolMisses, 0);
@@ -105,7 +106,6 @@ struct AIConsoleVars
 	DeclareConstIntCVar(DrawPerceptionIndicators, 0);
 	DeclareConstIntCVar(DrawPerceptionDebugging, 0);
 	DeclareConstIntCVar(DrawPerceptionModifiers, 0);
-	DeclareConstIntCVar(DebugPerceptionManager, 0);
 	DeclareConstIntCVar(DebugGlobalPerceptionScale, 0);
 	DeclareConstIntCVar(TargetTracking, 1);
 	DeclareConstIntCVar(TargetTracks_GlobalTargetLimit, 0);
@@ -118,11 +118,6 @@ struct AIConsoleVars
 	DeclareConstIntCVar(DebugDrawAdaptiveUrgency, 0);
 	DeclareConstIntCVar(DebugDrawReinforcements, -1);
 	DeclareConstIntCVar(DebugDrawPlayerActions, 0);
-	DeclareConstIntCVar(DrawCollisionEvents, 0);
-	DeclareConstIntCVar(DrawBulletEvents, 0);
-	DeclareConstIntCVar(DrawSoundEvents, 0);
-	DeclareConstIntCVar(DrawGrenadeEvents, 0);
-	DeclareConstIntCVar(DrawExplosions, 0);
 
 	DeclareConstIntCVar(SimpleWayptPassability, 1);
 
@@ -138,9 +133,6 @@ struct AIConsoleVars
 	DeclareConstIntCVar(DebugInterest, 0);
 	DeclareConstIntCVar(InterestSystemCastRays, 1);
 
-	// Code coverage
-	DeclareConstIntCVar(CodeCoverage, 0);
-
 	// Path Follower
 	DeclareConstIntCVar(UseSmartPathFollower, 1);
 	DeclareConstIntCVar(SmartpathFollower_UseAABB_CheckWalkibility, 1);
@@ -151,7 +143,7 @@ struct AIConsoleVars
 
 	DeclareConstIntCVar(MNMPathfinderMT, 1);
 	DeclareConstIntCVar(MNMPathfinderConcurrentRequests, 4);
-	DeclareConstIntCVar(MNMRaycastImplementation, 1);
+	DeclareConstIntCVar(MNMRaycastImplementation, 2);
 
 	DeclareConstIntCVar(LogConsoleVerbosity, 0);
 	DeclareConstIntCVar(LogFileVerbosity, 0);
@@ -222,18 +214,12 @@ struct AIConsoleVars
 	float       DebugDrawArrowLabelsVisibilityDistance;
 	const char* DebugDrawAStarOpenList;
 	float       DebugDrawAStarOpenListTime;
-	float       DebugCheckWalkabilityRadius;
 
 	float       CoverPredictTarget;
 	float       CoverSpacing;
 
 	const char* StatsTarget;
-	const char* DebugBehaviorSelection;
 	float       AIUpdateInterval;
-	float       DynamicWaypointUpdateTime;
-	float       DynamicVolumeUpdateTime;
-	float       LayerSwitchDynamicLinkBump;
-	int         LayerSwitchDynamicLinkBumpDuration;
 
 	float       CollisionAvoidanceAgentExtraFat;
 	float       CollisionAvoidanceRadiusIncrementIncreaseRate;
@@ -261,8 +247,6 @@ struct AIConsoleVars
 	const char* DrawShooting;
 	float       BurstWhileMovingDestinationRange;
 	const char* DrawAgentStats;
-
-	const char* DebugHideSpotName;
 
 	float       SOMSpeedRelaxed;
 	float       SOMSpeedCombat;
@@ -323,6 +307,7 @@ struct AIConsoleVars
 	float       ProneVisibleRange;
 
 	int         MNMDebugAccessibility; // TODO: remove
+	const char* MNMDebugDrawFlag;
 
 	int         MNMEditorBackgroundUpdate;
 

@@ -12,9 +12,11 @@ add_sources("CryAudioImpl_uber_0.cpp"
 		"AudioImplCVars.h"
 		"AudioObject.h"
 		"Common.h"
+		"GlobalData.h"
 		"resource.h"
 		"stdafx.h"
 	SOURCE_GROUP "Source Files"
+		"ATLEntities.cpp"
 		"AudioEvent.cpp"
 		"AudioImpl.cpp"
 		"AudioImplCVars.cpp"
@@ -32,7 +34,7 @@ end_sources()
 #END-FILE-LIST
 
 if(AUDIO_FMOD)
-	CryEngineModule(CryAudioImplFmod PCH "stdafx.cpp" SOLUTION_FOLDER "CryEngine/Audio/Implementations")
+	CryEngineModule(CryAudioImplFmod FORCE_SHARED_WIN PCH "stdafx.cpp" SOLUTION_FOLDER "CryEngine/Audio/Implementations")
 	target_include_directories(CryAudioImplFmod PRIVATE ../../Common)
 	target_link_libraries(CryAudioImplFmod PRIVATE fmod fmodstudio)
 else()

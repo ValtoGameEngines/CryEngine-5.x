@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 #include "StdAfx.h"
 #include <limits.h>
 #include <CryString/CryPath.h>
@@ -166,7 +166,7 @@ void CMaterialEffects::LoadFXLibrary(const char* name)
 
 bool CMaterialEffects::ExecuteEffect(TMFXEffectId effectId, SMFXRunTimeEffectParams& params)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	if (!CMaterialEffectsCVars::Get().mfx_Enable)
 		return false;
@@ -220,7 +220,7 @@ void CMaterialEffects::StopEffect(TMFXEffectId effectId)
 
 void CMaterialEffects::SetCustomParameter(TMFXEffectId effectId, const char* customParameter, const SMFXCustomParamValue& customParameterValue)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	if (!CMaterialEffectsCVars::Get().mfx_Enable)
 		return;
@@ -274,8 +274,6 @@ void ToEffectString(const string& effectString, string& libName, string& effectN
 void CMaterialEffects::LoadSpreadSheet()
 {
 	m_bDataInitialized = true;
-
-	Reset(false);
 
 	CryComment("[MFX] Init");
 
@@ -560,6 +558,10 @@ TMFXEffectId CMaterialEffects::GetEffectId(int surfaceIndex1, int surfaceIndex2)
 		{
 			m_pVisualDebug->AddLastSearchHint(effectId, surfaceIndex1, surfaceIndex2);
 		}
+		else
+		{
+			GameWarning("Could not find a valid effect at row %i and column %i of libs/materialeffects/materialeffects.xml", idx1, idx2);
+		}
 	}
 
 	return effectId;
@@ -585,6 +587,10 @@ TMFXEffectId CMaterialEffects::GetEffectId(const char* customName, int surfaceIn
 		if (effectId != InvalidEffectId)
 		{
 			m_pVisualDebug->AddLastSearchHint(effectId, customName, surfaceIndex2);
+		}
+		else
+		{
+			GameWarning("Could not find a valid effect at row %i and column %i of libs/materialeffects/materialeffects.xml", idx1, idx2 );
 		}
 	}
 
@@ -613,6 +619,10 @@ TMFXEffectId CMaterialEffects::GetEffectId(IEntityClass* pEntityClass, int surfa
 		if (effectId != InvalidEffectId)
 		{
 			m_pVisualDebug->AddLastSearchHint(effectId, pEntityClass, surfaceIndex2);
+		}
+		else
+		{
+			GameWarning("Could not find a valid effect at row %i and column %i of libs/materialeffects/materialeffects.xml", idx1, idx2);
 		}
 	}
 
@@ -881,6 +891,8 @@ bool CMaterialEffects::PlayBreakageEffect(ISurfaceType* pSurfaceType, const char
 
 void CMaterialEffects::CompleteInit()
 {
+	LOADING_TIME_PROFILE_SECTION
+
 	if (m_bDataInitialized)
 		return;
 
@@ -906,7 +918,7 @@ void CMaterialEffects::ReloadMatFXFlowGraphs()
 	m_pMaterialFGManager->ReloadFlowGraphs();
 }
 
-int CMaterialEffects::GetMatFXFlowGraphCount() const
+size_t CMaterialEffects::GetMatFXFlowGraphCount() const
 {
 	return m_pMaterialFGManager->GetFlowGraphCount();
 }

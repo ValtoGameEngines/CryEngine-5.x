@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*=============================================================================
    CPUDetect.cpp : CPU detection.
@@ -336,7 +336,7 @@ unsigned long GetCPUFeatureSet()
 			features |= CPUF_SSE;
 		if (CPUInfo[3] & (1 << 26))
 			features |= CPUF_SSE2;
-		if (CPUInfo[2] & (1 << 9))
+		if (CPUInfo[2] & (1 << 0))
 			features |= CPUF_SSE3;
 		if (CPUInfo[2] & (1 << 20))
 			features |= CPUF_SSE4;
@@ -347,7 +347,7 @@ unsigned long GetCPUFeatureSet()
 		if (CPUInfo[2] & (1 << 29))
 			features |= CPUF_FP16;
 	}
-	if (nIds >= 7 )
+	if (nIds >= 7)
 	{
 		__cpuid(CPUInfo, 0x00000007);
 		if (CPUInfo[1] & (1 << 5))
@@ -1508,6 +1508,8 @@ void CCpuFeatures::Detect(void)
 		}
 		m_NumLogicalProcessors = m_NumAvailProcessors = nCpu + 1;
 		m_NumSystemProcessors = nCores;
+
+		fclose(cpu_info);
 	}
 
 #elif CRY_PLATFORM_APPLE
@@ -1616,8 +1618,7 @@ void CCpuFeatures::Detect(void)
 		CryLogAlways(" ");
 		CryLogAlways("Processor %d:", i);
 		CryLogAlways("  CPU: %s %s", p->mVendor, p->mCpuType);
-		CryLogAlways("  Family: %d, Model: %d, Stepping: %d", p->mFamily, p->mModel, p->mStepping);
-		CryLogAlways("  FPU: %s", p->mFpuType);
+		CryLogAlways("  Family: %d, Model: %d, Stepping: %d, FPU: %s", p->mFamily, p->mModel, p->mStepping, p->mFpuType);
 		string sFeatures;
 		if (p->mFeatures & CPUF_FP16) sFeatures += "FP16, ";
 		if (p->mFeatures & CPUF_MMX) sFeatures += "MMX, ";
@@ -1632,10 +1633,6 @@ void CCpuFeatures::Detect(void)
 		if (sFeatures.size())
 			sFeatures.resize(sFeatures.size() - 2);
 		CryLogAlways("  Features: %s", sFeatures.c_str());
-		if (p->mbSerialPresent)
-			CryLogAlways("  Serial number: %s", p->mSerialNumber);
-		else
-			CryLogAlways("  Serial number not present or disabled");
 	}
 
 	CryLogAlways(" ");

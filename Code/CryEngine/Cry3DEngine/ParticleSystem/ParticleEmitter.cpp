@@ -1,22 +1,14 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  Created:     23/09/2014 by Filipe amim
-//  Description:
-// -------------------------------------------------------------------------
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
-#include <CryEntitySystem/IEntitySystem.h>
-#include "ParticleManager.h"
-#include "FogVolumeRenderNode.h"
-#include "ParticleSystem.h"
 #include "ParticleEmitter.h"
+#include "ParticleComponentRuntime.h"
+#include "ParticleManager.h"
+#include "ParticleSystem.h"
 #include "ParticleDataTypes.h"
 #include "ParticleFeature.h"
-
-CRY_PFX2_DBG
+#include "FogVolumeRenderNode.h"
+#include <CryEntitySystem/IEntitySystem.h>
 
 namespace pfx2
 {
@@ -24,21 +16,31 @@ namespace pfx2
 //////////////////////////////////////////////////////////////////////////
 // CParticleEmitter
 
-CParticleEmitter::CParticleEmitter(uint emitterId)
-	: m_pEffect(0)
+CParticleEmitter::CParticleEmitter(CParticleEffect* pEffect, uint emitterId)
+	: m_pEffect(pEffect)
+	, m_pEffectOriginal(pEffect)
 	, m_registered(false)
-	, m_bounds(0.0f)
+	, m_boundsChanged(false)
+	, m_realBounds(AABB::RESET)
+	, m_maxBounds(AABB::RESET)
+	, m_bounds(AABB::RESET)
 	, m_viewDistRatio(1.0f)
 	, m_active(false)
+	, m_alive(true)
+	, m_addInstances(0)
 	, m_location(IDENTITY)
-	, m_timeScale(1)
-	, m_editVersion(-1)
-	, m_entityId(0)
+	, m_emitterEditVersion(-1)
+	, m_effectEditVersion(-1)
+	, m_entityOwner(nullptr)
 	, m_entitySlot(-1)
 	, m_emitterGeometrySlot(-1)
 	, m_time(0.0f)
+	, m_timeCreated(0.0f)
+	, m_timeUpdated(0.0f)
+	, m_timeStable(0.0f)
 	, m_initialSeed(0)
 	, m_emitterId(emitterId)
+	, m_unrendered(0)
 {
 	m_currentSeed = m_initialSeed;
 	m_nInternalFlags |= IRenderNode::REQUIRES_FORWARD_RENDERING;
@@ -51,11 +53,22 @@ CParticleEmitter::CParticleEmitter(uint emitterId)
 	float g = contrast(smoothstep(1 - abs((x - 0.5f) * 2)));
 	float b = contrast(smoothstep(max(0.0f, x * 2 - 1)));
 	m_profilerColor = ColorF(r, g, b);
+
+	if (m_pEffect)
+		m_attributeInstance.Reset(m_pEffect->GetAttributeTable());
+
+	m_parentContainer.AddParticleData(EPVF_Position);
+	m_parentContainer.AddParticleData(EPQF_Orientation);
+	m_parentContainer.AddParticleData(EPVF_Velocity);
+	m_parentContainer.AddParticleData(EPVF_AngularVelocity);
+	m_parentContainer.AddParticleData(EPDT_NormalAge);
+
+	m_parentContainer.AddParticle();
 }
 
 CParticleEmitter::~CParticleEmitter()
 {
-	SetCEffect(0);
+	Unregister();
 	gEnv->p3DEngine->FreeRenderNodeState(this);
 	ResetRenderObjects();
 }
@@ -88,7 +101,7 @@ Vec3 CParticleEmitter::GetPos(bool bWorldOnly) const
 
 void CParticleEmitter::Render(const struct SRendParams& rParam, const SRenderingPassInfo& passInfo)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_PARTICLE);
+	CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
 	PARTICLE_LIGHT_PROFILER();
 
 	if (!passInfo.RenderParticles() || passInfo.IsRecursivePass())
@@ -96,108 +109,230 @@ void CParticleEmitter::Render(const struct SRendParams& rParam, const SRendering
 	if (passInfo.IsShadowPass())
 		return;
 
+	m_unrendered = 0;
+
 	CLightVolumesMgr& lightVolumeManager = m_p3DEngine->GetLightVolumeManager();
 	SRenderContext renderContext(rParam, passInfo);
 	renderContext.m_lightVolumeId = lightVolumeManager.RegisterVolume(GetPos(), GetBBox().GetRadius() * 0.5f, rParam.nClipVolumeStencilRef, passInfo);
 	renderContext.m_distance = GetPos().GetDistance(passInfo.GetCamera().GetPosition());
 	ColorF fogVolumeContrib;
 	CFogVolumeRenderNode::TraceFogVolumes(GetPos(), fogVolumeContrib, passInfo);
-	renderContext.m_fogVolumeId = GetRenderer()->PushFogVolumeContribution(fogVolumeContrib, passInfo);
+	renderContext.m_fogVolumeId = passInfo.GetIRenderView()->PushFogVolumeContribution(fogVolumeContrib, passInfo);
 	
-	for (auto& pComponentRuntime : m_componentRuntimes)
+	GetPSystem()->GetThreadData().statsCPU.emitters.rendered ++;
+	for (auto& pRuntime : m_componentRuntimes)
 	{
-		pComponentRuntime.pComponent->Render(this, pComponentRuntime.pRuntime, renderContext);
+		if (pRuntime->GetComponent()->IsVisible() && passInfo.GetCamera().IsAABBVisible_E(pRuntime->GetBounds()))
+			pRuntime->GetComponent()->RenderAll(this, pRuntime, renderContext);
 	}
 }
 
 void CParticleEmitter::Update()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_PARTICLE);
+	CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
 
-	m_time += gEnv->pTimer->GetFrameTime();
+	if (m_attributeInstance.WasChanged())
+		SetChanged();
+
+	if (IsStable())
+		// Update only for last frame, even if update skipped for longer
+		m_timeUpdated = m_time;
+
+	const float frameTime = gEnv->pTimer->GetFrameTime() * GetTimeScale();
+	m_time += frameTime;
 	++m_currentSeed;
+	m_unrendered++;
 
-	m_pEffect->Compile();
-	if (m_editVersion != m_pEffect->GetEditVersion())
+	UpdateFromEntity();
+
+	for (auto const& elem: GetCEffect()->MainPreUpdate)
 	{
-		m_attributeInstance.Reset(&m_pEffect->GetAttributeTable(), EAttributeScope::PerEmitter);
-		UpdateRuntimeRefs();
+		if (auto pRuntime = GetRuntimeFor(elem.pComponent))
+			elem.pFeature->MainPreUpdate(pRuntime);
 	}
-	m_editVersion = m_pEffect->GetEditVersion();
 
-	if (m_entityId != 0)
-		UpdateFromEntity();
-	for (auto& pComponentRuntime : m_componentRuntimes)
-		pComponentRuntime.pRuntime->MainPreUpdate();
+	if (CParticleJobManager::ThreadMode() >= 4 && SkipUpdate())
+	{
+		// If not updating this frame, use max bounds for visibility
+		if (!m_bounds.ContainsBox(m_maxBounds))
+		{
+			m_bounds = m_maxBounds;
+			m_boundsChanged = true;
+		}
+	}
 
-	AABB newBounds = AABB(m_location.t, 0.25f);
-	for (auto& ref : m_componentRuntimes)
-		newBounds.Add(ref.pRuntime->GetBounds());
+	if (m_boundsChanged)
+	{
+		m_boundsChanged = false;
+		if (!HasBounds())
+			Unregister();
+		else
+			Register();
+	}
 
-	m_visEnviron.Invalidate();
+	// Apply stats from last update
+	auto& stats = GetPSystem()->GetThreadData().statsCPU;
+	stats.components.alive += m_stats.components.alive;
+	stats.particles.alloc += m_stats.particles.alloc;
+	stats.particles.alive += m_stats.particles.alive;
+}
 
-	if (m_registered && !IsEquivalent(m_bounds, newBounds))
-		Unregister();
+namespace Bounds
+{
+	float Expansion       = 1.125f;
+	float ShrinkThreshold = 0.5f;
+}
 
-	m_bounds = newBounds;
-	if (!m_registered)
-		Register();
+void CParticleEmitter::UpdateBoundingBox()
+{
+	CRY_PFX2_PROFILE_DETAIL;
 
+	if (!m_registered || 
+	!m_bounds.ContainsBox(m_realBounds) ||
+	m_realBounds.GetVolume() <= m_bounds.GetVolume() * Bounds::ShrinkThreshold)
+		m_boundsChanged = true;
+	
+	if (m_boundsChanged)
+	{
+		if (m_realBounds.IsReset())
+		{
+			m_bounds.Reset();
+		}
+		else
+		{
+			// Expand bounds to avoid frequent re-registering
+			Vec3 center = m_realBounds.GetCenter();
+			Vec3 extent = m_realBounds.GetSize() * (Bounds::Expansion * 0.5f);
+			m_bounds = AABB(center - extent, center + extent);
+			m_maxBounds.Add(m_bounds);
+		}
+	}
+}
+
+bool CParticleEmitter::UpdateAll()
+{
+	// Multithread support
+	stl::AutoLock<stl::PSyncMultiThread> lock(m_lock);
+	if (m_timeUpdated >= m_time)
+		return false;
+
+	// Update all components, and accumulate bounds and stats
+	CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
+
+	if (m_spawnParams.bPrime && !(GetCVars()->e_ParticlesDebug & AlphaBit('p')))
+	{
+		if (m_timeUpdated == m_timeCreated)
+			m_time = m_timeStable;
+	}
+
+	auto& stats = GetPSystem()->GetThreadData().statsCPU;
+	stats.emitters.updated ++;
+
+	m_realBounds = AABB::RESET;
+	m_stats = {};
+	for (auto& pRuntime : m_componentRuntimes)
+	{
+		if (m_active && m_addInstances && !pRuntime->IsChild())
+		{
+			SInstance instance;
+			for (uint id = 0; id < m_addInstances; ++id)
+				pRuntime->AddSubInstances({ &instance, 1 });
+		}
+		pRuntime->UpdateAll();
+		m_realBounds.Add(pRuntime->GetBounds());
+	}
+	m_alive = m_stats.components.alive > 0;
+	m_addInstances = 0;
+
+	PostUpdate();
+	UpdateBoundingBox();
+	m_timeUpdated = m_time;
+	return true;
+}
+
+void CParticleEmitter::SyncUpdate()
+{
+	if (CParticleJobManager::ThreadMode() >= 2)
+	{
+		UpdateAll();
+	}
+	CRY_PFX2_ASSERT(m_timeUpdated >= m_time);
+}
+
+void CParticleEmitter::DebugRender(const SRenderingPassInfo& passInfo) const
+{
+	if (!GetRenderer())
+		return;
+
+	IRenderAuxGeom* pRenderAux = gEnv->pRenderer->GetIRenderAuxGeom();
+
+	if (!IsAlive() && !HasParticles())
+		return;
+
+	const bool visible = WasRenderedLastFrame();
+	const bool stable = IsStable();
+
+	const float maxDist = non_const(*this).GetMaxViewDist();
+	const float dist = (GetPos() - passInfo.GetCamera().GetPosition()).GetLength();
+	const float alpha = sqr(crymath::saturate(1.0f - dist / maxDist));
+	const float ac = alpha * 0.75f + 0.25f;
+	const ColorF alphaColor(ac, ac, ac, alpha);
+
+	if (visible)
+	{
+		// Draw component boxes and label
+		const ColorB componentColor = ColorF(1, 0.5, 0) * alphaColor;
+		for (auto& pRuntime : m_componentRuntimes)
+		{
+			if (!pRuntime->GetBounds().IsReset())
+			{
+				pRenderAux->DrawAABB(pRuntime->GetBounds(), false, componentColor, eBBD_Faceted);
+				string label = string().Format("%s #%d", pRuntime->GetComponent()->GetName(),
+					pRuntime->GetContainer().GetNumParticles());
+				IRenderAuxText::DrawLabelEx(pRuntime->GetBounds().GetCenter(), 1.5f, componentColor, true, true, label);
+			}
+		}
+		string label = string().Format("%s #%d Age %.3f", m_pEffect->GetShortName().c_str(), m_stats.particles.alive, GetAge());
+		IRenderAuxText::DrawLabelEx(m_location.t, 1.5f, (float*)&alphaColor, true, true, label);
+	}
+	if (!m_maxBounds.IsReset())
+	{
+		const ColorB emitterColor = ColorF(0, 1, 1) * alphaColor;
+		pRenderAux->DrawAABB(m_maxBounds, false, emitterColor, eBBD_Faceted);
+	}
 	if (!m_bounds.IsReset())
 	{
-		m_visEnviron.Update(GetPos(), m_bounds);
-		m_physEnviron.GetPhysAreas(
-		  CParticleManager::Instance()->GetPhysEnviron(), m_bounds,
-		  m_visEnviron.OriginIndoors(), ENV_GRAVITY | ENV_WIND | ENV_WATER, true, 0);
+		const ColorB emitterColor = ColorF(1, stable, visible) * alphaColor;
+		pRenderAux->DrawAABB(m_bounds, false, emitterColor, eBBD_Faceted);
 	}
 }
 
 void CParticleEmitter::PostUpdate()
 {
-	m_parentContainer.GetIOVec3Stream(EPVF_Velocity).Store(0, Vec3(ZERO));
-	m_parentContainer.GetIOVec3Stream(EPVF_AngularVelocity).Store(0, Vec3(ZERO));
-}
-
-IPhysicalEntity* CParticleEmitter::GetPhysics() const
-{
-	return 0;
-}
-
-void CParticleEmitter::SetPhysics(IPhysicalEntity*)
-{
-}
-
-void CParticleEmitter::SetMaterial(IMaterial* pMat)
-{
-}
-
-IMaterial* CParticleEmitter::GetMaterial(Vec3* pHitPos) const
-{
-	return 0;
-}
-
-IMaterial* CParticleEmitter::GetMaterialOverride()
-{
-	return 0;
+	m_parentContainer.GetIOVec3Stream(EPVF_Velocity).Store(TParticleGroupId(0), Vec3v(ZERO));
+	m_parentContainer.GetIOVec3Stream(EPVF_AngularVelocity).Store(TParticleGroupId(0), Vec3v(ZERO));
 }
 
 float CParticleEmitter::GetMaxViewDist()
 {
-	float maxParticleSize = 0.0f;
-	size_t compCount = m_pEffect->GetNumComponents();
-	for (size_t i = 0; i < compCount; ++i)
-	{
-		const auto& params = m_pEffect->GetCComponent(i)->GetComponentParams();
-		maxParticleSize = max(maxParticleSize, params.m_maxParticleSize * params.m_visibility.m_viewDistanceMultiple);
-	}
 	IRenderer* pRenderer = GetRenderer();
-	float maxAngularDensity = pRenderer ? GetPSystem()->GetMaxAngularDensity(pRenderer->GetCamera()) : 1080.0f;
-	float maxDistance = maxAngularDensity * maxParticleSize * m_viewDistRatio;
-	return maxDistance;
-}
+	const float angularDensity =
+		(pRenderer ? GetPSystem()->GetMaxAngularDensity(GetISystem()->GetViewCamera()) : 1080.0f)
+		* m_viewDistRatio;
 
-void CParticleEmitter::Precache()
-{
+	float maxViewDist = 0.0f;
+	for (auto& pRuntime : m_componentRuntimes)
+	{
+		const auto* pComponent = pRuntime->GetComponent();
+		if (pComponent->IsEnabled())
+		{
+			const auto& params = pComponent->GetComponentParams();
+			const float sizeDist = params.m_maxParticleSize * angularDensity * params.m_visibility.m_viewDistanceMultiple;
+			const float dist = min(sizeDist, +params.m_visibility.m_maxCameraDistance);
+			SetMax(maxViewDist, dist);
+		}
+	}
+	return maxViewDist;
 }
 
 void CParticleEmitter::GetMemoryUsage(ICrySizer* pSizer) const
@@ -206,25 +341,15 @@ void CParticleEmitter::GetMemoryUsage(ICrySizer* pSizer) const
 
 const AABB CParticleEmitter::GetBBox() const
 {
-	return m_bounds;
+	if (m_bounds.IsReset())
+		return AABB(m_location.t, 0.05f);
+	else
+		return m_bounds;
 }
 
 void CParticleEmitter::FillBBox(AABB& aabb)
 {
 	aabb = GetBBox();
-}
-
-void CParticleEmitter::SetBBox(const AABB& WSBBox)
-{
-}
-
-void CParticleEmitter::OffsetPosition(const Vec3& delta)
-{
-}
-
-bool CParticleEmitter::IsAllocatedOutsideOf3DEngineDLL()
-{
-	return false;
 }
 
 void CParticleEmitter::SetViewDistRatio(int nViewDistRatio)
@@ -235,188 +360,18 @@ void CParticleEmitter::SetViewDistRatio(int nViewDistRatio)
 
 void CParticleEmitter::ReleaseNode(bool bImmediate)
 {
+	CRY_ASSERT((m_dwRndFlags & ERF_PENDING_DELETE) == 0);
+
 	Activate(false);
 	Unregister();
 }
 
-const IParticleEffect* CParticleEmitter::GetEffect() const
+void CParticleEmitter::InitSeed()
 {
-	return m_pEffect;
-}
-
-void CParticleEmitter::Activate(bool activate)
-{
-	if (!m_pEffect || activate == m_active)
-		return;
-
-	if (activate)
-	{
-		m_parentContainer.AddParticleData(EPVF_Position);
-		m_parentContainer.AddParticleData(EPQF_Orientation);
-		m_parentContainer.AddParticleData(EPVF_Velocity);
-		m_parentContainer.AddParticleData(EPVF_AngularVelocity);
-		m_parentContainer.AddParticleData(EPDT_NormalAge);
-
-		UpdateRuntimeRefs();
-		AddInstance();
-	}
-	else
-	{
-		StopInstances();
-	}
-
-	m_active = activate;
-}
-
-void CParticleEmitter::Kill()
-{
-	for (auto& componentRef : m_componentRuntimes)
-	{
-		auto pCpuComponent = componentRef.pRuntime->GetCpuRuntime();
-		if (pCpuComponent)
-		{
-			pCpuComponent->RemoveAllSubInstances();
-			pCpuComponent->Reset();
-		}
-		auto pGpuComponent = componentRef.pRuntime->GetGpuRuntime();
-		if (pGpuComponent)
-		{
-			pGpuComponent->RemoveAllSubInstances();
-		}
-	}
-}
-
-bool CParticleEmitter::IsActive() const
-{
-	return m_active;
-}
-
-void CParticleEmitter::Prime()
-{
-	// PFX2_TODO : implement
-}
-
-void CParticleEmitter::SetLocation(const QuatTS& loc)
-{
-	const Vec3 prevPos = m_location.t;
-	const Quat prevQuat = m_location.q;
-	const Vec3 newPos = loc.t;
-	const Quat newQuat = loc.q;
-	m_parentContainer.GetIOVec3Stream(EPVF_Position).Store(0, newPos);
-	m_parentContainer.GetIOQuatStream(EPQF_Orientation).Store(0, newQuat);
-
-	if (m_registered)
-	{
-		const float deltaTime = gEnv->pTimer->GetFrameTime();
-		const float invDeltaTime = abs(deltaTime) > FLT_EPSILON ? rcp_fast(deltaTime) : 0.0f;
-		const Vec3 velocity0 = m_parentContainer.GetIOVec3Stream(EPVF_Velocity).Load(0);
-		const Vec3 angularVelocity0 = m_parentContainer.GetIOVec3Stream(EPVF_AngularVelocity).Load(0);
-
-		const Vec3 velocity1 =
-		  velocity0 +
-		  (newPos - prevPos) * invDeltaTime;
-		const Vec3 angularVelocity1 =
-		  angularVelocity0 +
-		  2.0f * Quat::log(newQuat * prevQuat.GetInverted()) * invDeltaTime;
-
-		m_parentContainer.GetIOVec3Stream(EPVF_Velocity).Store(0, velocity1);
-		m_parentContainer.GetIOVec3Stream(EPVF_AngularVelocity).Store(0, angularVelocity1);
-	}
-
-	m_location = loc;
-}
-
-void CParticleEmitter::EmitParticle(const EmitParticleData* pData)
-{
-	// PFX2_TODO : this is awful, make it better
-	CParticleComponentRuntime::SInstance instance;
-	instance.m_parentId = m_parentContainer.GetLastParticleId();
-	m_parentContainer.AddParticle();
-	if (pData->bHasLocation)
-	{
-		QuatT location = QuatT(pData->Location);
-		m_parentContainer.GetIOVec3Stream(EPVF_Position).Store(instance.m_parentId, location.t);
-		m_parentContainer.GetIOQuatStream(EPQF_Orientation).Store(instance.m_parentId, location.q);
-		m_parentContainer.GetIOVec3Stream(EPVF_Velocity).Store(instance.m_parentId, Vec3(ZERO));
-		m_parentContainer.GetIOVec3Stream(EPVF_AngularVelocity).Store(instance.m_parentId, Vec3(ZERO));
-	}
-
-	TComponentId lastComponentId = m_pEffect->GetNumComponents();
-	for (TComponentId componentId = 0; componentId < lastComponentId; ++componentId)
-	{
-		CParticleComponent* pComponent = m_pEffect->GetCComponent(componentId);
-		const SComponentParams& params = pComponent->GetComponentParams();
-		const bool isEnabled = pComponent->IsEnabled();
-		const bool isvalid = params.IsValid();
-		if (isEnabled && isvalid && !params.IsSecondGen())
-			m_componentRuntimes.back().pRuntime->AddSubInstances(&instance, 1);
-	}
-}
-
-void CParticleEmitter::SetEntity(IEntity* pEntity, int nSlot)
-{
-	if (pEntity)
-	{
-		m_entityId = pEntity->GetId();
-		m_entitySlot = nSlot;
-	}
-	else
-		m_entityId = 0;
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CParticleEmitter::InvalidateCachedEntityData()
-{
-	UpdateFromEntity();
-}
-
-void CParticleEmitter::SetTarget(const ParticleTarget& target)
-{
-	if ((int)target.bPriority >= (int)m_target.bPriority)
-		m_target = target;
-}
-
-bool CParticleEmitter::UpdateStreamableComponents(float fImportance, const Matrix34A& objMatrix, IRenderNode* pRenderNode, float fEntDistance, bool bFullUpdate, int nLod)
-{
-	FUNCTION_PROFILER_3DENGINE;
-
-	const TComponentId numComponents = m_pEffect->GetNumComponents();
-	for (TComponentId componentId = 0; componentId < numComponents; ++componentId)
-	{
-		CParticleComponent* pComponent = m_pEffect->GetCComponent(componentId);
-		const SComponentParams& params = pComponent->GetComponentParams();
-
-		IMaterial* pMaterial = params.m_pMaterial;
-		CMatInfo*  pMatInfo  = reinterpret_cast<CMatInfo*>(pMaterial);
-		if (pMatInfo)
-			pMatInfo->PrecacheMaterial(fEntDistance, nullptr, bFullUpdate);
-
-		IMeshObj* pMesh = params.m_pMesh;
-		if (pMesh)
-		{
-			CStatObj* pStatObj = static_cast<CStatObj*>(pMesh);
-			IMaterial* pMaterial = pStatObj->GetMaterial();
-			m_pObjManager->PrecacheStatObj(pStatObj, nLod, objMatrix, pMaterial, fImportance, fEntDistance, bFullUpdate, false);
-		}
-	}
-
-	return true;
-}
-
-void CParticleEmitter::GetSpawnParams(SpawnParams& sp) const
-{
-	sp = SpawnParams();
-	sp.fTimeScale = m_timeScale;
-}
-
-void CParticleEmitter::SetSpawnParams(const SpawnParams& spawnParams)
-{
-	m_timeScale = spawnParams.fTimeScale;
-	
 	const int forcedSeed = GetCVars()->e_ParticlesForceSeed;
-	if (spawnParams.nSeed != -1)
+	if (m_spawnParams.nSeed != -1)
 	{
-		m_initialSeed = uint32(spawnParams.nSeed);
+		m_initialSeed = uint32(m_spawnParams.nSeed);
 		m_time = 0.0f;
 	}
 	else if (forcedSeed != 0)
@@ -429,179 +384,305 @@ void CParticleEmitter::SetSpawnParams(const SpawnParams& spawnParams)
 		m_initialSeed = cry_random_uint32();
 		m_time = gEnv->pTimer->GetCurrTime();
 	}
+	m_timeCreated = m_time;
 	m_currentSeed = m_initialSeed;
 }
 
-void CParticleEmitter::UpdateRuntimeRefs()
+void CParticleEmitter::Activate(bool activate)
 {
-	// #PFX2_TODO : clean up and optimize this function. Way too messy.
+	if (!m_pEffect || activate == m_active)
+		return;
+
+	const auto& timings = m_pEffect->GetTimings();
+	m_active = activate;
+	if (activate)
+	{
+		InitSeed();
+		m_timeUpdated = m_time;
+		m_timeStable = m_time + timings.m_equilibriumTime;
+		m_timeDeath = m_time + timings.m_maxTotalLIfe;
+		m_bounds = m_realBounds = m_maxBounds = AABB::RESET;
+		m_alive = true;
+
+		m_effectEditVersion = -1; // Force creation of Runtimes next Update
+	}
+	else
+	{
+		for (auto& pRuntime : m_componentRuntimes)
+		{
+			if (!pRuntime->IsChild())
+				pRuntime->RemoveAllSubInstances();
+		}
+		m_timeStable = m_timeDeath = m_time + timings.m_stableTime;
+	}
+}
+
+void CParticleEmitter::Restart()
+{
+	Activate(false);
+	Activate(true);
+}
+
+void CParticleEmitter::SetChanged()
+{
+	// Update stability time
+	if (m_pEffect)
+	{
+		const auto& timings = m_pEffect->GetTimings();
+		m_timeStable = max(timings.m_equilibriumTime, m_time + timings.m_stableTime);
+	}
+	m_maxBounds.Reset();
+}
+
+void CParticleEmitter::Kill()
+{
+	m_active = false;
+	m_alive = false;
+	m_componentRuntimes.clear();
+	m_componentRuntimesFor.clear();
+}
+
+bool CParticleEmitter::IsActive() const
+{
+	return m_active;
+}
+
+void CParticleEmitter::SetLocation(const QuatTS& loc)
+{
+	QuatTS prevLoc = m_location;
+	m_location = loc;
+	if (m_spawnParams.bPlaced && m_pEffect->IsSubstitutedPfx1())
+	{
+		ParticleLoc::RotateYtoZ(m_location.q);
+	}
+
+	m_parentContainer.GetIOVec3Stream(EPVF_Position).Store(0, m_location.t);
+	m_parentContainer.GetIOQuatStream(EPQF_Orientation).Store(0, m_location.q);
+
+	if (m_registered)
+	{
+		const float deltaTime = gEnv->pTimer->GetFrameTime();
+		const float invDeltaTime = abs(deltaTime) > FLT_EPSILON ? rcp_fast(deltaTime) : 0.0f;
+		const Vec3 velocity0 = m_parentContainer.GetIOVec3Stream(EPVF_Velocity).Load(0);
+		const Vec3 angularVelocity0 = m_parentContainer.GetIOVec3Stream(EPVF_AngularVelocity).Load(0);
+
+		const Vec3 velocity1 =
+		  velocity0 +
+		  (m_location.t - prevLoc.t) * invDeltaTime;
+		const Vec3 angularVelocity1 =
+		  angularVelocity0 +
+		  2.0f * Quat::log(m_location.q * prevLoc.q.GetInverted()) * invDeltaTime;
+
+		m_parentContainer.GetIOVec3Stream(EPVF_Velocity).Store(0, velocity1);
+		m_parentContainer.GetIOVec3Stream(EPVF_AngularVelocity).Store(0, angularVelocity1);
+		m_visEnviron.Invalidate();
+	}
+
+	SetChanged();
+}
+
+void CParticleEmitter::EmitParticle(const EmitParticleData* pData)
+{
+	// #PFX2_TODO : handle EmitParticleData (create new instances)
+	for (auto pRuntime: m_componentRuntimes)
+	{
+		if (!pRuntime->IsChild())
+		{
+			pRuntime->EmitParticle();
+			SetChanged();
+		}
+	}
+}
+
+void CParticleEmitter::SetEmitterFeatures(TParticleFeatures& features)
+{
+	if (features.m_editVersion != m_emitterEditVersion)
+	{
+		m_emitterFeatures = features;
+		m_emitterEditVersion = features.m_editVersion;
+	}
+}
+
+void CParticleEmitter::SetEntity(IEntity* pEntity, int nSlot)
+{
+	m_entityOwner = pEntity;
+	m_entitySlot = nSlot;
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CParticleEmitter::InvalidateCachedEntityData()
+{
+	UpdateFromEntity();
+}
+
+void CParticleEmitter::SetTarget(const ParticleTarget& target)
+{
+	if ((int)target.bPriority >= (int)m_target.bPriority)
+	{
+		m_target = target;
+		SetChanged();
+	}
+}
+
+void CParticleEmitter::UpdateStreamingPriority(const SUpdateStreamingPriorityContext& context)
+{
+	FUNCTION_PROFILER_3DENGINE;
+
+	for (auto& pRuntime : m_componentRuntimes)
+	{
+		const auto* pComponent = pRuntime->GetComponent();
+		const SComponentParams& params = pComponent->GetComponentParams();
+		const float normalizedDist = context.distance * rcp_safe(params.m_maxParticleSize);
+		const bool bHighPriority = !!(params.m_renderObjectFlags & FOB_NEAREST);
+
+		if (CMatInfo* pMatInfo  = static_cast<CMatInfo*>(params.m_pMaterial.get()))
+		{
+			const float adjustedDist = normalizedDist
+				* min(params.m_shaderData.m_tileSize[0], params.m_shaderData.m_tileSize[1]);
+			pMatInfo->PrecacheMaterial(adjustedDist, nullptr, context.bFullUpdate, bHighPriority);
+		}
+
+		if (CStatObj* pStatObj = static_cast<CStatObj*>(params.m_pMesh.get()))
+			m_pObjManager->PrecacheStatObj(pStatObj, context.lod, Matrix34A(m_location),
+				pStatObj->GetMaterial(), context.importance, normalizedDist, context.bFullUpdate, bHighPriority);
+	}
+}
+
+void CParticleEmitter::GetSpawnParams(SpawnParams& spawnParams) const
+{
+	spawnParams = m_spawnParams;
+}
+
+void CParticleEmitter::SetEmitGeom(const GeomRef& geom)
+{
+	// If emitter has an OwnerEntity, it will override this GeomRef on the next frame.
+	// So SetOwnerEntity(nullptr) should be called as well.
+	m_emitterGeometry = geom;
+	SetChanged();
+}
+
+void CParticleEmitter::SetSpawnParams(const SpawnParams& spawnParams)
+{
+	if (spawnParams.bIgnoreVisAreas != m_spawnParams.bIgnoreVisAreas || spawnParams.bRegisterByBBox != m_spawnParams.bRegisterByBBox)
+		Unregister();
+	m_spawnParams = spawnParams;	
+	SetChanged();
+}
+
+uint CParticleEmitter::GetAttachedEntityId()
+{
+	return m_entityOwner ? m_entityOwner->GetId() : INVALID_ENTITYID;
+}
+
+void CParticleEmitter::UpdateRuntimes()
+{
+	CRY_PFX2_PROFILE_DETAIL;
+
+	m_componentRuntimesFor.clear();
+	TRuntimes newRuntimes;
+
+	m_pEffectOriginal->Compile();
+
+	if (!m_emitterFeatures.empty())
+	{
+		// clone and modify effect
+		m_pEffect = new CParticleEffect(*m_pEffectOriginal);
+		for (auto& pComponent : m_pEffect->GetComponents())
+		{
+			pComponent = new CParticleComponent(*pComponent);
+			pComponent->SetEffect(m_pEffect);
+			pComponent->ClearChildren();
+			if (auto pParentComponent = pComponent->GetParentComponent())
+			{
+				auto pNewParent = m_pEffect->GetComponent(pParentComponent->GetComponentId());
+				pComponent->SetParent(pNewParent);
+			}
+			else
+			{
+				for (auto& feature : m_emitterFeatures)
+					pComponent->AddFeature(static_cast<CParticleFeature*>(feature.get()));
+			}
+		}
+		m_pEffect->SetChanged();
+		m_pEffect->Compile();
+	}
+	else
+	{
+		m_pEffect = m_pEffectOriginal;
+	}
 
 	ResetRenderObjects();
 
-	TComponentRuntimes newRuntimes;
-
-	TComponentId lastComponentId = m_pEffect->GetNumComponents();
-
-	for (TComponentId componentId = 0; componentId < lastComponentId; ++componentId)
+	for (const auto& pComponent: m_pEffect->GetComponents())
 	{
-		CParticleComponent* pComponent = m_pEffect->GetCComponent(componentId);
-
-		auto it = std::find_if(m_componentRuntimes.begin(), m_componentRuntimes.end(),
-		                       [=](const SRuntimeRef& ref)
-			{
-				return ref.pComponent == pComponent;
-		  });
-
-		SRuntimeRef runtimeRef;
-		const SRuntimeInitializationParameters& params = pComponent->GetRuntimeInitializationParameters();
-
-		bool createNew = false;
-		if (it == m_componentRuntimes.end())
-			createNew = true;
-		else
+		if (!pComponent->CanMakeRuntime(this))
 		{
-			// exists, but wrong runtime type
-			// (can mean wrong cpu/gpu type, or wrong maximum number of particles, etc)
-			createNew = !it->pRuntime->IsValidRuntimeForInitializationParameters(params);
+			m_componentRuntimesFor.push_back(nullptr);
+			continue;
 		}
 
-		if (createNew)
-			runtimeRef = SRuntimeRef(m_pEffect, this, pComponent, params);
-		else
-			runtimeRef = *it;
+		CParticleComponentRuntime* pRuntime = stl::find_value_if(m_componentRuntimes,
+			[&](CParticleComponentRuntime* pRuntime)
+			{
+				return pRuntime->GetComponent() == pComponent;
+			}
+		);
 
-		newRuntimes.push_back(runtimeRef);
+		if (!pRuntime || !pRuntime->IsValidForComponent())
+		{
+			pRuntime = new CParticleComponentRuntime(this, pComponent);
+		}
+		else
+		{
+			pRuntime->RemoveAllSubInstances();
+			pRuntime->Initialize();
+		}
+
+		newRuntimes.push_back(pRuntime);
+		m_componentRuntimesFor.push_back(pRuntime);
 	}
 
 	m_componentRuntimes = newRuntimes;
-	for (TComponentId componentId = 0; componentId < lastComponentId; ++componentId)
-	{
-		bool isActive = true;
-		TComponentId thisComponentId = componentId;
-		while (thisComponentId != gInvalidId)
-		{
-			const CParticleComponent* pComponent = m_pEffect->GetCComponent(thisComponentId);
-			const SComponentParams& params = pComponent->GetComponentParams();
-			const bool isEnabled = pComponent->IsEnabled();
-			const bool isValid = params.IsValid();
-			// #PFX2_TODO : Cache canMakeRuntime, it is evaluating same components more than once for secondgen.
-			const bool canMakeRuntime = pComponent->CanMakeRuntime(this);
-			if (!(isEnabled && isValid && canMakeRuntime))
-			{
-				isActive = false;
-				break;
-			}
-			thisComponentId = params.m_parentId;
-		}
 
-		CParticleComponent* component = m_pEffect->GetCComponent(componentId);
-		ICommonParticleComponentRuntime* pCommonRuntime = m_componentRuntimes[componentId].pRuntime;
-		if (!component->GetRuntimeInitializationParameters().usesGpuImplementation)
-		{
-			CParticleComponentRuntime* pRuntime    = pCommonRuntime->GetCpuRuntime();
-			const SComponentParams&    params      = pRuntime->GetComponentParams();
-			const bool                 wasActive   = pRuntime->IsActive();
-			const bool                 isSecondGen = params.IsSecondGen();
-			pRuntime->RemoveAllSubInstances();
-			pRuntime->SetActive(isActive);
-			if (isActive)
-				pRuntime->Initialize();
-			else
-				pRuntime->Reset();
-			if (m_active && !isSecondGen)
-			{
-				CParticleComponentRuntime::SInstance instance;
-				instance.m_parentId = 0;
-				pRuntime->AddSubInstances(&instance, 1);
-			}
-		}
-		else
-		{
-			gpu_pfx2::IParticleComponentRuntime* pRuntime =
-				pCommonRuntime->GetGpuRuntime();
-			pRuntime->RemoveAllSubInstances();
-			pRuntime->SetActive(isActive);
-			const bool isSecondGen = pRuntime->IsSecondGen();
-			if (isActive && !isSecondGen)
-			{
-				CParticleComponentRuntime::SInstance instance;
-				instance.m_parentId = 0;
-				pRuntime->AddSubInstances(&instance, 1);
-			}
-		}
-		component->PrepareRenderObjects(this);
-	}
-
-	m_editVersion = m_pEffect->GetEditVersion();
+	m_effectEditVersion = m_pEffectOriginal->GetEditVersion() + m_emitterEditVersion;
+	m_alive = true;
+	m_addInstances = 1;
 }
 
 void CParticleEmitter::ResetRenderObjects()
 {
+	if (!GetRenderer())
+		return;
+
 	if (!m_pEffect)
 		return;
 
 	const uint numROs = m_pEffect->GetNumRenderObjectIds();
 	for (uint threadId = 0; threadId < RT_COMMAND_BUF_COUNT; ++threadId)
-		m_pRenderObjects[threadId].resize(numROs, nullptr);
-
-	const TComponentId lastComponentId = m_pEffect->GetNumComponents();
-	for (TComponentId componentId = 0; componentId < lastComponentId; ++componentId)
 	{
-		CParticleComponent* pComponent = m_pEffect->GetCComponent(componentId);
-		pComponent->ResetRenderObjects(this);
+		for (auto& object : m_pRenderObjects[threadId])
+		{
+			if (CRenderObject* pRO = object.first)
+			{
+				if (pRO->m_pRE)
+					pRO->m_pRE->Release();
+				gEnv->pRenderer->EF_FreeObject(pRO);
+			}
+			object = { nullptr, nullptr };
+		}
+		m_pRenderObjects[threadId].resize(numROs, { nullptr, nullptr });
 	}
 }
 
-void CParticleEmitter::AddInstance()
+ILINE void CParticleEmitter::UpdateFromEntity()
 {
-	m_parentContainer.AddParticle();
-
-	CParticleComponentRuntime::SInstance instance;
-	instance.m_parentId = 0;
-
-	for (auto& ref : m_componentRuntimes)
-	{
-		if (auto pRuntime = ref.pRuntime->GetCpuRuntime())
-		{
-			const SComponentParams& params = pRuntime->GetComponentParams();
-			const bool isSecondGen = params.IsSecondGen();
-			if (!isSecondGen)
-				ref.pRuntime->AddSubInstances(&instance, 1);
-		}
-	}
-}
-
-void CParticleEmitter::StopInstances()
-{
-	for (auto& ref : m_componentRuntimes)
-	{
-		if (auto pRuntime = ref.pRuntime->GetCpuRuntime())
-		{
-			const SComponentParams& params = pRuntime->GetComponentParams();
-			const bool isSecondGen = params.IsSecondGen();
-			if (!isSecondGen)
-				pRuntime->RemoveAllSubInstances();
-		}
-		else if (auto pRuntime = ref.pRuntime->GetGpuRuntime())
-		{
-			const bool isSecondGen = pRuntime->IsSecondGen();
-			if (!isSecondGen)
-				pRuntime->RemoveAllSubInstances();
-		}
-	}
-}
-
-void CParticleEmitter::UpdateFromEntity()
-{
-	IEntity* pEntity = gEnv->pEntitySystem->GetEntity(m_entityId);
-	if (!pEntity)
-		return;
-	UpdateTargetFromEntity(pEntity);
+	if (m_entityOwner && m_target.bPriority)
+		UpdateTargetFromEntity(m_entityOwner);
 }
 
 IEntity* CParticleEmitter::GetEmitGeometryEntity() const
 {
-	IEntity* pEntity = gEnv->pEntitySystem->GetEntity(m_entityId);
+	IEntity* pEntity = m_entityOwner;
 	if (pEntity)
 	{
 		// Override m_emitterGeometry with geometry of owning or attached entity if it exists
@@ -614,7 +695,7 @@ IEntity* CParticleEmitter::GetEmitGeometryEntity() const
 void CParticleEmitter::UpdateEmitGeomFromEntity()
 {
 	IEntity* pEntity = GetEmitGeometryEntity();
-	m_emitterGeometrySlot = m_emitterGeometry.Set(pEntity, m_entitySlot);
+	m_emitterGeometrySlot = m_emitterGeometry.Set(pEntity);
 }
 
 QuatTS CParticleEmitter::GetEmitterGeometryLocation() const
@@ -637,17 +718,19 @@ CRenderObject* CParticleEmitter::GetRenderObject(uint threadId, uint renderObjec
 	CRY_PFX2_ASSERT(threadId < RT_COMMAND_BUF_COUNT);
 	if (m_pRenderObjects[threadId].empty())
 		return nullptr;
-	return m_pRenderObjects[threadId][renderObjectIdx];
+	return m_pRenderObjects[threadId][renderObjectIdx].first;
 }
 
-void CParticleEmitter::SetRenderObject(CRenderObject* pRenderObject, uint threadId, uint renderObjectIdx)
+void CParticleEmitter::SetRenderObject(CRenderObject* pRenderObject, _smart_ptr<IMaterial>&& material, uint threadId, uint renderObjectIdx)
 {
 	CRY_PFX2_ASSERT(threadId < RT_COMMAND_BUF_COUNT);
-	m_pRenderObjects[threadId][renderObjectIdx] = pRenderObject;
+	m_pRenderObjects[threadId][renderObjectIdx] = std::make_pair(pRenderObject, std::move(material));
 }
 
 void CParticleEmitter::UpdateTargetFromEntity(IEntity* pEntity)
 {
+	CRY_PFX2_PROFILE_DETAIL;
+
 	if (m_target.bPriority)
 		return;
 
@@ -672,104 +755,77 @@ void CParticleEmitter::UpdateTargetFromEntity(IEntity* pEntity)
 	m_target = target;
 }
 
-void CParticleEmitter::GetParentData(const int parentComponentId, const uint* parentParticleIds, const int numParentParticleIds, SInitialData* data) const
-{
-	const CParticleContainer& container = (parentComponentId < 0)
-	                                      ? m_parentContainer
-	                                      : GetRuntimes()[parentComponentId].pRuntime->GetCpuRuntime()->GetContainer();
-
-	IVec3Stream parentPositions = container.GetIVec3Stream(EPVF_Position);
-	IVec3Stream parentVelocities = container.GetIVec3Stream(EPVF_Velocity);
-
-	for (int i = 0; i < numParentParticleIds; ++i)
-	{
-		data[i].position = parentPositions.Load(parentParticleIds[i]);
-		data[i].velocity = parentVelocities.Load(parentParticleIds[i]);
-	}
-}
-
-void CParticleEmitter::SetCEffect(CParticleEffect* pEffect)
-{
-	Unregister();
-	Activate(false);
-	if (!pEffect)
-		ResetRenderObjects();
-	m_pEffect = pEffect;
-	if (m_pEffect)
-		m_attributeInstance.Reset(&m_pEffect->GetAttributeTable(), EAttributeScope::PerEmitter);
-	else
-		m_attributeInstance.Reset();
-}
-
 void CParticleEmitter::Register()
 {
+	CRY_PFX2_PROFILE_DETAIL;
+
 	if (m_registered)
+		gEnv->p3DEngine->UnRegisterEntityDirect(this);
+	if (!HasBounds())
+	{
+		m_registered = false;
 		return;
+	}
+
 	bool posContained = GetBBox().IsContainPoint(GetPos());
 	SetRndFlags(ERF_REGISTER_BY_POSITION, posContained);
+	SetRndFlags(ERF_REGISTER_BY_BBOX, m_spawnParams.bRegisterByBBox);
+	SetRndFlags(ERF_RENDER_ALWAYS, m_spawnParams.bIgnoreVisAreas);
 	SetRndFlags(ERF_CASTSHADOWMAPS, false);
 	gEnv->p3DEngine->RegisterEntity(this);
 	m_registered = true;
+
+	m_visEnviron.Invalidate();
+	m_visEnviron.Update(GetPos(), m_bounds);
+	m_physEnviron.GetPhysAreas(
+		CParticleManager::Instance()->GetPhysEnviron(), m_bounds,
+		m_visEnviron.OriginIndoors(), m_pEffect->GetEnvironFlags() | ENV_WATER, true, 0);
 }
 
 void CParticleEmitter::Unregister()
 {
 	if (!m_registered)
 		return;
-	// PFX2_TODO - UnRegisterEntityDirect should only be needed to update bbox on 3dengine
-	// gEnv->p3DEngine->UnRegisterEntityAsJob(this);
+	CRY_PFX2_PROFILE_DETAIL;
+
 	gEnv->p3DEngine->UnRegisterEntityDirect(this);
 	m_registered = false;
+	m_bounds.Reset();
+	m_realBounds.Reset();
 }
 
 bool CParticleEmitter::HasParticles() const
 {
-	CRY_PFX2_ASSERT(m_pEffect != 0);
-	for (auto& ref : m_componentRuntimes)
+	for (auto& pRuntime : m_componentRuntimes)
 	{
-		if (auto pRuntime = ref.pRuntime->GetCpuRuntime())
-		{
-			if (pRuntime->GetContainer().GetLastParticleId() != 0)
-				return true;
-		}
-		else if (auto pRuntime = ref.pRuntime->GetGpuRuntime())
-		{
-			if (pRuntime->HasParticles())
-				return true;
-		}
+		if (pRuntime->HasParticles())
+			return true;
 	}
+
 	return false;
 }
 
-void CParticleEmitter::AccumCounts(SParticleCounts& counts)
+uint CParticleEmitter::GetParticleSpec() const
 {
-	counts.EmittersRendered += m_emitterCounts.EmittersRendered;
-	counts.ParticlesRendered += m_emitterCounts.ParticlesRendered;
-	counts.ParticlesClip += m_emitterCounts.ParticlesClip;
-	for (auto& ref : m_componentRuntimes)
+	if (m_spawnParams.eSpec != EParticleSpec::Default)
+		return uint(m_spawnParams.eSpec);
+
+	int quality = C3DEngine::GetCVars()->e_ParticlesQuality;
+	if (quality != 0)
+		return quality;
+
+	const ESystemConfigSpec configSpec = gEnv->pSystem->GetConfigSpec();
+	return uint(configSpec);
+}
+
+void CParticleEmitter::CheckUpdated()
+{
+	if (m_effectEditVersion < 0 || (gEnv->IsEditing() && m_effectEditVersion != m_pEffectOriginal->GetEditVersion() + m_emitterEditVersion))
 	{
-		ref.pRuntime->AccumCounts(counts);
+		m_attributeInstance.Reset(m_pEffectOriginal->GetAttributeTable());
+		UpdateRuntimes();
 	}
-	m_emitterCounts = SContainerCounts();
-}
-
-void CParticleEmitter::AddDrawCallCounts(int numRendererdParticles, int numClippedParticles)
-{
-	m_countsMutex.Lock();
-	m_emitterCounts.EmittersRendered += 1.0f;
-	m_emitterCounts.ParticlesRendered += float(numRendererdParticles);
-	m_emitterCounts.ParticlesClip += float(numClippedParticles);
-	m_countsMutex.Unlock();
-}
-
-CParticleEmitter::SRuntimeRef::SRuntimeRef(CParticleEffect* effect, CParticleEmitter* emitter, CParticleComponent* component, const SRuntimeInitializationParameters& params)
-{
-	if (params.usesGpuImplementation)
-		pRuntime = gEnv->pRenderer->GetGpuParticleManager()->CreateParticleComponentRuntime(component, params);
-	else
-		pRuntime = new CParticleComponentRuntime(effect, emitter, component);
-
-	pComponent = component;
+	m_alive = m_componentRuntimes.size() && m_time <= m_timeDeath;
 }
 
 }

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ComponentsWidget.h"
@@ -8,20 +8,23 @@
 #include "PropertiesWidget.h"
 
 #include "ObjectModel.h"
+#include "MainWindow.h"
 
 #include <QtUtil.h>
 #include <QFilteringPanel.h>
 #include <QAdvancedPropertyTree.h>
+#include <QCollapsibleFrame.h>
 #include <ProxyModels/AttributeFilterProxyModel.h>
 #include <Controls/QPopupWidget.h>
 #include <Controls/DictionaryWidget.h>
 #include <ICommandManager.h>
 #include <EditorFramework/BroadcastManager.h>
+#include <EditorFramework/Inspector.h>
 
 #include <QAbstractItemModel>
 #include <QStyledItemDelegate>
 #include <QVBoxLayout>
-#include <QTreeView>
+#include <QAdvancedTreeView.h>
 #include <QLabel>
 #include <QString>
 #include <QHelpEvent>
@@ -292,8 +295,9 @@ private:
 	QLabel*       m_pLabel;
 };
 
-CComponentsWidget::CComponentsWidget(QWidget* pParent)
+CComponentsWidget::CComponentsWidget(CMainWindow& editor, QWidget* pParent)
 	: QWidget(pParent)
+	, m_pEditor(&editor)
 	, m_pModel(nullptr)
 	, m_pFilter(nullptr)
 	, m_pComponentsList(nullptr)
@@ -320,7 +324,7 @@ CComponentsWidget::CComponentsWidget(QWidget* pParent)
 	pToolBar->addWidget(pSpacer);
 	pToolBar->addWidget(m_pAddButton);
 
-	m_pComponentsList = new QTreeView();
+	m_pComponentsList = new QAdvancedTreeView();
 	m_pComponentsList->setContextMenuPolicy(Qt::CustomContextMenu);
 	m_pComponentsList->setSelectionMode(QAbstractItemView::SingleSelection);
 	m_pComponentsList->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -352,6 +356,16 @@ CComponentsWidget::CComponentsWidget(QWidget* pParent)
 	QObject::connect(m_pContextMenuContent, &CDictionaryWidget::OnEntryClicked, this, &CComponentsWidget::OnAddComponent);
 
 	m_pContextMenu = new QPopupWidget("Add Component", m_pContextMenuContent, QSize(250, 400), true);
+
+	QObject::connect(m_pEditor, &CMainWindow::SignalOpenedModel, this, &CComponentsWidget::SetModel);
+	QObject::connect(m_pEditor, &CMainWindow::SignalReleasingModel, [this]
+		{
+			SetModel(nullptr);
+	  });
+	QObject::connect(m_pEditor, &QWidget::destroyed, [this](QObject*)
+		{
+			m_pEditor = nullptr;
+	  });
 }
 
 CComponentsWidget::~CComponentsWidget()
@@ -360,6 +374,11 @@ CComponentsWidget::~CComponentsWidget()
 	{
 		m_pFilterProxy->sourceModel()->deleteLater();
 		m_pFilterProxy->deleteLater();
+	}
+
+	if (m_pEditor)
+	{
+		QObject::disconnect(m_pEditor);
 	}
 }
 
@@ -444,14 +463,16 @@ void CComponentsWidget::OnSelectionChanged(const QItemSelection& selected, const
 
 			if (CBroadcastManager* pBroadcastManager = CBroadcastManager::Get(this))
 			{
-				CPropertiesWidget* pPropertiesWidget = new CPropertiesWidget(*pItem);
+				CPropertiesWidget* pPropertiesWidget = nullptr /*new CPropertiesWidget(*pItem)*/;
 
-				auto populateInspector = [pPropertiesWidget](const PopulateInspectorEvent&)
+				PopulateInspectorEvent popEvent([pPropertiesWidget](CInspector& inspector)
 				{
-					return pPropertiesWidget;
-				};
-				PopulateInspectorEvent populateEvent(populateInspector, "Properties");
-				pBroadcastManager->Broadcast(populateEvent);
+					QCollapsibleFrame* pInspectorWidget = new QCollapsibleFrame("Properties");
+					pInspectorWidget->SetWidget(pPropertiesWidget);
+					inspector.AddWidget(pInspectorWidget);
+				});
+
+				pBroadcastManager->Broadcast(popEvent);
 			}
 		}
 	}
@@ -490,7 +511,7 @@ void CComponentsWidget::OnContextMenu(const QPoint& point)
 	else
 	{
 		if (m_pModel)
-			m_pContextMenuContent->SetDictionary(m_pModel->GetAvailableComponentsDictionary());
+			m_pContextMenuContent->AddDictionary(*m_pModel->GetAvailableComponentsDictionary());
 
 		m_pContextMenu->ShowAt(menuPos);
 	}
@@ -501,7 +522,7 @@ void CComponentsWidget::OnAddButton(bool checked)
 	const QPoint menuPos = m_pAddButton->mapToGlobal(m_pAddButton->mapFromParent(m_pAddButton->pos()));
 
 	if (m_pModel)
-		m_pContextMenuContent->SetDictionary(m_pModel->GetAvailableComponentsDictionary());
+		m_pContextMenuContent->AddDictionary(*m_pModel->GetAvailableComponentsDictionary());
 
 	m_pContextMenu->ShowAt(menuPos, QPopupWidget::TopRight);
 }
@@ -575,3 +596,4 @@ void CComponentsWidget::customEvent(QEvent* pEvent)
 }
 
 }
+

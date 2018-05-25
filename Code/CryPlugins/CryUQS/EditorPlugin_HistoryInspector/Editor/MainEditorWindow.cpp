@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // TODO:
 // - tweak size of the treeview captions
@@ -17,18 +17,22 @@
 #include <QAbstractButton>
 #include <QDialogButtonbox>
 #include <QLineEdit>
-#include <QTreeView>
+#include <QAdvancedTreeView.h>
 #include <QSplitter>
 #include <QMessageBox>
 #include <QFontMetrics>
 
 #include <QtUtil.h>
 
-#include <QPropertyTree/QPropertyTree.h>
+#include <Serialization/QPropertyTree/QPropertyTree.h>
 #include <Controls/QuestionDialog.h>
+#include <EditorFramework/Events.h>
 
 // UQS 3d rendering
-#include <IDisplayViewport.h>
+#include <IViewportManager.h>
+#include <SandboxAPI.h>	// SANDBOX_API
+struct IDataBaseItem;	// CViewport should have forward-declared this
+#include <Viewport.h>
 
 //#pragma optimize("", off)
 
@@ -48,6 +52,8 @@ struct SQuery
 		// TODO: column for displaying the itemType of the items in the result set
 		Column_ItemCounts, // number of resulting items vs. generated items
 		Column_ElapsedTime,
+		Column_TimestampQueryCreated,
+		Column_TimestampQueryDestroyed,
 
 		ColumnCount
 	};
@@ -58,8 +64,11 @@ struct SQuery
 	// control data
 	SQuery*              pParent;
 	std::vector<SQuery*> children;
-	uqs::core::CQueryID  queryID;
-	uqs::core::IQueryHistoryManager::SEvaluatorDrawMasks evaluatorDrawMasks;
+	UQS::Core::CQueryID  queryID;
+	bool                 bFoundTooFewItems;
+	bool                 bExceptionEncountered;
+	bool                 bEncounteredSomeWarnings;
+	UQS::Core::IQueryHistoryManager::SEvaluatorDrawMasks evaluatorDrawMasks;
 
 	std::vector<string> instantEvaluatorNames;
 	std::vector<string> deferredEvaluatorNames;
@@ -69,26 +78,16 @@ struct SQuery
 	// display data
 	QVariant dataPerColumn[ColumnCount];
 
-	SQuery() : pParent(nullptr), queryID(uqs::core::CQueryID::CreateInvalid()), evaluatorDrawMasks(uqs::core::IQueryHistoryManager::SEvaluatorDrawMasks::CreateAllBitsSet()) {}
-	SQuery(SQuery* _pParent, const uqs::core::IQueryHistoryConsumer::SHistoricQueryOverview& overview)
+	SQuery() : pParent(nullptr), queryID(UQS::Core::CQueryID::CreateInvalid()), evaluatorDrawMasks(UQS::Core::IQueryHistoryManager::SEvaluatorDrawMasks::CreateAllBitsSet()) {}
+	SQuery(SQuery* _pParent, const UQS::Core::IQueryHistoryConsumer::SHistoricQueryOverview& overview)
 		: pParent(_pParent)
 		, queryID(overview.queryID)
-		, evaluatorDrawMasks(uqs::core::IQueryHistoryManager::SEvaluatorDrawMasks::CreateAllBitsSet())
+		, bFoundTooFewItems(overview.bFoundTooFewItems)
+		, bExceptionEncountered(overview.bQueryEncounteredAnException)
+		, bEncounteredSomeWarnings(overview.bQueryEncounteredSomeWarnings)
+		, evaluatorDrawMasks(UQS::Core::IQueryHistoryManager::SEvaluatorDrawMasks::CreateAllBitsSet())
 	{
-		uqs::shared::CUqsString queryIdAsString;
-		stack_string queryIdAndQuerierName;
-		stack_string itemCountsAsString;
-		stack_string elapsedTimeAsString;
-
-		overview.queryID.ToString(queryIdAsString);
-		queryIdAndQuerierName.Format("#%s: %s", queryIdAsString.c_str(), overview.querierName);
-		itemCountsAsString.Format("%i / %i", (int)overview.numResultingItems, (int)overview.numGeneratedItems);
-		elapsedTimeAsString.Format("%.2f ms", overview.timeElapsedUntilResult.GetMilliSeconds());
-
-		dataPerColumn[Column_QueryIdAndQuerierName] = QtUtil::ToQString(queryIdAndQuerierName.c_str());
-		dataPerColumn[Column_QueryBlueprintName] = QtUtil::ToQString(overview.queryBlueprintName);
-		dataPerColumn[Column_ItemCounts] = QtUtil::ToQString(itemCountsAsString.c_str());
-		dataPerColumn[Column_ElapsedTime] = QtUtil::ToQString(elapsedTimeAsString.c_str());
+		UpdateInformation(overview);
 	}
 
 	~SQuery()
@@ -97,13 +96,44 @@ struct SQuery
 			delete pChild;
 	}
 
-	static void HelpSerializeEvaluatorsBitfield(Serialization::IArchive& ar, uqs::core::evaluatorsBitfield_t& bitfieldToSerialize, const std::vector<string>& evaluatorNames, const std::vector<string>& evaluatorLabelsForUI)
+	void UpdateInformation(const UQS::Core::IQueryHistoryConsumer::SHistoricQueryOverview& overview)
+	{
+		UQS::Shared::CUqsString queryIdAsString;
+		stack_string queryIdAndQuerierName;
+		stack_string itemCountsAsString;
+		stack_string elapsedTimeAsString;
+		stack_string timestampQueryCreatedAsString;
+		stack_string timestampQueryDestroyedAsString;
+
+		int hours, minutes, seconds, milliseconds;
+
+		overview.queryID.ToString(queryIdAsString);
+		queryIdAndQuerierName.Format("#%s: %s", queryIdAsString.c_str(), overview.szQuerierName);
+		itemCountsAsString.Format("%i / %i", (int)overview.numResultingItems, (int)overview.numGeneratedItems);
+		elapsedTimeAsString.Format("%.2f ms", overview.timeElapsedUntilResult.GetMilliSeconds());
+		UQS::Shared::CTimeValueUtil::Split(overview.timestampQueryCreated, &hours, &minutes, &seconds, &milliseconds);
+		timestampQueryCreatedAsString.Format  ("%i:%02i:%02i:%03i", hours, minutes, seconds, milliseconds);
+		UQS::Shared::CTimeValueUtil::Split(overview.timestampQueryDestroyed, &hours, &minutes, &seconds, &milliseconds);
+		timestampQueryDestroyedAsString.Format("%i:%02i:%02i:%03i", hours, minutes, seconds, milliseconds);
+
+		this->dataPerColumn[Column_QueryIdAndQuerierName] = QtUtil::ToQString(queryIdAndQuerierName.c_str());
+		this->dataPerColumn[Column_QueryBlueprintName] = QtUtil::ToQString(overview.szQueryBlueprintName);
+		this->dataPerColumn[Column_ItemCounts] = QtUtil::ToQString(itemCountsAsString.c_str());
+		this->dataPerColumn[Column_ElapsedTime] = QtUtil::ToQString(elapsedTimeAsString.c_str());
+		this->dataPerColumn[Column_TimestampQueryCreated] = QtUtil::ToQString(timestampQueryCreatedAsString.c_str());
+		this->dataPerColumn[Column_TimestampQueryDestroyed] = QtUtil::ToQString(timestampQueryDestroyedAsString.c_str());
+		this->bFoundTooFewItems = overview.bFoundTooFewItems;
+		this->bExceptionEncountered = overview.bQueryEncounteredAnException;
+		this->bEncounteredSomeWarnings = overview.bQueryEncounteredSomeWarnings;
+	}
+
+	static void HelpSerializeEvaluatorsBitfield(Serialization::IArchive& ar, UQS::Core::evaluatorsBitfield_t& bitfieldToSerialize, const std::vector<string>& evaluatorNames, const std::vector<string>& evaluatorLabelsForUI)
 	{
 		assert(evaluatorNames.size() == evaluatorLabelsForUI.size());
 
 		for (size_t i = 0, n = evaluatorNames.size(); i < n; ++i)
 		{
-			const uqs::core::evaluatorsBitfield_t bit = (uqs::core::evaluatorsBitfield_t)1 << i;
+			const UQS::Core::evaluatorsBitfield_t bit = (UQS::Core::evaluatorsBitfield_t)1 << i;
 			bool bValue;
 
 			if (ar.isInput())
@@ -133,7 +163,7 @@ struct SQuery
 		HelpSerializeEvaluatorsBitfield(ar, this->evaluatorDrawMasks.maskDeferredEvaluators, this->deferredEvaluatorNames, this->deferredEvaluatorLabelsForUI);
 	}
 
-	static SQuery* FindQueryByQueryID(SQuery* pStart, const uqs::core::CQueryID& queryID)
+	static SQuery* FindQueryByQueryID(SQuery* pStart, const UQS::Core::CQueryID& queryID)
 	{
 		if (pStart->queryID == queryID)
 			return pStart;
@@ -146,6 +176,20 @@ struct SQuery
 
 		return nullptr;
 	}
+
+	bool ContainsWarningsDownwardsAlongHierarchy() const
+	{
+		if (this->bEncounteredSomeWarnings)
+			return true;
+
+		for (const SQuery* pChild : this->children)
+		{
+			if (pChild->ContainsWarningsDownwardsAlongHierarchy())
+				return true;
+		}
+
+		return false;
+	}
 };
 
 const char* SQuery::headers[SQuery::ColumnCount] =
@@ -153,7 +197,9 @@ const char* SQuery::headers[SQuery::ColumnCount] =
 	"Query ID + querier",         // Column_QueryIdAndQuerierName
 	"Query Blueprint",            // Column_QueryBlueprintName
 	"Items (accepted/generated)", // Column_ItemCounts
-	"Elapsed time"                // Column_ElapsedTime,
+	"Elapsed time",               // Column_ElapsedTime
+	"Timestamp query created",    // Column_TimestampQueryCreated
+	"Timestamp query destroyed",  // Column_TimestampQueryDestroyed
 };
 
 const char* SQuery::toolTips[SQuery::ColumnCount] =
@@ -161,7 +207,9 @@ const char* SQuery::toolTips[SQuery::ColumnCount] =
 	"Unique id of the query instance and the name of who started that query",                                                                                                                           // Column_QueryIdAndQuerierName
 	"Name of the blueprint from which the live query was instantiated",                                                                                                                                 // Column_QueryBlueprintName
 	"Number of items that were generated and ended up in the final result set. Notice: a hierarchical query may not necessarily generate items, yet grab the resulting items from one of its children", // Column_ItemCounts
-	"Elapsed time from start to finish of the query. Notice: don't confuse with *consumed* time."                                                                                                       // Column_ElapsedTime,
+	"Elapsed time from start to finish of the query. Notice: don't confuse with *consumed* time.",                                                                                                      // Column_ElapsedTime
+	"Timestamp of when the query was created in h:mm:ss:mmm",                                                                                                                                           // Column_TimestampQueryCreated
+	"Timestamp of when the query was destroyed in h:mm:ss:mmm. Notice: might show some weird value if the query was canceled prematurely.",                                                             // Column_TimestampQueryDestroyed
 };
 
 //===================================================================================
@@ -259,6 +307,41 @@ public:
 
 	Q_INVOKABLE virtual QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override
 	{
+		if (role == Qt::TextColorRole)
+		{
+			if (index.isValid())
+			{
+				const SQuery* pQuery = static_cast<const SQuery*>(index.internalPointer());
+
+				// *red* text if the query encountered an exception
+				if (pQuery->bExceptionEncountered)
+				{
+					return QtUtil::ToQColor(ColorB(255, 0, 0));
+				}
+
+				// *orange* text if the query encountered some warnings
+				if (pQuery->bEncounteredSomeWarnings)
+				{
+					return QtUtil::ToQColor(ColorB(255, 165, 0));	// RGB values taken from Col_Orange
+				}
+
+				//
+				// bonus: propagate warning's *orange* color up the query hierarchy (although the parent queries will *not* the actual warning messages of their children)
+				//
+				{
+					// see if any of our children contains a warning
+					if (pQuery->ContainsWarningsDownwardsAlongHierarchy())
+						return QtUtil::ToQColor(ColorB(255, 165, 0));	// RGB values taken from Col_Orange
+				}
+
+				// *yellow* text if too few items were found
+				if (pQuery->bFoundTooFewItems)
+				{
+					return QtUtil::ToQColor(ColorB(255, 255, 0));
+				}
+			}
+		}
+
 		if (role == Qt::DisplayRole)
 		{
 			if (index.isValid())
@@ -288,13 +371,19 @@ public:
 	}
 
 public:
-	SQuery* AddHistoricQuery(const uqs::core::IQueryHistoryConsumer::SHistoricQueryOverview& overview)
+	SQuery* AddOrUpdateHistoricQuery(const UQS::Core::IQueryHistoryConsumer::SHistoricQueryOverview& overview)
 	{
 		SQuery* pParent;
 
 		if (overview.parentQueryID.IsValid())
 		{
 			pParent = SQuery::FindQueryByQueryID(&m_root, overview.parentQueryID);
+
+			// FIXME: this assert() should be handled properly.
+			//        -> What most likely happend is:
+			//           The history got cleared inbetween having already stored information about the parent and this child now receiving its information.
+			//           A typical scenario is when a parent query keeps running for a while, then the user clears the history and *then* the parent query starts its next child
+			//           => Once that child finishes and reports back to the history, the historic counterpart of its parent is already gone.
 			assert(pParent);
 		}
 		else
@@ -302,24 +391,32 @@ public:
 			pParent = &m_root;
 		}
 
-		SQuery* pNewQuery = new SQuery(pParent, overview);
-		pParent->children.push_back(pNewQuery);
+		SQuery* pNewOrUpdatedQuery = SQuery::FindQueryByQueryID(&m_root, overview.queryID);
 
-		// TODO: don't call them for every added historic query when the whole query history is being built up
+		if (pNewOrUpdatedQuery)
+		{
+			pNewOrUpdatedQuery->UpdateInformation(overview);
+		}
+		else
+		{
+			pNewOrUpdatedQuery = new SQuery(pParent, overview);
+			pParent->children.push_back(pNewOrUpdatedQuery);
+		}
+
 		beginResetModel();
 		endResetModel();
 
-		return pNewQuery;
+		return pNewOrUpdatedQuery;
 	}
 
 	void ClearAllHistoricQueries()
 	{
-		beginResetModel();
-		endResetModel();
-
 		for (SQuery* pChild : m_root.children)
 			delete pChild;
 		m_root.children.clear();
+
+		beginResetModel();
+		endResetModel();
 	}
 
 private:
@@ -332,11 +429,11 @@ private:
 //
 //===================================================================================
 
-class CHistoricQueryTreeView : public QTreeView
+class CHistoricQueryTreeView : public QAdvancedTreeView
 {
 public:
 	explicit CHistoricQueryTreeView(QWidget* pParent)
-		: QTreeView(pParent)
+		: QAdvancedTreeView(QAdvancedTreeView::Behavior(QAdvancedTreeView::PreserveExpandedAfterReset | QAdvancedTreeView::PreserveSelectionAfterReset), pParent)
 	{
 	}
 
@@ -363,9 +460,9 @@ public:
 protected:
 	virtual void currentChanged(const QModelIndex& current, const QModelIndex& previous) override
 	{
-		QTreeView::currentChanged(current, previous);
+		QAdvancedTreeView::currentChanged(current, previous);
 
-		uqs::core::IQueryHistoryManager* pHistoryQueryManager = GetHistoryQueryManager();
+		UQS::Core::IQueryHistoryManager* pHistoryQueryManager = GetHistoryQueryManager();
 
 		if (!pHistoryQueryManager)
 			return;
@@ -373,15 +470,49 @@ protected:
 		if (current.isValid())
 		{
 			const SQuery* pQueryToSwitchTo = static_cast<const SQuery*>(current.internalPointer());
-			const uqs::core::IQueryHistoryManager::EHistoryOrigin whichHistory = pHistoryQueryManager->GetCurrentQueryHistory();
+			const UQS::Core::IQueryHistoryManager::EHistoryOrigin whichHistory = pHistoryQueryManager->GetCurrentQueryHistory();
 			pHistoryQueryManager->MakeHistoricQueryCurrentForInWorldRendering(whichHistory, pQueryToSwitchTo->queryID);
 		}
 	}
 
-private:
-	uqs::core::IQueryHistoryManager* GetHistoryQueryManager()
+	virtual void mouseDoubleClickEvent(QMouseEvent *event) override
 	{
-		if (uqs::core::IHub* pHub = uqs::core::IHubPlugin::GetHubPtr())
+		QAdvancedTreeView::mouseDoubleClickEvent(event);
+
+		if (CViewport* pActiveView = GetIEditor()->GetActiveView())
+		{
+			if (UQS::Core::IQueryHistoryManager* pQueryHistoryManager = GetHistoryQueryManager())
+			{
+				UQS::Core::SDebugCameraView cameraView;
+
+				// construct the current camera view
+				{
+					const Matrix34& viewTM = pActiveView->GetViewTM();
+					Matrix33 orientation;
+					viewTM.GetRotation33(orientation);
+					cameraView.pos = viewTM.GetTranslation();
+					cameraView.dir = orientation * Vec3(0, 1, 0);
+				}
+
+				cameraView = pQueryHistoryManager->GetIdealDebugCameraView(
+					pQueryHistoryManager->GetCurrentQueryHistory(),
+					pQueryHistoryManager->GetCurrentHistoricQueryForInWorldRendering(pQueryHistoryManager->GetCurrentQueryHistory()),
+					cameraView);
+
+				// change the editor's camera view
+				{
+					const Matrix33 orientation = Matrix33::CreateRotationVDir(cameraView.dir);
+					const Matrix34 transform(orientation, cameraView.pos);
+					pActiveView->SetViewTM(transform);
+				}
+			}
+		}
+	}
+
+private:
+	UQS::Core::IQueryHistoryManager* GetHistoryQueryManager()
+	{
+		if (UQS::Core::IHub* pHub = UQS::Core::IHubPlugin::GetHubPtr())
 		{
 			return &pHub->GetQueryHistoryManager();
 		}
@@ -396,12 +527,43 @@ private:
 // CMainEditorWindow
 //////////////////////////////////////////////////////////////////////////
 
-CMainEditorWindow::CMainEditorWindow()
-	: m_pQueryHistoryManager(nullptr)
-	, m_pFreshlyAddedQuery(nullptr)
+CMainEditorWindow::CUQSHistoryPostRenderer::CUQSHistoryPostRenderer(CHistoricQueryTreeView& historicQueryTreeView)
+	: m_historicQueryTreeView(historicQueryTreeView)
 {
-	GetIEditor()->RegisterNotifyListener(this);
+	// nothing
+}
 
+void CMainEditorWindow::CUQSHistoryPostRenderer::OnPostRender() const
+{
+	if (UQS::Core::IHub* pHub = UQS::Core::IHubPlugin::GetHubPtr())
+	{
+		if (const CViewport* pGameViewport = GetIEditor()->GetViewportManager()->GetGameViewport())
+		{
+			const Matrix34& viewTM = pGameViewport->GetViewTM();
+			Matrix33 orientation;
+			viewTM.GetRotation33(orientation);
+			UQS::Core::SDebugCameraView uqsCameraView;
+			uqsCameraView.pos = viewTM.GetTranslation();
+			uqsCameraView.dir = orientation * Vec3(0, 1, 0);
+
+			UQS::Core::IQueryHistoryManager::SEvaluatorDrawMasks evaluatorDrawMasks = UQS::Core::IQueryHistoryManager::SEvaluatorDrawMasks::CreateAllBitsSet();
+
+			if (const SQuery* pSelectedQuery = m_historicQueryTreeView.GetSelectedQuery())
+			{
+				evaluatorDrawMasks = pSelectedQuery->evaluatorDrawMasks;
+			}
+
+			pHub->GetQueryHistoryManager().UpdateDebugRendering3D(&uqsCameraView, evaluatorDrawMasks);
+		}
+	}
+}
+
+CMainEditorWindow::CMainEditorWindow()
+	: m_windowTitle("UQS History")
+	, m_pQueryHistoryManager(nullptr)
+	, m_pFreshlyAddedOrUpdatedQuery(nullptr)
+	, m_pHistoryPostRenderer(nullptr)
+{
 	// "file" menu
 	{
 		QMenu* pFileMenu = menuBar()->addMenu("&File");
@@ -414,8 +576,8 @@ CMainEditorWindow::CMainEditorWindow()
 	}
 
 	m_pComboBoxHistoryOrigin = new QComboBox(this);
-	m_pComboBoxHistoryOrigin->addItem("Live history", QVariant(uqs::core::IQueryHistoryManager::EHistoryOrigin::Live));
-	m_pComboBoxHistoryOrigin->addItem("Deserialized history", QVariant(uqs::core::IQueryHistoryManager::EHistoryOrigin::Deserialized));
+	m_pComboBoxHistoryOrigin->addItem("Live history", QVariant(UQS::Core::IQueryHistoryManager::EHistoryOrigin::Live));
+	m_pComboBoxHistoryOrigin->addItem("Deserialized history", QVariant(UQS::Core::IQueryHistoryManager::EHistoryOrigin::Deserialized));
 
 	m_pButtonClearCurrentHistory = new QPushButton(this);
 	m_pButtonClearCurrentHistory->setText("Clear history");
@@ -462,7 +624,11 @@ CMainEditorWindow::CMainEditorWindow()
 	QObject::connect(m_pButtonClearCurrentHistory, &QPushButton::clicked, this, &CMainEditorWindow::OnClearHistoryButtonClicked);
 	QObject::connect(m_pTreeView->selectionModel(), &QItemSelectionModel::currentChanged, this, &CMainEditorWindow::OnTreeViewCurrentChanged);
 
-	if (uqs::core::IHub* pHub = uqs::core::IHubPlugin::GetHubPtr())
+	// instantiate the CUQSHistoryPostRenderer on the heap - it's IPostRenderer is refcounted and deletes itself when un-registering from the game's viewport
+	m_pHistoryPostRenderer = new CUQSHistoryPostRenderer(*m_pTreeView);
+	GetIEditor()->GetViewportManager()->GetGameViewport()->AddPostRenderer(m_pHistoryPostRenderer);	// this increments its refcount
+
+	if (UQS::Core::IHub* pHub = UQS::Core::IHubPlugin::GetHubPtr())
 	{
 		m_pQueryHistoryManager = &pHub->GetQueryHistoryManager();
 		m_pQueryHistoryManager->RegisterQueryHistoryListener(this);
@@ -483,102 +649,81 @@ CMainEditorWindow::~CMainEditorWindow()
 		m_pQueryHistoryManager->UnregisterQueryHistoryListener(this);
 	}
 
-	GetIEditor()->UnregisterNotifyListener(this);
+	// - remove the QueryHistoryPostRenderer
+	// - notice: we will *not* leak memory if the viewport-manager and/or the game-viewport are already gone, since they would then have decremented its refcount and eventually delete'd the object already
+	if (IViewportManager* pViewportManager = GetIEditor()->GetViewportManager())
+	{
+		if(CViewport* pGameViewport = pViewportManager->GetGameViewport())
+		{
+			pGameViewport->RemovePostRenderer(m_pHistoryPostRenderer);	// this decrements its refcount, eventually delete'ing it
+		}
+	}
 }
 
 const char* CMainEditorWindow::GetPaneTitle() const
 {
 	// check for whether the UQS engine plugin has been loaded
-	if (uqs::core::IHubPlugin::GetHubPtr())
+	if (UQS::Core::IHubPlugin::GetHubPtr())
 	{
-		return "UQS Query History Inspector";
+		return m_windowTitle;
 	}
 	else
 	{
-		return "UQS Query History Inspector (disabled due to the UQS engine-plugin not being loaded)";
+		return "UQS History (disabled due to the UQS engine-plugin not being loaded)";
 	}
 }
 
-void CMainEditorWindow::OnEditorNotifyEvent(EEditorNotifyEvent ev)
+void CMainEditorWindow::OnQueryHistoryEvent(const UQS::Core::IQueryHistoryListener::SEvent& ev)
 {
-	switch (ev)
+	switch (ev.type)
 	{
-	case eNotify_OnIdleUpdate:
-		if (m_pQueryHistoryManager)
+	case UQS::Core::IQueryHistoryListener::EEventType::HistoricQueryJustGotCreatedInLiveQueryHistory:
+	case UQS::Core::IQueryHistoryListener::EEventType::HistoricQueryJustFinishedInLiveQueryHistory:
+		if (m_pQueryHistoryManager->GetCurrentQueryHistory() == UQS::Core::IQueryHistoryManager::EHistoryOrigin::Live)
 		{
-			if (IDisplayViewport* pActiveDisplayViewport = GetIEditor()->GetActiveDisplayViewport())
-			{
-				const Matrix34& viewTM = pActiveDisplayViewport->GetViewTM();
-				Matrix33 orientation;
-				viewTM.GetRotation33(orientation);
-				uqs::core::SDebugCameraView uqsCameraView;
-				uqsCameraView.pos = viewTM.GetTranslation();
-				uqsCameraView.dir = orientation * Vec3(0, 1, 0);
-
-				uqs::core::IQueryHistoryManager::SEvaluatorDrawMasks evaluatorDrawMasks = uqs::core::IQueryHistoryManager::SEvaluatorDrawMasks::CreateAllBitsSet();
-
-				if (const SQuery* pSelectedQuery = m_pTreeView->GetSelectedQuery())
-				{
-					evaluatorDrawMasks = pSelectedQuery->evaluatorDrawMasks;
-				}
-
-				m_pQueryHistoryManager->UpdateDebugRendering3D(uqsCameraView, evaluatorDrawMasks);
-			}
-		}
-		break;
-	}
-}
-
-void CMainEditorWindow::OnQueryHistoryEvent(EEvent ev)
-{
-	switch (ev)
-	{
-	case EEvent::HistoricQueryJustFinishedInLiveQueryHistory:
-		if (m_pQueryHistoryManager->GetCurrentQueryHistory() == uqs::core::IQueryHistoryManager::EHistoryOrigin::Live)
-		{
-			m_pTreeModel->ClearAllHistoricQueries();
-			m_pQueryHistoryManager->EnumerateHistoricQueries(m_pQueryHistoryManager->GetCurrentQueryHistory(), *this);
+			assert(ev.relatedQueryID.IsValid());
+			m_pQueryHistoryManager->EnumerateSingleHistoricQuery(m_pQueryHistoryManager->GetCurrentQueryHistory(), ev.relatedQueryID, *this);
 		}
 		break;
 
-	case EEvent::CurrentQueryHistorySwitched:
+	case UQS::Core::IQueryHistoryListener::EEventType::CurrentQueryHistorySwitched:
 		m_pTreeModel->ClearAllHistoricQueries();
 		m_pQueryHistoryManager->EnumerateHistoricQueries(m_pQueryHistoryManager->GetCurrentQueryHistory(), *this);
 		break;
 
-	case EEvent::DeserializedQueryHistoryCleared:
-		if (m_pQueryHistoryManager->GetCurrentQueryHistory() == uqs::core::IQueryHistoryManager::EHistoryOrigin::Deserialized)
+	case UQS::Core::IQueryHistoryListener::EEventType::DeserializedQueryHistoryCleared:
+		if (m_pQueryHistoryManager->GetCurrentQueryHistory() == UQS::Core::IQueryHistoryManager::EHistoryOrigin::Deserialized)
 		{
 			m_pTreeModel->ClearAllHistoricQueries();
 		}
 		break;
 
-	case EEvent::LiveQueryHistoryCleared:
-		if (m_pQueryHistoryManager->GetCurrentQueryHistory() == uqs::core::IQueryHistoryManager::EHistoryOrigin::Live)
+	case UQS::Core::IQueryHistoryListener::EEventType::LiveQueryHistoryCleared:
+		if (m_pQueryHistoryManager->GetCurrentQueryHistory() == UQS::Core::IQueryHistoryManager::EHistoryOrigin::Live)
 		{
 			m_pTreeModel->ClearAllHistoricQueries();
 		}
 		break;
 
-	case EEvent::DifferentHistoricQuerySelected:
+	case UQS::Core::IQueryHistoryListener::EEventType::DifferentHistoricQuerySelected:
 		{
-			const uqs::core::IQueryHistoryManager::EHistoryOrigin historyOrigin = m_pQueryHistoryManager->GetCurrentQueryHistory();
-			const uqs::core::CQueryID queryID = m_pQueryHistoryManager->GetCurrentHistoricQueryForInWorldRendering(historyOrigin);
+			const UQS::Core::IQueryHistoryManager::EHistoryOrigin historyOrigin = m_pQueryHistoryManager->GetCurrentQueryHistory();
+			const UQS::Core::CQueryID queryID = m_pQueryHistoryManager->GetCurrentHistoricQueryForInWorldRendering(historyOrigin);
 			m_pTextQueryDetails->clear();
 			m_pTextItemDetails->clear();   // get rid of some leftovers in case no item will be focused anymore
 			m_pQueryHistoryManager->GetDetailsOfHistoricQuery(historyOrigin, queryID, *this);
 		}
 		break;
 
-	case EEvent::FocusedItemChanged:
+	case UQS::Core::IQueryHistoryListener::EEventType::FocusedItemChanged:
 		{
 			m_pTextItemDetails->clear();
 			m_pQueryHistoryManager->GetDetailsOfFocusedItem(*this);
 		}
 		break;
 
-	case EEvent::QueryHistoryDeserialized:
-		if (m_pQueryHistoryManager->GetCurrentQueryHistory() == uqs::core::IQueryHistoryManager::EHistoryOrigin::Deserialized)
+	case UQS::Core::IQueryHistoryListener::EEventType::QueryHistoryDeserialized:
+		if (m_pQueryHistoryManager->GetCurrentQueryHistory() == UQS::Core::IQueryHistoryManager::EHistoryOrigin::Deserialized)
 		{
 			m_pTreeModel->ClearAllHistoricQueries();
 			m_pQueryHistoryManager->EnumerateHistoricQueries(m_pQueryHistoryManager->GetCurrentQueryHistory(), *this);
@@ -587,24 +732,24 @@ void CMainEditorWindow::OnQueryHistoryEvent(EEvent ev)
 	}
 }
 
-void CMainEditorWindow::AddHistoricQuery(const SHistoricQueryOverview& overview)
+void CMainEditorWindow::AddOrUpdateHistoricQuery(const SHistoricQueryOverview& overview)
 {
-	assert(m_pFreshlyAddedQuery == nullptr);
+	assert(m_pFreshlyAddedOrUpdatedQuery == nullptr);
 	
-	m_pFreshlyAddedQuery = m_pTreeModel->AddHistoricQuery(overview);
+	m_pFreshlyAddedOrUpdatedQuery = m_pTreeModel->AddOrUpdateHistoricQuery(overview);
 
-	m_pQueryHistoryManager->EnumerateInstantEvaluatorNames(m_pQueryHistoryManager->GetCurrentQueryHistory(), m_pFreshlyAddedQuery->queryID, *this);
-	m_pQueryHistoryManager->EnumerateDeferredEvaluatorNames(m_pQueryHistoryManager->GetCurrentQueryHistory(), m_pFreshlyAddedQuery->queryID, *this);
+	m_pQueryHistoryManager->EnumerateInstantEvaluatorNames(m_pQueryHistoryManager->GetCurrentQueryHistory(), m_pFreshlyAddedOrUpdatedQuery->queryID, *this);
+	m_pQueryHistoryManager->EnumerateDeferredEvaluatorNames(m_pQueryHistoryManager->GetCurrentQueryHistory(), m_pFreshlyAddedOrUpdatedQuery->queryID, *this);
 
-	m_pFreshlyAddedQuery = nullptr;
+	m_pFreshlyAddedOrUpdatedQuery = nullptr;
 }
 
-void CMainEditorWindow::AddTextLineToCurrentHistoricQuery(const ColorF& color, const char* fmt, ...)
+void CMainEditorWindow::AddTextLineToCurrentHistoricQuery(const ColorF& color, const char* szFormat, ...)
 {
 	stack_string tmpText;
 	va_list ap;
-	va_start(ap, fmt);
-	tmpText.FormatV(fmt, ap);
+	va_start(ap, szFormat);
+	tmpText.FormatV(szFormat, ap);
 	va_end(ap);
 
 	const unsigned int rgb888 = color.pack_rgb888();
@@ -615,12 +760,12 @@ void CMainEditorWindow::AddTextLineToCurrentHistoricQuery(const ColorF& color, c
 	m_pTextQueryDetails->insertHtml(qHtml);
 }
 
-void CMainEditorWindow::AddTextLineToFocusedItem(const ColorF& color, const char* fmt, ...)
+void CMainEditorWindow::AddTextLineToFocusedItem(const ColorF& color, const char* szFormat, ...)
 {
 	stack_string tmpText;
 	va_list ap;
-	va_start(ap, fmt);
-	tmpText.FormatV(fmt, ap);
+	va_start(ap, szFormat);
+	tmpText.FormatV(szFormat, ap);
 	va_end(ap);
 
 	const unsigned int rgb888 = color.pack_rgb888();
@@ -633,24 +778,44 @@ void CMainEditorWindow::AddTextLineToFocusedItem(const ColorF& color, const char
 
 void CMainEditorWindow::AddInstantEvaluatorName(const char* szInstantEvaluatorName)
 {
-	assert(m_pFreshlyAddedQuery);
+	assert(m_pFreshlyAddedOrUpdatedQuery);
 
-	m_pFreshlyAddedQuery->instantEvaluatorNames.push_back(szInstantEvaluatorName);
+	m_pFreshlyAddedOrUpdatedQuery->instantEvaluatorNames.push_back(szInstantEvaluatorName);
 
 	string label;
-	label.Format("IE #%i: %s", (int)m_pFreshlyAddedQuery->instantEvaluatorLabelsForUI.size(), szInstantEvaluatorName);
-	m_pFreshlyAddedQuery->instantEvaluatorLabelsForUI.push_back(label);
+	label.Format("IE #%i: %s", (int)m_pFreshlyAddedOrUpdatedQuery->instantEvaluatorLabelsForUI.size(), szInstantEvaluatorName);
+	m_pFreshlyAddedOrUpdatedQuery->instantEvaluatorLabelsForUI.push_back(label);
 }
 
 void CMainEditorWindow::AddDeferredEvaluatorName(const char* szDeferredEvaluatorName)
 {
-	assert(m_pFreshlyAddedQuery);
+	assert(m_pFreshlyAddedOrUpdatedQuery);
 
-	m_pFreshlyAddedQuery->deferredEvaluatorNames.push_back(szDeferredEvaluatorName);
+	m_pFreshlyAddedOrUpdatedQuery->deferredEvaluatorNames.push_back(szDeferredEvaluatorName);
 
 	string label;
-	label.Format("DE #%i: %s", (int)m_pFreshlyAddedQuery->deferredEvaluatorLabelsForUI.size(), szDeferredEvaluatorName);
-	m_pFreshlyAddedQuery->deferredEvaluatorLabelsForUI.push_back(label);
+	label.Format("DE #%i: %s", (int)m_pFreshlyAddedOrUpdatedQuery->deferredEvaluatorLabelsForUI.size(), szDeferredEvaluatorName);
+	m_pFreshlyAddedOrUpdatedQuery->deferredEvaluatorLabelsForUI.push_back(label);
+}
+
+void CMainEditorWindow::customEvent(QEvent* event)
+{
+	// TODO: This handler should be removed whenever this editor is refactored to be a CDockableEditor
+	if (event->type() == SandboxEvent::Command)
+	{
+		CommandEvent* commandEvent = static_cast<CommandEvent*>(event);
+
+		const string& command = commandEvent->GetCommand();
+		if (command == "general.help")
+		{
+			event->setAccepted(EditorUtils::OpenHelpPage(GetPaneTitle()));
+		}
+	}
+
+	if (!event->isAccepted())
+	{
+		QWidget::customEvent(event);
+	}
 }
 
 void CMainEditorWindow::OnHistoryOriginComboBoxSelectionChanged(int index)
@@ -659,7 +824,7 @@ void CMainEditorWindow::OnHistoryOriginComboBoxSelectionChanged(int index)
 	{
 		const QVariant data = m_pComboBoxHistoryOrigin->itemData(index);
 		assert(data.type() == QVariant::Int);
-		const uqs::core::IQueryHistoryManager::EHistoryOrigin origin = (uqs::core::IQueryHistoryManager::EHistoryOrigin)data.toInt();
+		const UQS::Core::IQueryHistoryManager::EHistoryOrigin origin = (UQS::Core::IQueryHistoryManager::EHistoryOrigin)data.toInt();
 		m_pQueryHistoryManager->MakeQueryHistoryCurrent(origin);
 	}
 }
@@ -678,7 +843,7 @@ void CMainEditorWindow::OnSaveLiveHistoryToFile()
 	string sFilePath = QtUtil::ToString(qFilePath);
 	if (!sFilePath.empty())  // would be empty if pressing the "cancel" button
 	{
-		uqs::shared::CUqsString uqsErrorMessage;
+		UQS::Shared::CUqsString uqsErrorMessage;
 		if (!m_pQueryHistoryManager->SerializeLiveQueryHistory(sFilePath.c_str(), uqsErrorMessage))
 		{
 			// show the error message
@@ -687,21 +852,39 @@ void CMainEditorWindow::OnSaveLiveHistoryToFile()
 			CryWarning(VALIDATOR_MODULE_GAME, VALIDATOR_ERROR, "UQS Query History Inspector: %s", error.c_str());
 			QMessageBox::warning(this, "Error saving the live query history", error.c_str());
 		}
+		else
+		{
+			// change the window title to also show the file name
+			m_windowTitle.Format("UQS History - %s", sFilePath.c_str());
+			setWindowTitle(QtUtil::ToQString(m_windowTitle));
+		}
 	}
 }
 
 void CMainEditorWindow::OnLoadHistoryFromFile()
 {
 	QString qFilePath = QFileDialog::getOpenFileName(this, "Load File", "*.xml", "XML file (*.xml)");
-	string sFilePath = QtUtil::ToString(qFilePath);
-	uqs::shared::CUqsString uqsErrorMessage;
-	if (!m_pQueryHistoryManager->DeserializeQueryHistory(sFilePath.c_str(), uqsErrorMessage))
+	if (!qFilePath.isEmpty())
 	{
-		// show the error message
-		stack_string error;
-		error.Format("Deserializing the query history from '%s' failed: %s", sFilePath.c_str(), uqsErrorMessage.c_str());
-		CryWarning(VALIDATOR_MODULE_GAME, VALIDATOR_ERROR, "UQS Query History Inspector: %s", error.c_str());
-		QMessageBox::warning(this, "Error loading the query history", error.c_str());
+		string sFilePath = QtUtil::ToString(qFilePath);
+		UQS::Shared::CUqsString uqsErrorMessage;
+		if (m_pQueryHistoryManager->DeserializeQueryHistory(sFilePath.c_str(), uqsErrorMessage))
+		{
+			// ensure the "deserialized" entry in the history origin combo-box is selected
+			m_pComboBoxHistoryOrigin->setCurrentIndex(1);
+
+			// change the window title to also show the file name
+			m_windowTitle.Format("UQS History - %s", sFilePath.c_str());
+			setWindowTitle(QtUtil::ToQString(m_windowTitle));
+		}
+		else
+		{
+			// show the error message
+			stack_string error;
+			error.Format("Deserializing the query history from '%s' failed: %s", sFilePath.c_str(), uqsErrorMessage.c_str());
+			CryWarning(VALIDATOR_MODULE_GAME, VALIDATOR_ERROR, "UQS Query History Inspector: %s", error.c_str());
+			QMessageBox::warning(this, "Error loading the query history", error.c_str());
+		}
 	}
 }
 

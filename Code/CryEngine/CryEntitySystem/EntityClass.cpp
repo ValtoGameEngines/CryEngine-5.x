@@ -1,19 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   EntityClass.cpp
-//  Version:     v1.00
-//  Created:     18/5/2004 by Timur.
-//  Compilers:   Visual Studio.NET 2003
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "EntityClass.h"
 #include "EntityScript.h"
+
+#include <CrySchematyc/ICore.h>
+#include <CryFlowGraph/IFlowSystem.h>
 
 //////////////////////////////////////////////////////////////////////////
 CEntityClass::CEntityClass()
@@ -30,6 +22,7 @@ CEntityClass::CEntityClass()
 //////////////////////////////////////////////////////////////////////////
 CEntityClass::~CEntityClass()
 {
+	SAFE_RELEASE(m_pIFlowNodeFactory);
 	SAFE_RELEASE(m_pEntityScript);
 }
 
@@ -80,7 +73,7 @@ int CEntityClass::GetEventCount()
 	if (!m_pEntityScript)
 		return 0;
 
-	return ((CEntityScript*)m_pEntityScript)->GetEventCount();
+	return static_cast<CEntityScript*>(m_pEntityScript)->GetEventCount();
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -134,12 +127,11 @@ CEntityClass::SEventInfo CEntityClass::GetEventInfo(int nIndex)
 	if (!m_bScriptLoaded)
 		LoadScript(false);
 
-	// cppcheck-suppress assertWithSideEffect
-	assert(nIndex >= 0 && nIndex < GetEventCount());
+	CRY_ASSERT(nIndex >= 0 && nIndex < GetEventCount());
 
 	if (m_pEntityScript)
 	{
-		const SEntityScriptEvent& scriptEvent = ((CEntityScript*)m_pEntityScript)->GetEvent(nIndex);
+		const SEntityScriptEvent& scriptEvent = static_cast<CEntityScript*>(m_pEntityScript)->GetEvent(nIndex);
 		info.name = scriptEvent.name.c_str();
 		info.bOutput = scriptEvent.bOutput;
 		info.type = scriptEvent.valueType;
@@ -162,7 +154,7 @@ bool CEntityClass::FindEventInfo(const char* sEvent, SEventInfo& event)
 	if (!m_pEntityScript)
 		return false;
 
-	const SEntityScriptEvent* pScriptEvent = ((CEntityScript*)m_pEntityScript)->FindEvent(sEvent);
+	const SEntityScriptEvent* pScriptEvent = static_cast<CEntityScript*>(m_pEntityScript)->FindEvent(sEvent);
 	if (!pScriptEvent)
 		return false;
 
@@ -173,9 +165,40 @@ bool CEntityClass::FindEventInfo(const char* sEvent, SEventInfo& event)
 	return true;
 }
 
+//////////////////////////////////////////////////////////////////////////
+void CEntityClass::SetClassDesc(const IEntityClassRegistry::SEntityClassDesc& classDesc)
+{
+	m_sName = classDesc.sName;
+	m_nFlags = classDesc.flags;
+	m_guid = classDesc.guid;
+	m_schematycRuntimeClassGuid = classDesc.schematycRuntimeClassGuid;
+	m_onSpawnCallback = classDesc.onSpawnCallback;
+	m_sScriptFile = classDesc.sScriptFile;
+	m_pfnUserProxyCreate = classDesc.pUserProxyCreateFunc;
+	m_pUserProxyUserData = classDesc.pUserProxyData;
+	m_pScriptFileHandler = classDesc.pScriptFileHandler;
+	m_EditorClassInfo = classDesc.editorClassInfo;
+	m_pEventHandler = classDesc.pEventHandler;
+
+	if (m_pIFlowNodeFactory)
+	{
+		m_pIFlowNodeFactory->Release();
+	}
+	m_pIFlowNodeFactory = classDesc.pIFlowNodeFactory;
+	if (m_pIFlowNodeFactory)
+	{
+		m_pIFlowNodeFactory->AddRef();
+	}
+}
+
 void CEntityClass::SetName(const char* sName)
 {
 	m_sName = sName;
+}
+
+void CEntityClass::SetGUID(const CryGUID& guid)
+{
+	m_guid = guid;
 }
 
 void CEntityClass::SetScriptFile(const char* sScriptFile)
@@ -202,6 +225,22 @@ void CEntityClass::SetEventHandler(IEntityEventHandler* pEventHandler)
 void CEntityClass::SetScriptFileHandler(IEntityScriptFileHandler* pScriptFileHandler)
 {
 	m_pScriptFileHandler = pScriptFileHandler;
+}
+
+void CEntityClass::SetOnSpawnCallback(const OnSpawnCallback& callback)
+{
+	m_onSpawnCallback = callback;
+}
+
+Schematyc::IRuntimeClassConstPtr CEntityClass::GetSchematycRuntimeClass() const
+{
+	if (!m_pSchematycRuntimeClass && !m_schematycRuntimeClassGuid.IsNull())
+	{
+		// Cache Schematyc runtime class pointer
+		m_pSchematycRuntimeClass = gEnv->pSchematyc->GetRuntimeRegistry().GetClass(m_schematycRuntimeClassGuid);
+	}
+
+	return m_pSchematycRuntimeClass;
 }
 
 IEntityEventHandler* CEntityClass::GetEventHandler() const

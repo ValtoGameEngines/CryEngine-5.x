@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -9,47 +9,47 @@
 // - not required when building a .lib
 #include <CryCore/Platform/platform_impl.inl>
 
-namespace uqs
-{
-	namespace core
-	{
 
+namespace UQS
+{
+	namespace Core
+	{
 		//===================================================================================
 		//
 		// CHubPlugin
 		//
 		//===================================================================================
 
-		class CHubPlugin : public IHubPlugin, public ISystemEventListener
+		class CHubPlugin : public IHubPlugin
 		{
 			CRYINTERFACE_BEGIN()
 			CRYINTERFACE_ADD(IHubPlugin)
-			CRYINTERFACE_ADD(ICryPlugin)
+			CRYINTERFACE_ADD(Cry::IEnginePlugin)
 			CRYINTERFACE_END()
 
-			CRYGENERATE_SINGLETONCLASS(CHubPlugin, "Plugin_UQS", 0x2a2f00e0f0684baf, 0xb31bb3c8f78b3477)
+			CRYGENERATE_SINGLETONCLASS_GUID(CHubPlugin, "Plugin_UQS", "2a2f00e0-f068-4baf-b31b-b3c8f78b3477"_cry_guid)
 
 			CHubPlugin();
-			virtual ~CHubPlugin();
+			virtual ~CHubPlugin() = default;
 
 		private:
-			// ICryPlugin (forwarded by IHubPlugin)
-			virtual const char*     GetName() const override;
-			virtual const char*     GetCategory() const override;
-			virtual bool            Initialize(SSystemGlobalEnvironment& env, const SSystemInitParams& initParams) override;
-			virtual void            OnPluginUpdate(EPluginUpdateType updateType) override;
-			// ~ICryPlugin
+			// Cry::IEnginePlugin
+			virtual const char*                  GetName() const override;
+			virtual const char*                  GetCategory() const override;
+			virtual bool                         Initialize(SSystemGlobalEnvironment& env, const SSystemInitParams& initParams) override;
+			virtual void                         MainUpdate(float frameTime) override;
+			// ~Cry::IEnginePlugin
 
 			// IHubPlugin
-			virtual IHub&           GetHubImplementation() override;
+			virtual void                         RegisterHubPluginEventListener(IHubPluginEventListener* pListenerToRegister) override;
+			virtual void                         UnregisterHubPluginEventListener(IHubPluginEventListener* pListenerToUnregister) override;
+			virtual IHub&                        GetHubImplementation() override;
+			virtual void                         TearDownHubImplementation() override;
 			// ~IHubPlugin
 
-			// ISystemEventListener
-			virtual void            OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR lparam) override;
-			// ~ISystemEventListener
-
 		private:
-			std::unique_ptr<CHub>   m_pHub;
+			std::unique_ptr<CHub>                m_pHub;
+			std::list<IHubPluginEventListener*>  m_hubPluginEventListeners;
 		};
 
 		CRYREGISTER_SINGLETON_CLASS(CHubPlugin)
@@ -58,13 +58,7 @@ namespace uqs
 
 		CHubPlugin::CHubPlugin()
 		{
-			m_updateFlags = 0;  // the ctor of ICryPlugin base class should have done that, but didn't
-			GetISystem()->GetISystemEventDispatcher()->RegisterListener(this);
-		}
-
-		CHubPlugin::~CHubPlugin()
-		{
-			GetISystem()->GetISystemEventDispatcher()->RemoveListener(this);
+			m_pHub = stl::make_unique<CHub>();
 		}
 
 		const char* CHubPlugin::GetName() const
@@ -81,12 +75,56 @@ namespace uqs
 		{
 			// Notice: we currently do *not* yet instantiate the UQS Hub here, because some of its sub-systems rely on the presence of sub-systems of ISystem, like IInput, which
 			// are still NULL at this point in time. So instead, we instantiate the UQS Hub upon ESYSTEM_EVENT_CRYSYSTEM_INIT_DONE (see OnSystemEvent()).
+			EnableUpdate(EUpdateStep::MainUpdate, true);
 			return true;
 		}
 
-		void CHubPlugin::OnPluginUpdate(EPluginUpdateType updateType)
+		void CHubPlugin::MainUpdate(float frameTime)
 		{
-			// nothing (the game or editor shall call IHub::Update() directly whenever it wants queries to get processed)
+			if (gEnv->IsEditing())
+				return;	// leave it to the UQS editor-plugins to update the IHub
+
+			if (!m_pHub.get())
+				return;	// IHub got torn down already
+
+			if (!(m_pHub->GetOverrideFlags() & EHubOverrideFlags::CallUpdate))
+			{
+				//
+				// update the IHub to process all running queries and to do some basic on-screen 2D debug rendering
+				//
+
+				m_pHub->AutomaticUpdateBegin();
+				m_pHub->Update();
+				m_pHub->AutomaticUpdateEnd();
+			}
+
+			if (!(m_pHub->GetOverrideFlags() & EHubOverrideFlags::CallUpdateDebugRendering3D))
+			{
+				//
+				// update the 3D debug rendering of all items of all queries
+				//
+
+				CQueryHistoryManager& queryHistoryManager = m_pHub->GetQueryHistoryManager();
+				queryHistoryManager.AutomaticUpdateDebugRendering3DBegin();
+
+				const CCamera& sysCamera = gEnv->pSystem->GetViewCamera();
+				SDebugCameraView debugCameraView;
+				debugCameraView.pos = sysCamera.GetPosition();
+				debugCameraView.dir = sysCamera.GetViewdir();
+				queryHistoryManager.UpdateDebugRendering3D(&debugCameraView, IQueryHistoryManager::SEvaluatorDrawMasks::CreateAllBitsSet());
+
+				queryHistoryManager.AutomaticUpdateDebugRendering3DEnd();
+			}
+		}
+
+		void CHubPlugin::RegisterHubPluginEventListener(IHubPluginEventListener* pListenerToRegister)
+		{
+			stl::push_back_unique(m_hubPluginEventListeners, pListenerToRegister);
+		}
+
+		void CHubPlugin::UnregisterHubPluginEventListener(IHubPluginEventListener* pListenerToUnregister)
+		{
+			m_hubPluginEventListeners.remove(pListenerToUnregister);
 		}
 
 		IHub& CHubPlugin::GetHubImplementation()
@@ -96,16 +134,34 @@ namespace uqs
 			return *m_pHub.get();
 		}
 
-		void CHubPlugin::OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR lparam)
+		void CHubPlugin::TearDownHubImplementation()
 		{
-			switch (event)
+			if (m_pHub.get())
 			{
-			case ESYSTEM_EVENT_CRYSYSTEM_INIT_DONE:
-				assert(!m_pHub.get());
-				m_pHub.reset(new CHub);
-				break;
+				//
+				// notify all listeners
+				// (notice that since we're using a std::list, the currently being called listener is even allowed to unregister himself
+				//  during the callback without affecting the remaining iterators)
+				//
+
+				for (auto it = m_hubPluginEventListeners.begin(); it != m_hubPluginEventListeners.end(); )
+				{
+					IHubPluginEventListener* pListener = *it++;
+					pListener->OnHubPluginEvent(IHubPluginEventListener::HubIsAboutToGetTornDown);
+				}
+
+				//
+				// prematurely cancel all running queries
+				//
+
+				m_pHub->GetQueryManager().CancelAllRunningQueriesDueToUpcomingTearDownOfHub();
+
+				//
+				// destroy the one and only Hub instance
+				//
+
+				m_pHub.reset();
 			}
 		}
-
 	}
 }

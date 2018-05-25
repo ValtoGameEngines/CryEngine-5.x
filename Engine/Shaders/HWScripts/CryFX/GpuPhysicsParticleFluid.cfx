@@ -1,5 +1,4 @@
-// CRYENGINE Source Code File
-// Copyright 2001-2016 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 float Script : STANDARDSGLOBAL<string Script = "NoPreview;"
                                                "ShaderType = Compute;"
@@ -277,7 +276,7 @@ void RearrangeParticlesCS(uint3 DTid : SV_DispatchThreadID)
 	{
 		// screenspace collision
 		float3 vpos = bodies[i].xp;
-		float distance = ScreenSpaceDistancePoint(vpos, 0.1, c_h);
+		float distance = ScreenSpaceDistancePoint(vpos, c_h);
 		if (distance < c_h)
 		{
 			float3 surface = ComputeGradient(vpos);

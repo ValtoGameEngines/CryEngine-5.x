@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "System.h"
@@ -8,6 +8,7 @@
 #include <Cry3DEngine/IRenderNode.h>
 #include <Cry3DEngine/IStatObj.h>
 
+#pragma warning(push)
 #pragma warning(disable: 4244)
 
 ColorB CPhysRenderer::g_colorTab[9] = {
@@ -22,7 +23,6 @@ CPhysRenderer::CPhysRenderer()
 	, m_rayPeakTime(0.0f)
 	, m_maxTris(200)
 	, m_maxTrisRange(800)
-	, m_pAuxRenderer(nullptr)
 	, m_pRenderer(nullptr)
 	, m_rayBuf(nullptr)
 	, m_szRayBuf(0)
@@ -37,6 +37,7 @@ CPhysRenderer::CPhysRenderer()
 	, m_pRayGeom(nullptr)
 	, m_pRay(nullptr)
 	, m_offset(ZERO)
+	, m_qrot(IDENTITY)
 	, m_lockDrawGeometry(0)
 {
 }
@@ -53,7 +54,6 @@ void CPhysRenderer::Init()
 	m_iFirstRay = 0;
 	m_iLastRay = -1;
 	m_nRays = 0;
-	m_pAuxRenderer = gEnv->pAuxGeomRenderer;
 	m_pRenderer = gEnv->pRenderer;
 }
 
@@ -98,7 +98,7 @@ const char* CPhysRenderer::GetPhysForeignName(void* pForeignData, int iForeignDa
 	if (iForeignData == PHYS_FOREIGN_ID_FOLIAGE)
 		return "**foliage rope**";
 	if (iForeignData == PHYS_FOREIGN_ID_ROPE)
-		if (IEntity* pEntity = gEnv->pEntitySystem->GetEntity(((IRopeRenderNode*)pForeignData)->GetEntityOwner()))
+		if (IEntity* pEntity = (((IRopeRenderNode*)pForeignData)->GetOwnerEntity()))
 			return pEntity->GetName();
 		else
 			return "Rope";
@@ -110,13 +110,23 @@ const char* CPhysRenderer::GetPhysForeignName(void* pForeignData, int iForeignDa
 	return "[Static]";
 }
 
-void CPhysRenderer::DrawGeometry(IGeometry* pGeom, geom_world_data* pgwd, int idxColor, int bSlowFadein, const Vec3& sweepDir)
+void CPhysRenderer::DrawGeometry(IGeometry* pGeom, geom_world_data* pgwd, int idxColor, int bSlowFadein, const Vec3& sweepDir, const ColorF& color)
 {
 	WriteLock lock(m_lockDrawGeometry);
 	if (!bSlowFadein)
 	{
-		ColorB clr = g_colorTab[idxColor & 7];
-		clr.a >>= idxColor >> 8;
+		ColorB clr;
+
+		if (!isneg(idxColor))
+		{
+			clr = g_colorTab[idxColor & 7];
+			clr.a >>= idxColor >> 8;
+		}
+		else
+		{
+			clr = color;
+		}
+
 		DrawGeometry(pGeom, pgwd, clr);
 	}
 	else
@@ -198,51 +208,40 @@ void CPhysRenderer::DrawGeometry(IGeometry* pGeom, geom_world_data* pgwd, int id
 
 void CPhysRenderer::DrawFrame(const Vec3& pnt, const Vec3* axes, const float scale, const Vec3* limits, const int axes_locked)
 {
-	SAuxGeomRenderFlags oldFlags = m_pAuxRenderer->GetRenderFlags();
+	IRenderAuxGeom* aux = IRenderAuxGeom::GetAux();
+	SAuxGeomRenderFlags oldFlags = aux->GetRenderFlags();
 	SAuxGeomRenderFlags renderFlags(oldFlags);
 	renderFlags.SetDepthWriteFlag(e_DepthWriteOn);
 	renderFlags.SetDepthTestFlag(e_DepthTestOn);
 	renderFlags.SetDrawInFrontMode(e_DrawInFrontOff);
 	renderFlags.SetAlphaBlendMode(e_AlphaNone);
-	m_pAuxRenderer->SetRenderFlags(renderFlags);
+	renderFlags.SetCullMode(e_CullModeNone);
+	aux->SetRenderFlags(renderFlags);
 
 	ColorB clr[3] = { ColorB(255, 0, 0), ColorB(0, 255, 0), ColorB(0, 0, 255) };
 	float fclr[4][4] = {
 		{ 1.f, 0.f, 0.f, 1.f }, { 0.f, 1.f, 0.f, 1.f }, { 0.f, 0.f, 1.f, 1.f }, { 1.f, 1.f, 1.f, 1.f }
 	};
-	char str[128];
-	const unsigned int num_arc_pnts = 12;
-	Vec3 arc_pnts[num_arc_pnts];
 
 	for (int j = 0; j < 3; ++j)
-	{
-		m_pAuxRenderer->DrawLine(pnt, clr[j], pnt + axes[j] * scale, clr[j], 1.f);
-		m_pAuxRenderer->DrawCone(pnt + axes[j] * scale, axes[j], 0.001f, 0.01f, clr[j]);
-		if (limits && (axes_locked & (1 << j)))
+		if (axes_locked & 1 << j)
 		{
-			Quat qmin, qmax;
-			qmin.SetRotationAA(limits[0][j], axes[j]);
-			qmax.SetRotationAA(limits[1][j], axes[j]);
-			Vec3 p1 = pnt + (axes[inc_mod3[j]] * qmin);
-			Vec3 p2 = pnt + (axes[inc_mod3[j]] * qmax);
-			Vec3 p1_dir = (p1 - pnt).GetNormalized() * scale;
-			Vec3 p2_dir = (p2 - pnt).GetNormalized() * scale;
-
-			cry_sprintf(str, "%.1f", RAD2DEG(limits[0][j]));
-			IRenderAuxText::DrawLabelEx(pnt + p1_dir, 1.5f, fclr[j], true, true, str);
-			cry_sprintf(str, "%.1f", RAD2DEG(limits[1][j]));
-			IRenderAuxText::DrawLabelEx(pnt + p2_dir, 1.5f, fclr[j], true, true, str);
-
-			arc_pnts[0] = p1_dir;
-			for (int k = 1; k < num_arc_pnts; ++k)
+			float lim[2] = { max(-gf_PI*2, limits[0][j]), min(gf_PI*2, limits[1][j]) };
+			const float step = 0.2f;
+			float cosa, sina, cstep = 0.499f * step / max(0.001f, lim[1] - lim[0]);
+			sincos_tpl(step, &sina, &cosa);
+			// axes0 is conventionally the "twist", aka "prinpical" axis for a bone
+			// use axes0 to show rotation ranges around axes1 and 2, and axes1 for rotation around axes0
+			Vec3 axort = axes[(j | j >> 1) & 1 ^ 1], axis = axort.GetRotated(axes[j], lim[0]), axis1;
+			for(float a = lim[0], c = 0.5f; a < lim[1]; a += step, axis = axis1, c += cstep)
 			{
-				arc_pnts[k] = Vec3::CreateSlerp(p1_dir, p2_dir, float(k + 1) / num_arc_pnts).GetNormalized() * scale;
-				m_pAuxRenderer->DrawTriangle(pnt, clr[j], pnt + arc_pnts[k - 1], clr[j], pnt + arc_pnts[k], clr[j]);
+				axis1 = a + step < lim[1] ? axis.GetRotated(axes[j], cosa, sina) : axort.GetRotated(axes[j], lim[1]);
+				ColorB cb = ColorB(ColorF(clr[j]) * c);
+				aux->DrawTriangle(pnt, cb, pnt + axis * scale, cb, pnt + axis1 * scale, cb);
 			}
 		}
-	}
 
-	m_pAuxRenderer->SetRenderFlags(oldFlags);
+	aux->SetRenderFlags(oldFlags);
 }
 
 void CPhysRenderer::DrawLine(const Vec3& pt0, const Vec3& pt1, int idxColor, int bSlowFadein)
@@ -341,7 +340,8 @@ void CPhysRenderer::DrawGeometry(IGeometry* pGeom, geom_world_data* pgwd, const 
 		pos = pgwd->offset;
 		scale = pgwd->scale;
 	}
-	pos += m_offset;
+	pos = m_qrot*pos + m_offset;
+	R = Matrix33(m_qrot)*R;
 
 	pGeom->GetBBox(&bbox);
 	sz = (bbox.size * (bbox.Basis *= R.T()).Fabs()) * scale;
@@ -355,7 +355,7 @@ void CPhysRenderer::DrawGeometry(IGeometry* pGeom, geom_world_data* pgwd, const 
 	fAlpha = ::min(::max(0.0f, fAlpha), 1.0f);
 	if (fAlpha < 0.99) clrNew.set(clr.r, clr.g, clr.b, (uint8)(fAlpha * (float)clr.a));
 
-	m_pAuxRenderer->SetRenderFlags(e_Mode3D | e_AlphaBlended | e_FillModeSolid | e_CullModeBack | e_DepthTestOn |
+	IRenderAuxGeom::GetAux()->SetRenderFlags(e_Mode3D | e_AlphaBlended | e_FillModeSolid | e_CullModeBack | e_DepthTestOn |
 	                               (clrNew.a == 255 ? e_DepthWriteOn : e_DepthWriteOff));
 
 	DrawGeometry(itype, pGeom->GetData(), pgwd, clrNew, sweepDir);
@@ -368,10 +368,7 @@ void CPhysRenderer::DrawGeometry(int itype, const void* pGeomData, geom_world_da
 	float scale = 1.0f, t, l, sx, dist;
 	primitives::box bbox;
 	ColorB clrlit[4], clr = clr0;
-	SAuxGeomRenderFlags rflags = m_pAuxRenderer->GetRenderFlags();
-	EAuxGeomPublicRenderflags_DrawInFrontMode difmode = rflags.GetDrawInFrontMode();
-	rflags.SetDrawInFrontMode(e_DrawInFrontOn);
-	m_pAuxRenderer->SetRenderFlags(rflags);
+	IRenderAuxGeom* aux = IRenderAuxGeom::GetAux();
 	int i, j;
 #define FIAT_LUX(color)                                                                                                  \
   t = (n * ldir0) * -0.5f; l = t + fabs_tpl(t); t = (n * ldir1) * -0.1f; l += t + fabs_tpl(t); l = min(1.0f, l + 0.05f); \
@@ -383,7 +380,8 @@ void CPhysRenderer::DrawGeometry(int itype, const void* pGeomData, geom_world_da
 		pos = pgwd->offset;
 		scale = pgwd->scale;
 	}
-	pos += m_offset;
+	pos = m_qrot*pos + m_offset;
+	R = Matrix33(m_qrot)*R;
 	campos = m_camera.GetPosition() * 3;
 	(ldir0 = m_camera.GetViewdir()).z = 0;
 	(ldir0 = ldir0.normalized() * 0.5f).z = (float)sqrt3 * -0.5f;
@@ -412,9 +410,9 @@ void CPhysRenderer::DrawGeometry(int itype, const void* pGeomData, geom_world_da
 				FIAT_LUX(clrlit[0]);
 				if (pmats[i & matmask] >= 0)
 				{
-					m_pAuxRenderer->DrawTriangle(pt[0], clrlit[0], pt[1], clrlit[0], pt[2], clrlit[0]);
+					aux->DrawTriangle(pt[0], clrlit[0], pt[1], clrlit[0], pt[2], clrlit[0]);
 					if ((pt[0] + pt[1] + pt[2] - campos).len2() < sqr(m_wireframeDist) * 9)
-						m_pAuxRenderer->DrawPolyline(pt, 3, true, clr);
+						aux->DrawPolyline(pt, 3, true, clr);
 				}
 			}
 			break;
@@ -444,8 +442,8 @@ void CPhysRenderer::DrawGeometry(int itype, const void* pGeomData, geom_world_da
 					pt[3] = R * Vec3((i + 1) * phf->step.x, (j + 1) * phf->step.y, getheight(phf, i + 1, j + 1)) * scale + pos;
 					if (!phf->fpGetSurfTypeCallback || !phf->fpGetHeightCallback || phf->fpGetSurfTypeCallback(i, j) != phf->typehole)
 					{
-						m_pAuxRenderer->DrawTriangle(pt[0], clrlit[0], pt[2], clrlit[0], pt[1], clrlit[0]);
-						m_pAuxRenderer->DrawTriangle(pt[1], clrlit[0], pt[2], clrlit[0], pt[3], clrlit[0]);
+						aux->DrawTriangle(pt[0], clrlit[0], pt[2], clrlit[0], pt[1], clrlit[0]);
+						aux->DrawTriangle(pt[1], clrlit[0], pt[2], clrlit[0], pt[3], clrlit[0]);
 					}
 					pt[0] = pt[2];
 					pt[1] = pt[3];
@@ -468,8 +466,8 @@ void CPhysRenderer::DrawGeometry(int itype, const void* pGeomData, geom_world_da
 				for (j = 0; j < 4; j++)
 					pt[j] = pt[4] + bbox.Basis.GetRow(incm3(i >> 1)) * bbox.size[incm3(i >> 1)] * float(((j ^ i) * 2 & 2) - 1) +
 					        bbox.Basis.GetRow(decm3(i >> 1)) * bbox.size[decm3(i >> 1)] * float((j & 2) - 1);
-				m_pAuxRenderer->DrawTriangle(pt[0], clrlit[0], pt[2], clrlit[0], pt[3], clrlit[0]);
-				m_pAuxRenderer->DrawTriangle(pt[0], clrlit[0], pt[3], clrlit[0], pt[1], clrlit[0]);
+				aux->DrawTriangle(pt[0], clrlit[0], pt[2], clrlit[0], pt[3], clrlit[0]);
+				aux->DrawTriangle(pt[0], clrlit[0], pt[3], clrlit[0], pt[1], clrlit[0]);
 			}
 			if (sweepDir.len2() > 0)
 			{
@@ -490,8 +488,8 @@ void CPhysRenderer::DrawGeometry(int itype, const void* pGeomData, geom_world_da
 					pt[0] = bbox.center + pt[0] * bbox.Basis;
 					pt[1] = bbox.center + pt[1] * bbox.Basis;
 					FIAT_LUX(clrlit[0]);
-					m_pAuxRenderer->DrawTriangle(pt[0], clrlit[0], pt[0] + sweepDir, clrlit[0], pt[1] + sweepDir, clrlit[0]);
-					m_pAuxRenderer->DrawTriangle(pt[0], clrlit[0], pt[1] + sweepDir, clrlit[0], pt[1], clrlit[0]);
+					aux->DrawTriangle(pt[0], clrlit[0], pt[0] + sweepDir, clrlit[0], pt[1] + sweepDir, clrlit[0]);
+					aux->DrawTriangle(pt[0], clrlit[0], pt[1] + sweepDir, clrlit[0], pt[1], clrlit[0]);
 				}
 				bbox.center += sweepDir;
 				DrawGeometry(GEOM_BOX, &bbox, 0, clr);
@@ -504,7 +502,7 @@ void CPhysRenderer::DrawGeometry(int itype, const void* pGeomData, geom_world_da
 			assert(pgwd);
 			primitives::sphere* psph = (primitives::sphere*)pGeomData;
 			if (pgwd->iStartNode >= 0 || (pgwd->offset - campos * (1.0f / 3)).len2() < sqr(pgwd->iStartNode))
-				m_pAuxRenderer->DrawSphere(pgwd->offset + pgwd->R * psph->center * pgwd->scale, psph->r * pgwd->scale, clr);
+				aux->DrawSphere(pgwd->offset + pgwd->R * psph->center * pgwd->scale, psph->r * pgwd->scale, clr);
 			if (sweepDir.len2() > 0)
 			{
 				pgwd->offset += sweepDir * 0.5f;
@@ -544,10 +542,10 @@ void CPhysRenderer::DrawGeometry(int itype, const void* pGeomData, geom_world_da
 				n = axes[0] * x + axes[1] * y;
 				FIAT_LUX(clrlit[1]);
 				pt[1] = center + n * (pcyl->r * scale);
-				m_pAuxRenderer->DrawTriangle(pt[0] - axes[2], clrlit[0], pt[1] - axes[2], clrlit[1], pt[0] + axes[2], clrlit[0]);
-				m_pAuxRenderer->DrawTriangle(pt[1] + axes[2], clrlit[1], pt[0] + axes[2], clrlit[0], pt[1] - axes[2], clrlit[1]);
-				m_pAuxRenderer->DrawTriangle(pt[2] + axes[2], clrlit[2], pt[0] + axes[2], clrlit[2], pt[1] + axes[2], clrlit[2]);
-				m_pAuxRenderer->DrawTriangle(pt[2] - axes[2], clrlit[3], pt[1] - axes[2], clrlit[3], pt[0] - axes[2], clrlit[3]);
+				aux->DrawTriangle(pt[0] - axes[2], clrlit[0], pt[1] - axes[2], clrlit[1], pt[0] + axes[2], clrlit[0]);
+				aux->DrawTriangle(pt[1] + axes[2], clrlit[1], pt[0] + axes[2], clrlit[0], pt[1] - axes[2], clrlit[1]);
+				aux->DrawTriangle(pt[2] + axes[2], clrlit[2], pt[0] + axes[2], clrlit[2], pt[1] + axes[2], clrlit[2]);
+				aux->DrawTriangle(pt[2] - axes[2], clrlit[3], pt[1] - axes[2], clrlit[3], pt[0] - axes[2], clrlit[3]);
 				t = x;
 				x = x * cos15 - y * sin15;
 				y = y * cos15 + t * sin15;
@@ -568,8 +566,8 @@ void CPhysRenderer::DrawGeometry(int itype, const void* pGeomData, geom_world_da
 					pt[3 - (sgax)] = pt[1] + axes[2] * ((sg0 ^ sgax) * 2 - 1);
 					n = (pt[3] - pt[2] ^ sweepDir).normalized();
 					FIAT_LUX(clrlit[0]);
-					m_pAuxRenderer->DrawTriangle(pt[2], clrlit[0], pt[3], clrlit[0], pt[3] + sweepDir, clrlit[0]);
-					m_pAuxRenderer->DrawTriangle(pt[2], clrlit[0], pt[3] + sweepDir, clrlit[0], pt[2] + sweepDir, clrlit[0]);
+					aux->DrawTriangle(pt[2], clrlit[0], pt[3], clrlit[0], pt[3] + sweepDir, clrlit[0]);
+					aux->DrawTriangle(pt[2], clrlit[0], pt[3] + sweepDir, clrlit[0], pt[2] + sweepDir, clrlit[0]);
 					if (sg0 ^ sg1)
 					{
 						n = (sweepDir ^ axes[2]).normalized();
@@ -578,8 +576,8 @@ void CPhysRenderer::DrawGeometry(int itype, const void* pGeomData, geom_world_da
 						FIAT_LUX(clrlit[0]);
 						pt[3 - j] = pt[1] - axes[2];
 						pt[2 + j] = pt[1] + axes[2];
-						m_pAuxRenderer->DrawTriangle(pt[2], clrlit[0], pt[3], clrlit[0], pt[3] + sweepDir, clrlit[0]);
-						m_pAuxRenderer->DrawTriangle(pt[2], clrlit[0], pt[3] + sweepDir, clrlit[0], pt[2] + sweepDir, clrlit[0]);
+						aux->DrawTriangle(pt[2], clrlit[0], pt[3], clrlit[0], pt[3] + sweepDir, clrlit[0]);
+						aux->DrawTriangle(pt[2], clrlit[0], pt[3] + sweepDir, clrlit[0], pt[2] + sweepDir, clrlit[0]);
 					}
 					t = x;
 					x = x * cos15 - y * sin15;
@@ -614,8 +612,8 @@ void CPhysRenderer::DrawGeometry(int itype, const void* pGeomData, geom_world_da
 					n = axes[0] * x + axes[1] * y;
 					FIAT_LUX(clrlit[1]);
 					pt[1] = center + n * (pcyl->r * scale);
-					m_pAuxRenderer->DrawTriangle(pt[0] - haxis, clrlit[0], pt[1] - haxis, clrlit[1], pt[0] + haxis, clrlit[0]);
-					m_pAuxRenderer->DrawTriangle(pt[1] + haxis, clrlit[1], pt[0] + haxis, clrlit[0], pt[1] - haxis, clrlit[1]);
+					aux->DrawTriangle(pt[0] - haxis, clrlit[0], pt[1] - haxis, clrlit[1], pt[0] + haxis, clrlit[0]);
+					aux->DrawTriangle(pt[1] + haxis, clrlit[1], pt[0] + haxis, clrlit[0], pt[1] - haxis, clrlit[1]);
 					t = x;
 					x = x * cos15 - y * sin15;
 					y = y * cos15 + t * sin15;
@@ -638,8 +636,8 @@ void CPhysRenderer::DrawGeometry(int itype, const void* pGeomData, geom_world_da
 							n = nxy * cost + axes[2] * sint;
 							FIAT_LUX(clrlit[1]);
 							pt[1] = center + haxis + n * (pcyl->r * scale);
-							m_pAuxRenderer->DrawTriangle(pt[0], clrlit[0], pt[1 + icap], clrlit[1 + icap], pt[2 - icap], clrlit[2 - icap]);
-							m_pAuxRenderer->DrawTriangle(pt[1], clrlit[1], pt[3 - icap], clrlit[3 - icap], pt[2 + icap], clrlit[2 + icap]);
+							aux->DrawTriangle(pt[0], clrlit[0], pt[1 + icap], clrlit[1 + icap], pt[2 - icap], clrlit[2 - icap]);
+							aux->DrawTriangle(pt[1], clrlit[1], pt[3 - icap], clrlit[3 - icap], pt[2 + icap], clrlit[2 + icap]);
 							t = x;
 							x = x * cos15 - y * sin15;
 							y = y * cos15 + t * sin15;
@@ -668,10 +666,10 @@ void CPhysRenderer::DrawGeometry(int itype, const void* pGeomData, geom_world_da
 			primitives::ray* pray = (primitives::ray*)pGeomData;
 			pt[0] = pos + R * pray->origin * scale;
 			pt[1] = pt[0] + R * pray->dir * scale;
-			m_pAuxRenderer->DrawLine(pt[0], clr, pt[1], ColorB(0, 0, 0, clr.a));
+			aux->DrawLine(pt[0], clr, pt[1], ColorB(0, 0, 0, clr.a));
 			break;
 		}
 	}
-	rflags.SetDrawInFrontMode(difmode);
-	m_pAuxRenderer->SetRenderFlags(rflags);
 }
+
+#pragma warning(pop)

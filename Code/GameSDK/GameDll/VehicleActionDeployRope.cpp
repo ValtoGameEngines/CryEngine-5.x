@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -270,7 +270,7 @@ EntityId CVehicleActionDeployRope::CreateRope(IPhysicalEntity *pLinkedEntity, co
 	params.pClass	= gEnv->pEntitySystem->GetClassRegistry()->FindClass("RopeEntity");
 
 	IEntity	*pRopeEntity = gEnv->pEntitySystem->SpawnEntity(params, true);
-
+	 
 	if(!pRopeEntity)
 	{
 		return 0;
@@ -278,9 +278,7 @@ EntityId CVehicleActionDeployRope::CreateRope(IPhysicalEntity *pLinkedEntity, co
 
 	pRopeEntity->SetFlags(pRopeEntity->GetFlags() | ENTITY_FLAG_CASTSHADOW);
 
-	pRopeEntity->CreateProxy(ENTITY_PROXY_ROPE);
-
-	IEntityRopeComponent	*pEntityRopeProxy = (IEntityRopeComponent *)pRopeEntity->GetProxy(ENTITY_PROXY_ROPE);
+	IEntityRopeComponent* pEntityRopeProxy = pRopeEntity->GetOrCreateComponent<IEntityRopeComponent>();
 
 	if(!pEntityRopeProxy)
 	{
@@ -325,7 +323,7 @@ EntityId CVehicleActionDeployRope::CreateRope(IPhysicalEntity *pLinkedEntity, co
 
 	pRopeNode->SetPoints(ropePoints, 2);
 
-	pRopeNode->SetEntityOwner(m_pVehicle->GetEntity()->GetId());
+	//pRopeNode->SetEntityOwner(m_pVehicle->GetEntity()->GetId());
 
 	if(pLinkedEntity)
 	{

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -157,7 +157,7 @@ SCreateChannelResult CGameServerNub::CreateChannel(INetChannel* pChannel, const 
 //------------------------------------------------------------------------
 void CGameServerNub::Update()
 {
-	const int timeout = MAX(0, sv_timeout_disconnect->GetIVal());
+	const int timeout = std::max(0, sv_timeout_disconnect->GetIVal());
 
 	CTimeValue now = gEnv->pTimer->GetFrameStartTime();
 
@@ -177,6 +177,21 @@ void CGameServerNub::Update()
 void CGameServerNub::FailedActiveConnect(EDisconnectionCause cause, const char* description)
 {
 	CRY_ASSERT(false && "Shouldn't be called from here");
+}
+
+//------------------------------------------------------------------------
+void CGameServerNub::AddSendableToRemoteClients(INetSendablePtr pMsg, int numAfterHandle, const SSendableHandle* afterHandle, SSendableHandle* handle)
+{
+	INetChannel* pLocalChannel = GetLocalChannel();
+
+	for (TServerChannelMap::iterator iter = m_channels.begin(); iter != m_channels.end(); ++iter)
+	{
+		INetChannel* pNetChannel = iter->second->GetNetChannel();
+		if (pNetChannel != nullptr && pNetChannel != pLocalChannel)
+		{
+			pNetChannel->AddSendable(pMsg, numAfterHandle, afterHandle, handle);
+		}
+	}
 }
 
 //------------------------------------------------------------------------
@@ -306,10 +321,12 @@ void CGameServerNub::RemoveOnHoldChannel(CGameServerChannel* pServerChannel, boo
 		if (it->second.channelId == pServerChannel->GetChannelId())
 		{
 			m_onhold.erase(it);
-			if (!renewed)//let gamerules know we should get rid of it...
+			if (!renewed)//let listeners know we should get rid of it...
 			{
-				IGameRules* pGameRules = CCryAction::GetCryAction()->GetIGameRulesSystem()->GetCurrentGameRules();
-				pGameRules->OnClientDisconnect(pServerChannel->GetChannelId(), eDC_Timeout, "OnHold timed out", false);
+				for (INetworkedClientListener* pListener : CCryAction::GetCryAction()->GetNetworkClientListeners())
+				{
+					pListener->OnClientDisconnected(pServerChannel->GetChannelId(), eDC_Timeout, "OnHold timed out", false);
+				}
 			}
 			break;
 		}
@@ -328,8 +345,11 @@ void CGameServerNub::ResetOnHoldChannels()
 {
 	for (THoldChannelMap::iterator it = m_onhold.begin(); it != m_onhold.end(); ++it)
 	{
-		IGameRules* pGameRules = CCryAction::GetCryAction()->GetIGameRulesSystem()->GetCurrentGameRules();
-		pGameRules->OnClientDisconnect(it->first, eDC_Timeout, "OnHold reseted", false);
+		for (INetworkedClientListener* pListener : CCryAction::GetCryAction()->GetNetworkClientListeners())
+		{
+			pListener->OnClientDisconnected(it->first, eDC_Timeout, "OnHold was reset", false);
+		}
+
 		TServerChannelMap::iterator ch_it = m_channels.find(it->first);
 		if (ch_it != m_channels.end())
 		{

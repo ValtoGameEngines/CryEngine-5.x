@@ -1,3 +1,5 @@
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // A wrapper around Scaleform's GRenderer interface to delegate all rendering to CryEngine's IRenderer interface
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -294,6 +296,7 @@ public:
 	virtual IScaleformPlayback* GetPlayback() const override { return m_pPlayback; }
 
 	// IFlashPlayer
+	virtual void SetClearFlags(uint32 clearFlags, ColorF clearColor) override;
 	virtual void SetCompositingDepth(float depth) override;
 
 	virtual void SetStereoMode(bool stereo, bool isLeft) override;
@@ -326,6 +329,8 @@ private:
 
 	// resource usage tracker
 	_smart_ptr<CCachedDataStore> m_pDataStore[3];
+	std::stack<GTextureXRenderTempRT*> m_pTempRTs;
+	std::stack<GTextureXRenderTempRTLockless*> m_pTempRTsLL;
 
 	// lockless rendering
 	threadID m_mainThreadID;

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   particleeffect.cpp
@@ -763,7 +763,7 @@ int ResourceParticleParams::LoadResources(const char* pEffectName)
 		else if (!sTexture.empty() && sGeometry.empty())
 		{
 			const uint32 textureLoadFlags = FT_DONT_STREAM;
-			const int nTexId = GetRenderer()->EF_LoadTexture(sTexture.c_str(), textureLoadFlags)->GetTextureID();
+			const int nTexId = GetRenderer()->EF_LoadTexture(sTexture.c_str(), textureLoadFlags)->GetTextureID();			
 			if (nTexId <= 0)
 				CryWarning(VALIDATOR_MODULE_3DENGINE, VALIDATOR_WARNING, "Particle effect texture %s not found", sTexture.c_str());
 			else
@@ -782,6 +782,8 @@ int ResourceParticleParams::LoadResources(const char* pEffectName)
 			pMaterial->SetGetMaterialParamVec3("diffuse", white, false);
 			pMaterial->SetGetMaterialParamFloat("opacity", defaultOpacity, false);
 			pMaterial->RequestTexturesLoading(0.0f);
+			if (nTexId > 0)
+				GetRenderer()->RemoveTexture(nTexId);
 		}
 		else if (sGeometry.empty())
 		{
@@ -1550,38 +1552,45 @@ void CParticleEffect::PropagateParticleParams(const ParticleParams& params)
 }
 
 //////////////////////////////////////////////////////////////////////////
-bool CParticleEffect::IsActive(bool bAll) const
+bool CParticleEffect::IsEnabled(uint options) const
 {
-	// Make sure effect and all indirect parents are active in current render context.
-	for (const CParticleEffect* pEffect = this;; pEffect = pEffect->m_parent)
+	bool bEnabled = m_pParticleParams && m_pParticleParams->bEnabled;
+
+	if (bEnabled && (options & eCheckFeatures))
 	{
-		if (!(pEffect && pEffect->m_pParticleParams && pEffect->m_pParticleParams->IsActive()))
-			return false;
-		if (!pEffect->m_pParticleParams->eSpawnIndirection)
-			break;
+		// Check whether effect does anything.
+		if (!(m_pParticleParams->nEnvFlags & (REN_ANY | EFF_ANY)))
+			bEnabled = false;
 	}
 
-	if (m_pParticleParams->nEnvFlags & (REN_ANY | EFF_ANY))
-		// Has visible or other effects.
-		return true;
-
-	for (auto& child : m_children)
-		if (bAll || child.GetIndirectParent())
-			if (child.IsActive(true))
-				return true;
-	return false;
-}
-
-uint32 CParticleEffect::GetEnvironFlags(bool bAll) const
-{
-	uint32 nFlags = m_pParticleParams ? m_pParticleParams->nEnvFlags : 0;
-	if (bAll)
+	if (bEnabled && (options & eCheckConfig))
 	{
+		// Make sure effect and all indirect parents are active in current render context.
+		for (const CParticleEffect* pEffect = this;; pEffect = pEffect->m_parent)
+		{
+			if (!(pEffect && pEffect->m_pParticleParams && pEffect->m_pParticleParams->IsActive()))
+			{
+				bEnabled = false;
+				break;
+			}
+			if (!pEffect->m_pParticleParams->eSpawnIndirection)
+				break;
+		}
+	}
+
+	if (!bEnabled && (options & eCheckChildren))
+	{
+		// Check actual child effects.
 		for (auto& child : m_children)
-			if (child.IsActive())
-				nFlags |= child.GetEnvironFlags(true);
+			if (child.GetIndirectParent())
+				if (child.IsEnabled(options))
+				{
+					bEnabled = true;
+					break;
+				}
 	}
-	return nFlags;
+
+	return bEnabled;
 }
 
 void CParticleEffect::SetParticleParams(const ParticleParams& params)
@@ -1796,21 +1805,16 @@ IParticleAttributes& CParticleEffect::GetAttributes()
 {
 	static class CNullParticleAttributes : public IParticleAttributes
 	{
-		virtual void         UpdateScriptTable(const SmartScriptTable& scriptTable)  {}
+		virtual void         Reset(const IParticleAttributes* pCopySource = nullptr) {}
+		virtual void         Serialize(Serialization::IArchive& ar)                  {}
+		virtual void         TransferInto(IParticleAttributes* pReceiver) const      {}
 		virtual TAttributeId FindAttributeIdByName(cstr name) const                  { return -1; }
 		virtual uint         GetNumAttributes() const                                { return 0; }
 		virtual cstr         GetAttributeName(uint idx) const                        { return nullptr; }
-		virtual EType        GetAttributeType(uint idx) const                        { return ET_Float; }
-		virtual bool         GetAsBoolean(TAttributeId id, bool defaultValue) const  { return defaultValue; }
-		virtual int          GetAsInteger(TAttributeId id, int defaultValue) const   { return defaultValue; }
-		virtual float        GetAsFloat(TAttributeId id, float defaultValue) const   { return defaultValue; }
-		virtual ColorB       GetAsColorB(TAttributeId id, ColorB defaultValue) const { return defaultValue; }
-		virtual ColorF       GetAsColorF(TAttributeId id, ColorF defaultValue) const { return defaultValue; }
-		virtual void         SetAsBoolean(TAttributeId id, bool value)               {}
-		virtual int          SetAsInteger(TAttributeId id, int value)                { return value; }
-		virtual float        SetAsFloat(TAttributeId id, float value)                { return value; }
-		virtual void         SetAsColor(TAttributeId id, ColorB value)               {}
-		virtual void         SetAsColor(TAttributeId id, ColorF value)               {}
+		virtual EType        GetAttributeType(uint idx) const                        { return ET_Boolean; }
+		virtual const TValue& GetValue(TAttributeId idx) const                       { static TValue def; return def; }
+		virtual TValue        GetValue(TAttributeId idx, const TValue& def) const    { return def; }
+		virtual bool          SetValue(TAttributeId idx, const TValue& value)        { return false; }
 	} nullAttributes;
 	return nullAttributes;
 }
@@ -1899,7 +1903,7 @@ float CParticleEffect::GetEquilibriumAge(bool bAll) const
 	if (bAll)
 	{
 		for (auto& child : m_children)
-			if (child.IsEnabled() && !child.GetParams().eSpawnIndirection)
+			if (child.IsEnabled(eCheckFeatures) && !child.GetParams().eSpawnIndirection)
 				fEquilibriumAge = max(fEquilibriumAge, child.GetEquilibriumAge(true));
 	}
 

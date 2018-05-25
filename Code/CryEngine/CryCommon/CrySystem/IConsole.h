@@ -1,9 +1,9 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef _ICONSOLE_H_
 #define _ICONSOLE_H_
 
-struct SFunctor;
+#include <CryCore/SFunctor.h>
 
 struct ConsoleBind;
 
@@ -34,7 +34,7 @@ enum ELoadConfigurationType;
 #define CVF_CHANGE_SOURCE (1u << 16)
 
 //! Flags used by ICVar.
-enum EVarFlags
+enum EVarFlags : uint32
 {
 	VF_NULL                    = 0x00000000,      //!< Just to have one recognizable spot where the flags are located in the Register call.
 	VF_CHEAT                   = 0x00000002,      //!< Stays in the default state when cheats are disabled.
@@ -101,6 +101,9 @@ struct IConsoleVarSink
 
 	//! Called by Console after variable has changed value.
 	virtual void OnAfterVarChange(ICVar* pVar) = 0;
+
+	//! Called by Console after variable has been unregistered.
+	virtual void OnVarUnregister(ICVar* pVar) = 0;
 	// </interfuscator:shuffle>
 };
 
@@ -145,6 +148,14 @@ typedef void (* ConsoleCommandFunc)(IConsoleCmdArgs*);
 //! This a definition of the callback function that is called when variable change.
 typedef void (* ConsoleVarFunc)(ICVar*);
 
+struct IManagedConsoleCommandListener
+{
+	virtual ~IManagedConsoleCommandListener() {};
+	virtual void OnManagedConsoleCommandEvent(const char* commandName, IConsoleCmdArgs* consoleCommandArguments) = 0;
+};
+
+namespace Detail { struct ConsoleRegistrationHelper; }
+
 //! Interface to the engine console.
 //! The engine console allow to manipulate the internal engine parameters and to invoke commands.
 //! This interface allow external modules to integrate their functionalities into the console as commands or variables.
@@ -158,75 +169,12 @@ struct IConsole
 	//! Deletes the console.
 	virtual void Release() = 0;
 
-	//! Create a new console variable that store the value in a string.
-	//! \param sName Console variable name.
-	//! \param sValue Default value.
-	//! \param nFlags User defined flag, this parameter is used by other subsystems and doesn't affect the console variable (basically of user data).
-	//! \param help Help text that is shown when you use "<sName> ?" in the console.
-	//! \return Pointer to the interface ICVar.
-	virtual ICVar* RegisterString(const char* sName, const char* sValue, int nFlags, const char* help = "", ConsoleVarFunc pChangeFunc = 0) = 0;
-
-	//! Create a new console variable that store the value in a int.
-	//! \param sName Console variable name.
-	//! \param iValue Default value.
-	//! \param nFlags User defined flag, this parameter is used by other subsystems and doesn't affect the console variable (basically of user data).
-	//! \param Help help text that is shown when you use "<sName> ?" in the console.
-	//! \return Pointer to the interface ICVar.
-	virtual ICVar* RegisterInt(const char* sName, int iValue, int nFlags, const char* help = "", ConsoleVarFunc pChangeFunc = 0) = 0;
-
-	//! Create a new console variable that store the value in a int64.
-	//! \param sName Console variable name.
-	//! \param iValue Default value.
-	//! \param nFlags Her defined flag, this parameter is used by other subsystems and doesn't affect the console variable (basically of user data).
-	//! \param help - help text that is shown when you use "<sName> ?" in the console.
-	//! \return Pointer to the interface ICVar.
-	virtual ICVar* RegisterInt64(const char* sName, int64 iValue, int nFlags, const char* help = "", ConsoleVarFunc pChangeFunc = 0) = 0;
-
-	//! Create a new console variable that store the value in a float.
-	//! \param sName Console variable name.
-	//! \param fValue Default value.
-	//! \param nFlags User defined flag, this parameter is used by other subsystems and doesn't affect the console variable (basically of user data).
-	//! \param help help text that is shown when you use "<sName> ?" in the console.
-	//! \return Pointer to the interface ICVar.
-	virtual ICVar* RegisterFloat(const char* sName, float fValue, int nFlags, const char* help = "", ConsoleVarFunc pChangeFunc = 0) = 0;
-
-	//! Create a new console variable that will update the user defined float.
-	//! \param sName Console variable name.
-	//! \param src Pointer to the memory that will be updated.
-	//! \param nFlags User defined flag, this parameter is used by other subsystems and doesn't affect the console variable (basically of user data).
-	//! \param help Help text that is shown when you use "<sName> ?" in the console.
-	//! \param allowModify Allow modification through config vars, prevents missing modifications in release mode.
-	//! \return pointer to the interface ICVar.
-	virtual ICVar* Register(const char* name, float* src, float defaultvalue, int nFlags = 0, const char* help = "", ConsoleVarFunc pChangeFunc = 0, bool allowModify = true) = 0;
-
-	//! Create a new console variable that will update the user defined float.
-	//! \param sName Console variable name.
-	//! \param src Pointer to the memory that will be updated.
-	//! \param nFlags User defined flag, this parameter is used by other subsystems and doesn't affect the console variable (basically of user data).
-	//! \param help Help text that is shown when you use "<sName> ?" in the console.
-	//! \param allowModify Allow modification through config vars, prevents missing modifications in release mode.
-	//! \return pointer to the interface ICVar.
-	virtual ICVar* Register(const char* name, int* src, int defaultvalue, int nFlags = 0, const char* help = "", ConsoleVarFunc pChangeFunc = 0, bool allowModify = true) = 0;
-
-	//! Create a new console variable that will update the user defined float.
-	//! \param sName Console variable name.
-	//! \param src Pointer to the memory that will be updated.
-	//! \param nFlags User defined flag, this parameter is used by other subsystems and doesn't affect the console variable (basically of user data).
-	//! \param help Help text that is shown when you use "<sName> ?" in the console.
-	//! \param allowModify Allow modification through config vars, prevents missing modifications in release mode.
-	//! \return pointer to the interface ICVar.
-	virtual ICVar* Register(const char* name, const char** src, const char* defaultvalue, int nFlags = 0, const char* help = "", ConsoleVarFunc pChangeFunc = 0, bool allowModify = true) = 0;
-
-	//! Registers an existing console variable.
-	//! Should only be used with static duration objects, object is never freed.
-	//! \param pVar The existing console variable.
-	//! \return Pointer to the interface ICVar (that was passed in)
-	virtual ICVar* Register(ICVar* pVar) = 0;
-
 	//! Remove a variable from the console.
 	//! \param sVarName Console variable name.
 	//! \param bDelete If true, the variable is deleted.
 	//! \see ICVar.
+	//! \par Example
+	//! \include CrySystem/Examples/ConsoleVariable.cpp
 	virtual void UnregisterVariable(const char* sVarName, bool bDelete = false) = 0;
 
 	//! Set the y coordinate where the console will stop to scroll when is dropped.
@@ -286,6 +234,8 @@ struct IConsole
 	//! \param name variable name.
 	//! \return a pointer to the ICVar interface, NULL if is not found.
 	//! \see ICVar.
+	//! \par Example
+	//! \include CrySystem/Examples/ConsoleVariable.cpp
 	virtual ICVar* GetCVar(const char* name) = 0;
 
 	//! Read a value from a configuration file (.ini) and return the value.
@@ -323,30 +273,21 @@ struct IConsole
 	//! Draw the console.
 	virtual void Draw() = 0;
 
-	//! Register a new console command.
-	//! \param sCommand Command name.
-	//! \param func     Pointer to the console command function to be called when command is invoked.
-	//! \param nFlags   Bitfield consisting of VF_ flags (e.g. VF_CHEAT).
-	//! \param sHelp    Help string, will be displayed when typing in console "command ?".
-	virtual void AddCommand(const char* sCommand, ConsoleCommandFunc func, int nFlags = 0, const char* sHelp = NULL) = 0;
-
-	//! Register a new console command that execute script function.
-	//! EG "Game.Connect(%1)" the symbol "%1" will be replaced with the command parameter 1
-	//! writing in the console "connect 127.0.0.1" will invoke Game.Connect("127.0.0.1").
-	//! \param sCommand    Command name.
-	//! \param sScriptFunc Script function to be executed when command is invoked.
-	//! \param nFlags      Bitfield consist of VF_ flags (e.g. VF_CHEAT).
-	//! \param sHelp       Help string, will be displayed when typing in console "command ?".
-	virtual void AddCommand(const char* sName, const char* sScriptFunc, int nFlags = 0, const char* sHelp = NULL) = 0;
+	virtual void RegisterListener(IManagedConsoleCommandListener* pListener, const char* name) = 0;
+	virtual void UnregisterListener(IManagedConsoleCommandListener* pListener) = 0;
 
 	//! Removes a console command which was previously registered with AddCommand.
 	//! \param sCommand Command name.
+	//! \par Example
+	//! \include CrySystem/Examples/ConsoleCommand.cpp
 	virtual void RemoveCommand(const char* sName) = 0;
 
 	//! Execute a string in the console.
 	//! \param command Console command e.g. "map testy" - no leading slash
 	//! \param bSilentMode true=suppresses log in error case and logging the command to the console
 	//! \param bDeferExecution true=the command is stored in special fifo that allows delayed execution by using wait_seconds and wait_frames commands
+	//! \par Example
+	//! \include CrySystem/Examples/ConsoleCommand.cpp
 	virtual void ExecuteString(const char* command, const bool bSilentMode = false, const bool bDeferExecution = false) = 0;
 
 	//! Print a message into the log and abort the execution of the application.
@@ -358,11 +299,12 @@ struct IConsole
 	virtual bool IsOpened() = 0;
 
 	//! Auto completion.
-	virtual int GetNumVars(bool bIncludeCommands = false) = 0;
+	virtual size_t GetNumVars(bool bIncludeCommands = false) const = 0;
 
 	//! \param szPrefix - 0 or prefix e.g. "sys_spec_".
 	//! \return Used size.
-	virtual size_t      GetSortedVars(const char** pszArray, size_t numItems, const char* szPrefix = 0) = 0;
+	//! nListType = 0 get all values, nListTypes=1 return only cvars, nListTypes=2 return only console commands
+	virtual size_t      GetSortedVars(const char** pszArray, size_t numItems, const char* szPrefix = 0, int nListTypes = 0) const = 0;
 	virtual const char* AutoComplete(const char* substr) = 0;
 	virtual const char* AutoCompletePrev(const char* substr) = 0;
 	virtual const char* ProcessCompletion(const char* szInputBuffer) = 0;
@@ -430,7 +372,13 @@ struct IConsole
 	//! \param szCommand Must not be 0.
 	virtual void                   AddCommandToHistory(const char* szCommand) = 0;
 
+	//! Sets the value of a CVar as loaded from a config
+	//! Will defer setting of the value until the CVar is registered if it hasn't been already
 	virtual void                   LoadConfigVar(const char* sVariable, const char* sValue) = 0;
+	//! Executes a command with optional arguments
+	//! Will defer setting of the value until the command is registered if it hasn't been already
+	virtual void                   LoadConfigCommand(const char* szCommand, const char* szArguments = nullptr) = 0;
+
 	// Sets how to treat calls to LoadConfigVar, return previous configuration type.
 	virtual ELoadConfigurationType SetCurrentConfigType(ELoadConfigurationType configType) = 0;
 
@@ -448,8 +396,109 @@ struct IConsole
 #if defined(DEDICATED_SERVER)
 	virtual void SetClientDataProbeString(const char* pName, const char* pValue) = 0;
 #endif
+
+protected:
+	friend struct ConsoleRegistrationHelper;
+
+	//! Register a new console command.
+	//! \param sCommand Command name.
+	//! \param func     Pointer to the console command function to be called when command is invoked.
+	//! \param nFlags   Bitfield consisting of VF_ flags (e.g. VF_CHEAT).
+	//! \param sHelp    Help string, will be displayed when typing in console "command ?".
+	//! \par Example
+	//! \include CrySystem/Examples/ConsoleCommand.cpp
+	virtual void AddCommand(const char* sCommand, ConsoleCommandFunc func, int nFlags = 0, const char* sHelp = NULL, bool bIsManaged = false) = 0;
+
+	//! Register a new console command that execute script function.
+	//! EG "Game.Connect(%1)" the symbol "%1" will be replaced with the command parameter 1
+	//! writing in the console "connect 127.0.0.1" will invoke Game.Connect("127.0.0.1").
+	//! \param sCommand    Command name.
+	//! \param sScriptFunc Script function to be executed when command is invoked.
+	//! \param nFlags      Bitfield consist of VF_ flags (e.g. VF_CHEAT).
+	//! \param sHelp       Help string, will be displayed when typing in console "command ?".
+	//! \par Example
+	//! \include CrySystem/Examples/ConsoleCommand.cpp
+	virtual void AddCommand(const char* sName, const char* sScriptFunc, int nFlags = 0, const char* sHelp = NULL) = 0;
+
+	//! Create a new console variable that store the value in a string.
+	//! \param sName Console variable name.
+	//! \param sValue Default value.
+	//! \param nFlags User defined flag, this parameter is used by other subsystems and doesn't affect the console variable (basically of user data).
+	//! \param help Help text that is shown when you use "<sName> ?" in the console.
+	//! \return Pointer to the interface ICVar.
+	virtual ICVar* RegisterString(const char* sName, const char* sValue, int nFlags, const char* help = "", ConsoleVarFunc pChangeFunc = 0) = 0;
+
+	//! Create a new console variable that store the value in a int.
+	//! \param sName Console variable name.
+	//! \param iValue Default value.
+	//! \param nFlags User defined flag, this parameter is used by other subsystems and doesn't affect the console variable (basically of user data).
+	//! \param Help help text that is shown when you use "<sName> ?" in the console.
+	//! \return Pointer to the interface ICVar.
+	//! \par Example
+	//! \include CrySystem/Examples/ConsoleVariable.cpp
+	virtual ICVar* RegisterInt(const char* sName, int iValue, int nFlags, const char* help = "", ConsoleVarFunc pChangeFunc = 0) = 0;
+
+	//! Create a new console variable that store the value in a int64.
+	//! \param sName Console variable name.
+	//! \param iValue Default value.
+	//! \param nFlags Her defined flag, this parameter is used by other subsystems and doesn't affect the console variable (basically of user data).
+	//! \param help - help text that is shown when you use "<sName> ?" in the console.
+	//! \return Pointer to the interface ICVar.
+	//! \par Example
+	//! \include CrySystem/Examples/ConsoleVariable.cpp
+	virtual ICVar* RegisterInt64(const char* sName, int64 iValue, int nFlags, const char* help = "", ConsoleVarFunc pChangeFunc = 0) = 0;
+
+	//! Create a new console variable that store the value in a float.
+	//! \param sName Console variable name.
+	//! \param fValue Default value.
+	//! \param nFlags User defined flag, this parameter is used by other subsystems and doesn't affect the console variable (basically of user data).
+	//! \param help help text that is shown when you use "<sName> ?" in the console.
+	//! \return Pointer to the interface ICVar.
+	//! \par Example
+	//! \include CrySystem/Examples/ConsoleVariable.cpp
+	virtual ICVar* RegisterFloat(const char* sName, float fValue, int nFlags, const char* help = "", ConsoleVarFunc pChangeFunc = 0) = 0;
+
+	//! Create a new console variable that will update the user defined float.
+	//! \param sName Console variable name.
+	//! \param src Pointer to the memory that will be updated.
+	//! \param nFlags User defined flag, this parameter is used by other subsystems and doesn't affect the console variable (basically of user data).
+	//! \param help Help text that is shown when you use "<sName> ?" in the console.
+	//! \param allowModify Allow modification through config vars, prevents missing modifications in release mode.
+	//! \return pointer to the interface ICVar.
+	//! \par Example
+	//! \include CrySystem/Examples/ConsoleVariable.cpp
+	virtual ICVar* Register(const char* name, float* src, float defaultvalue, int nFlags = 0, const char* help = "", ConsoleVarFunc pChangeFunc = 0, bool allowModify = true) = 0;
+
+	//! Create a new console variable that will update the user defined float.
+	//! \param sName Console variable name.
+	//! \param src Pointer to the memory that will be updated.
+	//! \param nFlags User defined flag, this parameter is used by other subsystems and doesn't affect the console variable (basically of user data).
+	//! \param help Help text that is shown when you use "<sName> ?" in the console.
+	//! \param allowModify Allow modification through config vars, prevents missing modifications in release mode.
+	//! \return pointer to the interface ICVar.
+	//! \par Example
+	//! \include CrySystem/Examples/ConsoleVariable.cpp
+	virtual ICVar* Register(const char* name, int* src, int defaultvalue, int nFlags = 0, const char* help = "", ConsoleVarFunc pChangeFunc = 0, bool allowModify = true) = 0;
+
+	//! Create a new console variable that will update the user defined float.
+	//! \param sName Console variable name.
+	//! \param src Pointer to the memory that will be updated.
+	//! \param nFlags User defined flag, this parameter is used by other subsystems and doesn't affect the console variable (basically of user data).
+	//! \param help Help text that is shown when you use "<sName> ?" in the console.
+	//! \param allowModify Allow modification through config vars, prevents missing modifications in release mode.
+	//! \return pointer to the interface ICVar.
+	//! \par Example
+	//! \include CrySystem/Examples/ConsoleVariable.cpp
+	virtual ICVar* Register(const char* name, const char** src, const char* defaultvalue, int nFlags = 0, const char* help = "", ConsoleVarFunc pChangeFunc = 0, bool allowModify = true) = 0;
+
+	//! Registers an existing console variable.
+	//! Should only be used with static duration objects, object is never freed.
+	//! \param pVar The existing console variable.
+	//! \return Pointer to the interface ICVar (that was passed in)
+	virtual ICVar* Register(ICVar* pVar) = 0;
 };
 
+//! \cond INTERNAL
 //! This interface for the remote console.
 struct IRemoteConsoleListener
 {
@@ -479,6 +528,7 @@ struct IRemoteConsole
 	virtual void RegisterListener(IRemoteConsoleListener* pListener, const char* name) = 0;
 	virtual void UnregisterListener(IRemoteConsoleListener* pListener) = 0;
 };
+//! \endcond
 
 //! This interface is the 1:1 "C++ representation" of a console variable.
 //! \note A console variable is accessible in C++ trough this interface and in all
@@ -492,6 +542,7 @@ struct ICVar
 		eCLM_FileOnly,          //!< Normal info to file only.
 		eCLM_FullInfo           //!< Full info to file only.
 	};
+	typedef std::function<void(void)> CallbackFunction;
 
 	// <interfuscator:shuffle>
 	// TODO make protected;
@@ -564,6 +615,10 @@ struct ICVar
 	//! It will add from index 1 on (0 is reserved).
 	virtual uint64 AddOnChangeFunctor(const SFunctor& pChangeFunctor) = 0;
 
+	//! Adds a new on change callback function to the cvar.
+	//! It will add from index 1 on (0 is reserved).
+	uint64 AddOnChange(const CallbackFunction &callback) { return AddOnChangeFunctor(SFunctor(callback)); };
+
 	//!  \return The number of registered on change functos.
 	virtual uint64 GetNumberOfOnChangeFunctors() const = 0;
 
@@ -573,7 +628,6 @@ struct ICVar
 	//! Removes an on change functor.
 	//! \return true if removal was successful.
 	virtual bool RemoveOnChangeFunctor(const uint64 nElement) = 0;
-	virtual bool RemoveOnChangeFunctor(const SFunctor& changeFunctor) = 0;
 
 	//! Get the current callback function.
 	virtual ConsoleVarFunc GetOnChangeCallback() const = 0;

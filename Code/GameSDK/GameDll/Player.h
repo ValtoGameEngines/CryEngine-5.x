@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
  -------------------------------------------------------------------------
@@ -595,8 +595,8 @@ public:
 	void ReloadClientXmlData();
 	virtual bool ReloadExtension( IGameObject * pGameObject, const SEntitySpawnParams &params ) override;
 	virtual void PostReloadExtension( IGameObject * pGameObject, const SEntitySpawnParams &params ) override;
-	virtual void ProcessEvent(SEntityEvent& event) override;
-	virtual void SetAuthority( bool auth ) override;
+	virtual void ProcessEvent(const SEntityEvent& event) override;
+	virtual uint64 GetEventMask() const override;
 	virtual void Update(SEntityUpdateContext& ctx, int updateSlot) override;
 	virtual void SerializeSpawnInfo( TSerialize ser ) override;
 	virtual ISerializableInfoPtr GetSpawnInfo() override;
@@ -1371,8 +1371,6 @@ public:
 
 	void RegisterVehicleClient(CVehicleClient* vehicleClient) { m_pVehicleClient = vehicleClient; }
 
-	virtual void OnShiftWorld() override;
-
 private:
 
 	void NetSerialize_Health( TSerialize ser, bool bReading );
@@ -1552,11 +1550,11 @@ protected:
 
 	IInteractor*         m_pInteractor;
 	IEntityAudioComponent* m_pIEntityAudioComponent;
-	AudioControlId      m_waterEnter;
-	AudioControlId      m_waterExit;
-	AudioControlId      m_waterDiveIn;
-	AudioControlId      m_waterDiveOut;
-	AudioControlId      m_waterInOutSpeed;
+	CryAudio::ControlId m_waterEnter;
+	CryAudio::ControlId m_waterExit;
+	CryAudio::ControlId m_waterDiveIn;
+	CryAudio::ControlId m_waterDiveOut;
+	CryAudio::ControlId m_waterInOutSpeed;
 
 	SStagingParams m_stagingParams;
 
@@ -1675,7 +1673,7 @@ private:
 	uint8                   m_RMIBenchmarkSeq;
 #endif
 
-	typedef std::map<int32, AudioProxyId> TJointToAudioProxyLookup;
+	typedef std::map<int32, CryAudio::AuxObjectId> TJointToAudioProxyLookup;
 	TJointToAudioProxyLookup		m_cJointAudioProxies;
 
 public:

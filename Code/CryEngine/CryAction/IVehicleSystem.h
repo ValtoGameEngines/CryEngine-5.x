@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -534,14 +534,14 @@ struct SVehicleMovementEventParams
 // Sound event info
 struct SVehicleSoundInfo
 {
-	string          name; // event name
-	IVehicleHelper* pHelper;
-	AudioControlId  soundId;
-	bool            isEngineSound;
+	string              name;      // event name
+	IVehicleHelper*     pHelper;
+	CryAudio::ControlId soundId;
+	bool                isEngineSound;
 
 	SVehicleSoundInfo() : isEngineSound(false), pHelper(NULL)
 	{
-		soundId = INVALID_AUDIO_CONTROL_ID;
+		soundId = CryAudio::InvalidControlId;
 	}
 };
 typedef int TVehicleSoundEventId;
@@ -1221,16 +1221,16 @@ struct IVehicleMovement
 	virtual void                   RegisterActionFilter(IVehicleMovementActionFilter* pActionFilter) = 0;
 	virtual void                   UnregisterActionFilter(IVehicleMovementActionFilter* pActionFilter) = 0;
 
-	virtual void                   ProcessEvent(SEntityEvent& event) = 0;
+	virtual void                   ProcessEvent(const SEntityEvent& event) = 0;
 	virtual CryCriticalSection*    GetNetworkLock() = 0;
 
 	virtual void                   GetMemoryUsage(ICrySizer* s) const = 0;
 
-	virtual IEntityAudioComponent*     GetAudioProxy() const                      { return nullptr; }
-	virtual AudioControlId         GetPrimaryWeaponAudioTrigger() const       { return INVALID_AUDIO_CONTROL_ID; }
-	virtual AudioControlId         GetPrimaryWeaponAudioStopTrigger() const   { return INVALID_AUDIO_CONTROL_ID; }
-	virtual AudioControlId         GetSecondaryWeaponAudioTrigger() const     { return INVALID_AUDIO_CONTROL_ID; }
-	virtual AudioControlId         GetSecondaryWeaponAudioStopTrigger() const { return INVALID_AUDIO_CONTROL_ID; }
+	virtual IEntityAudioComponent* GetAudioProxy() const                      { return nullptr; }
+	virtual CryAudio::ControlId    GetPrimaryWeaponAudioTrigger() const       { return CryAudio::InvalidControlId; }
+	virtual CryAudio::ControlId    GetPrimaryWeaponAudioStopTrigger() const   { return CryAudio::InvalidControlId; }
+	virtual CryAudio::ControlId    GetSecondaryWeaponAudioTrigger() const     { return CryAudio::InvalidControlId; }
+	virtual CryAudio::ControlId    GetSecondaryWeaponAudioStopTrigger() const { return CryAudio::InvalidControlId; }
 };
 
 // Summary
@@ -1611,19 +1611,19 @@ struct IVehiclePart
 	//   Will return the FINAL local transform matrix (with recoil etc) relative to parent part or vehicle space
 	// Return value:
 	//   a 3x4 matrix
-	virtual const Matrix34& GetLocalTM(bool relativeToParentPart, bool forced = false) = 0;
+	virtual Matrix34 GetLocalTM(bool relativeToParentPart, bool forced = false) = 0;
 
 	// Summary:
 	//   Gets the local base transform matrix
 	// Description:
 	//   Will return the local BASE transform matrix (without recoil etc) relative to parent part
-	virtual const Matrix34& GetLocalBaseTM() = 0;
+	virtual Matrix34 GetLocalBaseTM() = 0;
 
 	// Summary:
 	//   Gets the initial base transform matrix
 	// Description:
 	//   Will return the local transform matrix from the initial state of the model as relative to parent part
-	virtual const Matrix34& GetLocalInitialTM() = 0;
+	virtual Matrix34 GetLocalInitialTM() = 0;
 
 	// Summary:
 	//   Gets a world transform matrix
@@ -1631,7 +1631,7 @@ struct IVehiclePart
 	//   Will return a transform matrix world space.
 	// Return value:
 	//   a 3x4 matrix
-	virtual const Matrix34& GetWorldTM() = 0;
+	virtual Matrix34 GetWorldTM() = 0;
 
 	// Summary:
 	//   Sets local transformation matrix relative to parent part

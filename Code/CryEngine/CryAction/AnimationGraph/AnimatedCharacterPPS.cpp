@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include <CryExtension/CryCreateClassInstance.h>
@@ -278,8 +278,8 @@ void CAnimatedCharacter::AcquireRequestedBehaviourMovement()
 		Ang3 requestedEntityRot(m_requestedEntityMovement.q);
 		const ColorF cWhite = ColorF(1, 1, 1, 1);
 		IRenderAuxText::Draw2dLabel(350, 50, 2.0f, (float*)&cWhite, false, "Req Movement[%.2f, %.2f, %.2f | %.2f, %.2f, %.2f]",
-		                             m_requestedEntityMovement.t.x / m_curFrameTime, m_requestedEntityMovement.t.y / m_curFrameTime, m_requestedEntityMovement.t.z / m_curFrameTime,
-		                             RAD2DEG(requestedEntityRot.x), RAD2DEG(requestedEntityRot.y), RAD2DEG(requestedEntityRot.z));
+		                            m_requestedEntityMovement.t.x / m_curFrameTime, m_requestedEntityMovement.t.y / m_curFrameTime, m_requestedEntityMovement.t.z / m_curFrameTime,
+		                            RAD2DEG(requestedEntityRot.x), RAD2DEG(requestedEntityRot.y), RAD2DEG(requestedEntityRot.z));
 	}
 #endif
 
@@ -388,7 +388,7 @@ void CAnimatedCharacter::PostProcessingUpdate()
 
 	if (!m_pPoseAligner)
 		return;
-	if (!m_pPoseAligner->Initialize(*pEntity))
+	if (!m_pPoseAligner->Initialize(*pEntity, m_pCharacter))
 		return;
 
 	float poseBlendWeight = clamp_tpl(1.0f - m_fJumpSmooth, 0.0f, 1.0f);
@@ -493,7 +493,7 @@ void CAnimatedCharacter::PostProcessingUpdate()
 
 	m_pPoseAligner->SetRootOffsetEnable(m_groundAlignmentParams.IsFlag(eGA_PoseAlignerUseRootOffset));
 	m_pPoseAligner->SetBlendWeight(poseBlendWeight);
-	m_pPoseAligner->Update(m_entLocation, (float)m_curFrameTime);
+	m_pPoseAligner->Update(m_pCharacter, m_entLocation, (float)m_curFrameTime);
 }
 
 //--------------------------------------------------------------------------------
@@ -548,7 +548,7 @@ QuatT CAnimatedCharacter::CalculateDesiredAnimMovement() const
 		desiredAnimMovement = assetAnimMovement;
 
 		/*{
-		   IRenderAuxGeom*	pAuxGeom	= gEnv->pRenderer->GetIRenderAuxGeom();
+		   IRenderAuxGeom*	pAuxGeom	= gEnv->pAuxGeomRenderer;
 		   pAuxGeom->SetRenderFlags( e_Def3DPublicRenderflags );
 		   pAuxGeom->DrawLine( desiredAnimMovement.t,RGBA8(0x00,0xff,0x00,0x00),desiredAnimMovement.t+Vec3(0,0,+20),RGBA8(0xff,0xff,0xff,0x00) );
 		   }*/
@@ -921,7 +921,7 @@ void CAnimatedCharacter::RequestPhysicalEntityMovement(const QuatT& wantedEntMov
 			{
 				m_entLocation.q = newRotation;
 
-				pEntity->SetRotation(newRotation, ENTITY_XFORM_USER | ENTITY_XFORM_NOT_REREGISTER);
+				pEntity->SetRotation(newRotation, { ENTITY_XFORM_USER, ENTITY_XFORM_NOT_REREGISTER });
 			}
 		}
 

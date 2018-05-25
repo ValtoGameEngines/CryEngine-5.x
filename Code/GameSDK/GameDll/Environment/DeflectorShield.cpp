@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "DeflectorShield.h"
@@ -18,9 +18,8 @@ bool CDeflectorShield::NetSerialize(TSerialize ser, EEntityAspects aspect, uint8
 void CDeflectorShield::PostSerialize() {}
 void CDeflectorShield::SerializeSpawnInfo(TSerialize ser) {}
 ISerializableInfoPtr CDeflectorShield::GetSpawnInfo() {return ISerializableInfoPtr();}
-void CDeflectorShield::ProcessEvent(SEntityEvent& event) {}
+void CDeflectorShield::ProcessEvent(const SEntityEvent& event) {}
 void CDeflectorShield::SetChannelId(uint16 id) {}
-void CDeflectorShield::SetAuthority(bool auth ) {}
 const void * CDeflectorShield::GetRMIBase() const {return 0;}
 void CDeflectorShield::PostUpdate(float frameTime) {}
 void CDeflectorShield::PostRemoteSpawn() {}

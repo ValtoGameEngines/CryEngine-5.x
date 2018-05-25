@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -46,6 +46,7 @@ public:
 	void          InitAttachmentList(const CharacterAttachment* parrAttachments, uint32 numAttachments, const string pathname, uint32 nLoadingFlags, int nKeepModelInMemory);
 
 	IAttachment*  CreateAttachment(const char* szName, uint32 type, const char* szJointName = 0, bool bCallProject = true);
+	IAttachment*  CreateVClothAttachment(const SVClothAttachmentParams& params);
 
 	void          MergeCharacterAttachments();
 	void          RequestMergeCharacterAttachments() { ++m_attachmentMergingRequired; }
@@ -169,9 +170,9 @@ public:
 	const char*         ExecProcFunction(uint32 nCRC32, Skeleton::CPoseData* pPoseData, const char* pstrFunction = 0) const;
 
 	float               GetExtent(EGeomForm eForm);
-	void                GetRandomPos(PosNorm& ran, CRndGen& seed, EGeomForm eForm) const;
+	void                GetRandomPoints(Array<PosNorm> points, CRndGen& seed, EGeomForm eForm) const;
 #if !defined(_RELEASE)
-	float               DebugDrawAttachment(IAttachment* pAttachment, ISkin* pSkin, Vec3 drawLoc, IMaterial* pMaterial, float drawScale);
+	float               DebugDrawAttachment(IAttachment* pAttachment, ISkin* pSkin, Vec3 drawLoc, IMaterial* pMaterial, float drawScale,const SRenderingPassInfo &passInfo);
 #endif
 
 public:

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   statobjman.cpp
@@ -36,12 +36,10 @@
 #endif
 
 //////////////////////////////////////////////////////////////////////////
-IStatObj* CObjManager::GetStaticObjectByTypeID(int nTypeID, int nSID)
+IStatObj* CObjManager::GetStaticObjectByTypeID(int nTypeID)
 {
-	assert(nSID >= 0 && nSID < m_lstStaticTypes.Count());
-
-	if (nTypeID >= 0 && nTypeID < m_lstStaticTypes[nSID].Count())
-		return m_lstStaticTypes[nSID][nTypeID].pStatObj;
+	if (nTypeID >= 0 && nTypeID < m_lstStaticTypes.Count())
+		return m_lstStaticTypes[nTypeID].pStatObj;
 
 	return 0;
 }
@@ -53,27 +51,23 @@ IStatObj* CObjManager::FindStaticObjectByFilename(const char* filename)
 
 void CObjManager::UnloadVegetationModels(bool bDeleteAll)
 {
-	for (uint32 nSID = 0; nSID < m_lstStaticTypes.size(); nSID++)
+	PodArray<StatInstGroup>& rGroupTable = m_lstStaticTypes;
+	for (uint32 nGroupId = 0; nGroupId < rGroupTable.size(); nGroupId++)
 	{
-		PodArray<StatInstGroup>& rGroupTable = m_lstStaticTypes[nSID];
-		for (uint32 nGroupId = 0; nGroupId < rGroupTable.size(); nGroupId++)
+		StatInstGroup& rGroup = rGroupTable[nGroupId];
+
+		rGroup.pStatObj = NULL;
+		rGroup.pMaterial = NULL;
+
+		for (int j = 0; j < FAR_TEX_COUNT; ++j)
 		{
-			StatInstGroup& rGroup = rGroupTable[nGroupId];
-
-			rGroup.pStatObj = NULL;
-			rGroup.pMaterial = NULL;
-
-			for (int j = 0; j < FAR_TEX_COUNT; ++j)
-			{
-				SVegetationSpriteLightInfo& rLightInfo = rGroup.m_arrSSpriteLightInfo[j];
-				if (rLightInfo.m_pDynTexture)
-					SAFE_RELEASE(rLightInfo.m_pDynTexture);
-			}
+			SVegetationSpriteLightInfo& rLightInfo = rGroup.m_arrSSpriteLightInfo[j];
+			SAFE_RELEASE(rLightInfo.m_pDynTexture);
 		}
-
-		if (bDeleteAll)
-			rGroupTable.Free();
 	}
+
+	if (bDeleteAll)
+		rGroupTable.Free();
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -83,10 +77,6 @@ void CObjManager::UnloadObjects(bool bDeleteAll)
 	UnloadFarObjects();
 
 	CleanStreamingData();
-
-	if (m_REFarTreeSprites)
-		m_REFarTreeSprites->Release(true);
-	m_REFarTreeSprites = 0;
 
 	m_pRMBox = 0;
 
@@ -161,8 +151,8 @@ void CObjManager::UnloadObjects(bool bDeleteAll)
 		for (size_t ti = 0; ti < nThreadsNum; ++ti)
 			stl::free_container(m_arrVegetationSprites[rl][ti]);
 	}
-	for (int nSID = 0; nSID < m_lstStaticTypes.Count(); nSID++)
-		m_lstStaticTypes[nSID].Free();
+
+	m_lstStaticTypes.Free();
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -379,6 +369,12 @@ CStatObj* CObjManager::LoadStatObj(const char* __szFileName
 		m_pDefaultCGF->m_bDefaultObject = true;
 	}
 
+	if (CryStringUtils::stristr(__szFileName, "_lod"))
+	{
+		Warning("Failed to load cgf: %s, '_lod' meshes can be loaded only internally as part of multi-lod CGF loading", __szFileName);
+		return m_pDefaultCGF;
+	}
+
 	LOADING_TIME_PROFILE_SECTION_ARGS(__szFileName);
 	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "Static Geometry");
 
@@ -402,12 +398,7 @@ CStatObj* CObjManager::LoadStatObj(const char* __szFileName
 		int nAliasNameLen = sizeof("%level%") - 1;
 		if (strncmp(__szFileName, "%level%", nAliasNameLen) == 0)
 		{
-#ifdef SEG_WORLD
-			string tempString = szBlockName + string(__szFileName + nAliasNameLen + 1);
-			cry_strcpy(sFilename, Get3DEngine()->GetLevelFilePath(tempString.c_str()));
-#else
 			cry_strcpy(sFilename, Get3DEngine()->GetLevelFilePath(__szFileName + nAliasNameLen));
-#endif
 		}
 		else
 		{
@@ -478,7 +469,8 @@ CStatObj* CObjManager::LoadStatObj(const char* __szFileName
 
 	if (!pObject->LoadCGF(sFilename, strstr(sFilename, "_lod") != NULL, nLoadingFlags, pData, nDataSize))
 	{
-		Error("Failed to load cgf: %s", __szFileName);
+		if (!(nLoadingFlags & IStatObj::ELoadingFlagsNoErrorIfFail))
+			Error("Failed to load cgf: %s", __szFileName);
 		// object not found
 		// if geom name is specified - just return 0
 		if (_szGeomName && _szGeomName[0])
@@ -640,7 +632,6 @@ CObjManager::CObjManager() :
 	m_bGarbageCollectionEnabled = true;
 
 	m_decalsToPrecreate.reserve(128);
-	m_REFarTreeSprites = 0;
 
 	// init queue for check occlusion
 	m_CheckOcclusionQueue.Init(GetCVars()->e_CheckOcclusionQueueSize);
@@ -693,7 +684,7 @@ void CObjManager::MakeUnitCube()
 	m_pRMBox = GetRenderer()->CreateRenderMeshInitialized(
 	  arrVerts,
 	  CRY_ARRAY_COUNT(arrVerts),
-	  eVF_P3F_C4B_T2F,
+	  EDefaultInputLayouts::P3F_C4B_T2F,
 	  arrIndices,
 	  CRY_ARRAY_COUNT(arrIndices),
 	  prtTriangleList,
@@ -726,14 +717,14 @@ CObjManager::~CObjManager()
 #endif
 }
 
-int CObjManager::ComputeDissolve(const CLodValue &lodValueIn, IRenderNode* pEnt, float fEntDistance, CLodValue arrlodValuesOut[2])
+int CObjManager::ComputeDissolve(const CLodValue &lodValueIn, SRenderNodeTempData* pTempData, IRenderNode* pEnt, float fEntDistance, CLodValue arrlodValuesOut[2])
 {
 	int nLodMain = CLAMP(0, lodValueIn.LodA(), MAX_STATOBJ_LODS_NUM - 1);
 	int nLodMin = max(nLodMain - 1, 0);
 	int nLodMax = min(nLodMain + 1, MAX_STATOBJ_LODS_NUM - 1);
 
 	float prevLodLastTimeUsed = 0;
-	float * arrLodLastTimeUsed = pEnt->m_pTempData->userData.arrLodLastTimeUsed;
+	float * arrLodLastTimeUsed = pTempData->userData.arrLodLastTimeUsed;
 
 	// Find when previous lod was used as primary lod last time and update last time used for current primary lod
 	for (int nLO = nLodMin; nLO <= nLodMax; nLO++)
@@ -793,14 +784,12 @@ int CObjManager::ComputeDissolve(const CLodValue &lodValueIn, IRenderNode* pEnt,
 }
 
 // mostly xy size
-float CObjManager::GetXYRadius(int type, int nSID)
+float CObjManager::GetXYRadius(int type)
 {
-	assert(nSID >= 0 && nSID < m_lstStaticTypes.Count());
-
-	if ((m_lstStaticTypes[nSID].Count() <= type || !m_lstStaticTypes[nSID][type].pStatObj))
+	if ((m_lstStaticTypes.Count() <= type || !m_lstStaticTypes[type].pStatObj))
 		return 0;
 
-	Vec3 vSize = m_lstStaticTypes[nSID][type].pStatObj->GetBoxMax() - m_lstStaticTypes[nSID][type].pStatObj->GetBoxMin();
+	Vec3 vSize = m_lstStaticTypes[type].pStatObj->GetBoxMax() - m_lstStaticTypes[type].pStatObj->GetBoxMin();
 	vSize.z *= 0.5f;
 
 	float fXYRadius = vSize.GetLength() * 0.5f;
@@ -808,15 +797,13 @@ float CObjManager::GetXYRadius(int type, int nSID)
 	return fXYRadius;
 }
 
-bool CObjManager::GetStaticObjectBBox(int nType, Vec3& vBoxMin, Vec3& vBoxMax, int nSID)
+bool CObjManager::GetStaticObjectBBox(int nType, Vec3& vBoxMin, Vec3& vBoxMax)
 {
-	assert(nSID >= 0 && nSID < m_lstStaticTypes.Count());
-
-	if ((m_lstStaticTypes[nSID].Count() <= nType || !m_lstStaticTypes[nSID][nType].pStatObj))
+	if ((m_lstStaticTypes.Count() <= nType || !m_lstStaticTypes[nType].pStatObj))
 		return 0;
 
-	vBoxMin = m_lstStaticTypes[nSID][nType].pStatObj->GetBoxMin();
-	vBoxMax = m_lstStaticTypes[nSID][nType].pStatObj->GetBoxMax();
+	vBoxMin = m_lstStaticTypes[nType].pStatObj->GetBoxMin();
+	vBoxMax = m_lstStaticTypes[nType].pStatObj->GetBoxMax();
 
 	return true;
 }
@@ -877,18 +864,15 @@ void CObjManager::GetBandwidthStats(float* fBandwidthRequested)
 #endif
 }
 
-void CObjManager::ReregisterEntitiesInArea(Vec3 vBoxMin, Vec3 vBoxMax)
+void CObjManager::ReregisterEntitiesInArea(AABB * pBox, bool bCleanUpTree)
 {
 	PodArray<SRNInfo> lstEntitiesInArea;
 
-	AABB vBoxAABB(vBoxMin, vBoxMax);
-
-	Get3DEngine()->MoveObjectsIntoListGlobal(&lstEntitiesInArea, &vBoxAABB, true);
+	Get3DEngine()->MoveObjectsIntoListGlobal(&lstEntitiesInArea, pBox, true);
 
 	if (GetVisAreaManager())
-		GetVisAreaManager()->MoveObjectsIntoList(&lstEntitiesInArea, vBoxAABB, true);
+		GetVisAreaManager()->MoveObjectsIntoList(&lstEntitiesInArea, pBox, true);
 
-	int nChanged = 0;
 	for (int i = 0; i < lstEntitiesInArea.Count(); i++)
 	{
 		IVisArea* pPrevArea = lstEntitiesInArea[i].pNode->GetEntityVisArea();
@@ -896,10 +880,18 @@ void CObjManager::ReregisterEntitiesInArea(Vec3 vBoxMin, Vec3 vBoxMax)
 
 		if (lstEntitiesInArea[i].pNode->GetRenderNodeType() == eERType_Decal)
 			((CDecalRenderNode*)lstEntitiesInArea[i].pNode)->RequestUpdate();
+	}
 
+	if (bCleanUpTree)
+	{
+		Get3DEngine()->GetObjectsTree()->CleanUpTree();
+		if (GetVisAreaManager())
+			GetVisAreaManager()->CleanUpTrees();
+	}
+
+	for (int i = 0; i < lstEntitiesInArea.Count(); i++)
+	{
 		Get3DEngine()->RegisterEntity(lstEntitiesInArea[i].pNode);
-		if (pPrevArea != lstEntitiesInArea[i].pNode->GetEntityVisArea())
-			nChanged++;
 	}
 }
 
@@ -1164,19 +1156,13 @@ void CObjManager::UnregisterForGarbage(CStatObj* pObject)
 }
 
 //////////////////////////////////////////////////////////////////////////
-bool CObjManager::AddOrCreatePersistentRenderObject(SRenderNodeTempData* pTempData, CRenderObject*& pRenderObject, const CLodValue* pLodValue, const SRenderingPassInfo& passInfo) const
+bool CObjManager::AddOrCreatePersistentRenderObject(SRenderNodeTempData* pTempData, CRenderObject*& pRenderObject, const CLodValue* pLodValue, const Matrix34& transformationMatrix, const SRenderingPassInfo& passInfo) const
 {
 	CRY_ASSERT(pRenderObject == nullptr);
-
-	if (GetCVars()->e_PermanentRenderObjects && (pTempData || pRenderObject) && GetCVars()->e_DebugDraw == 0 && (!pLodValue || !pLodValue->DissolveRefA()))
+	const bool shouldGetOrCreatePermanentObject = (GetCVars()->e_PermanentRenderObjects && (pTempData || pRenderObject) && GetCVars()->e_DebugDraw == 0 && (!pLodValue || !pLodValue->DissolveRefA())) && 
+		!(passInfo.IsRecursivePass() || (pTempData && (pTempData->userData.m_pFoliage || (pTempData->userData.pOwnerNode && (pTempData->userData.pOwnerNode->GetRndFlags() & ERF_SELECTED)))));
+	if (shouldGetOrCreatePermanentObject)
 	{
-		if (passInfo.IsRecursivePass() || (pTempData && (pTempData->userData.m_pFoliage || (pTempData->userData.pOwnerNode && (pTempData->userData.pOwnerNode->GetRndFlags() & ERF_SELECTED)))))
-		{
-			// Recursive and Debug passes do not support permanent render objects now...
-			pRenderObject = gEnv->pRenderer->EF_GetObject_Temp(passInfo.ThreadID());
-			return false;
-		}
-
 		if (pLodValue && pLodValue->LodA() == -1 && pLodValue->LodB() == -1)
 			return true;
 
@@ -1189,26 +1175,25 @@ bool CObjManager::AddOrCreatePersistentRenderObject(SRenderNodeTempData* pTempDa
 		int nLod = pLodValue ? CLAMP(0, pLodValue->LodA(), MAX_STATOBJ_LODS_NUM - 1) : 0;
 
 		uint32 passId = passInfo.IsShadowPass() ? 1 : 0;
-		uint32 passMask = 1 << passId;
+		uint32 passMask = BIT(passId);
 
-		// Do we have to create a new permanent render object?
-		if (pTempData->userData.arrPermanentRenderObjects[nLod] == nullptr)
-		{
-			// Object creation must be locked because CheckCreateRenderObject can be called on same node from different threads
-			WriteLock lock(pTempData->userData.permanentObjectCreateLock);
+		pRenderObject = pTempData->GetRenderObject(nLod);
 
-			// Did another thread succeed in creating the object in the meantime?
-			if (pTempData->userData.arrPermanentRenderObjects[nLod] == nullptr)
-				pTempData->userData.arrPermanentRenderObjects[nLod] = gEnv->pRenderer->EF_GetObject();
-		}
-
-		pRenderObject = pTempData->userData.arrPermanentRenderObjects[nLod];
+		// Update instance only for dirty objects
+		const auto instanceDataDirty = pRenderObject->m_bInstanceDataDirty[passId];
 		passInfo.GetIRenderView()->AddPermanentObject(pRenderObject, passInfo);
 
 		// Has this object already been filled?
 		int previousMask = CryInterlockedExchangeOr(reinterpret_cast<volatile LONG*>(&pRenderObject->m_passReadyMask), passMask);
 		if (previousMask & passMask) // Object drawn once => fast path.
 		{
+			if (instanceDataDirty)
+			{
+				// Update instance matrix
+				pRenderObject->SetMatrix(transformationMatrix, passInfo);
+				pRenderObject->m_bInstanceDataDirty[passId] = false;
+			}
+
 			if (GetCVars()->e_BBoxes && pTempData && pTempData->userData.pOwnerNode)
 				GetObjManager()->RenderObjectDebugInfo(pTempData->userData.pOwnerNode, pRenderObject->m_fDistance, passInfo);
 
@@ -1216,13 +1201,18 @@ bool CObjManager::AddOrCreatePersistentRenderObject(SRenderNodeTempData* pTempDa
 		}
 
 		// Permanent object needs to be filled first time,
-		if (pTempData->IsValid())
+		if (pTempData && pTempData->userData.pOwnerNode)
 			pTempData->userData.nStatObjLastModificationId = GetResourcesModificationChecksum(pTempData->userData.pOwnerNode);
-
-		return false;
+	}
+	else
+	{
+		// Fallback to temporary render object
+		pRenderObject = passInfo.GetIRenderView()->AllocateTemporaryRenderObject();
 	}
 
-	pRenderObject = gEnv->pRenderer->EF_GetObject_Temp(passInfo.ThreadID());
+	// We do not have a persistant render object
+	// Always update instance matrix
+	pRenderObject->SetMatrix(transformationMatrix, passInfo);
 
 	return false;
 }
@@ -1242,4 +1232,58 @@ uint32 CObjManager::GetResourcesModificationChecksum(IRenderNode* pOwnerNode) co
 		nModificationId += ((CTerrainNode*)pOwnerNode)->GetMaterialsModificationId();
 
 	return nModificationId;
+}
+
+//////////////////////////////////////////////////////////////////////////
+IRenderMesh* CObjManager::GetBillboardRenderMesh(IMaterial* pMaterial)
+{
+	if(!m_pBillboardMesh)
+	{
+		PodArray<SVF_P3F_C4B_T2F> arrVertices;
+		PodArray<SPipTangents> arrTangents;
+		PodArray<vtx_idx> arrIndices;
+
+		SVF_P3F_C4B_T2F vert;
+		ZeroStruct(vert);
+		vert.st = Vec2(0.0f, 0.0f);
+		vert.color.dcolor = -1;
+
+		// verts
+		vert.xyz.Set(+.5, 0, -.5);
+		vert.st = Vec2(1, 1);
+		arrVertices.Add(vert);
+		vert.xyz.Set(-.5, 0, -.5);
+		vert.st = Vec2(0, 1);
+		arrVertices.Add(vert);
+		vert.xyz.Set(+.5, 0, +.5);
+		vert.st = Vec2(1, 0);
+		arrVertices.Add(vert);
+		vert.xyz.Set(-.5, 0, +.5);
+		vert.st = Vec2(0, 0);
+		arrVertices.Add(vert);
+
+		// tangents
+		arrTangents.Add(SPipTangents(Vec3(1, 0, 0), Vec3(0, 0, 1), 1));
+		arrTangents.Add(SPipTangents(Vec3(1, 0, 0), Vec3(0, 0, 1), 1));
+		arrTangents.Add(SPipTangents(Vec3(1, 0, 0), Vec3(0, 0, 1), 1));
+		arrTangents.Add(SPipTangents(Vec3(1, 0, 0), Vec3(0, 0, 1), 1));
+
+		// indices
+		arrIndices.Add(0);
+		arrIndices.Add(1);
+		arrIndices.Add(2);
+		arrIndices.Add(1);
+		arrIndices.Add(3);
+		arrIndices.Add(2);
+
+		m_pBillboardMesh = Cry3DEngineBase::GetRenderer()->CreateRenderMeshInitialized(
+			arrVertices.GetElements(), arrVertices.Count(), EDefaultInputLayouts::P3F_C4B_T2F,
+			arrIndices.GetElements(), arrIndices.Count(), prtTriangleList,
+			"Billboard", "Billboard", eRMT_Static, 1, 0, NULL, NULL, false, true,
+			arrTangents.GetElements());
+
+		m_pBillboardMesh->SetChunk(pMaterial, 0, arrVertices.Count(), 0, arrIndices.Count(), 1);
+	}
+
+	return m_pBillboardMesh;
 }

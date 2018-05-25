@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   terrain_damage.cpp
@@ -56,7 +56,7 @@ bool CTerrain::RemoveObjectsInArea(Vec3 vExploPos, float fExploRadius)
 				{
 					//
 					Matrix34A objMat;
-					CStatObj* pStatObj = (CStatObj*)pRenderNode->GetEntityStatObj(0, 0, &objMat);
+					CStatObj* pStatObj = (CStatObj*)pRenderNode->GetEntityStatObj(0, &objMat);
 					if (!pStatObj)
 						continue;
 					objMat.Invert();
@@ -129,8 +129,8 @@ void CTerrain::GetObjectsAround(Vec3 vExploPos, float fExploRadius, PodArray<SRN
 	   }*/
 }
 
-int CTerrain::ReloadModifiedHMData(FILE* f, int nSID)
+int CTerrain::ReloadModifiedHMData(FILE* f)
 {
 	ResetHeightMapCache();
-	return GetParentNode(nSID) ? GetParentNode(nSID)->ReloadModifiedHMData(f) : 0;
+	return GetParentNode() ? GetParentNode()->ReloadModifiedHMData(f) : 0;
 }

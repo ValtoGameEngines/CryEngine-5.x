@@ -1,10 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
-#include <Schematyc/Script/IScriptView.h>
-#include <Schematyc/Script/IScriptRegistry.h>
-#include <Schematyc/Script/Elements/IScriptComponentInstance.h>
+#include <CrySchematyc/Script/IScriptView.h>
+#include <CrySchematyc/Script/IScriptRegistry.h>
+#include <CrySchematyc/Script/Elements/IScriptComponentInstance.h>
 
 #include <CrySandbox/CrySignal.h>
 #include <CrySerialization/Forward.h>
@@ -50,7 +50,7 @@ class CAbstractComponentsModel
 public:
 	virtual uint32                     GetComponentItemCount() const = 0;
 	virtual CComponentItem*            GetComponentItemByIndex(uint32 index) const = 0;
-	virtual CComponentItem*            CreateComponent(Schematyc::SGUID typeId, const char* szName) = 0;
+	virtual CComponentItem*            CreateComponent(CryGUID typeId, const char* szName) = 0;
 	virtual bool                       RemoveComponent(CComponentItem& component) = 0;
 
 	virtual CAbstractDictionary*       GetAvailableComponentsDictionary() = 0;
@@ -63,3 +63,4 @@ public:
 };
 
 }
+

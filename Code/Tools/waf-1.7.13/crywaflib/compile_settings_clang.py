@@ -1,4 +1,4 @@
-# Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+# Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 from waflib.Configure import conf
 
 def load_clang_common_settings(v):
@@ -87,7 +87,8 @@ def load_clang_common_settings(v):
 		'-Wno-reorder',
 		'-Wno-conversion-null',
 		'-Wno-overloaded-virtual',
-		'-Wno-shift-sign-overflow'
+		'-Wno-shift-sign-overflow',
+		'-Wno-deprecated-register'
 		]
 		
 	# Copy common flags to prevent modifing references

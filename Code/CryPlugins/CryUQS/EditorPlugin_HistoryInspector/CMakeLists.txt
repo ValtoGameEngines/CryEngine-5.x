@@ -17,13 +17,19 @@ add_sources("NoUberFile"
 end_sources()
 #END-FILE-LIST
 
-CryPlugin(EditorUQS_HistoryInspector PCH "StdAfx.cpp" SOLUTION_FOLDER "CryPlugins/CryUQS")
+CryEditorPlugin(EditorUQS_HistoryInspector PCH "StdAfx.cpp" SOLUTION_FOLDER "CryPlugins/CryUQS")
 target_link_libraries (${THIS_PROJECT} PRIVATE
 	Sandbox
 	EditorCommon
-	CryUQS_Shared
 )
 
 target_include_directories(${THIS_PROJECT}
-	PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/.." "${CMAKE_CURRENT_SOURCE_DIR}/GeneratedFiles"
+	PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/../.." "${CMAKE_CURRENT_SOURCE_DIR}/GeneratedFiles"
 )
+
+if(OPTION_UQS_SCHEMATYC_SUPPORT)
+	target_include_directories(${THIS_PROJECT}
+		PRIVATE "${CRYENGINE_DIR}/Code/CryEngine/CrySchematyc/Core/Interface"
+		PRIVATE "${CRYENGINE_DIR}/Code/CryEngine/CrySchematyc/STDEnv/Interface"
+	)
+endif()

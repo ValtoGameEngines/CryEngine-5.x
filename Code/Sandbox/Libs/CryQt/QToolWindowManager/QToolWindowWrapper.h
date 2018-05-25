@@ -1,8 +1,9 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 #include <QWidget>
 #include <QVariantMap>
+#include <QPointer>
 
 #include "QToolWindowManagerCommon.h"
 #include "IToolWindowWrapper.h"
@@ -21,6 +22,9 @@ public:
 	virtual QWidget* getContents() Q_DECL_OVERRIDE;
 	virtual void setContents(QWidget* widget) Q_DECL_OVERRIDE;
 	virtual void startDrag() Q_DECL_OVERRIDE;
+	virtual void hide() Q_DECL_OVERRIDE { QWidget::hide(); }
+	virtual void deferDeletion() Q_DECL_OVERRIDE;
+	void setParent(QWidget* parent) Q_DECL_OVERRIDE { QWidget::setParent(parent); };
 
 protected:	
 	virtual void closeEvent(QCloseEvent *) Q_DECL_OVERRIDE;
@@ -35,6 +39,6 @@ protected:
 #endif
 
 private:
-	QToolWindowManager* m_manager;
+	QPointer<QToolWindowManager> m_manager;
 	QWidget* m_contents;
 };

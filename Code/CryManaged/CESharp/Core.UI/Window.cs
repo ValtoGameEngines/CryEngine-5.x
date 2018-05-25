@@ -1,31 +1,37 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
+using System.IO;
 using CryEngine.Resources;
 using CryEngine.UI.Components;
-using System.Runtime.Serialization;
-using System.IO;
 
 namespace CryEngine.UI
 {
 	/// <summary>
 	/// Represents a window with Header and Caption.
 	/// </summary>
-	[DataContract]
 	public class Window : Panel
 	{
 		Text _caption;
 
-		public string Caption { set { _caption.Content = value; } } ///< The header text.
+		/// <summary>
+		/// The header text.
+		/// </summary>
+		/// <value>The caption.</value>
+		public string Caption { set { _caption.Content = value; } }
 
+		/// <summary>
+		/// The height of the caption of this window.
+		/// </summary>
+		/// <value>The height of the caption.</value>
 		public byte CaptionHeight { set { _caption.Height = value; } }
 
 		/// <summary>
 		/// Called by framework. Do not call directly.
 		/// </summary>
-		public override void OnAwake()
+		protected override void OnAwake()
 		{
 			base.OnAwake();
-			Background.Source = ResourceManager.ImageFromFile(Path.Combine(UIElement.DataDirectory, "dialog.png"));
+			Background.Source = ResourceManager.ImageFromFile(Path.Combine(DataDirectory, "dialog.png"));
 			Background.SliceType = SliceType.Nine;
 			Background.IgnoreClamping = true;
 			RectTransform.Spacing = new Rect(13, 13, 14, 14);

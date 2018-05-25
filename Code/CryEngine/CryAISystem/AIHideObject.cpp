@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    -------------------------------------------------------------------------
@@ -16,7 +16,6 @@
 #include "StdAfx.h"
 #include "CAISystem.h"
 #include "AIHideObject.h"
-#include "NavRegion.h"
 #include "PipeUser.h"
 #include <math.h>
 #include "DebugDrawContext.h"
@@ -162,17 +161,6 @@ void CAIHideObject::Set(const SHideSpot* hs, const Vec3& hidePos, const Vec3& hi
 			m_objectCollidable = true;
 		}
 
-		if (hs->pNavNode && hs->pNavNode->navType == IAISystem::NAV_WAYPOINT_HUMAN)
-		{
-			if (hs->pNavNode->GetWaypointNavData()->type == WNT_HIDESECONDARY)
-			{
-				m_objectCollidable = false;
-				m_objectRadius = 0.05f; // Omni directional.
-			}
-			else
-				m_objectCollidable = true;
-		}
-
 		if (hs->info.type == SHideSpotInfo::eHST_DYNAMIC)
 		{
 			// Get the initial position of the entity which is associated with the dyn hidespot.
@@ -226,7 +214,7 @@ void CAIHideObject::Set(const SHideSpot* hs, const Vec3& hidePos, const Vec3& hi
 //-------------------------------------------------------------------------------------------------------------
 void CAIHideObject::Update(CPipeUser* pOperand)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (m_bIsValid && !m_bIsSmartObject)
 		UpdatePathExpand(pOperand);
@@ -730,46 +718,6 @@ void CAIHideObject::SetupPathExpand(CPipeUser* pOperand)
 //-------------------------------------------------------------------------------------------------------------
 bool CAIHideObject::IsSegmentValid(CPipeUser* pOperand, const Vec3& posFrom, const Vec3& posTo)
 {
-	CAISystem* pAISystem = GetAISystem();
-
-	int nBuildingID;
-
-	float agentRadius = pOperand ? pOperand->GetParameters().m_fPassRadius : DEFAULT_AGENT_RADIUS;
-
-	IAISystem::tNavCapMask navCapMask = pOperand ? pOperand->GetMovementAbility().pathfindingProperties.navCapMask : DEFAULT_AGENT_NAVMASK;
-	IAISystem::ENavigationType navType = gAIEnv.pNavigation->CheckNavigationType(posFrom, nBuildingID, navCapMask);
-
-	if (navType == IAISystem::NAV_VOLUME || navType == IAISystem::NAV_FLIGHT ||
-	    navType == IAISystem::NAV_WAYPOINT_3DSURFACE || navType == IAISystem::NAV_TRIANGULAR)
-	{
-		CNavRegion* pRegion = gAIEnv.pNavigation->GetNavRegion(navType, gAIEnv.pGraph);
-		if (pRegion)
-		{
-			NavigationBlockers navBlocker;
-			if (pRegion->CheckPassability(posFrom, posTo, agentRadius, navBlocker, navCapMask))
-			{
-				if (navType == IAISystem::NAV_TRIANGULAR)
-				{
-					// Make sure not to enter forbidden area.
-					if (gAIEnv.pNavigation->IsPointInForbiddenRegion(posTo))
-						return false;
-				}
-				return true;
-			}
-		}
-	}
-	else if (navType == IAISystem::NAV_WAYPOINT_HUMAN)
-	{
-		const SpecialArea* sa = gAIEnv.pNavigation->GetSpecialArea(nBuildingID);
-		if (sa)
-			return CheckWalkability(posFrom, posTo, agentRadius + 0.1f, sa->GetPolygon(), 0, 0, &sa->GetAABB());
-		else
-		{
-			AIWarning("COPUseCover::IsSegmentValid: Cannot find special area for building ID %d", nBuildingID);
-			return false;
-		}
-	}
-
 	return false;
 }
 
@@ -903,7 +851,7 @@ void CAIHideObject::SampleLineRefine(CPipeUser* pOperand, float& maxMove, float 
 //-------------------------------------------------------------------------------------------------------------
 void CAIHideObject::UpdatePathExpand(CPipeUser* pOperand)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (m_pathUpdateIter == 0)
 		SetupPathExpand(pOperand);

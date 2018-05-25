@@ -23,6 +23,9 @@ add_sources("CryEntitySystem_component_uber.cpp"
 	SOURCE_GROUP "Components\\\\FlowGraph"
 		"FlowGraphProxy.cpp"
 		"FlowGraphProxy.h"
+	SOURCE_GROUP "Proxy\\\\NetEntity"
+		"NetEntity.cpp"
+		"NetEntity.h"
 	SOURCE_GROUP "Components\\\\Physics"
 		"PhysicsEventListener.cpp"
 		"PhysicsProxy.cpp"
@@ -53,6 +56,14 @@ add_sources("CryEntitySystem_component_uber.cpp"
 	SOURCE_GROUP "Components\\\\TriggerProxy"
 		"TriggerProxy.cpp"
 		"TriggerProxy.h"
+
+	SOURCE_GROUP "Schematyc"
+		"Schematyc/EntitySchematycActions.h"
+		"Schematyc/EntitySchematycUtilFunctions.h"
+		"Schematyc/EntityObjectDebugger.cpp"
+		"Schematyc/EntityObjectDebugger.h"
+		"Schematyc/EntityUtilsComponent.cpp"
+		"Schematyc/EntityUtilsComponent.h"
 )
 
 add_sources("CryEntitySystem_uber_0.cpp"
@@ -76,7 +87,6 @@ add_sources("CryEntitySystem_uber_0.cpp"
 		"EntityCVars.cpp"
 		"EntityLayer.cpp"
 		"EntitySystem.cpp"
-		"EntityTimeoutList.cpp"
 		"AffineParts.h"
 		"Entity.h"
 		"EntityArchetype.h"
@@ -84,14 +94,18 @@ add_sources("CryEntitySystem_uber_0.cpp"
 		"EntityIt.h"
 		"EntityLayer.h"
 		"EntitySystem.h"
-		"EntityTimeoutList.h"
+		"EntityComponentsVector.cpp"
 		"EntityComponentsVector.h"
+		"EntityComponentsCache.cpp"
+		"EntityComponentsCache.h"
 		"SaltBufferArray.h"
 		"SaltHandle.h"
 		"CharacterBoneAttachmentManager.h"
 		"CharacterBoneAttachmentManager.cpp"
 		"GeomCacheAttachmentManager.h"
 		"GeomCacheAttachmentManager.cpp"
+		"EntityUnitTests.cpp"
+		"EntityUnitTests.h"
 )
 
 add_sources("CryEntitySystem_uber_1.cpp"
@@ -129,3 +143,6 @@ end_sources()
 #END-FILE-LIST
 
 CryEngineModule(CryEntitySystem PCH "stdafx.cpp" SOLUTION_FOLDER "CryEngine")
+
+# Make sure that the entity system always compiles without items that are deprecated
+target_compile_definitions(${THIS_PROJECT} PRIVATE EXCLUDE_5_5_ENTITY_DEPRECATIONS=1)

@@ -1,5 +1,4 @@
-// CRYENGINE Source Code File
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #define VS_NO_SKINNING_DATA
 
@@ -385,7 +384,7 @@ struct a2v
 struct v2f
 {
 #if !%WATER_TESSELLATION_DX11 || %_RT_NO_TESSELLATION
-	float4 Position		: POSITION;
+	float4 Position		: SV_POSITION;
 #endif
 
 	float4 baseTC	  : TEXCOORDN;
@@ -402,7 +401,7 @@ struct v2f
 
 struct v2f_hs
 {
-	float4 Position		: POSITION; 
+	float4 Position		: SV_POSITION; 
 	float4 baseTC	  : TEXCOORDN;
 	float4 screenProj : TEXCOORDN; 
 	half4  vView  	  : TEXCOORDN;
@@ -526,12 +525,6 @@ v2f WaterVS(a2v IN)
 
 HS_CONSTANT_DATA_OUTPUT WaterConstantsHS(InputPatch<v2f, 3> p, uint PatchID : SV_PrimitiveID )
 {
-#if (D3DX_SDK_VERSION == 43)
-	// Workaround for the optimization rule problem of DXSDKJune10's HLSL Compiler (9.29.952.3111)
-	// See: http://support.microsoft.com/kb/2448404	
-	#pragma ruledisable 0x0802405f  ;
-#endif
-
 	HS_CONSTANT_DATA_OUTPUT OUT = (HS_CONSTANT_DATA_OUTPUT)0;
 
 	// map inputs

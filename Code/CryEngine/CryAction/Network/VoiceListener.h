@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __VOICELISTENER_H__
 #define __VOICELISTENER_H__
@@ -31,9 +31,8 @@ public:
 	virtual ISerializableInfoPtr GetSpawnInfo()                                                                { return 0; }
 	virtual void                 Update(SEntityUpdateContext& ctx, int updateSlot);
 	virtual void                 HandleEvent(const SGameObjectEvent&);
-	virtual void                 ProcessEvent(SEntityEvent&);
+	virtual void                 ProcessEvent(const SEntityEvent&);
 	virtual void                 SetChannelId(uint16 id) {};
-	virtual void                 SetAuthority(bool auth);
 	virtual void                 PostUpdate(float frameTime);
 	virtual void                 PostRemoteSpawn() {};
 	virtual void                 GetMemoryUsage(ICrySizer* s)

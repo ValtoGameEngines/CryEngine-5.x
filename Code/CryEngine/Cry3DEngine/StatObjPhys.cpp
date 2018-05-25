@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -14,6 +14,7 @@
 
 #define SMALL_MESH_NUM_INDEX 30
 
+#pragma warning(push)
 #pragma warning(disable: 4244)
 
 //////////////////////////////////////////////////////////////////////////
@@ -127,7 +128,7 @@ void CStatObj::PhysicalizeCompiled(CNodeCGF* pNode, int bAppend)
 				FileWarning(0, GetFilePath(), "Phys proxy rejected due to triangle count limit, %d > %d (%s)", pmd->nTris, GetCVars()->e_PhysProxyTriLimit, GetFilePath());
 				GetPhysicalWorld()->GetGeomManager()->UnregisterGeometry(pPhysGeom);
 				m_isProxyTooBig = true;
-				m_pMaterial = Get3DEngine()->GetMaterialManager()->LoadMaterial("EngineAssets/Materials/PhysProxyTooBig");
+				m_pMaterial = Get3DEngine()->GetMaterialManager()->LoadMaterial("%ENGINE%/EngineAssets/Materials/PhysProxyTooBig");
 			}
 			else
 				AssignPhysGeom(nPhysGeomType + PHYS_GEOM_TYPE_DEFAULT, pPhysGeom, bAppend, /*bLoading*/ 1);
@@ -1856,7 +1857,7 @@ IStatObj* CStatObj::SkinVertices(strided_pointer<Vec3> pSkelVtx, const Matrix34&
 			{
 				SMeshTangents tb(pTangents0[i]);
 
-				tb.RotateBy(M);
+				tb.RotateSafelyBy(M);
 				tb.ExportTo(pTangents[i]);
 			}
 			pVtx[i] = v3;
@@ -1885,7 +1886,8 @@ int CStatObj::Physicalize(IPhysicalEntity* pent, pe_geomparams* pgp, int id, con
 	if (GetFlags() & STATIC_OBJECT_COMPOUND)
 	{
 		Matrix34 mtxId(IDENTITY);
-		res = PhysicalizeSubobjects(pent, pgp->pMtx3x4 ? pgp->pMtx3x4 : &mtxId, pgp->mass, pgp->density, id, 0, szPropsOverride);
+		res = PhysicalizeSubobjects(pent, pgp->pMtx3x4 ? pgp->pMtx3x4 : &mtxId, pgp->mass, pgp->density, id, 0, szPropsOverride, 
+			pgp->type == pe_articgeomparams::type_id ? ((pe_articgeomparams*)pgp)->idbody : -1);
 	}
 	else
 	{
@@ -1971,7 +1973,15 @@ int CStatObj::Physicalize(IPhysicalEntity* pent, pe_geomparams* pgp, int id, con
 			// add all solid and non-colliding geoms as individual parts
 			for (i = 0; i < m_arrPhysGeomInfo.GetGeomCount(); i++)
 				if (m_arrPhysGeomInfo.GetGeomType(i) == PHYS_GEOM_TYPE_DEFAULT)
+				{
+					int flags1 = pgp->flags;
+					if (m_arrPhysGeomInfo[i]->surface_idx < m_arrPhysGeomInfo[i]->nMats)
+						if (ISurfaceType* pMat = pSurfaceMan->GetSurfaceType(m_arrPhysGeomInfo[i]->pMatMapping[m_arrPhysGeomInfo[i]->surface_idx]))
+							if (pMat->GetPhyscalParams().collType >= 0)
+								(pgp->flags &= ~(geom_collides | geom_floats)) |= pMat->GetPhyscalParams().collType;
 					res = pent->AddGeometry(m_arrPhysGeomInfo[i], pgp, id);
+					pgp->flags = flags1;
+				}
 			pgp->idmatBreakable = -1;
 			for (i = 0; i < m_arrPhysGeomInfo.GetGeomCount(); i++)
 				if (m_arrPhysGeomInfo.GetGeomType(i) == PHYS_GEOM_TYPE_NO_COLLIDE)
@@ -1995,7 +2005,7 @@ int CStatObj::Physicalize(IPhysicalEntity* pent, pe_geomparams* pgp, int id, con
 #define isalpha(c) isalpha((unsigned char)c)
 #define isdigit(c) isdigit((unsigned char)c)
 
-int CStatObj::PhysicalizeSubobjects(IPhysicalEntity* pent, const Matrix34* pMtx, float mass, float density, int id0, strided_pointer<int> pJointsIdMap, const char* szPropsOverride)
+int CStatObj::PhysicalizeSubobjects(IPhysicalEntity* pent, const Matrix34* pMtx, float mass, float density, int id0, strided_pointer<int> pJointsIdMap, const char* szPropsOverride, int idbodyArtic)
 {
 	int i, j, i0, i1, len = 0, len1, nObj = GetSubObjectCount(), ipart[2], nparts, bHasPlayerOnlyGeoms = 0, nGeoms = 0, id, idNext = 0;
 	float V[2], M, scale3, jointsz;
@@ -2026,7 +2036,7 @@ int CStatObj::PhysicalizeSubobjects(IPhysicalEntity* pent, const Matrix34* pMtx,
 	for (i = j = 0; i < nObj; i++)
 		if (pSubObj = GetSubObject(i))
 			j += pSubObj->pStatObj && pSubObj->pStatObj->GetPhysGeom(0) != 0;
-	id0 = id0 < 0 ? 0 : AllocPartIdRange(id0, j);
+	id0 = id0 < 0 ? 0 : EntityPhysicsUtils::AllocPartIdRange(id0, j);
 
 	for (i = 0; i < nObj; i++)
 		if ((pSubObj = GetSubObject(i))->nType == STATIC_SUB_OBJECT_MESH && pSubObj->pStatObj && pSubObj->pStatObj->GetPhysGeom() &&
@@ -2089,7 +2099,7 @@ int CStatObj::PhysicalizeSubobjects(IPhysicalEntity* pent, const Matrix34* pMtx,
 		{
 			if (pJointsIdMap)
 				continue;
-			partpos.idbody = i + id0;
+			partpos.idbody = idbodyArtic + (i + id0 - idbodyArtic & idbodyArtic >> 31);
 			partpos.pMtx3x4 = pMtx ? &(mtxLoc = *pMtx * pSubObj->tm) : &pSubObj->tm;
 
 			float mi = 0, di = 0;
@@ -3691,10 +3701,10 @@ CStatObjFoliage::~CStatObjFoliage()
 	m_prev->m_next = m_next;
 	if (m_pStatObj)
 		m_pStatObj->Release();
+	if (*m_ppThis == this)
+		*m_ppThis = nullptr;
 	if (!m_bDelete)
 	{
-		if (*m_ppThis == this)
-			*m_ppThis = 0;
 		if (m_pRenderObject)
 		{
 			m_pRenderObject->m_ObjFlags &= ~(FOB_SKINNED);
@@ -3800,7 +3810,7 @@ SSkinningData* CStatObjFoliage::GetSkinningData(const Matrix34& RenderMat34, con
 	int nNumBones = ComputeSkinningTransformationsCount();
 
 	// get data to fill
-	int nSkinningFrameID = gEnv->pRenderer->EF_GetSkinningPoolID();
+	int nSkinningFrameID = passInfo.GetIRenderView()->GetSkinningPoolIndex();
 	int nSkinningList = nSkinningFrameID % 3;
 	int nPrevSkinningList = (nSkinningFrameID - 1) % 3;
 
@@ -3873,7 +3883,7 @@ SSkinningData* CStatObjFoliage::GetSkinningData(const Matrix34& RenderMat34, con
 	// get data to fill
 	assert(jointIndex == nNumBones);
 
-	SSkinningData* pSkinningData = gEnv->pRenderer->EF_CreateSkinningData(jointIndex, false);
+	SSkinningData* pSkinningData = gEnv->pRenderer->EF_CreateSkinningData(passInfo.GetIRenderView(), jointIndex, false);
 	assert(pSkinningData);
 	PREFAST_ASSUME(pSkinningData);
 	memcpy(pSkinningData->pBoneQuatsS, pPose, jointIndex * sizeof(DualQuat));
@@ -4149,3 +4159,5 @@ int CStatObjFoliage::Serialize(TSerialize ser)
 
 	return 1;
 }
+
+#pragma warning(pop)

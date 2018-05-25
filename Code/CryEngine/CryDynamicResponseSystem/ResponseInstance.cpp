@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "ResponseInstance.h"
@@ -107,8 +107,9 @@ void CResponseInstance::ExecuteSegment(CResponseSegment* pSegment)
 
 	if (pSegment)
 	{
+		DRS_DEBUG_DATA_ACTION(AddResponseSegmentStarted(pSegment));
 #if !defined(_RELEASE)
-		const string currentName = string("Response for '") + GetSignalName().GetText() + "', Segment: " + pSegment->GetName() + " CurrentActor:" + (GetCurrentActor() ? GetCurrentActor()->GetName().GetText() : "None");
+		const string currentName = string("Response for '") + GetSignalName().GetText() + "', Segment: '" + pSegment->GetName() + "' CurrentActor: " + (GetCurrentActor() ? GetCurrentActor()->GetName() : "None");
 #endif
 		for (CResponseSegment::ActionsInfo& actionInfo : pSegment->GetActions())
 		{

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -266,7 +266,7 @@ void CServiceNetworkConnection::FlushAndWait()
 	// Wait for the connection to be empty
 	while (IsAlive() && !m_pSendQueue.empty())
 	{
-		Sleep(1);
+		CrySleep(1);
 	}
 
 	// Resume communication layer
@@ -1546,11 +1546,11 @@ CServiceNetwork::CServiceNetwork()
 	, m_bufferID(1)
 {
 	// Create the CVAR
-	m_pVerboseLevel = gEnv->pConsole->RegisterInt("net_debugVerboseLevel", 0, VF_DEV_ONLY);
+	m_pVerboseLevel = REGISTER_INT("net_debugVerboseLevel", 0, VF_DEV_ONLY, "");
 
 	// Send/receive Queue size limits
-	m_pReceiveDataQueueLimit = gEnv->pConsole->RegisterInt("net_receiveQueueSize", 20 << 20, VF_DEV_ONLY);
-	m_pSendDataQueueLimit = gEnv->pConsole->RegisterInt("net_sendQueueSize", 5 << 20, VF_DEV_ONLY);
+	m_pReceiveDataQueueLimit = REGISTER_INT("net_receiveQueueSize", 20 << 20, VF_DEV_ONLY, "");
+	m_pSendDataQueueLimit = REGISTER_INT("net_sendQueueSize", 5 << 20, VF_DEV_ONLY, "");
 
 	// Reinitialize the random number generator with independent seed value
 	m_guidGenerator.Seed((uint32)GetNetworkTime());
@@ -1720,7 +1720,7 @@ void CServiceNetwork::ThreadEntry()
 
 		// Internal delay
 		// TODO: this is guess work right now
-		Sleep(5);
+		CrySleep(5);
 	}
 }
 

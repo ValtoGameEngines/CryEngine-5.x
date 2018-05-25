@@ -1,4 +1,4 @@
-# Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+# Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 import os
 from waflib import Logs, Utils
@@ -51,6 +51,10 @@ def module_extensions_scaleform(ctx, kw, entry_prefix, platform, configuration):
 	elif platform == 'android_arm':
 		has_shipping_lib = True
 		scaleform_lib_subfolder +=  'android-armeabi-v7a'
+		kw[entry_prefix + 'lib']  += ['gfx']
+	elif platform == 'android_arm64':
+		has_shipping_lib = True
+		scaleform_lib_subfolder +=  'android-arm64-v8a'
 		kw[entry_prefix + 'lib']  += ['gfx']
 	elif platform == 'darwin':
 		has_shipping_lib = False

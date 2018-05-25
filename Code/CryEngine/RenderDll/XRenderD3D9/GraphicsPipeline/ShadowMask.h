@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -20,11 +20,12 @@ class CShadowMaskStage : public CGraphicsPipelineStage
 public:
 	CShadowMaskStage();
 
-	virtual void Init() final;
-	virtual void Prepare(CRenderView* pRenderView) final;
+	void Init() final;
+	void Prepare();
+
 	void Execute();
 
-	virtual void OnCVarsChanged(const CCVarUpdateRecorder& cvarUpdater) final;
+	void OnCVarsChanged(const CCVarUpdateRecorder& cvarUpdater) final;
 
 private:
 	std::unique_ptr<ShadowMaskInternal::CSunShadows>        m_pSunShadows;
@@ -36,14 +37,8 @@ private:
 	CTexture*                                               m_pShadowMaskRT;
 	CConstantBufferPtr                                      m_pPerViewConstantBuffer;
 
-	CStandardGraphicsPipeline::SViewInfo                    m_viewInfo[2];
-	int                                                     m_viewInfoCount;
-
-	int                                                     m_samplerComparison;
-	int                                                     m_samplerPointClamp;
-	int                                                     m_samplerPointWrap;
-	int                                                     m_samplerBilinearWrap;
-	int                                                     m_samplerTrilinearBorder;
+	SRenderViewInfo                                         m_viewInfo[2];
+	size_t                                                  m_viewInfoCount;
 
 	int                                                     m_sunShadowPrimitives;
 	int                                                     m_localLightPrimitives;

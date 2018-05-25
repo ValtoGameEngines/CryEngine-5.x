@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   PerfHUD.cpp
@@ -223,7 +223,7 @@ void CPerfHUD::Done()
 //////////////////////////////////////////////////////////////////////////
 void CPerfHUD::Draw()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_SYSTEM);
+	CRY_PROFILE_FUNCTION(PROFILE_SYSTEM);
 
 	if (m_hudState != m_hudLastState)
 	{
@@ -792,7 +792,7 @@ bool CPerfHUD::OnInputEvent(const SInputEvent& rInputEvent)
 						if (!m_hwMouseEnabled)
 						{
 							gEnv->pHardwareMouse->IncrementCounter();
-							gEnv->pHardwareMouse->SetHardwareMousePosition(gEnv->pRenderer->GetWidth() * 0.5f, gEnv->pRenderer->GetHeight() * 0.5f);
+							gEnv->pHardwareMouse->SetHardwareMousePosition(gEnv->pRenderer->GetOverlayWidth() * 0.5f, gEnv->pRenderer->GetOverlayHeight() * 0.5f);
 							m_hwMouseEnabled = true;
 						}
 					}
@@ -842,7 +842,7 @@ void CPerfHUD::SetState(EHudState state)
 		else if (state == eHudInFocus)
 		{
 			gEnv->pHardwareMouse->IncrementCounter();
-			gEnv->pHardwareMouse->SetHardwareMousePosition(gEnv->pRenderer->GetWidth() * 0.5f, gEnv->pRenderer->GetHeight() * 0.5f);
+			gEnv->pHardwareMouse->SetHardwareMousePosition(gEnv->pRenderer->GetOverlayWidth() * 0.5f, gEnv->pRenderer->GetOverlayHeight() * 0.5f);
 			m_hwMouseEnabled = true;
 		}
 
@@ -1412,25 +1412,40 @@ void CRenderStatsWidget::Update()
 
 	switch (gEnv->pRenderer->GetRenderType())
 	{
-	case eRT_OpenGL:
-		pRenderType = "PC - OpenGL";
+#if CRY_PLATFORM_DURANGO
+	case ERenderType::Direct3D11:
+		pRenderType = "Xbox - DX11";
 		break;
-	case eRT_DX11:
+	case ERenderType::Direct3D12:
+		pRenderType = "Xbox - DX12";
+		break;
+#else
+	case ERenderType::Direct3D11:
 		pRenderType = "PC - DX11";
 		break;
-	case eRT_DX12:
+	case ERenderType::Direct3D12:
 		pRenderType = "PC - DX12";
 		break;
-	case eRT_XboxOne:
-		pRenderType = "Xbox One";
+#endif
+#if CRY_PLATFORM_MOBILE
+	case ERenderType::OpenGL:
+		pRenderType = "Mobile - OpenGL";
 		break;
-	case eRT_PS4:
-		pRenderType = "PS4";
+	case ERenderType::Vulkan:
+		pRenderType = "Mobile - Vulkan";
 		break;
-	case eRT_Null:
-		pRenderType = "Null";
+#else
+	case ERenderType::OpenGL:
+		pRenderType = "PC - OpenGL";
 		break;
-	case eRT_Undefined:
+	case ERenderType::Vulkan:
+		pRenderType = "PC - Vulkan";
+		break;
+#endif
+	case ERenderType::GNM:
+		pRenderType = "PS4 - GNM";
+		break;
+	case ERenderType::Undefined:
 	default:
 		assert(0);
 		pRenderType = "Undefined";
@@ -1440,11 +1455,11 @@ void CRenderStatsWidget::Update()
 	const char* buildType = NULL;
 
 	#if defined(_RELEASE)
-	buildType = "RELEASE";
+		buildType = "RELEASE";
 	#elif defined(_DEBUG)
-	buildType = "DEBUG";
+		buildType = "DEBUG";
 	#else
-	buildType = "PROFILE"; //Assume profile?
+		buildType = "PROFILE"; //Assume profile?
 	#endif
 
 	char entryBuffer[CMiniInfoBox::MAX_TEXT_LENGTH];
@@ -1554,9 +1569,9 @@ void CRenderStatsWidget::Update()
 	//
 	// Camera
 	//
-	Matrix33 m = Matrix33(pRenderer->GetCamera().GetMatrix());
+	Matrix33 m = Matrix33(GetISystem()->GetViewCamera().GetMatrix());
 	m_runtimeData.cameraRot = RAD2DEG(Ang3::GetAnglesXYZ(m));
-	m_runtimeData.cameraPos = pRenderer->GetCamera().GetPosition();
+	m_runtimeData.cameraPos = GetISystem()->GetViewCamera().GetPosition();
 
 	//
 	// Polys / Draw Prims
@@ -1611,7 +1626,7 @@ void CRenderStatsWidget::Update()
 	//
 	// Forward Lights
 	//
-	PodArray<CDLight*>* pLights = gEnv->p3DEngine->GetDynamicLightSources();
+	PodArray<SRenderLight*>* pLights = gEnv->p3DEngine->GetDynamicLightSources();
 	const uint32 nDynamicLights = pLights->Count();
 
 	if (nDynamicLights)
@@ -1620,7 +1635,7 @@ void CRenderStatsWidget::Update()
 
 		for (uint32 i = 0; i < nDynamicLights; i++)
 		{
-			CDLight* pLight = pLights->GetAt(i);
+			SRenderLight* pLight = pLights->GetAt(i);
 
 			if (pLight->m_Flags & DLF_CASTSHADOW_MAPS)
 			{
@@ -1660,18 +1675,18 @@ void CRenderStatsWidget::Update()
 		SParticleCounts particleCounts;
 		pParticleMgr->GetCounts(particleCounts);
 
-		m_runtimeData.nParticles = (uint32)particleCounts.ParticlesRendered;
+		m_runtimeData.nParticles = (uint32)particleCounts.particles.rendered;
 
-		cry_sprintf(entryBuffer, "Num Particles Rendered: %d (%u)", (int)particleCounts.ParticlesRendered, m_particlesBudget);
+		cry_sprintf(entryBuffer, "Num Particles Rendered: %d (%u)", (int)particleCounts.particles.rendered, m_particlesBudget);
 
-		if (particleCounts.ParticlesRendered <= m_particlesBudget)
+		if (particleCounts.particles.rendered <= m_particlesBudget)
 		{
 			m_pInfoBox->AddEntry(entryBuffer, CPerfHUD::COL_NORM, CPerfHUD::TEXT_SIZE_NORM);
 		}
 		else
 		{
 			m_pInfoBox->AddEntry(entryBuffer, CPerfHUD::COL_ERROR, CPerfHUD::TEXT_SIZE_NORM);
-			CryPerfHUDWarning(1.f, "Too Many Particles: %d", (int)particleCounts.ParticlesRendered);
+			CryPerfHUDWarning(1.f, "Too Many Particles: %d", (int)particleCounts.particles.rendered);
 		}
 	}
 
@@ -2218,8 +2233,8 @@ void CRenderBatchWidget::Update_ModeBatchStats()
 
 	IRenderer::RNDrawcallsMapMesh& drawCallsInfo = gEnv->pRenderer->GetDrawCallsInfoPerMesh();
 
-	IRenderer::RNDrawcallsMapMeshItor pEnd = drawCallsInfo.end();
-	IRenderer::RNDrawcallsMapMeshItor pItor = drawCallsInfo.begin();
+	auto pEnd = drawCallsInfo.end();
+	auto pItor = drawCallsInfo.begin();
 
 	//Per RenderNode Stats
 	for (; pItor != pEnd; ++pItor)
@@ -2307,7 +2322,7 @@ void CRenderBatchWidget::Update_ModeBatchStats()
 
 		s_particlesBatch.Reset();
 		s_particlesBatch.name = s_strParticles;
-		s_particlesBatch.nBatches = (uint16)CurCounts.EmittersRendered;
+		s_particlesBatch.nBatches = (uint16)CurCounts.emitters.rendered;
 		s_particlesBatch.nInstances = 1;
 		s_particlesBatch.col.set(255, 255, 0, 255);
 

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    CryGame Source File.
@@ -81,7 +81,7 @@ public:
 	virtual bool                     SetCharacter(const char* character, const char* behaviour = NULL);
 	virtual const char*              GetCharacter();
 #endif
-	virtual void                     QueryBodyInfo(SAIBodyInfo& bodyInfo);
+	virtual bool                     QueryBodyInfo(SAIBodyInfo& bodyInfo);
 	virtual bool                     QueryBodyInfo(const SAIBodyInfoQuery& query, SAIBodyInfo& bodyInfo);
 	virtual void                     QueryWeaponInfo(SAIWeaponInfo& weaponInfo);
 	virtual EntityId                 GetLinkedDriverEntityId();
@@ -136,7 +136,6 @@ public:
 	virtual const char*               GetVoiceLibraryName(const bool useForcedDefaultName = false) const;
 	virtual const char*               GetCommunicationConfigName() const;
 	virtual const float               GetFmodCharacterTypeParam() const;
-	virtual const char*               GetBehaviorSelectionTreeName() const;
 	virtual const char*               GetNavigationTypeName() const;
 
 	virtual bool                      PredictProjectileHit(float vel, Vec3& posOut, Vec3& dirOut, float& speedOut, Vec3* pTrajectoryPositions = 0, unsigned int* trajectorySizeInOut = 0, Vec3* pTrajectoryVelocities = 0);
@@ -147,6 +146,8 @@ public:
 	virtual const char*               GetPreviousBehaviorName() const;
 	virtual void                      UpdateMeAlways(bool doUpdateMeAlways);
 	virtual void                      ResendTargetSignalsNextFrame();
+
+	virtual void                      OnActorRemoved();
 	//------------------  ~IAIActorProxy
 
 	void        SetMinFireTime(float fTime) { m_fMinFireTime = fTime; }
@@ -214,7 +215,6 @@ protected:
 	string      m_voiceLibrary;
 	string      m_voiceLibraryWhenForcingTest;
 	float       m_FmodCharacterTypeParam;
-	string      m_behaviorSelectionTreeName;
 	string      m_agentTypeName;
 
 	int8        m_forcedExecute;

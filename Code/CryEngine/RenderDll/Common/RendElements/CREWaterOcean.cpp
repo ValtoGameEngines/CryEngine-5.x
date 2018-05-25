@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include <CryRenderer/RenderElements/CREWaterOcean.h>
@@ -52,33 +52,9 @@ struct SCompiledWaterOcean : NoCopy
 		, m_reserved(0)
 	{}
 
-	~SCompiledWaterOcean()
-	{
-		ReleaseDeviceResources();
-	}
-
-	void ReleaseDeviceResources()
-	{
-		if (m_pMaterialResourceSet)
-		{
-			gRenDev->m_pRT->RC_ReleaseRS(m_pMaterialResourceSet);
-		}
-
-		if (m_pPerInstanceResourceSet)
-		{
-			gRenDev->m_pRT->RC_ReleaseRS(m_pPerInstanceResourceSet);
-		}
-
-		if (m_pPerInstanceCB)
-		{
-			gRenDev->m_pRT->RC_ReleaseCB(m_pPerInstanceCB);
-			m_pPerInstanceCB = nullptr;
-		}
-	}
-
 	CDeviceResourceSetPtr     m_pMaterialResourceSet;
 	CDeviceResourceSetPtr     m_pPerInstanceResourceSet;
-	CConstantBuffer*          m_pPerInstanceCB;
+	CConstantBufferPtr        m_pPerInstanceCB;
 
 	const CDeviceInputStream* m_vertexStreamSet;
 	const CDeviceInputStream* m_indexStreamSet;
@@ -166,10 +142,9 @@ CREWaterOcean::CREWaterOcean()
 
 	if (m_pRenderTarget->m_nIDInPool >= 0)
 	{
-		if ((int)CTexture::s_CustomRT_2D.Num() <= m_pRenderTarget->m_nIDInPool)
-			CTexture::s_CustomRT_2D.Expand(m_pRenderTarget->m_nIDInPool + 1);
+		if ((int)CRendererResources::s_CustomRT_2D.Num() <= m_pRenderTarget->m_nIDInPool)
+			CRendererResources::s_CustomRT_2D.Expand(m_pRenderTarget->m_nIDInPool + 1);
 	}
-	m_pRenderTarget->m_pTarget[0] = CTexture::s_ptexRT_2D;
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -178,21 +153,6 @@ CREWaterOcean::CREWaterOcean()
 CREWaterOcean::~CREWaterOcean()
 {
 	ReleaseOcean();
-}
-
-/////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////////////////////////////////////////////
-
-void CREWaterOcean::Release(bool bForce /*= false*/)
-{
-	// NOTE: ReleaseDeviceResources() must be called here because a device resource set holds the pointer to ocean reflection texture grabbed from SHRenderTarget::GetEnv2D(),
-	//       and it has to be released before SDynTexture::ShutDown() is called. Otherwise a assertion happens in SDynTexture::ReleaseDynamicRT().
-	if (m_pCompiledObject)
-	{
-		m_pCompiledObject->ReleaseDeviceResources();
-	}
-
-	CRenderElement::Release(bForce);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -220,6 +180,73 @@ Vec4* CREWaterOcean::GetDisplaceGrid() const
 SHRenderTarget* CREWaterOcean::GetReflectionRenderTarget()
 {
 	return m_pRenderTarget.get();
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+
+bool CREWaterOcean::RequestVerticesBuffer(SVF_P3F_C4B_T2F** pOutputVertices, uint8** pOutputIndices, uint32 nVerticesCount, uint32 nIndicesCount, uint32 nIndexSizeof)
+{
+	if (!pOutputVertices || !pOutputIndices)
+	{
+		return false;
+	}
+
+	if (!nVerticesCount || !nIndicesCount || (nIndexSizeof != 2 && nIndexSizeof != 4))
+	{
+		pOutputVertices = nullptr;
+		pOutputIndices = nullptr;
+
+		return false;
+	}
+
+	CD3D9Renderer* const RESTRICT_POINTER rd = gcpRendD3D;
+	auto nThreadID = gRenDev->GetMainThreadID();
+	CRY_ASSERT(rd->m_pRT->IsMainThread());
+
+	*pOutputVertices = new SVF_P3F_C4B_T2F[nVerticesCount];
+	*pOutputIndices = new uint8[nIndicesCount * nIndexSizeof];
+
+	return true;
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+
+bool CREWaterOcean::SubmitVerticesBuffer(uint32 nVerticesCount, uint32 nIndicesCount, uint32 nIndexSizeof, SVF_P3F_C4B_T2F* pVertices, uint8* pIndices)
+{
+	if (!pVertices || !pIndices)
+	{
+		SAFE_DELETE_ARRAY(pVertices);
+		SAFE_DELETE_ARRAY(pIndices);
+
+		return false;
+	}
+
+	if (!nVerticesCount || !nIndicesCount || (nIndexSizeof != 2 && nIndexSizeof != 4))
+	{
+		SAFE_DELETE_ARRAY(pVertices);
+		SAFE_DELETE_ARRAY(pIndices);
+
+		return false;
+	}
+
+	CD3D9Renderer* const RESTRICT_POINTER rd = gcpRendD3D;
+	auto nThreadID = gRenDev->GetMainThreadID();
+	CRY_ASSERT(rd->m_pRT->IsMainThread());
+
+	auto& requests = m_verticesUpdateRequests[nThreadID];
+
+	requests.emplace_back();
+	auto& req = requests.back();
+
+	req.nVerticesCount = nVerticesCount;
+	req.pVertices = pVertices;
+	req.nIndicesCount = nIndicesCount;
+	req.pIndices = pIndices;
+	req.nIndexSizeof = nIndexSizeof;
+
+	return true;
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -269,6 +296,30 @@ void CREWaterOcean::Create(uint32 nVerticesCount, SVF_P3F_C4B_T2F* pVertices, ui
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+void CREWaterOcean::CreateVertexAndIndexBuffer(threadID threadId)
+{
+	auto& requests = m_verticesUpdateRequests[threadId];
+
+	if (!requests.empty())
+	{
+		auto& req = requests.back();
+
+		// create vertex and index buffer if update requests exist.
+		Create(req.nVerticesCount, req.pVertices, req.nIndicesCount, req.pIndices, req.nIndexSizeof);
+
+		for (auto& req : requests)
+		{
+			SAFE_DELETE_ARRAY(req.pVertices);
+			SAFE_DELETE_ARRAY(req.pIndices);
+		}
+
+		requests.clear();
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 void CREWaterOcean::FrameUpdate()
 {
 	static bool bInitialize = true;
@@ -285,27 +336,25 @@ void CREWaterOcean::FrameUpdate()
 	{
 		pParams0 = pCurrParams0;
 		pParams1 = pCurrParams1;
-		WaterSimMgr()->Create(1.0, pParams0.x, pParams0.z, 1.0f, 1.0f);
+		WaterSimMgr()->Create(1.0, pParams0.x, 1.0f, 1.0f);
 		bInitialize = false;
 	}
 
 	const int nGridSize = 64;
 
 	// Update Vertex Texture
-	if (!CTexture::IsTextureExist(CTexture::s_ptexWaterOcean))
+	if (!CTexture::IsTextureExist(CRendererResources::s_ptexWaterOcean))
 	{
-		CTexture::s_ptexWaterOcean->Create2DTexture(nGridSize, nGridSize, 1,
-		                                            FT_DONT_RELEASE | FT_NOMIPS | FT_STAGE_UPLOAD,
-		                                            0, eTF_R32G32B32A32F, eTF_R32G32B32A32F);
+		CRendererResources::s_ptexWaterOcean->Create2DTexture(nGridSize, nGridSize, 1, FT_DONT_RELEASE | FT_NOMIPS | FT_STAGE_UPLOAD, 0, eTF_R32G32B32A32F);
 	}
 
-	CTexture* pTexture = CTexture::s_ptexWaterOcean;
+	CTexture* pTexture = CRendererResources::s_ptexWaterOcean;
 
 	// Copy data..
 	if (CTexture::IsTextureExist(pTexture))
 	{
 		const float fUpdateTime = 0.125f * gEnv->pTimer->GetCurrTime();// / clamp_tpl<float>(pParams1.x, 0.55f, 1.0f);
-		int nFrameID = gRenDev->GetFrameID();
+		int nFrameID = gRenDev->GetRenderFrameID();
 		void* pRawPtr = NULL;
 		WaterSimMgr()->Update(nFrameID, fUpdateTime, false, pRawPtr);
 
@@ -317,7 +366,7 @@ void CREWaterOcean::FrameUpdate()
 		const uint32 width = nGridSize;
 		const uint32 height = nGridSize;
 
-		STALL_PROFILER("update subresource")
+		CRY_PROFILE_REGION_WAITING(PROFILE_RENDERER, "update subresource");
 
 		CDeviceTexture * pDevTex = pTexture->GetDevTexture();
 		pDevTex->UploadFromStagingResource(0, [=](void* pData, uint32 rowPitch, uint32 slicePitch)
@@ -348,7 +397,7 @@ void CREWaterOcean::ReleaseOcean()
 /////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool CREWaterOcean::Compile(CRenderObject* pObj)
+bool CREWaterOcean::Compile(CRenderObject* pObj,CRenderView *pRenderView, bool updateInstanceDataOnly)
 {
 	if (!m_pCompiledObject)
 	{
@@ -359,8 +408,7 @@ bool CREWaterOcean::Compile(CRenderObject* pObj)
 	cro.m_bValid = 0;
 
 	CD3D9Renderer* const RESTRICT_POINTER rd = gcpRendD3D;
-	SRenderPipeline& rp(rd->m_RP);
-	auto nThreadID = rp.m_nProcessThreadID;
+	auto nThreadID = gRenDev->GetRenderThreadID();
 	CRY_ASSERT(rd->m_pRT->IsRenderThread());
 	auto* pWaterStage = rd->GetGraphicsPipeline().GetWaterStage();
 
@@ -377,12 +425,15 @@ bool CREWaterOcean::Compile(CRenderObject* pObj)
 
 	if (!pShader
 	    || pShader->m_eShaderType != eST_Water
+	    || (shaderItem.m_nPreprocessFlags & (FB_WATER_REFL | FB_WATER_CAUSTIC)) != 0
 	    || !pResources
 	    || !pResources->m_pCompiledResourceSet
 	    || !pResources->m_pipelineStateCache)
 	{
 		return false;
 	}
+
+	CreateVertexAndIndexBuffer(nThreadID);
 
 	if (!m_nVerticesCount
 	    || !m_nIndicesCount
@@ -399,10 +450,10 @@ bool CREWaterOcean::Compile(CRenderObject* pObj)
 	}
 
 	N3DEngineCommon::SOceanInfo& OceanInfo = gRenDev->m_p3DEngineCommon.m_OceanInfo;
-	const bool bAboveWater = gRenDev->GetRCamera().vOrigin.z > OceanInfo.m_fWaterLevel;
+	const bool bAboveWater = pRenderView->GetCamera(CCamera::eEye_Left).GetPosition().z > OceanInfo.m_fWaterLevel;
 	cro.m_bAboveWater = bAboveWater ? 1 : 0;
 
-	const EVertexFormat vertexFormat = eVF_P3F_C4B_T2F;
+	const InputLayoutHandle vertexFormat =  EDefaultInputLayouts::P3F_C4B_T2F;
 
 	// need to check mesh is ready for tessellation because m_bUseWaterTessHW is enabled but CREWaterOcean::Create() isn't called yet.
 	const bool bTessellationMesh = ((m_nIndicesCount % 3) == 0);
@@ -458,7 +509,7 @@ bool CREWaterOcean::Compile(CRenderObject* pObj)
 	psoDescription.objectRuntimeMask |= g_HWSR_MaskBit[HWSR_COMPUTE_SKINNING];
 
 	// fog related runtime mask, this changes eventual PSOs.
-	const bool bFog = rp.m_TI[nThreadID].m_FS.m_bEnable;
+	const bool bFog = pRenderView->IsGlobalFogEnabled();
 	const bool bVolumetricFog = (rd->m_bVolumetricFogEnabled != 0);
 	psoDescription.objectRuntimeMask |= bFog ? g_HWSR_MaskBit[HWSR_FOG] : 0;
 	psoDescription.objectRuntimeMask |= bVolumetricFog ? g_HWSR_MaskBit[HWSR_VOLUMETRIC_FOG] : 0;
@@ -497,7 +548,7 @@ bool CREWaterOcean::Compile(CRenderObject* pObj)
 	CRY_ASSERT(cro.m_indexStreamSet);
 
 	// Issue the barriers on the core command-list, which executes directly before the Draw()s in multi-threaded jobs
-	PrepareForUse(cro, false, *(CCryDeviceWrapper::GetObjectFactory().GetCoreCommandList()));
+	PrepareForUse(cro, false, GetDeviceObjectFactory().GetCoreCommandList());
 
 	cro.m_bValid = 1;
 
@@ -517,7 +568,7 @@ void CREWaterOcean::DrawToCommandList(CRenderObject* pObj, const struct SGraphic
 #if defined(ENABLE_PROFILING_CODE)
 	if (!cobj.m_bValid || !cobj.m_pMaterialResourceSet->IsValid())
 	{
-		CryInterlockedIncrement(&SPipeStat::Out()->m_nIncompleteCompiledObjects);
+		CryInterlockedIncrement(&SRenderStatistics::Write().m_nIncompleteCompiledObjects);
 	}
 #endif
 
@@ -538,8 +589,8 @@ void CREWaterOcean::DrawToCommandList(CRenderObject* pObj, const struct SGraphic
 
 	// Set states
 	commandInterface.SetPipelineState(pPso.get());
-	commandInterface.SetResources(EResourceLayoutSlot_PerMaterialRS, cobj.m_pMaterialResourceSet.get(), EShaderStage_AllWithoutCompute);
-	commandInterface.SetResources(EResourceLayoutSlot_PerInstanceExtraRS, cobj.m_pPerInstanceResourceSet.get(), EShaderStage_AllWithoutCompute);
+	commandInterface.SetResources(EResourceLayoutSlot_PerMaterialRS, cobj.m_pMaterialResourceSet.get());
+	commandInterface.SetResources(EResourceLayoutSlot_PerInstanceExtraRS, cobj.m_pPerInstanceResourceSet.get());
 
 	EShaderStage perInstanceCBShaderStages =
 	  cobj.m_bHasTessellation
@@ -573,10 +624,10 @@ void CREWaterOcean::PrepareForUse(water::SCompiledWaterOcean& compiledObj, bool 
 
 	if (!bInstanceOnly)
 	{
-		pCommandInterface->PrepareResourcesForUse(EResourceLayoutSlot_PerMaterialRS, compiledObj.m_pMaterialResourceSet.get(), EShaderStage_AllWithoutCompute);
+		pCommandInterface->PrepareResourcesForUse(EResourceLayoutSlot_PerMaterialRS, compiledObj.m_pMaterialResourceSet.get());
 	}
 
-	pCommandInterface->PrepareResourcesForUse(EResourceLayoutSlot_PerInstanceExtraRS, compiledObj.m_pPerInstanceResourceSet.get(), EShaderStage_AllWithoutCompute);
+	pCommandInterface->PrepareResourcesForUse(EResourceLayoutSlot_PerInstanceExtraRS, compiledObj.m_pPerInstanceResourceSet.get());
 
 	EShaderStage perInstanceCBShaderStages =
 	  compiledObj.m_bHasTessellation
@@ -604,13 +655,13 @@ void CREWaterOcean::PrepareForUse(water::SCompiledWaterOcean& compiledObj, bool 
 
 void CREWaterOcean::UpdatePerInstanceResourceSet(water::SCompiledWaterOcean& RESTRICT_REFERENCE compiledObj, const SWaterOceanParam& oceanParam, const CWaterStage& waterStage)
 {
-	auto pPerInstanceResource = CCryDeviceWrapper::GetObjectFactory().CloneResourceSet(waterStage.GetDefaultPerInstanceResourceSet());
+	CDeviceResourceSetDesc perInstanceResources(waterStage.GetDefaultPerInstanceResources(), nullptr, nullptr);
 
-	auto* pDisplacementTex = (oceanParam.bWaterOceanFFT) ? CTexture::s_ptexWaterOcean : CTexture::s_ptexBlack;
-	pPerInstanceResource->SetTexture(water::ePerInstanceTexture_OceanDisplacement, pDisplacementTex, SResourceView::DefaultView, EShaderStage_Pixel | EShaderStage_Vertex | EShaderStage_Domain);
+	auto* pDisplacementTex = (oceanParam.bWaterOceanFFT) ? CRendererResources::s_ptexWaterOcean : CRendererResources::s_ptexBlack;
+	perInstanceResources.SetTexture(water::ePerInstanceTexture_OceanDisplacement, pDisplacementTex, EDefaultResourceViews::Default, EShaderStage_Pixel | EShaderStage_Vertex | EShaderStage_Domain);
 
 	// get ocean reflection texture from render target.
-	auto* pReflectionTex = CTexture::s_ptexBlack;
+	auto* pReflectionTex = CRendererResources::s_ptexBlack;
 	if (m_pRenderTarget)
 	{
 		SEnvTexture* pEnvTex = m_pRenderTarget->GetEnv2D();
@@ -619,10 +670,10 @@ void CREWaterOcean::UpdatePerInstanceResourceSet(water::SCompiledWaterOcean& RES
 			pReflectionTex = (CTexture*)pEnvTex->m_pTex->GetTexture();
 		}
 	}
-	pPerInstanceResource->SetTexture(water::ePerInstanceTexture_OceanReflection, pReflectionTex, SResourceView::DefaultView, EShaderStage_Pixel);
+	perInstanceResources.SetTexture(water::ePerInstanceTexture_OceanReflection, pReflectionTex, EDefaultResourceViews::Default, EShaderStage_Pixel);
 
-	pPerInstanceResource->Build();
-	compiledObj.m_pPerInstanceResourceSet = pPerInstanceResource;
+	compiledObj.m_pPerInstanceResourceSet = GetDeviceObjectFactory().CreateResourceSet(CDeviceResourceSet::EFlags_ForceSetAllState);
+	compiledObj.m_pPerInstanceResourceSet->Update(perInstanceResources);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -634,7 +685,7 @@ void CREWaterOcean::UpdatePerInstanceCB(water::SCompiledWaterOcean& RESTRICT_REF
 
 	if (!compiledObj.m_pPerInstanceCB)
 	{
-		compiledObj.m_pPerInstanceCB = rd->m_DevBufMan.CreateConstantBufferRaw(sizeof(water::SPerInstanceConstantBuffer));
+		compiledObj.m_pPerInstanceCB = rd->m_DevBufMan.CreateConstantBuffer(sizeof(water::SPerInstanceConstantBuffer));
 	}
 
 	if (!compiledObj.m_pPerInstanceCB)
@@ -689,7 +740,7 @@ void CREWaterOcean::UpdateVertex(water::SCompiledWaterOcean& compiledObj, int32 
 
 		// fill geomInfo.
 		geomInfo.primitiveType = bTessellation ? ept3ControlPointPatchList : primType;
-		geomInfo.eVertFormat = eVF_P3F_C4B_T2F;
+		geomInfo.eVertFormat = EDefaultInputLayouts::P3F_C4B_T2F;
 		geomInfo.nFirstIndex = 0;
 		geomInfo.nNumIndices = m_nIndicesCount;
 		geomInfo.nFirstVertex = 0;
@@ -706,13 +757,13 @@ void CREWaterOcean::UpdateVertex(water::SCompiledWaterOcean& compiledObj, int32 
 	// Fill stream pointers.
 	if (geomInfo.indexStream.hStream != 0)
 	{
-		compiledObj.m_indexStreamSet = CCryDeviceWrapper::GetObjectFactory().CreateIndexStreamSet(&geomInfo.indexStream);
+		compiledObj.m_indexStreamSet = GetDeviceObjectFactory().CreateIndexStreamSet(&geomInfo.indexStream);
 	}
 	else
 	{
 		compiledObj.m_indexStreamSet = nullptr;
 	}
-	compiledObj.m_vertexStreamSet = CCryDeviceWrapper::GetObjectFactory().CreateVertexStreamSet(geomInfo.nNumVertexStreams, &geomInfo.vertexStreams[0]);
+	compiledObj.m_vertexStreamSet = GetDeviceObjectFactory().CreateVertexStreamSet(geomInfo.nNumVertexStreams, &geomInfo.vertexStreams[0]);
 	compiledObj.m_nNumIndices = geomInfo.nNumIndices;
 	compiledObj.m_nStartIndex = geomInfo.nFirstIndex;
 	compiledObj.m_nVerticesCount = geomInfo.nNumVertices;

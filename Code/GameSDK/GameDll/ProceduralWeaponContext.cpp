@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ProceduralWeaponContext.h"
@@ -97,7 +97,7 @@ void CProceduralWeaponAnimationContext::Initialize(IScope* pScope)
 	ICharacterInstance* pCharacter = m_pScope->GetCharInst();
 	if (pCharacter)
 	{
-		CryCreateClassInstance("AnimationPoseModifier_OperatorQueue", m_pPoseModifier);
+		CryCreateClassInstanceForInterface(cryiidof<IAnimationOperatorQueue>(), m_pPoseModifier);
 		m_params = SParams(pCharacter->GetIDefaultSkeleton());
 	}
 }

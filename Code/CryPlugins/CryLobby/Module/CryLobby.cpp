@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -24,6 +24,9 @@
 #include "INetworkPrivate.h"
 #include "Protocol/FrameTypes.h"
 #include <CryMemory/BucketAllocatorImpl.h>
+
+#include <CryMath/Random.h>
+#include <CryCore/Platform/platform_impl.inl>
 
 const int LOBBY_KEEP_ALIVE_INTERVAL = (CryLobbySendInterval + 100);
 const int LOBBY_FORCE_DISCONNECT_TIMER = 99999999;
@@ -58,7 +61,37 @@ ICryLobby* CCryLobby::m_pLobby = NULL;
 	#define SECURE_NET_LOG NetLog
 #endif
 
+CRYREGISTER_SINGLETON_CLASS(CCryLobby)
+
 CCryLobby::CCryLobby()
+{
+	gEnv->pLobby = this;
+}
+
+CCryLobby::~CCryLobby()
+{
+	int a;
+
+#if NETWORK_HOST_MIGRATION
+	RemoveHostMigrationEventListener(this);
+#endif
+
+	for (a = 0; a < eCLS_NumServices; a++)
+	{
+		InternalSocketDie(ECryLobbyService(a));
+	}
+
+#if ENCRYPT_LOBBY_PACKETS
+	if (gEnv->pNetwork)
+	{
+		gEnv->pNetwork->EndCipher(m_cipher);
+	}
+#endif
+
+	m_pLobby = NULL;
+}
+
+bool CCryLobby::Initialize(SSystemGlobalEnvironment& env, const SSystemInitParams& initParams)
 {
 	if (m_pLobby)
 	{
@@ -119,29 +152,8 @@ CCryLobby::CCryLobby()
 		m_cipher = gEnv->pNetwork->BeginCipher((const uint8*)g_lobbyEncryptionKey, 32);
 	}
 #endif
-}
 
-CCryLobby::~CCryLobby()
-{
-	int a;
-
-#if NETWORK_HOST_MIGRATION
-	RemoveHostMigrationEventListener(this);
-#endif
-
-	for (a = 0; a < eCLS_NumServices; a++)
-	{
-		InternalSocketDie(ECryLobbyService(a));
-	}
-
-#if ENCRYPT_LOBBY_PACKETS
-	if (gEnv->pNetwork)
-	{
-		gEnv->pNetwork->EndCipher(m_cipher);
-	}
-#endif
-
-	m_pLobby = NULL;
+	return true;
 }
 
 ECryLobbyService CCryLobby::SetLobbyService(ECryLobbyService service)
@@ -682,9 +694,7 @@ void CCryLobby::InternalSocketCreate(ECryLobbyService service)
 		if (!pSocketService->m_socket)
 		{
 			NetLog("[Lobby] Failed to create socket on port %u", port);
-#ifndef IS_EAAS // For EaaS, some users want to locally run a dedi server + client for testing, so by default we make this work independent on the start order
 			if ((gEnv->IsDedicated() == false) || ((gEnv->IsClient() == true) && (gEnv->bServer == false)))
-#endif
 			{
 				// If we are not a dedicated server (Which should always use the port specified in the cfg file) and we fail to create the socket
 				// try to create on some different ports.

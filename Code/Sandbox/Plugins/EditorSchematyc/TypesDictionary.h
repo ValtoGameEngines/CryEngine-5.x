@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -9,7 +9,7 @@
 #include <QString>
 #include <QIcon>
 
-#include <Schematyc/FundamentalTypes.h>
+#include <CrySchematyc/FundamentalTypes.h>
 
 namespace Schematyc {
 
@@ -79,3 +79,4 @@ private:
 };
 
 }
+

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -199,27 +199,25 @@ void IDebugCallStack::FatalError(const char* description)
 	WriteLineToLog(description);
 
 #if !defined(_RELEASE) && !defined(CRY_PLATFORM_WINDOWS)
-	IPlatformOS* pOS = gEnv->pSystem->GetPlatformOS();
-	bool bShowDebugScreen = pOS && g_cvars.sys_no_crash_dialog == 0;
+	bool bShowDebugScreen = g_cvars.sys_no_crash_dialog == 0;
 	// showing the debug screen is not safe when not called from mainthread
 	// it normally leads to a infinity recursion followed by a stackoverflow, preventing
 	// useful callstacks, thus they are disabled
 	bShowDebugScreen = bShowDebugScreen && gEnv->mMainThreadId == CryGetCurrentThreadId();
 	if (bShowDebugScreen)
 	{
-		pOS->DebugMessageBox(description, "CryEngine Fatal Error");
+		CryMessageBox(description, "CryEngine Fatal Error", eMB_Error);
 	}
 #endif
 
 #if CRY_PLATFORM_WINDOWS || !defined(_RELEASE)
-	int* p = 0x0;
-	PREFAST_SUPPRESS_WARNING(6011) * p = 1; // we're intentionally crashing here
+	__debugbreak(); // We're intentionally stopping execution and crashing here.
 #endif
 }
 
 void IDebugCallStack::WriteLineToLog(const char* format, ...)
 {
-	CDebugAllowFileAccess allowFileAccess;
+	SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
 
 	if (gEnv && gEnv->pLog)
 	{
@@ -250,14 +248,10 @@ void IDebugCallStack::Screenshot(const char* szFileName)
 	static int g_numScreenshots = 0;
 	if (gEnv && gEnv->pRenderer && !g_numScreenshots++)
 	{
-		if (gEnv->pRenderer->ScreenShot(szFileName, 0, eScreenShotMode_AppCrash))
-		{
-			WriteLineToLog("Successfully created screenshot.");
-		}
-		else
-		{
-			WriteLineToLog("Error creating screenshot.");
-		}
+		const bool result = gEnv->pRenderer->ScreenShot(szFileName);
+		WriteLineToLog(result ?
+			"Successfully created screenshot." :
+			"Error creating screenshot.");
 	}
 	else
 	{
