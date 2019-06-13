@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
  -------------------------------------------------------------------------
@@ -14,6 +14,8 @@
 #include "PrefabManager.h"
 #include "RuntimePrefab.h"
 #include <CryCore/Base64.h>
+#include <CryRenderer/IRenderer.h>
+#include <Cry3DEngine/IRenderNode.h>
 
 using namespace CryGame;
  

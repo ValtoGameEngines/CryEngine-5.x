@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    ---------------------------------------------------------------------
@@ -61,16 +61,7 @@ struct SEntityInterest
 	bool           SupportsActorClass(const char* szActorClass) const;
 	bool           IsValid() const     { return m_entityId > 0; }
 
-	void           Invalidate()
-	{
-		IEntity* pEntity = GetEntity();
-		if (pEntity && gAIEnv.pSmartObjectManager)
-		{
-			gAIEnv.pSmartObjectManager->RemoveSmartObjectState(pEntity, "Registered");
-		}
-		m_entityId = 0;
-		m_sActionName = string();
-	}
+	void           Invalidate();
 
 	void Serialize(TSerialize ser)
 	{
@@ -155,10 +146,9 @@ public:
 	virtual void OnSpawn(IEntity* pEntity, SEntitySpawnParams&);
 	virtual bool OnRemove(IEntity* pEntity);
 	virtual void OnReused(IEntity* pEntity, SEntitySpawnParams& entitySpawnParams) {}
-	virtual void OnEvent(IEntity* pEntity, SEntityEvent& entityEvent)              {}
 
 	// IEntityEventListener
-	virtual void OnEntityEvent(IEntity* pEntity, SEntityEvent& event);
+	virtual void OnEntityEvent(IEntity* pEntity, const SEntityEvent& event);
 	// End of IEntityEventListener
 
 	// Expose for DebugDraw

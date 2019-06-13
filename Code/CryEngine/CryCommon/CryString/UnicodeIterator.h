@@ -1,4 +1,6 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
+//! \cond INTERNAL
 
 #pragma once
 #include "UnicodeBinding.h"
@@ -200,6 +202,9 @@ struct SBaseIterators<BaseIterator, false>
 	type it;
 
 	SBaseIterators(const BaseIterator& begin, const BaseIterator& end)
+		: it(begin) {}
+
+	SBaseIterators(const BaseIterator& begin)
 		: it(begin) {}
 
 	SBaseIterators(const SBaseIterators& other)
@@ -418,7 +423,7 @@ public:
 	//! This can only be used for unsafe iterators.
 	template<typename IteratorType>
 	CIterator(const IteratorType& it, typename Detail::SRequire<!Safe&& Detail::is_convertible<IteratorType, BaseIterator>::value, IteratorType>::type* = 0)
-		: its(static_cast<const BaseIterator&>(it), *(const BaseIterator*)0)
+		: its(static_cast<const BaseIterator&>(it))
 	{
 		sink.Clear();
 	}
@@ -577,3 +582,5 @@ inline typename Detail::SIteratorSpecializer<StringType>::type MakeIterator(cons
 	return typename Detail::SIteratorSpecializer<StringType>::type(str.begin(), str.end());
 }
 }
+
+//! \endcond

@@ -1,27 +1,24 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "LevelSystem.h"
-#include "ActorSystem.h"
 #include <CryMovie/IMovieSystem.h>
-#include "CryAction.h"
+#include <CryRenderer/IRenderAuxGeom.h>
 #include <CryGame/IGameTokens.h>
-#include <CryAudio/Dialog/IDialogSystem.h>
 #include "TimeOfDayScheduler.h"
 #include "IGameRulesSystem.h"
 #include <CryAction/IMaterialEffects.h>
 #include "IPlayerProfiles.h"
-#include <CryLiveCreate/ILiveCreateHost.h>
 #include <CrySystem/File/IResourceManager.h>
-#include <CrySystem/ILocalizationManager.h>
 #include "Network/GameContext.h"
 #include "ICooperativeAnimationManager.h"
 #include <CryPhysics/IDeferredCollisionEvent.h>
 #include <CryCore/Platform/IPlatformOS.h>
 #include <CryAction/ICustomActions.h>
+#include <CrySystem/CryVersion.h>
 #include "CustomEvents/CustomEventsManager.h"
+#include "GameVolumes/GameVolumesManager.h"
 
-#include <CryGame/IGameVolumes.h>
 
 #define LOCAL_WARNING(cond, msg) do { if (!(cond)) { CryWarning(VALIDATOR_MODULE_GAME, VALIDATOR_WARNING, "%s", msg); } } while (0)
 //#define LOCAL_WARNING(cond, msg)  CRY_ASSERT_MESSAGE(cond, msg)
@@ -204,7 +201,7 @@ void CLevelRotation::AddGameMode(int level, const char* gameMode)
 //------------------------------------------------------------------------
 void CLevelRotation::AddGameMode(SLevelRotationEntry& level, const char* gameMode)
 {
-	const char* pActualGameModeName = CCryAction::GetCryAction()->GetIGameRulesSystem()->GetGameRulesName(gameMode);
+	const char* pActualGameModeName = gEnv->pGameFramework->GetIGameRulesSystem() ?  gEnv->pGameFramework->GetIGameRulesSystem()->GetGameRulesName(gameMode) : nullptr;
 	if (pActualGameModeName)
 	{
 		int idx = level.gameRulesNames.size();
@@ -449,9 +446,9 @@ void CLevelRotation::ChangeLevel(IConsoleCmdArgs* pArgs)
 	const char* nextGameRules = GetNextGameRules();
 	if (nextGameRules && nextGameRules[0])
 		ctx.gameRules = nextGameRules;
-	else if (IEntity* pEntity = CCryAction::GetCryAction()->GetIGameRulesSystem()->GetCurrentGameRulesEntity())
+	else if (IEntity* pEntity = gEnv->pGameFramework->GetIGameRulesSystem() ? gEnv->pGameFramework->GetIGameRulesSystem()->GetCurrentGameRulesEntity() : nullptr)
 		ctx.gameRules = pEntity->GetClass()->GetName();
-	else if (ILevelInfo* pLevelInfo = CCryAction::GetCryAction()->GetILevelSystem()->GetLevelInfo(GetNextLevel()))
+	else if (ILevelInfo* pLevelInfo = gEnv->pGameFramework->GetILevelSystem()->GetLevelInfo(GetNextLevel()))
 		ctx.gameRules = pLevelInfo->GetDefaultGameType()->name;
 
 	ctx.levelName = GetNextLevel();
@@ -647,6 +644,20 @@ bool CLevelInfo::SupportsGameType(const char* gameTypeName) const
 const char* CLevelInfo::GetDisplayName() const
 {
 	return m_levelDisplayName.c_str();
+}
+
+//------------------------------------------------------------------------
+size_t CLevelInfo::GetGameRules(const char** pszGameRules, size_t numGameRules) const
+{
+	if (pszGameRules == nullptr)
+		return 0;
+
+	numGameRules = std::min(m_gamerules.size(), numGameRules);
+	for (size_t i = 0; i < numGameRules; ++i)
+	{
+		pszGameRules[i] = m_gamerules[i].c_str();
+	}
+	return numGameRules;
 }
 
 //------------------------------------------------------------------------
@@ -865,12 +876,12 @@ struct SLevelNameAutoComplete : public IConsoleArgumentAutoComplete
 SLevelNameAutoComplete g_LevelNameAutoComplete;
 
 //------------------------------------------------------------------------
-CLevelSystem::CLevelSystem(ISystem* pSystem, const char* levelsFolder)
+CLevelSystem::CLevelSystem(ISystem* pSystem)
 	: m_pSystem(pSystem),
 	m_pCurrentLevelInfo(nullptr),
 	m_pLoadingLevelInfo(nullptr)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	CRY_ASSERT(pSystem);
 
 	//Load user defined level types
@@ -889,7 +900,7 @@ CLevelSystem::CLevelSystem(ISystem* pSystem, const char* levelsFolder)
 	}
 
 	//if (!gEnv->IsEditor())
-	Rescan(levelsFolder, ILevelSystem::TAG_MAIN);
+	Rescan("", ILevelSystem::TAG_MAIN);
 
 	// register with system to get loading progress events
 	m_pSystem->SetLoadingProgressListener(this);
@@ -913,6 +924,9 @@ CLevelSystem::~CLevelSystem()
 {
 	// register with system to get loading progress events
 	m_pSystem->SetLoadingProgressListener(0);
+
+	// clean up the listeners
+	stl::free_container(m_listeners);
 }
 
 //------------------------------------------------------------------------
@@ -925,17 +939,15 @@ void CLevelSystem::Rescan(const char* levelsFolder, const uint32 tag)
 			if (m_pSystem->IsMODValid(pModArg->GetValue()))
 			{
 				m_levelsFolder.Format("Mods/%s/%s/%s", pModArg->GetValue(), PathUtil::GetGameFolder().c_str(), levelsFolder);
-				ScanFolder(0, true, tag);
+				ScanFolder(m_levelsFolder, true, tag);
 			}
 		}
 
 		m_levelsFolder = levelsFolder;
 	}
 
-	CRY_ASSERT(!m_levelsFolder.empty());
-
 	m_levelInfos.reserve(64);
-	ScanFolder(0, false, tag);
+	ScanFolder(m_levelsFolder, false, tag);
 
 	g_LevelNameAutoComplete.levels.clear();
 	for (int i = 0; i < (int)m_levelInfos.size(); i++)
@@ -976,70 +988,51 @@ void CLevelSystem::LoadRotation()
 }
 
 //------------------------------------------------------------------------
-void CLevelSystem::ScanFolder(const char* subfolder, bool modFolder, const uint32 tag)
+void CLevelSystem::ScanFolder(const string& rootFolder, bool modFolder, const uint32 tag)
 {
-	//CryLog("[DLC] ScanFolder:'%s' tag:'%.4s'", subfolder, (char*)&tag);
-	string folder;
-	if (subfolder && subfolder[0])
-		folder = subfolder;
-
-	string search(m_levelsFolder);
-	if (!folder.empty())
-		search += string("/") + folder;
-	search += "/*.*";
-
-	ICryPak* pPak = gEnv->pCryPak;
+	string searchedPath = PathUtil::Make(rootFolder, "*.*");
 
 	_finddata_t fd;
 	intptr_t handle = 0;
 
-	//CryLog("[DLC] ScanFolder: search:'%s'", search.c_str());
-	// --kenzo
-	// allow this find first to actually touch the file system
-	// (causes small overhead but with minimal amount of levels this should only be around 150ms on actual DVD Emu)
-	handle = pPak->FindFirst(search.c_str(), &fd, 0, true);
+	handle = gEnv->pCryPak->FindFirst(searchedPath.c_str(), &fd, 0, true);
 
 	if (handle > -1)
 	{
 		do
 		{
-			if (!(fd.attrib & _A_SUBDIR) || !strcmp(fd.name, ".") || !strcmp(fd.name, ".."))
+			if (!strcmp(fd.name, ".") || !strcmp(fd.name, ".."))
+			{
+				continue;
+			}
+
+			if (fd.attrib & _A_SUBDIR)
+			{
+				if (!rootFolder.empty())
+				{
+					string nextRootFolder = PathUtil::Make(rootFolder, fd.name);
+					ScanFolder(nextRootFolder, modFolder, tag);
+				}
+				else
+				{
+					ScanFolder(fd.name, modFolder, tag);
+				}
+
+				continue;
+			}
+
+			const char* szFileName = PathUtil::GetFile(fd.name);
+			if (stricmp(szFileName, "level.pak"))
 			{
 				continue;
 			}
 
 			CLevelInfo levelInfo;
 
-			string levelFolder = (folder.empty() ? "" : (folder + "/")) + string(fd.name);
-			string levelPath = m_levelsFolder + "/" + levelFolder;
-			string paks = levelPath + string("/*.pak");
+			levelInfo.m_levelPaks = PathUtil::Make(rootFolder, fd.name);
+			levelInfo.m_levelPath = rootFolder;
+			levelInfo.m_levelName = PathUtil::GetFile(levelInfo.m_levelPath);
 
-			//CryLog("[DLC] ScanFolder fd:'%s' levelPath:'%s'", fd.name, levelPath.c_str());
-
-			const string levelPakName = levelPath + "/level.pak";
-			const string levelXmlName = levelPath + "/" + fd.name + ".xml";
-#if 0
-			if (pPak->IsFileExist(levelPakName.c_str(), ICryPak::eFileLocation_OnDisk))
-			{
-				CryLog("[DLC] %s found on disk", levelPakName.c_str());
-			}
-			if (pPak->IsFileExist(levelXmlName.c_str()))
-			{
-				CryLog("[DLC] %s found", levelXmlName.c_str());
-			}
-#endif
-
-			if (!pPak->IsFileExist(levelPakName.c_str(), ICryPak::eFileLocation_OnDisk) && !pPak->IsFileExist(levelXmlName.c_str()))
-			{
-				ScanFolder(levelFolder.c_str(), modFolder, tag);
-				continue;
-			}
-
-			//CryLog("[DLC] ScanFolder adding level:'%s'", levelPath.c_str());
-			levelInfo.m_levelPath = levelPath;
-			levelInfo.m_levelPaks = paks;
-			levelInfo.m_levelName = levelFolder;
-			levelInfo.m_levelName = UnifyName(levelInfo.m_levelName);
 			levelInfo.m_isModLevel = modFolder;
 			levelInfo.m_scanTag = tag;
 			levelInfo.m_levelTag = ILevelSystem::TAG_UNKNOWN;
@@ -1047,7 +1040,7 @@ void CLevelSystem::ScanFolder(const char* subfolder, bool modFolder, const uint3
 			SwapEndian(levelInfo.m_scanTag, eBigEndian);
 			SwapEndian(levelInfo.m_levelTag, eBigEndian);
 
-			CLevelInfo* pExistingInfo = GetLevelInfoInternal(levelInfo.m_levelName);
+			CLevelInfo* pExistingInfo = GetLevelInfoByPathInternal(levelInfo.m_levelPath);
 			if (pExistingInfo && pExistingInfo->MetadataLoaded() == false)
 			{
 				//Reload metadata if it failed to load
@@ -1068,9 +1061,9 @@ void CLevelSystem::ScanFolder(const char* subfolder, bool modFolder, const uint3
 			}
 
 		}
-		while (pPak->FindNext(handle, &fd) >= 0);
+		while (gEnv->pCryPak->FindNext(handle, &fd) >= 0);
 
-		pPak->FindClose(handle);
+		gEnv->pCryPak->FindClose(handle);
 	}
 }
 
@@ -1106,36 +1099,35 @@ ILevelInfo* CLevelSystem::GetLevelInfo(const char* levelName)
 //------------------------------------------------------------------------
 CLevelInfo* CLevelSystem::GetLevelInfoInternal(const char* levelName)
 {
-	// If level not found by full name try comparing with only filename
+	if (CLevelInfo* pLevelInfo = GetLevelInfoByPathInternal(levelName))
+	{
+		return pLevelInfo;
+	}
+
+	// Try stripping out the folder to find the raw level name
+	string sLevelName = PathUtil::GetFile(levelName);
 	for (std::vector<CLevelInfo>::iterator it = m_levelInfos.begin(); it != m_levelInfos.end(); ++it)
 	{
-		if (!strcmpi(it->GetName(), levelName))
+		if (!strcmpi(it->GetName(), sLevelName))
 		{
 			return &(*it);
 		}
 	}
 
-	//////////////////////////////////////////////////////////////////////////
+	return nullptr;
+}
+
+//------------------------------------------------------------------------
+CLevelInfo* CLevelSystem::GetLevelInfoByPathInternal(const char* szLevelPath)
+{
 	for (std::vector<CLevelInfo>::iterator it = m_levelInfos.begin(); it != m_levelInfos.end(); ++it)
 	{
-		if (!strcmpi(PathUtil::GetFileName(it->GetName()), levelName))
+		if (!strcmpi(it->GetPath(), szLevelPath))
 		{
 			return &(*it);
 		}
 	}
-
-	// Try stripping out the folder to find the raw filename
-	string sLevelName(levelName);
-	size_t lastSlash = sLevelName.find_last_of('\\');
-	if (lastSlash == string::npos)
-		lastSlash = sLevelName.find_last_of('/');
-	if (lastSlash != string::npos)
-	{
-		sLevelName = sLevelName.substr(lastSlash + 1, sLevelName.size() - lastSlash - 1);
-		return GetLevelInfoInternal(sLevelName.c_str());
-	}
-
-	return 0;
+	return nullptr;
 }
 
 //------------------------------------------------------------------------
@@ -1183,6 +1175,434 @@ public:
 };
 #endif
 
+
+class CLevelLoadTimeslicer
+{
+public:
+
+#define LOAD_3DENGINE_SLICED (1)
+
+	enum class EStep
+	{
+		Init = 0,
+		PhysGlobalArea,
+		GameTokenLibs,
+		EntitySystemLayers,
+		LoadMissionXml,
+#if LOAD_3DENGINE_SLICED
+		LoadLevel3DEngine_SlicedStart,
+		LoadLevel3DEngine_SlicedContinue,
+#else
+		LoadLevel3DEngine,
+#endif
+		LoadEntitiesStart,
+		LoadLevelAiAndGame,
+		LoadEntities,
+		LoadResetAiMfxFg,
+		NotifyLoadingComplete,
+		NotifyPrecache,
+		Finish,
+
+		// Results
+		Done,
+		Failed,
+		Count
+	};
+
+	CLevelLoadTimeslicer(CLevelSystem& levelSystem, const char* szLevelName)
+		: m_levelSystem(levelSystem)
+		, m_levelName(szLevelName)
+	{}
+	
+
+	ILevelSystem::ELevelLoadStatus DoStep()
+	{
+		CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
+
+
+#define NEXT_STEP(step) return SetInProgress(step); case step: 
+
+		switch (m_currentStep)
+		{
+		case EStep::Init:
+		{
+			gEnv->pSystem->SetSystemGlobalState(ESYSTEM_GLOBAL_STATE_LEVEL_LOAD_START);
+			CryLog("Level system is loading \"%s\"", m_levelName.c_str());
+
+			CLevelInfo* pLevelInfo = m_levelSystem.GetLevelInfoInternal(m_levelName);
+
+			if (!pLevelInfo)
+			{
+				// alert the listener
+				m_levelSystem.OnLevelNotFound(m_levelName);
+				return SetFailed("Level not found");
+			}
+
+			m_levelSystem.m_bLevelLoaded = false;
+			m_levelSystem.m_lastLevelName = m_levelName;
+			m_levelSystem.m_pCurrentLevelInfo = pLevelInfo;
+
+			//////////////////////////////////////////////////////////////////////////
+			// Read main level info.
+			if (!pLevelInfo->ReadInfo())
+			{
+				return SetFailed("Failed to read level info (level.pak might be corrupted)!");
+			}
+			//////////////////////////////////////////////////////////////////////////
+
+			gEnv->pConsole->SetScrollMax(600);
+			ICVar* con_showonload = gEnv->pConsole->GetCVar("con_showonload");
+			if (con_showonload && con_showonload->GetIVal() != 0)
+			{
+				gEnv->pConsole->ShowConsole(true);
+				ICVar* g_enableloadingscreen = gEnv->pConsole->GetCVar("g_enableloadingscreen");
+				if (g_enableloadingscreen)
+					g_enableloadingscreen->Set(0);
+				ICVar* gfx_loadtimethread = gEnv->pConsole->GetCVar("gfx_loadtimethread");
+				if (gfx_loadtimethread)
+					gfx_loadtimethread->Set(0);
+			}
+
+			// Reset the camera to (0,0,0) which is the invalid/uninitialised state
+			CCamera defaultCam;
+			m_levelSystem.m_pSystem->SetViewCamera(defaultCam);
+			{
+				IGameTokenSystem* pGameTokenSystem = CCryAction::GetCryAction()->GetIGameTokenSystem();
+				pGameTokenSystem->Reset();
+			}
+
+			m_levelSystem.m_pLoadingLevelInfo = pLevelInfo;
+			m_levelSystem.OnLoadingStart(pLevelInfo);
+		}
+
+		NEXT_STEP(EStep::PhysGlobalArea)
+		{
+			// ensure a physical global area is present
+			{
+				IPhysicalWorld* pPhysicalWorld = gEnv->pPhysicalWorld;
+				pPhysicalWorld->AddGlobalArea();
+			}
+
+			m_levelSystem.m_pSystem->SetThreadState(ESubsys_Physics, false);
+		}
+
+		NEXT_STEP(EStep::GameTokenLibs)
+		{
+			m_pSpamDelay = gEnv->pConsole->GetCVar("log_SpamDelay");
+			m_spamDelay = 0.0f;
+			if (m_pSpamDelay)
+			{
+				m_spamDelay = m_pSpamDelay->GetFVal();
+				m_pSpamDelay->Set(0.0f);
+			}
+
+			// load all GameToken libraries this level uses incl. LevelLocal
+			{
+				IGameTokenSystem* pGameTokenSystem = CCryAction::GetCryAction()->GetIGameTokenSystem();
+				ILevelInfo* pLevelInfo = m_levelSystem.m_pLoadingLevelInfo;
+				pGameTokenSystem->LoadLibs(pLevelInfo->GetPath() + string("/GameTokens/*.xml"));
+			}
+		}
+
+		NEXT_STEP(EStep::EntitySystemLayers)
+		{
+			CRY_ASSERT(gEnv->pEntitySystem);
+			if (gEnv->pEntitySystem)
+			{
+				// load layer infos before load level by 3dEngine and EntitySystem
+				ILevelInfo* pLevelInfo = m_levelSystem.m_pLoadingLevelInfo;
+				gEnv->pEntitySystem->LoadLayers(pLevelInfo->GetPath() + string("/LevelData.xml"));
+			}
+		}
+
+		NEXT_STEP(EStep::LoadMissionXml)
+		{
+			ILevelInfo* pLevelInfo = m_levelSystem.m_pLoadingLevelInfo;
+			const string& missionXml = pLevelInfo->GetDefaultGameType()->xmlFile;
+			CryPathString xmlFile = PathUtil::Make<CryPathString>(pLevelInfo->GetPath(), missionXml);
+			
+			m_missionXml = m_levelSystem.m_pSystem->LoadXmlFromFile(xmlFile.c_str());
+		}
+
+#if LOAD_3DENGINE_SLICED
+		NEXT_STEP(EStep::LoadLevel3DEngine_SlicedStart)
+		{
+			ILevelInfo* pLevelInfo = m_levelSystem.m_pLoadingLevelInfo;
+			if (!gEnv->p3DEngine->StartLoadLevel(pLevelInfo->GetPath(), m_missionXml))
+			{
+				return SetFailed("3DEngine failed to start loading the level");
+			}
+		}
+
+		NEXT_STEP(EStep::LoadLevel3DEngine_SlicedContinue)
+		{
+			switch (gEnv->p3DEngine->UpdateLoadLevelStatus())
+			{
+			case I3DEngine::ELevelLoadStatus::InProgress:
+				return SetInProgress(m_currentStep);
+
+			case I3DEngine::ELevelLoadStatus::Failed:
+				{
+					return SetFailed("3DEngine failed to handle loading the level");
+				}
+
+			case I3DEngine::ELevelLoadStatus::Done:
+				// do nothing and continue with next step
+				break;
+			}
+		}
+
+#else
+		NEXT_STEP(EStep::LoadLevel3DEngine)
+		{
+			ILevelInfo* pLevelInfo = m_levelSystem.m_pLoadingLevelInfo;
+			if (!gEnv->p3DEngine->LoadLevel(pLevelInfo->GetPath(), m_missionXml))
+			{
+				return SetFailed("3DEngine failed to handle loading the level");
+			}
+		}
+#endif
+		
+		NEXT_STEP(EStep::LoadEntitiesStart)
+		{
+			ILevelInfo* pLevelInfo = m_levelSystem.m_pLoadingLevelInfo;
+			m_levelSystem.OnLoadingLevelEntitiesStart(pLevelInfo);
+
+			gEnv->pSystem->SetSystemGlobalState(ESYSTEM_GLOBAL_STATE_LEVEL_LOAD_START_ENTITIES);
+			CRY_ASSERT(gEnv->pEntitySystem);
+			if (!gEnv->pEntitySystem || !gEnv->pEntitySystem->OnLoadLevel(pLevelInfo->GetPath()))
+			{
+				return SetFailed("EntitySystem failed to handle loading the level");
+			}
+
+			// reset all the script timers
+			gEnv->pScriptSystem->ResetTimers();
+
+			if (gEnv->pAISystem)
+			{
+				gEnv->pAISystem->Reset(IAISystem::RESET_LOAD_LEVEL);
+			}
+
+			// Reset TimeOfDayScheduler
+			CCryAction::GetCryAction()->GetTimeOfDayScheduler()->Reset();
+			CCryAction::GetCryAction()->OnActionEvent(SActionEvent(eAE_loadLevel));
+
+			CCryAction::GetCryAction()->CreatePhysicsQueues();
+		}
+
+		NEXT_STEP(EStep::LoadLevelAiAndGame)
+		{
+			ILevelInfo* pLevelInfo = m_levelSystem.m_pLoadingLevelInfo;
+			if (gEnv->pAISystem && gEnv->pAISystem->IsEnabled())
+			{
+				gEnv->pAISystem->FlushSystem();
+				gEnv->pAISystem->LoadLevelData(pLevelInfo->GetPath(), pLevelInfo->GetDefaultGameType()->name);
+			}
+
+			if (auto* pGame = gEnv->pGameFramework->GetIGame())
+			{
+				pGame->LoadExportedLevelData(pLevelInfo->GetPath(), pLevelInfo->GetDefaultGameType()->name.c_str());
+			}
+
+			ICustomActionManager* pCustomActionManager = gEnv->pGameFramework->GetICustomActionManager();
+			if (pCustomActionManager)
+			{
+				pCustomActionManager->LoadLibraryActions(CUSTOM_ACTIONS_PATH);
+			}
+
+			if (gEnv->pGameFramework->GetIGameRulesSystem())
+			{
+				gEnv->pGameFramework->GetIGameRulesSystem()->CreateGameRules(CCryAction::GetCryAction()->GetGameContext()->GetRequestedGameRules());
+			}
+		}
+
+		NEXT_STEP(EStep::LoadEntities)
+		{
+			if (m_missionXml)
+			{
+				INDENT_LOG_DURING_SCOPE(true, "Reading '%s'", xmlFile.c_str());
+				const char* script = m_missionXml->getAttr("Script");
+
+				if (script && script[0])
+				{
+					CryLog("Executing script '%s'", script);
+					INDENT_LOG_DURING_SCOPE();
+					gEnv->pScriptSystem->ExecuteFile(script, true, true);
+				}
+
+				XmlNodeRef objectsNode = m_missionXml->findChild("Objects");
+
+				if (objectsNode)
+				{
+					// Stop the network ticker thread before loading entities - otherwise the network queues
+					// can get polled mid way through spawning an entity resulting in tasks being handled in
+					// the wrong order.
+					// Note: The network gets ticked after every 8 entity spawns so we are still ticking, just
+					// not from the ticker thread.
+					SCOPED_TICKER_LOCK;
+
+					gEnv->pEntitySystem->LoadEntities(objectsNode, true);
+				}
+
+				CGameVolumesManager* pGameVolumes = static_cast<CGameVolumesManager*>(CCryAction::GetCryAction()->GetIGameVolumesManager());
+				pGameVolumes->ResolveEntityIdsFromGUIDs();
+			}
+		}
+
+		NEXT_STEP(EStep::LoadResetAiMfxFg)
+		{
+			// Now that we've registered our AI objects, we can init
+			if (gEnv->pAISystem)
+				gEnv->pAISystem->Reset(IAISystem::RESET_ENTER_GAME);
+
+			//////////////////////////////////////////////////////////////////////////
+			// Movie system must be loaded after entities.
+			//////////////////////////////////////////////////////////////////////////
+			if (IMovieSystem* pMovieSys = gEnv->pMovieSystem)
+			{
+				ILevelInfo* pLevelInfo = m_levelSystem.m_pLoadingLevelInfo;
+				string movieXml = pLevelInfo->GetPath() + string("/moviedata.xml");
+				pMovieSys->Load(movieXml, pLevelInfo->GetDefaultGameType()->name);
+				pMovieSys->Reset(true, false); // bSeekAllToStart needs to be false here as it's only of interest in the editor (double checked with Timur Davidenko)
+			}
+
+			CCryAction::GetCryAction()->GetIMaterialEffects()->PreLoadAssets();
+
+			gEnv->pFlowSystem->Reset(false);
+		}
+
+		NEXT_STEP(EStep::NotifyLoadingComplete)
+		{
+			{
+#if LEVEL_SYSTEM_SPAWN_ENTITIES_DURING_LOADING_COMPLETE_NOTIFICATION
+				// We spawn entities in this callback, so we need the network locked so it
+				// won't try to sync info for entities being spawned.
+				SCOPED_TICKER_LOCK;
+#endif
+
+				CRY_PROFILE_SECTION(PROFILE_LOADING_ONLY, "OnLoadingComplete");
+				// Inform Level system listeners that loading of the level is complete.
+				for (std::vector<ILevelSystemListener*>::const_iterator it = m_levelSystem.m_listeners.begin(); it != m_levelSystem.m_listeners.end(); ++it)
+				{
+					(*it)->OnLoadingComplete(m_levelSystem.m_pCurrentLevelInfo);
+				}
+			}
+		}
+
+		NEXT_STEP(EStep::NotifyPrecache)
+		{
+			gEnv->pSystem->SetSystemGlobalState(ESYSTEM_GLOBAL_STATE_LEVEL_LOAD_START_PRECACHE);
+			if (gEnv->pGameFramework->GetIGameRulesSystem())
+			{
+				// Let gamerules precache anything needed
+				if (IGameRules* pGameRules = gEnv->pGameFramework->GetIGameRulesSystem()->GetCurrentGameRules())
+				{
+					pGameRules->PrecacheLevel();
+				}
+			}
+		}
+
+		NEXT_STEP(EStep::Finish)
+		{
+			//////////////////////////////////////////////////////////////////////////
+			// Notify 3D engine that loading finished
+			//////////////////////////////////////////////////////////////////////////
+			gEnv->p3DEngine->PostLoadLevel();
+
+			if (gEnv->pScriptSystem)
+			{
+				// After level was loaded force GC cycle in Lua
+				gEnv->pScriptSystem->ForceGarbageCollection();
+			}
+			//////////////////////////////////////////////////////////////////////////
+
+			//////////////////////////////////////////////////////////////////////////
+			//////////////////////////////////////////////////////////////////////////
+			gEnv->pConsole->SetScrollMax(600 / 2);
+
+			gEnv->pCryPak->GetResourceList(ICryPak::RFOM_NextLevel)->Clear();
+
+			if (m_pSpamDelay)
+				m_pSpamDelay->Set(m_spamDelay);
+
+#if CAPTURE_REPLAY_LOG
+			CryGetIMemReplay()->AddLabelFmt("loadEnd%d_%s", CLevelSystem::s_loadCount++, m_levelName.c_str());
+#endif
+
+			gEnv->pConsole->GetCVar("sv_map")->Set(m_levelName);
+
+			m_levelSystem.m_bLevelLoaded = true;
+			return SetDone(m_levelSystem.m_pCurrentLevelInfo);
+		}
+
+
+		case EStep::Done:
+			return SetDone(m_pResult);
+
+		case EStep::Failed:
+		default:
+			return SetFailed("Loading have already failed");
+		}
+
+#undef NEXT_STEP
+	}
+
+	ILevelInfo* GetResult() const
+	{
+		CRY_ASSERT(m_currentStep == EStep::Done);
+		return m_pResult;
+	}
+
+	const char* GetLevelName() const
+	{
+		return m_levelName.c_str();
+	}
+
+private:
+
+	ILevelSystem::ELevelLoadStatus SetInProgress(EStep nextStep)
+	{
+		m_currentStep = nextStep;
+		return ILevelSystem::ELevelLoadStatus::InProgress;
+	}
+
+	ILevelSystem::ELevelLoadStatus SetDone(ILevelInfo* pResult)
+	{
+		m_currentStep = EStep::Done;
+		m_pResult = pResult;
+		return ILevelSystem::ELevelLoadStatus::Done;
+	}
+
+	ILevelSystem::ELevelLoadStatus SetFailed(const char* szError)
+	{
+		GameWarning("CLevelLoadTimeslicer: failed loading in step %d: %s", static_cast<int>(m_currentStep), szError);
+		m_currentStep = EStep::Failed;
+
+		ILevelInfo* pLevelInfo = m_levelSystem.m_pLoadingLevelInfo;
+		m_levelSystem.OnLoadingError(pLevelInfo, szError);
+
+		return ILevelSystem::ELevelLoadStatus::Failed;
+	}
+
+private:
+	// State support
+	EStep m_currentStep = EStep::Init;
+
+	// Inputs
+	CLevelSystem& m_levelSystem;
+	string m_levelName;
+	
+	// Intermediate
+	ICVar* m_pSpamDelay = nullptr;
+	float m_spamDelay = 0.0f;
+	XmlNodeRef m_missionXml;
+
+	// Result
+	ILevelInfo* m_pResult = nullptr;
+};
+
+
+
 //------------------------------------------------------------------------
 ILevelInfo* CLevelSystem::LoadLevel(const char* _levelName)
 {
@@ -1190,275 +1610,67 @@ ILevelInfo* CLevelSystem::LoadLevel(const char* _levelName)
 	CLiveCreateLevelLoadingBracket liveCreateLoadingBracket;
 #endif
 
-	gEnv->pSystem->SetSystemGlobalState(ESYSTEM_GLOBAL_STATE_LEVEL_LOAD_START);
-
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Other, 0, "Level load (%s)", _levelName);
-
-	CryLog("Level system is loading \"%s\"", _levelName);
+	MEMSTAT_CONTEXT_FMT(EMemStatContextType::Other, "Level load (%s)", _levelName);
 	INDENT_LOG_DURING_SCOPE();
 
-	char levelName[256];
-	string sNextLevel(_levelName);
-	cry_strcpy(levelName, _levelName);
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
-	// Not remove a scope!!!
+	CLevelLoadTimeslicer slicer(*this, _levelName);
+	ILevelSystem::ELevelLoadStatus result;
+	do
 	{
-		LOADING_TIME_PROFILE_SECTION;
+		result = slicer.DoStep();
+	} while (result == ILevelSystem::ELevelLoadStatus::InProgress);
 
-		//m_levelLoadStartTime = gEnv->pTimer->GetAsyncTime();
-
-		CLevelInfo* pLevelInfo = GetLevelInfoInternal(levelName);
-
-		if (!pLevelInfo)
-		{
-			// alert the listener
-			OnLevelNotFound(levelName);
-
-			return 0;
-		}
-
-		m_bLevelLoaded = false;
-
-		m_lastLevelName = levelName;
-
-		//////////////////////////////////////////////////////////////////////////
-		// Read main level info.
-		if (!pLevelInfo->ReadInfo())
-		{
-			OnLoadingError(pLevelInfo, "Failed to read level info (level.pak might be corrupted)!");
-			return 0;
-		}
-		//////////////////////////////////////////////////////////////////////////
-
-		m_pCurrentLevelInfo = pLevelInfo;
-
-		gEnv->pConsole->SetScrollMax(600);
-		ICVar* con_showonload = gEnv->pConsole->GetCVar("con_showonload");
-		if (con_showonload && con_showonload->GetIVal() != 0)
-		{
-			gEnv->pConsole->ShowConsole(true);
-			ICVar* g_enableloadingscreen = gEnv->pConsole->GetCVar("g_enableloadingscreen");
-			if (g_enableloadingscreen)
-				g_enableloadingscreen->Set(0);
-			ICVar* gfx_loadtimethread = gEnv->pConsole->GetCVar("gfx_loadtimethread");
-			if (gfx_loadtimethread)
-				gfx_loadtimethread->Set(0);
-		}
-
-		// Reset the camera to (0,0,0) which is the invalid/uninitialised state
-		CCamera defaultCam;
-		m_pSystem->SetViewCamera(defaultCam);
-		IGameTokenSystem* pGameTokenSystem = CCryAction::GetCryAction()->GetIGameTokenSystem();
-		pGameTokenSystem->Reset();
-
-		m_pLoadingLevelInfo = pLevelInfo;
-		OnLoadingStart(pLevelInfo);
-
-		// ensure a physical global area is present
-		IPhysicalWorld* pPhysicalWorld = gEnv->pPhysicalWorld;
-		pPhysicalWorld->AddGlobalArea();
-
-		ICryPak* pPak = gEnv->pCryPak;
-
-		string levelPath = pLevelInfo->GetPath();
-
-		/*
-		   ICVar *pFileCache = gEnv->pConsole->GetCVar("sys_FileCache");		CRY_ASSERT(pFileCache);
-
-		   if(pFileCache->GetIVal())
-		   {
-		   if(pPak->OpenPack("",pLevelInfo->GetPath()+string("/FileCache.dat")))
-		   gEnv->pLog->Log("FileCache.dat loaded");
-		   else
-		   gEnv->pLog->Log("FileCache.dat not loaded");
-		   }
-		 */
-
-		m_pSystem->SetThreadState(ESubsys_Physics, false);
-
-		ICVar* pSpamDelay = gEnv->pConsole->GetCVar("log_SpamDelay");
-		float spamDelay = 0.0f;
-		if (pSpamDelay)
-		{
-			spamDelay = pSpamDelay->GetFVal();
-			pSpamDelay->Set(0.0f);
-		}
-
-		// load all GameToken libraries this level uses incl. LevelLocal
-		pGameTokenSystem->LoadLibs(pLevelInfo->GetPath() + string("/GameTokens/*.xml"));
-
-		if (gEnv->pEntitySystem)
-		{
-			// load layer infos before load level by 3dEngine and EntitySystem
-			gEnv->pEntitySystem->LoadLayers(pLevelInfo->GetPath() + string("/LevelData.xml"));
-		}
-
-		if (!gEnv->p3DEngine->LoadLevel(pLevelInfo->GetPath(), pLevelInfo->GetDefaultGameType()->name))
-		{
-			OnLoadingError(pLevelInfo, "3DEngine failed to handle loading the level");
-
-			return 0;
-		}
-
-		OnLoadingLevelEntitiesStart(pLevelInfo);
-
-		gEnv->pSystem->SetSystemGlobalState(ESYSTEM_GLOBAL_STATE_LEVEL_LOAD_START_ENTITIES);
-		if (!gEnv->pEntitySystem || !gEnv->pEntitySystem->OnLoadLevel(pLevelInfo->GetPath()))
-		{
-			OnLoadingError(pLevelInfo, "EntitySystem failed to handle loading the level");
-
-			return 0;
-		}
-
-		// reset all the script timers
-		gEnv->pScriptSystem->ResetTimers();
-
-		if (gEnv->pAISystem)
-		{
-			gEnv->pAISystem->Reset(IAISystem::RESET_LOAD_LEVEL);
-		}
-
-		// Reset TimeOfDayScheduler
-		CCryAction::GetCryAction()->GetTimeOfDayScheduler()->Reset();
-		CCryAction::GetCryAction()->OnActionEvent(SActionEvent(eAE_loadLevel));
-
-		CCryAction::GetCryAction()->CreatePhysicsQueues();
-
-		// Reset dialog system
-		if (gEnv->pDialogSystem)
-		{
-			gEnv->pDialogSystem->Reset(false);
-			gEnv->pDialogSystem->Init();
-		}
-
-		if (gEnv->pAISystem && gEnv->pAISystem->IsEnabled())
-		{
-			gEnv->pAISystem->FlushSystem();
-			gEnv->pAISystem->LoadLevelData(pLevelInfo->GetPath(), pLevelInfo->GetDefaultGameType()->name);
-		}
-
-		if (auto* pGame = gEnv->pGameFramework->GetIGame())
-		{
-			pGame->LoadExportedLevelData(pLevelInfo->GetPath(), pLevelInfo->GetDefaultGameType()->name.c_str());
-		}
-
-		ICustomActionManager* pCustomActionManager = gEnv->pGameFramework->GetICustomActionManager();
-		if (pCustomActionManager)
-		{
-			pCustomActionManager->LoadLibraryActions(CUSTOM_ACTIONS_PATH);
-		}
-
-		if (gEnv->pEntitySystem)
-		{
-			gEnv->pEntitySystem->ReserveEntityId(1);
-			gEnv->pEntitySystem->ReserveEntityId(LOCAL_PLAYER_ENTITY_ID);
-		}
-
-		CCryAction::GetCryAction()->GetIGameRulesSystem()->CreateGameRules(CCryAction::GetCryAction()->GetGameContext()->GetRequestedGameRules());
-
-		string missionXml = pLevelInfo->GetDefaultGameType()->xmlFile;
-		string xmlFile = string(pLevelInfo->GetPath()) + "/" + missionXml;
-
-		XmlNodeRef rootNode = m_pSystem->LoadXmlFromFile(xmlFile.c_str());
-		if (rootNode)
-		{
-			INDENT_LOG_DURING_SCOPE(true, "Reading '%s'", xmlFile.c_str());
-			const char* script = rootNode->getAttr("Script");
-
-			if (script && script[0])
-			{
-				CryLog("Executing script '%s'", script);
-				INDENT_LOG_DURING_SCOPE();
-				gEnv->pScriptSystem->ExecuteFile(script, true, true);
-			}
-
-			XmlNodeRef objectsNode = rootNode->findChild("Objects");
-
-			if (objectsNode)
-			{
-				// Stop the network ticker thread before loading entities - otherwise the network queues
-				// can get polled mid way through spawning an entity resulting in tasks being handled in
-				// the wrong order.
-				// Note: The network gets ticked after every 8 entity spawns so we are still ticking, just
-				// not from the ticker thread.
-				SCOPED_TICKER_LOCK;
-
-				gEnv->pEntitySystem->LoadEntities(objectsNode, true);
-			}
-		}
-
-		// Now that we've registered our AI objects, we can init
-		if (gEnv->pAISystem)
-			gEnv->pAISystem->Reset(IAISystem::RESET_ENTER_GAME);
-
-		//////////////////////////////////////////////////////////////////////////
-		// Movie system must be loaded after entities.
-		//////////////////////////////////////////////////////////////////////////
-		string movieXml = pLevelInfo->GetPath() + string("/moviedata.xml");
-		IMovieSystem* movieSys = gEnv->pMovieSystem;
-		if (movieSys != NULL)
-		{
-			movieSys->Load(movieXml, pLevelInfo->GetDefaultGameType()->name);
-			movieSys->Reset(true, false); // bSeekAllToStart needs to be false here as it's only of interest in the editor (double checked with Timur Davidenko)
-		}
-
-		CCryAction::GetCryAction()->GetIMaterialEffects()->PreLoadAssets();
-
-		gEnv->pFlowSystem->Reset(false);
-
-		{
-#if LEVEL_SYSTEM_SPAWN_ENTITIES_DURING_LOADING_COMPLETE_NOTIFICATION
-			// We spawn entities in this callback, so we need the network locked so it
-			// won't try to sync info for entities being spawned.
-			SCOPED_TICKER_LOCK;
-#endif
-
-			LOADING_TIME_PROFILE_SECTION_NAMED("OnLoadingComplete");
-			// Inform Level system listeners that loading of the level is complete.
-			for (std::vector<ILevelSystemListener*>::const_iterator it = m_listeners.begin(); it != m_listeners.end(); ++it)
-			{
-				(*it)->OnLoadingComplete(m_pCurrentLevelInfo);
-			}
-		}
-
-		gEnv->pSystem->SetSystemGlobalState(ESYSTEM_GLOBAL_STATE_LEVEL_LOAD_START_PRECACHE);
-		// Let gamerules precache anything needed
-		if (IGameRules* pGameRules = CCryAction::GetCryAction()->GetIGameRulesSystem()->GetCurrentGameRules())
-		{
-			pGameRules->PrecacheLevel();
-		}
-
-		//////////////////////////////////////////////////////////////////////////
-		// Notify 3D engine that loading finished
-		//////////////////////////////////////////////////////////////////////////
-		gEnv->p3DEngine->PostLoadLevel();
-
-		if (gEnv->pScriptSystem)
-		{
-			// After level was loaded force GC cycle in Lua
-			gEnv->pScriptSystem->ForceGarbageCollection();
-		}
-		//////////////////////////////////////////////////////////////////////////
-
-		//////////////////////////////////////////////////////////////////////////
-		//////////////////////////////////////////////////////////////////////////
-		gEnv->pConsole->SetScrollMax(600 / 2);
-
-		pPak->GetResourceList(ICryPak::RFOM_NextLevel)->Clear();
-
-		if (pSpamDelay)
-			pSpamDelay->Set(spamDelay);
-
-#if CAPTURE_REPLAY_LOG
-		CryGetIMemReplay()->AddLabelFmt("loadEnd%d_%s", s_loadCount++, levelName);
-#endif
-
-		gEnv->pConsole->GetCVar("sv_map")->Set(levelName);
-
-		m_bLevelLoaded = true;
+	if (result == ILevelSystem::ELevelLoadStatus::Failed)
+	{
+		return nullptr;
 	}
+	
+	CRY_ASSERT(slicer.GetResult() == m_pCurrentLevelInfo);
 
 	return m_pCurrentLevelInfo;
+}
+
+//------------------------------------------------------------------------
+bool CLevelSystem::StartLoadLevel(const char* szLevelName)
+{
+	if (m_pLevelLoadTimeslicer)
+	{
+		return false;
+	}
+
+	m_pLevelLoadTimeslicer.reset(new CLevelLoadTimeslicer(*this, szLevelName));
+	return true;
+}
+
+//------------------------------------------------------------------------
+CLevelSystem::ELevelLoadStatus CLevelSystem::UpdateLoadLevelStatus()
+{
+	if (!m_pLevelLoadTimeslicer)
+	{
+		return ELevelLoadStatus::Failed;
+	}
+
+	MEMSTAT_CONTEXT_FMT(EMemStatContextType::Other, "Level load (%s)", m_pLevelLoadTimeslicer->GetLevelName());
+	INDENT_LOG_DURING_SCOPE();
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
+
+	switch (m_pLevelLoadTimeslicer->DoStep())
+	{
+	case ELevelLoadStatus::InProgress:
+		return ELevelLoadStatus::InProgress;
+
+	case ELevelLoadStatus::Done:
+		CRY_ASSERT(m_pLevelLoadTimeslicer->GetResult() == m_pCurrentLevelInfo);
+		m_pLevelLoadTimeslicer.reset();
+		return ELevelLoadStatus::Done;
+
+	case ELevelLoadStatus::Failed:
+	default:
+		m_pLevelLoadTimeslicer.reset();
+		return ELevelLoadStatus::Failed;
+	}
 }
 
 //------------------------------------------------------------------------
@@ -1596,7 +1808,7 @@ void CLevelSystem::OnLevelNotFound(const char* levelName)
 //------------------------------------------------------------------------
 void CLevelSystem::OnLoadingStart(ILevelInfo* pLevelInfo)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	if (gEnv->pCryPak->GetRecordFileOpenList() == ICryPak::RFOM_EngineStartup)
 		gEnv->pCryPak->RecordFileOpen(ICryPak::RFOM_Level);
@@ -1604,8 +1816,12 @@ void CLevelSystem::OnLoadingStart(ILevelInfo* pLevelInfo)
 	m_fFilteredProgress = 0.f;
 	m_fLastTime = gEnv->pTimer->GetAsyncCurTime();
 
-	if(gEnv->IsEditor()) //pure game calls it from CCET_LoadLevel
-		GetISystem()->GetISystemEventDispatcher()->OnSystemEvent( ESYSTEM_EVENT_LEVEL_LOAD_START,0,0 );
+	if (gEnv->IsEditor()) //pure game calls it from CCET_LoadLevel
+	{
+		char* szLevelName = nullptr;
+		gEnv->pGameFramework->GetEditorLevel(&szLevelName, nullptr);
+		GetISystem()->GetISystemEventDispatcher()->OnSystemEvent(ESYSTEM_EVENT_LEVEL_LOAD_START, reinterpret_cast<UINT_PTR>(szLevelName), 0);
+	}
 
 #if CRY_PLATFORM_WINDOWS
 	/*
@@ -1715,15 +1931,12 @@ void CLevelSystem::OnLoadingComplete(ILevelInfo* pLevelInfo)
 	 */
 
 	// LoadLevel is not called in the editor, hence OnLoadingComplete is not invoked on the ILevelSystemListeners
-	if (gEnv->IsEditor())
+	if (gEnv->IsEditor() && pLevelInfo)
 	{
 		for (std::vector<ILevelSystemListener*>::const_iterator it = m_listeners.begin(); it != m_listeners.end(); ++it)
 		{
 			(*it)->OnLoadingComplete(pLevelInfo);
 		}
-
-		SEntityEvent loadingCompleteEvent(ENTITY_EVENT_LEVEL_LOADED);
-		gEnv->pEntitySystem->SendEventToAll(loadingCompleteEvent);
 	}
 }
 
@@ -1763,15 +1976,6 @@ void CLevelSystem::OnLoadingProgress(int steps)
 	OnLoadingProgress(m_pLoadingLevelInfo, (int)m_fFilteredProgress);
 }
 
-//------------------------------------------------------------------------
-string& CLevelSystem::UnifyName(string& name)
-{
-	//name.MakeLower();
-	name.replace('\\', '/');
-
-	return name;
-}
-
 //////////////////////////////////////////////////////////////////////////
 void CLevelSystem::LogLoadingTime()
 {
@@ -1782,10 +1986,9 @@ void CLevelSystem::LogLoadingTime()
 		return;
 
 #if CRY_PLATFORM_WINDOWS
-	CDebugAllowFileAccess ignoreInvalidFileAccess;
+	SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
 
-	string filename = gEnv->pSystem->GetRootFolder();
-	filename += "Game_LevelLoadTime.log";
+	string filename = PathUtil::Make(gEnv->pSystem->GetRootFolder(), "Game_LevelLoadTime.log");
 
 	FILE* file = fxopen(filename, "at");
 	if (!file)
@@ -1872,7 +2075,7 @@ static bool SubsituteFile(const string& srcPath, const string& destPath)
 //////////////////////////////////////////////////////////////////////////
 bool CLevelInfo::OpenLevelPak()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	//////////////////////////////////////////////////////////////////////////
 	//LiveCreate level reloading functionality
 #ifndef NO_LIVECREATE
@@ -1908,17 +2111,26 @@ bool CLevelInfo::OpenLevelPak()
 	//////////////////////////////////////////////////////////////////////////
 
 	string levelpak = m_levelPath + string("/level.pak");
-	CryFixedStringT<ICryPak::g_nMaxPath> fullLevelPakPath;
+	CryPathString fullLevelPakPath;
 	bool bOk = gEnv->pCryPak->OpenPack(levelpak, (unsigned)0, NULL, &fullLevelPakPath);
 	m_levelPakFullPath.assign(fullLevelPakPath.c_str());
 	if (bOk)
 	{
 		string levelmmpak = m_levelPath + string("/levelmm.pak");
-		if (gEnv->pCryPak->IsFileExist(levelmmpak))
+		if (gEnv->pCryPak->IsFileExist(levelmmpak, ICryPak::eFileLocation_OnDisk))
 		{
 			gEnv->pCryPak->OpenPack(levelmmpak, (unsigned)0, NULL, &fullLevelPakPath);
 			m_levelMMPakFullPath.assign(fullLevelPakPath.c_str());
 		}
+
+#if defined(FEATURE_SVO_GI)
+		string levelSvoPak = m_levelPath + string("/svogi.pak");
+		if (gEnv->pCryPak->IsFileExist(levelSvoPak, ICryPak::eFileLocation_OnDisk))
+		{
+			gEnv->pCryPak->OpenPack(levelSvoPak, (unsigned)0, NULL, &fullLevelPakPath);
+			m_levelSvoPakFullPath.assign(fullLevelPakPath.c_str());
+		}
+#endif
 	}
 
 	gEnv->pCryPak->SetPacksAccessibleForLevel(GetName());
@@ -1929,7 +2141,7 @@ bool CLevelInfo::OpenLevelPak()
 //////////////////////////////////////////////////////////////////////////
 void CLevelInfo::CloseLevelPak()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	if (!m_levelPakFullPath.empty())
 	{
 		gEnv->pCryPak->ClosePack(m_levelPakFullPath.c_str(), ICryPak::FLAGS_PATH_REAL);
@@ -1940,6 +2152,12 @@ void CLevelInfo::CloseLevelPak()
 	{
 		gEnv->pCryPak->ClosePack(m_levelMMPakFullPath.c_str(), ICryPak::FLAGS_PATH_REAL);
 		stl::free_container(m_levelMMPakFullPath);
+	}
+
+	if (!m_levelSvoPakFullPath.empty())
+	{
+		gEnv->pCryPak->ClosePack(m_levelSvoPakFullPath.c_str(), ICryPak::FLAGS_PATH_REAL);
+		stl::free_container(m_levelSvoPakFullPath);
 	}
 }
 
@@ -1985,7 +2203,15 @@ void CLevelSystem::UnLoadLevel()
 	CryLog("UnLoadLevel Start");
 	INDENT_LOG_DURING_SCOPE();
 
+#if !defined(EXCLUDE_NORMAL_LOG)
 	CTimeValue tBegin = gEnv->pTimer->GetAsyncTime();
+#endif
+
+	if (m_pLevelLoadTimeslicer)
+	{
+		// Time-sliced level loading was not finished
+		m_pLevelLoadTimeslicer.reset();
+	}
 
 	// One last update to execute pending requests.
 	// Do this before the EntitySystem resets!
@@ -2013,12 +2239,8 @@ void CLevelSystem::UnLoadLevel()
 		gEnv->pRenderer->EndFrame();
 
 		// force a black screen as last render command
-		gEnv->pRenderer->BeginFrame();
-		gEnv->pRenderer->SetState(GS_BLSRC_SRCALPHA | GS_BLDST_ONEMINUSSRCALPHA | GS_NODEPTHTEST);
-		gEnv->pRenderer->Draw2dImage(0, 0, 800, 600, -1, 0.0f, 0.0f, 1.0f, 1.0f, 0.f,
+		IRenderAuxImage::Draw2dImage(0, 0, 800, 600, -1, 0.0f, 0.0f, 1.0f, 1.0f, 0.f,
 		                             0.0f, 0.0f, 0.0f, 1.0, 0.f);
-		gEnv->pRenderer->EndFrame();
-
 		//flush any outstanding texture requests
 		gEnv->pRenderer->FlushPendingTextureTasks();
 	}
@@ -2026,7 +2248,10 @@ void CLevelSystem::UnLoadLevel()
 	// Disable filecaching during level unloading
 	// will be reenabled when we get back to the IIS (frontend directly)
 	// or after level loading is finished (via system event system)
-	gEnv->pSystem->GetPlatformOS()->AllowOpticalDriveUsage(false);
+	if (IPlatformOS* pPlatformOS = gEnv->pSystem->GetPlatformOS())
+	{
+		pPlatformOS->AllowOpticalDriveUsage(false);
+	}
 
 	if (gEnv->pScriptSystem)
 	{
@@ -2084,10 +2309,6 @@ void CLevelSystem::UnLoadLevel()
 	}
 
 	// reset a bunch of subsystems
-	if (gEnv->pDialogSystem)
-	{
-		gEnv->pDialogSystem->Reset(true);
-	}
 
 	if (gEnv->pGameFramework)
 	{
@@ -2106,9 +2327,6 @@ void CLevelSystem::UnLoadLevel()
 		gEnv->pMovieSystem->Reset(false, false);
 		gEnv->pMovieSystem->RemoveAllSequences();
 	}
-
-	// Unload level specific audio binary data.
-	gEnv->pAudioSystem->OnUnloadLevel();
 
 	// Delete engine resources
 	if (p3DEngine)
@@ -2163,31 +2381,35 @@ void CLevelSystem::UnLoadLevel()
 	m_pCurrentLevelInfo = nullptr;
 
 	// Force to clean render resources left after deleting all objects and materials.
+	const int flags = gEnv->IsEditor() ? FRR_LEVEL_UNLOAD_SANDBOX : FRR_LEVEL_UNLOAD_LAUNCHER;
 	IRenderer* pRenderer = gEnv->pRenderer;
 	if (pRenderer)
 	{
 		pRenderer->FlushRTCommands(true, true, true);
 
 		CryComment("Deleting Render meshes, render resources and flush texture streaming");
+
 		// This may also release some of the materials.
-		int flags = FRR_DELETED_MESHES | FRR_FLUSH_TEXTURESTREAMING | FRR_OBJECTS | FRR_RENDERELEMENTS | FRR_RP_BUFFERS | FRR_POST_EFFECTS;
+		pRenderer->FreeSystemResources(flags);
 
-		// Always keep the system resources around in the editor.
-		if (!gEnv->IsEditor())
-			flags |= FRR_SYSTEM_RESOURCES;
-
-		pRenderer->FreeResources(flags);
 		CryComment("done");
 	}
 
 	m_bLevelLoaded = false;
 
+#if !defined(EXCLUDE_NORMAL_LOG)
 	CTimeValue tUnloadTime = gEnv->pTimer->GetAsyncTime() - tBegin;
 	CryLog("UnLoadLevel End: %.1f sec", tUnloadTime.GetSeconds());
+#endif
 
 	// Must be sent last.
 	// Cleanup all containers
 	GetISystem()->GetISystemEventDispatcher()->OnSystemEvent(ESYSTEM_EVENT_LEVEL_POST_UNLOAD, 0, 0);
+
+	if (pRenderer)
+	{
+		pRenderer->InitSystemResources(flags);
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////

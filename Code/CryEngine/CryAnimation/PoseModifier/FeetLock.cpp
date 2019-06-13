@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "FeetLock.h"
@@ -24,13 +24,18 @@ CRYREGISTER_CLASS(CFeetPoseStore)
 // IAnimationPoseModifier
 bool CFeetPoseStore::Execute(const SAnimationPoseModifierParams& params)
 {
+	DEFINE_PROFILER_FUNCTION();
+
 	Skeleton::CPoseData* pPoseData = Skeleton::CPoseData::GetPoseData(params.pPoseData);
 	if (!pPoseData)
 		return false;
 
 	const CDefaultSkeleton& rDefaultSkeleton = (const CDefaultSkeleton&)params.GetIDefaultSkeleton();
 	QuatT* pRelPose = pPoseData->GetJointsRelative();
+
+#ifdef _DEBUG
 	QuatT* pAbsPose = pPoseData->GetJointsAbsolute();
+#endif // _DEBUG
 
 	for (uint32 h = 0; h < MAX_FEET_AMOUNT; h++)
 	{
@@ -83,6 +88,8 @@ CRYREGISTER_CLASS(CFeetPoseRestore)
 // IAnimationPoseModifier
 bool CFeetPoseRestore::Execute(const SAnimationPoseModifierParams& params)
 {
+	DEFINE_PROFILER_FUNCTION();
+
 	Skeleton::CPoseData* pPoseData = Skeleton::CPoseData::GetPoseData(params.pPoseData);
 	if (!pPoseData)
 		return false;
@@ -132,15 +139,13 @@ bool CFeetPoseRestore::Execute(const SAnimationPoseModifierParams& params)
 
 CFeetLock::CFeetLock()
 {
-	::CryCreateClassInstance<IAnimationPoseModifier>(
-	  "AnimationPoseModifier_FeetPoseStore", m_store);
+	CryCreateClassInstance(CFeetPoseStore::GetCID(), m_store);
 	assert(m_store.get());
 
 	CFeetPoseStore* pStore = static_cast<CFeetPoseStore*>(m_store.get());
 	pStore->m_pFeetData = &m_FeetData[0];
 
-	::CryCreateClassInstance<IAnimationPoseModifier>(
-	  "AnimationPoseModifier_FeetPoseRestore", m_restore);
+	CryCreateClassInstance(CFeetPoseRestore::GetCID(), m_restore);
 	assert(m_restore.get());
 
 	CFeetPoseRestore* pRestore = static_cast<CFeetPoseRestore*>(m_restore.get());

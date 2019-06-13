@@ -1,13 +1,13 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include <CryAISystem/IAISystem.h>
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
-namespace uqs
+namespace UQS
 {
-	namespace stdlib
+	namespace StdLib
 	{
 
 		//===================================================================================
@@ -41,7 +41,7 @@ namespace uqs
 			}
 		}
 
-		client::IItemMonitor::EHealthState CItemMonitor_NavMeshChangesInAABB::UpdateAndCheckForCorruption(shared::IUqsString& outExplanationInCaseOfCorruption)
+		Client::IItemMonitor::EHealthState CItemMonitor_NavMeshChangesInAABB::UpdateAndCheckForCorruption(Shared::IUqsString& outExplanationInCaseOfCorruption)
 		{
 			if (m_bCorruptionOccurred)
 			{
@@ -54,7 +54,7 @@ namespace uqs
 			}
 		}
 
-		void CItemMonitor_NavMeshChangesInAABB::OnNavMeshChanged(NavigationAgentTypeID agentTypeID, NavigationMeshID meshID, uint32 tileID)
+		void CItemMonitor_NavMeshChangesInAABB::OnNavMeshChanged(NavigationAgentTypeID agentTypeID, NavigationMeshID meshID, MNM::TileID tileID)
 		{
 			AABB tileAABB;
 			gEnv->pAISystem->GetNavigationSystem()->GetTileBoundsForMesh(meshID, tileID, tileAABB);

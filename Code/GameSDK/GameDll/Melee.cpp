@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -127,7 +127,7 @@ void CMelee::InitFragmentData()
 //------------------------------------------------------------------------
 void CMelee::Update(float frameTime, uint32 frameId)
 {
-	FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	bool remote = false;
 	bool doMelee = false;
@@ -304,7 +304,7 @@ struct CMelee::StopAttackingAction
 			if (IEntity* owner = pItem->GetOwner())
 				if (IAIObject* aiObject = owner->GetAI())
 					if (IAIActor* aiActor = aiObject->CastToIAIActor())
-						aiActor->SetSignal(0, "OnMeleePerformed");
+						aiActor->SetSignal(gEnv->pAISystem->GetSignalManager()->CreateSignal(AISIGNAL_INCLUDE_DISABLED, gEnv->pAISystem->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnMeleePerformed()));
 		}
 		else if( g_pGameCVars->pl_melee.mp_melee_system_camera_lock_and_turn && s_meleeSnapTargetId && (pActor = pItem->GetOwnerActor()) && pActor->IsClient() )
 		{
@@ -820,7 +820,6 @@ int CMelee::Hit(const Vec3 &pt, const Vec3 &dir, const Vec3 &normal, IPhysicalEn
 
 		if (pTarget)
 		{
-			CActor *pCTargetActor = static_cast<CActor*>(pTargetActor);
 			CPlayer* pTargetPlayer = (pTargetActor && pTargetActor->IsPlayer()) ? static_cast<CPlayer*>(pTargetActor) : NULL;
 
 			if(pTargetPlayer && pTargetPlayer->IsClient())
@@ -1003,7 +1002,7 @@ void CMelee::Impulse(const Vec3 &pt, const Vec3 &dir, const Vec3 &normal, IPhysi
 		// so we must solve for v given the same energy as a scar bullet
 		float speed = sqrt_tpl(4000.0f/(80.0f*0.5f)); // 80.0f is the mass of the player
 
-		if( IRenderNode *pBrush = (IRenderNode*)pCollider->GetForeignData(PHYS_FOREIGN_ID_STATIC) )
+		if(pCollider->GetForeignData(PHYS_FOREIGN_ID_STATIC) != nullptr)
 		{
 			speed = 0.003f;
 		}

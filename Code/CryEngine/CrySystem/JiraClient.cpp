@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -18,7 +18,9 @@
 #if CRY_PLATFORM_WINDOWS && !defined(_RELEASE)
 
 #include <CrySystem/ISystem.h>
+#include <CrySystem/IConsole.h>
 #include <CryCore/Platform/CryWindows.h>
+#include <CryString/CryPath.h>
 
 namespace {
 bool FileExists(const char* szFileName)
@@ -49,7 +51,7 @@ bool CJiraClient::ReportBug()
 	if (!FileExists(crashHandlerPath.c_str()))
 	{
 		static const char* szErrorMessage = "Couldn't find the crash handler! (looking for Tools/CrashHandler/CrashHandler.exe)";
-		MessageBox(NULL, szErrorMessage, "Couldn't find the crash handler", MB_OK | MB_ICONWARNING);
+		CryMessageBox(szErrorMessage, "Couldn't find the crash handler", eMB_Error);
 		return false;
 	}
 
@@ -58,7 +60,7 @@ bool CJiraClient::ReportBug()
 	GetCurrentDirectory(sizeof(workingDirectory) - 1, workingDirectory);
 	commandLine.Format("\"%s\" -buildFolder=\"%s\" -logFileName=\"%s\"",
 	                   crashHandlerPath.c_str(), workingDirectory,
-	                   gEnv->pSystem->GetILog()->GetFileName());
+	                   gEnv->pSystem->GetILog()->GetFilePath());
 
 	// how to create a process: http://msdn.microsoft.com/en-us/library/ms682512(VS.85).aspx
 

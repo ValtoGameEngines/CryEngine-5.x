@@ -1,12 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
-namespace uqs
+namespace UQS
 {
-	namespace client
+	namespace Client
 	{
 
 		//===================================================================================
@@ -74,7 +74,7 @@ namespace uqs
 
 		inline void CParamsHolderDeleter::operator()(IParamsHolder* pParamsHolderToDelete)
 		{
-			assert(m_pParamsHolderFactory);
+			CRY_ASSERT(m_pParamsHolderFactory);
 			m_pParamsHolderFactory->DestroyParamsHolder(pParamsHolderToDelete);
 		}
 

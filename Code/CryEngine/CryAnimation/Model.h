@@ -1,10 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include "ModelAnimationSet.h" //embedded
 #include "ModelMesh.h"         //embedded
 #include "Skeleton.h"
+#include <CryPhysics/physinterface.h>
 
 class CFacialModel;
 
@@ -265,6 +266,60 @@ struct ADIKTarget
 	void GetMemoryUsage(ICrySizer* pSizer) const {}
 };
 
+struct CryBonePhysicsLinked : CryBonePhysics
+{
+	static CryBonePhysicsLinked  g_empty;
+	CryBonePhysicsLinked* next = nullptr;
+	int                   refCount = 0;
+	CryBonePhysicsLinked() { pPhysGeom = nullptr; }
+	CryBonePhysicsLinked(const CryBonePhysics *src) 
+	{ 
+		*static_cast<CryBonePhysics*>(this) = *src;
+		if ((INT_PTR)pPhysGeom > 0x400)	// if used when pPhysGeom is still a chunk index, don't addref
+			++pPhysGeom->nRefCount; 
+	}
+	~CryBonePhysicsLinked() { if (next) delete next; }
+	int AddRef()  { return ++refCount; }
+	int Release() 
+	{ 
+		if (this == &g_empty)	return 1;
+		int res = --refCount; 
+		if (refCount <= 0) delete this; 
+		return res; 
+	}
+};
+
+struct SBonePhysicsRef 
+{
+	_smart_ptr<CryBonePhysicsLinked> data = &CryBonePhysicsLinked::g_empty;
+	CryBonePhysics& operator()(int i) // unlike [], allocates lod info if necessary
+	{ 
+		CryBonePhysicsLinked *ptr = data == &CryBonePhysicsLinked::g_empty ? (data = new CryBonePhysicsLinked(CryBonePhysicsLinked::g_empty)) : data;
+		for(; i>0; --i, ptr = ptr->next ? ptr->next : (ptr->next = new CryBonePhysicsLinked(data)))
+			;
+		return *ptr;
+	}
+	const CryBonePhysics& operator[](int i) const
+	{ 
+		CryBonePhysicsLinked *res = data; 
+		for(; i>0 && res && res->next; --i, res=res->next)
+			;
+		return *res;
+	}
+	CryBonePhysics& operator[](int i)	{ return const_cast<CryBonePhysics&>(const_cast<const SBonePhysicsRef&>(*this)[i]); }
+	SBonePhysicsRef& operator=(const CryBonePhysics &src)	
+	{ 
+		if (src.pPhysGeom && src.pPhysGeom != (phys_geometry*)(INT_PTR)-1)
+		{
+			if (data == &CryBonePhysicsLinked::g_empty)
+				data = new CryBonePhysicsLinked(&src);
+		}
+		else 
+			data = &CryBonePhysicsLinked::g_empty;
+		return *this;
+	}
+};
+
 //----------------------------------------------------------------------
 // CDefault Skeleton
 //----------------------------------------------------------------------
@@ -337,7 +392,6 @@ public:
 			m_CGAObject = 0;
 			m_ObjectID = -1;
 			m_NodeID = ~0;
-			m_PhysInfo.pPhysGeom = 0;
 			m_fMass = 0.0f;
 		}
 
@@ -358,11 +412,18 @@ public:
 		//#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-
 		//--------> the rest is deprecated and will disappear sooner or later
 		//#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-
-		CryBonePhysics       m_PhysInfo;
+		SBonePhysicsRef      m_PhysInfoRef;
 		f32                  m_fMass;     //this doesn't need to be in every joint
 		_smart_ptr<IStatObj> m_CGAObject; // Static object controlled by this joint.
 		uint32               m_NodeID;    // CGA-node
 		uint16               m_ObjectID;  // used by CGA
+	};
+
+	//! Compact helper structure used for efficient computation of joint<->controller mapping.
+	struct SJointDescriptor
+	{
+		JointIdType id; //!< Index of the joint within its skeleton.
+		uint32 crc32;   //!< Case-sensitive crc32 sum of the joint name.
 	};
 
 	virtual uint32 GetJointCount() const
@@ -460,9 +521,13 @@ public:
 		assert(false);
 		return g_IdentityQuatT;
 	};
-	virtual const phys_geometry* GetJointPhysGeom(uint32 jointIndex) const
+	virtual const phys_geometry* GetJointPhysGeom(uint32 jointIndex, int nLod = 0) const
 	{
-		return m_arrModelJoints[jointIndex].m_PhysInfo.pPhysGeom;
+		return m_arrModelJoints[jointIndex].m_PhysInfoRef[nLod].pPhysGeom;
+	}
+	virtual CryBonePhysics* GetJointPhysInfo(uint32 jointIndex, int nLod = 0, bool allocIfLodAbsent = true)
+	{
+		return &(allocIfLodAbsent ? m_arrModelJoints[jointIndex].m_PhysInfoRef(nLod) : m_arrModelJoints[jointIndex].m_PhysInfoRef[nLod]);
 	}
 	virtual const DynArray<SBoneShadowCapsule>& GetShadowCapsules() const
 	{
@@ -473,7 +538,8 @@ public:
 	void LoadCHRPARAMS(const char* paramFileName);
 
 	//--> setup of physical proxies
-	bool                            SetupPhysicalProxies(const DynArray<PhysicalProxy>& arrPhyBoneMeshes, const DynArray<BONE_ENTITY>& arrBoneEntities, IMaterial* pIMaterial, const char* filename);
+	bool                            SetupPhysicalProxies(const DynArray<PhysicalProxy>& arrPhyBoneMeshes, const DynArray<BONE_ENTITY>& arrBoneEntities,
+	                                                     IMaterial* pIMaterial, const char* filename, const uint32 loadingFlags);
 
 	static bool                     ParsePhysInfoProperties_ROPE(CryBonePhysics& pi, const DynArray<SJointProperty>& props);
 	static DynArray<SJointProperty> GetPhysInfoProperties_ROPE(const CryBonePhysics& pi, int32 nRopeOrGrid);
@@ -498,19 +564,30 @@ public:
 	}
 	const IKLimbType* GetLimbDefinition(int32 index) const { return &m_IKLimbTypes[index]; }
 
-	void              PrepareJointIDHash()
+	void              RebuildJointLookupCaches()
 	{
-		int numBones = m_arrModelJoints.size();
+		const int numBones = m_arrModelJoints.size();
 
 		if (m_pJointsCRCToIDMap)
+		{
 			delete m_pJointsCRCToIDMap;
+		}
 		m_pJointsCRCToIDMap = new CInt32HashMap<JointIdType, 512>(numBones);
 
 		for (int i = 0; i < numBones; ++i)
 		{
-			uint32 crc32Lower = m_arrModelJoints[i].m_nJointCRC32Lower;
+			const uint32 crc32Lower = m_arrModelJoints[i].m_nJointCRC32Lower;
 			m_pJointsCRCToIDMap->Insert(crc32Lower, i);
 		}
+
+		m_crcOrderedJointDescriptors.clear();
+		m_crcOrderedJointDescriptors.reserve(numBones);
+		for (int i = 0; i < numBones; ++i)
+		{
+			const uint32 crc32 = m_arrModelJoints[i].m_nJointCRC32;
+			m_crcOrderedJointDescriptors.push_back({ JointIdType(i), crc32 });
+		}
+		std::sort(m_crcOrderedJointDescriptors.begin(), m_crcOrderedJointDescriptors.end(), [](const SJointDescriptor& lhs, const SJointDescriptor& rhs) { return lhs.crc32 < rhs.crc32; });
 	}
 
 	void                       InitializeHardcodedJointsProperty();
@@ -521,6 +598,8 @@ public:
 
 	DynArray<SJoint>                 m_arrModelJoints;    // This is the bone hierarchy. All the bones of the hierarchy are present in this array
 	CInt32HashMap<JointIdType, 512>* m_pJointsCRCToIDMap; //this dramatically accelerates access to JointIDs by CRC - overall consumption should be less than 100 kb throughout the game (2-3 kb per ModelSkeleton)
+	std::vector<SJointDescriptor>    m_crcOrderedJointDescriptors; //!< Array of joint descriptors, sorted by crc32.
+
 	Skeleton::CPoseData              m_poseDefaultData;
 
 	string                           m_strFeetLockIKHandle[MAX_FEET_AMOUNT];
@@ -534,7 +613,7 @@ public:
 	DynArray<SBoneShadowCapsule>     m_ShadowCapsulesList;
 	AABB                             m_AABBExtension;
 	AABB                             m_ModelAABB; //AABB of the model in default pose
-	bool                             m_bHasPhysics2;
+	bool                             m_bHasPhysics[2];
 	DynArray<PhysicalProxy>          m_arrBackupPhyBoneMeshes; //collision proxi
 	DynArray<BONE_ENTITY>            m_arrBackupBoneEntities;  //physical-bones
 	DynArray<CryBonePhysics>         m_arrBackupPhysInfo;
@@ -546,10 +625,14 @@ public:
 	DynArray<uint32> m_animListIDs;
 	IAnimationSet*       GetIAnimationSet()       { return m_pAnimationSet; }
 	const IAnimationSet* GetIAnimationSet() const { return m_pAnimationSet.get(); }
-	bool LoadAnimations(class CParamLoader& paramLoader);   //loads animations by using the output of the ParamLoader
+	bool LoadAnimations(class CChrParamLoader& paramLoader);   //loads animations by using the output of the ParamLoader
 	const string         GetDefaultAnimDir();
-	uint32               LoadAnimationFiles(CParamLoader& paramLoader, uint32 listID);  // load animation files that were parsed from the param file into memory (That are not in DBA)
-	uint32               ReuseAnimationFiles(CParamLoader& paramLoader, uint32 listID); // files that are already in memory can be reused
+	uint32               LoadAnimationFiles(CChrParamLoader& paramLoader, uint32 listID);  // load animation files that were parsed from the param file into memory (That are not in DBA)
+	uint32               ReuseAnimationFiles(CChrParamLoader& paramLoader, uint32 listID); // files that are already in memory can be reused
+
+	//! Returns sorted range of crc32 identifiers representing joints belonging to the given animation lod. If the returned range is empty, it signifies that LoD includes all joints.
+	std::pair<const uint32*, const uint32*> FindClosestAnimationLod(const int lodValue) const;
+
 	_smart_ptr<CAnimationSet>  m_pAnimationSet;
 	DynArray<DynArray<uint32>> m_arrAnimationLOD;
 
@@ -598,6 +681,8 @@ public:
 	_smart_ptr<IStatObj> m_pCGA_Object;
 
 private:
+	bool SetupPhysicalProxiesChr(const char* filename, int nLod, const DynArray<PhysicalProxy>& arrPhyBoneMeshes, DynArray<BONE_ENTITY>& arrBoneEntitiesSorted, IMaterial* pIMaterial, float dfltApproxTol);
+	bool SetupPhysicalProxiesChrCgf(const char* filename, int nLod);
 
 	CModelMesh m_ModelMesh;
 	bool       m_ModelMeshEnabled;

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -111,13 +111,6 @@ public:
 	T     GetPrevYValue() { return prevYValue; }
 
 };
-
-namespace {
-float tempFloat0 = 0;
-float tempFloat1 = 1;
-int tempInt0 = 0;
-int tempInt1 = 1;
-}
 
 class TimelineFloat : public Timeline<float>
 {

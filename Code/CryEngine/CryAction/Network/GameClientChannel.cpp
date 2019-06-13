@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -228,6 +228,7 @@ void CGameClientChannel::DefineProtocol(IProtocolBuilder* pBuilder)
 		cca->GetIGameObjectSystem()->DefineProtocol(false, pBuilder);
 	if (cca->GetGameContext())
 		cca->GetGameContext()->DefineContextProtocols(pBuilder, false);
+	cca->DefineProtocolRMI(pBuilder);
 }
 
 // message implementation
@@ -254,14 +255,29 @@ NET_IMPLEMENT_SIMPLE_ATSYNC_MESSAGE(CGameClientChannel, SetGameType, eNRT_Reliab
 {
 	string rulesClass;
 	string levelName = param.levelName;
-	if (!GetGameContext()->ClassNameFromId(rulesClass, param.rulesClass))
-		return false;
+	const uint16 invalidClassId = ~uint16(0);
+	bool hasGameRules = !GetGameContext()->HasContextFlag(eGSF_NoGameRules) && (param.rulesClass != invalidClassId);
+
+	if (hasGameRules && !GetGameContext()->ClassNameFromId(rulesClass, param.rulesClass))
+	{
+		hasGameRules = false;
+		CryWarning(VALIDATOR_MODULE_GAME, VALIDATOR_WARNING, "No GameRules");
+	}
+
+	if (!hasGameRules)
+	{
+		GetGameContext()->SetContextFlag(eGSF_NoGameRules);
+	}
+
 	bool ok = true;
 	if (!GetGameContext()->SetImmersive(param.immersive))
 		return false;
+
 	if (!bFromDemoSystem)
 	{
-		CryLogAlways("Game rules class: %s", rulesClass.c_str());
+		if (hasGameRules)
+			CryLogAlways("Game rules class: %s", rulesClass.c_str());
+
 		SGameContextParams params;
 		params.levelName = levelName.c_str();
 		params.gameRules = rulesClass.c_str();
@@ -335,7 +351,6 @@ NET_IMPLEMENT_IMMEDIATE_MESSAGE(CGameClientChannel, DefaultSpawn, eNRT_Unreliabl
 	IGameObjectSystem::SEntitySpawnParamsForGameObjectWithPreactivatedExtension userData;
 	userData.hookFunction = HookCreateActor;
 	userData.pUserData = &channelId;
-	userData.pSpawnSerializer = &ser;
 
 	IEntitySystem* pEntitySystem = gEnv->pEntitySystem;
 	SEntitySpawnParams esp;
@@ -344,6 +359,10 @@ NET_IMPLEMENT_IMMEDIATE_MESSAGE(CGameClientChannel, DefaultSpawn, eNRT_Unreliabl
 	esp.id = GetGameContext()->GetNetContext()->RemoveReservedUnboundEntityMapEntry(netMID);
 #endif
 	esp.nFlags = (param.flags & ~ENTITY_FLAG_TRIGGER_AREAS);
+	if (param.bClientActor)
+	{
+		esp.nFlags = (param.flags | ENTITY_FLAG_LOCAL_PLAYER);
+	}
 	esp.pClass = pEntitySystem->GetClassRegistry()->FindClass(actorClass);
 	if (!esp.pClass)
 		return false;
@@ -352,23 +371,33 @@ NET_IMPLEMENT_IMMEDIATE_MESSAGE(CGameClientChannel, DefaultSpawn, eNRT_Unreliabl
 	esp.sName = param.name.c_str();
 	esp.vPosition = param.pos;
 	esp.vScale = param.scale;
+	esp.pSpawnSerializer = &ser;
 
 	if (IEntity* pEntity = pEntitySystem->SpawnEntity(esp, false))
 	{
 		const EntityId entityId = pEntity->GetId();
+
+		if (!param.baseComponent.IsNull())
+		{
+			if (pEntity->QueryComponentByInterfaceID(param.baseComponent) == nullptr)
+			{
+				pEntity->CreateComponentByInterfaceID(param.baseComponent, nullptr);
+			}
+		}
+
 		if (!pEntitySystem->InitEntity(pEntity, esp))
 		{
 			return false;
 		}
 
-		CGameObject* pGameObject = (CGameObject*)CCryAction::GetCryAction()->GetIGameObjectSystem()->CreateGameObjectForEntity(pEntity->GetId());
-		CRY_ASSERT(pGameObject);
 		if (param.bClientActor)
 		{
 			SetPlayerId(entityId);
 		}
 		GetGameContext()->GetNetContext()->SpawnedObject(entityId);
-		pGameObject->PostRemoteSpawn();
+
+		pEntity->SendEvent(SEntityEvent(ENTITY_EVENT_SPAWNED_REMOTELY));
+
 		return true;
 	}
 
@@ -462,6 +491,9 @@ void CGameClientChannel::CallOnSetPlayerId()
 
 	if (IActor* pActor = CCryAction::GetCryAction()->GetIActorSystem()->GetActor(GetPlayerId()))
 		pActor->InitLocalPlayer();
+
+	SEntityEvent becomeLocalPlayer(ENTITY_EVENT_NET_BECOME_LOCAL_PLAYER);
+	pPlayer->SendEvent(becomeLocalPlayer);
 
 #ifndef OLD_VOICE_SYSTEM_DEPRECATED
 	if (m_pVoiceController)

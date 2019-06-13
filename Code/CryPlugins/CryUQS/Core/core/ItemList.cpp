@@ -1,13 +1,13 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ItemList.h"
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
-namespace uqs
+namespace UQS
 {
-	namespace core
+	namespace Core
 	{
 
 		CItemList::CItemList()
@@ -26,22 +26,30 @@ namespace uqs
 			}
 		}
 
-		void CItemList::SetItemFactory(client::IItemFactory& itemFactory)
-		{
-			assert(!m_pItemFactory);  // changing the item-factory is not supported (which use-case would it tackle?)
-			m_pItemFactory = &itemFactory;
-		}
-
 		void CItemList::CreateItemsByItemFactory(size_t numItemsToCreate)
 		{
 			// ensure SetItemFactory() has been called prior
-			assert(m_pItemFactory);
+			CRY_ASSERT(m_pItemFactory);
 
 			// ensure that no items have been created yet (we don't support recycling the item list)
-			assert(!m_pItems);
+			CRY_ASSERT(!m_pItems);
 
-			m_pItems = m_pItemFactory->CreateItems(numItemsToCreate, client::IItemFactory::EItemInitMode::UseDefaultConstructor);
+			m_pItems = m_pItemFactory->CreateItems(numItemsToCreate, Client::IItemFactory::EItemInitMode::UseDefaultConstructor);
 			m_numItems = numItemsToCreate;
+		}
+
+		void CItemList::CloneItems(const void* pOriginalItems, size_t numItemsToClone)
+		{
+			CRY_ASSERT(pOriginalItems);
+
+			// ensure SetItemFactory() has been called prior
+			CRY_ASSERT(m_pItemFactory);
+
+			// ensure that no items have been created yet (we don't support recycling the item list)
+			CRY_ASSERT(!m_pItems);
+
+			m_pItems = m_pItemFactory->CloneItems(pOriginalItems, numItemsToClone);
+			m_numItems = numItemsToClone;
 		}
 
 		size_t CItemList::GetItemCount() const
@@ -49,9 +57,9 @@ namespace uqs
 			return m_numItems;
 		}
 
-		client::IItemFactory& CItemList::GetItemFactory() const
+		Client::IItemFactory& CItemList::GetItemFactory() const
 		{
-			assert(m_pItemFactory);    // CreateItemsByItemFactory() should have been called before; I cannot see a use-case where it would make sense the other way round
+			CRY_ASSERT(m_pItemFactory);    // CreateItemsByItemFactory() should have been called before; I cannot see a use-case where it would make sense the other way round
 			return *m_pItemFactory;
 		}
 
@@ -67,26 +75,34 @@ namespace uqs
 				m_pItemFactory->DestroyItems(m_pItems);
 			}
 
-			const void* pOtherItems = other.GetItems();
-			const size_t numItemsToCopy = other.GetItemCount();
-			client::IItemFactory& otherItemFactory = other.GetItemFactory();
+			m_pItemFactory = &other.GetItemFactory();
+			m_pItems = m_pItemFactory->CloneItems(other.GetItems(), other.GetItemCount());
+			m_numItems = other.GetItemCount();
+		}
 
-			m_pItemFactory = &otherItemFactory;
-			m_pItems = m_pItemFactory->CreateItems(numItemsToCopy, client::IItemFactory::EItemInitMode::UseDefaultConstructor);
-			for (size_t i = 0; i < numItemsToCopy; ++i)
+		void CItemList::SetItemFactory(Client::IItemFactory& itemFactory)
+		{
+			CRY_ASSERT(!m_pItemFactory);  // changing the item-factory is not supported (which use-case would it tackle?)
+			m_pItemFactory = &itemFactory;
+		}
+
+		void CItemList::CopyOtherToSelfViaIndexList(const IItemList& other, const size_t* pIndexes, size_t numIndexes)
+		{
+			if (m_pItemFactory)
 			{
-				void* pTargetItem = m_pItemFactory->GetItemAtIndex(m_pItems, i);
-				const void* pSourceItem = otherItemFactory.GetItemAtIndex(pOtherItems, i);
-				m_pItemFactory->CopyItem(pTargetItem, pSourceItem);
+				m_pItemFactory->DestroyItems(m_pItems);
 			}
-			m_numItems = numItemsToCopy;
+
+			m_pItemFactory = &other.GetItemFactory();
+			m_pItems = m_pItemFactory->CloneItemsViaIndexList(other.GetItems(), pIndexes, numIndexes);
+			m_numItems = numIndexes;
 		}
 
 		void* CItemList::GetItemAtIndex(size_t index) const
 		{
-			assert(m_pItemFactory);
-			assert(m_pItems);
-			assert(index < m_numItems);
+			CRY_ASSERT(m_pItemFactory);
+			CRY_ASSERT(m_pItems);
+			CRY_ASSERT(index < m_numItems);
 			return m_pItemFactory->GetItemAtIndex(m_pItems, index);
 		}
 

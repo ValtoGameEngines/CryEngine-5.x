@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -20,7 +20,7 @@ class CDefaultLipsyncProvider final : public DRS::ISpeakerManager::ILipsyncProvi
 	//for now, our default lipsync provider just starts a animation when a line starts, and stops it when the line finishes
 public:
 	CDefaultLipsyncProvider();
-	~CDefaultLipsyncProvider();
+	virtual ~CDefaultLipsyncProvider() override;
 
 	//////////////////////////////////////////////////////////////////////////
 	// ISpeakerManager::ILipsyncProvider implementation
@@ -39,9 +39,10 @@ class CSpeakerManager final : public DRS::ISpeakerManager
 {
 public:
 	CSpeakerManager();
-	~CSpeakerManager();
+	virtual ~CSpeakerManager() override;
 
 	void Init();
+	void Shutdown();
 	void Reset();
 	void Update();
 
@@ -69,6 +70,18 @@ private:
 
 	struct SSpeakInfo
 	{
+		SSpeakInfo() = default;
+		SSpeakInfo(CryAudio::AuxObjectId auxAudioObjectId)
+			: speechAuxObjectId(auxAudioObjectId)
+			, voiceAttachmentIndex(-1)
+			, pActor(nullptr)
+			, pEntity(nullptr)
+			, pPickedLine(nullptr)
+			, finishTime(0.0f)
+			, priority(0)
+			, bWasCanceled(false)
+		{}
+
 		CResponseActor*       pActor;
 		IEntity*              pEntity;
 		string                text;
@@ -77,11 +90,10 @@ private:
 		float                 finishTime;
 		int                   priority;
 
-		int                   voiceAttachmentIndex;      //cached index of the voice attachment index
-		CryAudio::AuxObjectId speechAuxProxy;
+		int                   voiceAttachmentIndex;      //cached index of the voice attachment index // -1 means invalid ID;
+		CryAudio::AuxObjectId speechAuxObjectId;
 		CryAudio::ControlId   startTriggerID;
 		CryAudio::ControlId   stopTriggerID;
-		string                standaloneFile;
 
 		uint32                endingConditions;      //EEndingConditions
 		DRS::LipSyncID        lipsyncId;
@@ -124,18 +136,17 @@ private:
 	CDefaultLipsyncProvider*                m_pDefaultLipsyncProvider;
 
 	int                                            m_numActiveSpeaker;
-	CryAudio::ControlId                            m_audioRtpcIdLocal;
-	CryAudio::ControlId                            m_audioRtpcIdGlobal;
+	CryAudio::ControlId                            m_audioParameterIdLocal;
+	CryAudio::ControlId                            m_audioParameterIdGlobal;
 
 	std::vector<std::pair<CResponseActor*, float>> m_recentlyFinishedSpeakers;
 
 	// CVars
 	int          m_displaySubtitlesCVar;
-	int          m_playAudioCVar;
 	int          m_samePrioCancelsLinesCVar;
 	float        m_defaultMaxQueueTime;
 	static float s_defaultPauseAfterLines;
-	ICVar*       m_pDrsDialogDialogRunningEntityRtpcName;
-	ICVar*       m_pDrsDialogDialogRunningGlobalRtpcName;
+	ICVar*       m_pDrsDialogDialogRunningEntityParameterName;
+	ICVar*       m_pDrsDialogDialogRunningGlobalParameterName;
 };
 }  //namespace CryDRS

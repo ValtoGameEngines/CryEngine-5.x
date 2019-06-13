@@ -1,3 +1,5 @@
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
 #pragma once
 
 #include <functional>
@@ -7,6 +9,7 @@ namespace yasli
 
 struct CallbackInterface
 {
+	virtual ~CallbackInterface() {}
 	virtual bool serializeValue(Archive& ar, const char* name, const char* value) = 0;
 	virtual CallbackInterface* clone() = 0;
 	virtual void release() = 0;

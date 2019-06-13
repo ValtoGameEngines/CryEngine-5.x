@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -6,11 +6,13 @@
 #include "Memory/Pool.h"
 #include "Model.h"
 #include "Skeleton.h"
+#include <CryPhysics/IPhysics.h>
 
 struct CCGAJoint;
 class CSkeletonPose;
 class CSkeletonAnim;
 class CCharInstance;
+struct SBatchUpdateValidator;
 
 class CSkeletonPhysicsNull
 {
@@ -60,7 +62,7 @@ public:
 
 	void                      InitPhysicsSkeleton()                                                                                                                                        {}
 	void                      InitializeAnimToPhysIndexArray()                                                                                                                             {}
-	int                       CreateAuxilaryPhysics(IPhysicalEntity* pHost, const Matrix34& mtx, f32 scale, Vec3 offset, int nLod)                                                         { return 0; }
+	int                       CreateAuxilaryPhysics(IPhysicalEntity* pHost, const Matrix34& mtx, const QuatTS& offset, int nLod)		                                                       { return 0; }
 	int                       FillRopeLenArray(float* arr, int i0, int sz)                                                                                                                 { return 0; }
 	void                      DestroyPhysics()                                                                                                                                             {}
 	void                      SetAuxParams(pe_params* pf)                                                                                                                                  {}
@@ -123,38 +125,6 @@ struct aux_phys_data
 	void             GetMemoryUsage(ICrySizer* pSizer) const {}
 };
 
-struct SBatchUpdateValidator : pe_action_batch_parts_update::Validator
-{
-	SBatchUpdateValidator()
-	{
-		bValid = 1;
-		nRefCount = 1;
-		lock = 0;
-		WriteLock glock(g_lockList);
-		next = prev = &g_firstValidator;
-		next = g_firstValidator.next;
-		g_firstValidator.next->prev = this;
-		g_firstValidator.next = this;
-	}
-	~SBatchUpdateValidator() { WriteLock glock(g_lockList); prev->next = next; next->prev = prev; }
-	int                             bValid;
-	int                             nRefCount;
-	volatile int                    lock;
-	volatile SBatchUpdateValidator* next, * prev;
-	static SBatchUpdateValidator    g_firstValidator;
-	static volatile int             g_lockList;
-
-	virtual bool Lock()
-	{
-		if (!bValid) { Release(); return false; }
-		CryReadLock(&lock);
-		return true;
-	}
-	virtual void Unlock()  { CryReleaseReadLock(&lock); Release(); }
-	int          AddRef()  { return CryInterlockedIncrement(&nRefCount); }
-	void         Release() { if (CryInterlockedDecrement(&nRefCount) <= 0) delete this; }
-};
-
 class CSkeletonPhysics
 {
 public:
@@ -182,7 +152,7 @@ public:
 	CDefaultSkeleton::SJoint*       GetModelJointPointer(int nBone);
 	const CDefaultSkeleton::SJoint* GetModelJointPointer(int nBone) const;
 
-	Vec3                            GetOffset()                        { return m_vOffset; }
+	Vec3                            GetOffset()                        { return m_offset.t; }
 
 	IPhysicalEntity*                GetPhysEntOnJoint(int32 nId)       { return m_ppBonePhysics ? m_ppBonePhysics[nId] : 0; }
 	const IPhysicalEntity*          GetPhysEntOnJoint(int32 nId) const { return const_cast<CSkeletonPhysics*>(this)->GetPhysEntOnJoint(nId); }
@@ -200,11 +170,14 @@ public:
 private:
 	int    getBonePhysChildIndex(int nBoneIndex, int nLod = 0) const;
 	uint32 getBoneParentIndex(uint32 nBoneIndex) const;
+	int    GetPhysRoot(int nLod = 0) const;
 
 	int    GetModelJointChildIndex(int nBone, int i) const
 	{
+#if defined(USE_CRY_ASSERT)
 		int32 numChildren = int32(GetModelJointPointer(nBone)->m_numChildren);
 		assert(i >= 0 && i < numChildren);
+#endif
 		return nBone + GetModelJointPointer(nBone)->m_nOffsetChildren + i;
 	}
 	int  GetPhysicsLod() const { return m_bHasPhysicsProxies ? 1 : 0; }
@@ -216,14 +189,12 @@ private:
 
 	void ForceReskin();
 
-	void SetOffset(Vec3 offset) { m_vOffset = offset; }
-
 	// Initialization/creation
 public:
 	void                     InitPhysicsSkeleton();
 	void                     InitializeAnimToPhysIndexArray();
 	int                      CreateAuxilaryPhysics(IPhysicalEntity* pHost, const Matrix34& mtx, int nLod = 0);
-	int                      CreateAuxilaryPhysics(IPhysicalEntity* pHost, const Matrix34& mtx, f32 scale, Vec3 offset, int nLod);
+	int                      CreateAuxilaryPhysics(IPhysicalEntity* pHost, const Matrix34& mtx, const QuatTS& offset, int nLod);
 	int                      FillRopeLenArray(float* arr, int i0, int sz);
 	void                     DestroyPhysics();
 	void                     SetAuxParams(pe_params* pf);
@@ -240,6 +211,7 @@ public:
 	bool                     SetJointPhysProperties_ROPE(uint32 jointIndex, int nLod, const DynArray<SJointProperty>& props);
 
 	void                     SetLocation(const QuatTS& location) { m_location = location; }
+	void                     SetOffset(const QuatTS& offset)     { m_offset = offset; }
 
 private:
 	void CreateRagdollDefaultPose(Skeleton::CPoseData& poseData);
@@ -300,6 +272,7 @@ public:
 	bool              m_bPhysicsAwake         : 1;
 	bool              m_bPhysicsWasAwake      : 1;
 	bool              m_bPhysicsRelinquished  : 1;
+	int               m_physLod;
 
 private:
 	QuatTS                  m_location;
@@ -320,6 +293,7 @@ private:
 	bool m_bPhysicsSynchronize;
 	bool m_bPhysicsSynchronizeFromEntity;
 	bool m_bPhysBufferFilled;
+	int  m_idLastSyncFrame = 0;
 
 	struct PhysAuxData
 	{
@@ -339,7 +313,7 @@ private:
 		bool bSet : 1;
 	}*                      m_pPhysImpactBuffer;
 
-	Vec3                    m_vOffset;
+	QuatTS                  m_offset;
 	mutable int             m_iSpineBone[3];
 	mutable uint32          m_nSpineBones;
 	int                     m_nAuxPhys;
@@ -349,7 +323,6 @@ private:
 	f32                     m_fPhysBlendMaxTime;
 	f32                     m_frPhysBlendMaxTime;
 	float                   m_stiffnessScale;
-	f32                     m_fScale;
 	f32                     m_fMass;
 	Vec3                    m_prevPosPivot;
 	Vec3                    m_velPivot;

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -7,13 +7,13 @@
 #include <CryAISystem/BehaviorTree/NodeFactory.h>
 #include "BehaviorTree/BehaviorTreeMetaExtensions.h"
 
-#ifdef USING_BEHAVIOR_TREE_VISUALIZER
+#ifdef DEBUG_MODULAR_BEHAVIOR_TREE
 	#include "BehaviorTree/TreeVisualizer.h"
-#endif // USING_BEHAVIOR_TREE_VISUALIZER
+#endif // DEBUG_MODULAR_BEHAVIOR_TREE
 
-#ifdef USING_BEHAVIOR_TREE_EXECUTION_STACKS_FILE_LOG
+#ifdef DEBUG_MODULAR_BEHAVIOR_TREE
 	#include "ExecutionStackFileLogger.h"
-#endif
+#endif // DEBUG_MODULAR_BEHAVIOR_TREE
 
 #if defined(COMPILE_WITH_MOVEMENT_SYSTEM_DEBUG)
 	#include <CryAISystem/IAIDebugRenderer.h>
@@ -27,6 +27,7 @@
 
 #if defined (DEBUG_MODULAR_BEHAVIOR_TREE_WEB)
 	#include <CryGame/IGameFramework.h>
+	#include <CryGame/IGame.h>
 	#include <CrySerialization/IArchiveHost.h>
 #endif
 
@@ -49,10 +50,12 @@ static CPipeUser* GetPipeUser(EntityId entityId)
 #if defined (DEBUG_MODULAR_BEHAVIOR_TREE_WEB)
 IGameWebDebugService* GetIGameWebDebugService()
 {
-	if (gEnv)
+	if (gEnv && gEnv->pGameFramework != nullptr)
 	{
-		if (auto* pGame = gEnv->pGameFramework->GetIGame())
+		if (IGame* pGame = gEnv->pGameFramework->GetIGame())
+		{
 			return pGame->GetIWebDebugService();
+		}
 	}
 
 	return nullptr;
@@ -69,8 +72,10 @@ NodeFactory::BehaviorTreeBucketAllocator NodeFactory::s_bucketAllocator;
 #endif
 
 BehaviorTreeManager::BehaviorTreeManager()
+	: m_frameStartTime(0.0f)
+	, m_frameDeltaTime(0.0f)
 #if defined(DEBUG_MODULAR_BEHAVIOR_TREE_WEB)
-	: m_bRegisteredAsDebugChannel(false)
+	, m_bRegisteredAsDebugChannel(false)
 #endif
 {
 	m_metaExtensionFactory.reset(new BehaviorTree::MetaExtensionFactory);
@@ -90,6 +95,7 @@ BehaviorTreeManager::~BehaviorTreeManager()
 		}
 	}
 #endif
+	DeregisterGameEventsInSignalManager();
 }
 
 IMetaExtensionFactory& BehaviorTreeManager::GetMetaExtensionFactory()
@@ -144,7 +150,7 @@ BehaviorTreeInstancePtr BehaviorTreeManager::CreateBehaviorTreeInstanceFromXml(c
 
 BehaviorTreeInstancePtr BehaviorTreeManager::LoadFromCache(const char* behaviorTreeName)
 {
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Other, 0, "Load Modular Behavior Tree From Cache: %s", behaviorTreeName);
+	MEMSTAT_CONTEXT_FMT(EMemStatContextType::Other, "Load Modular Behavior Tree From Cache: %s", behaviorTreeName);
 
 	BehaviorTreeCache::iterator findResult = m_behaviorTreeCache.find(behaviorTreeName);
 	if (findResult != m_behaviorTreeCache.end())
@@ -162,6 +168,8 @@ BehaviorTreeInstancePtr BehaviorTreeManager::LoadFromCache(const char* behaviorT
 
 bool BehaviorTreeManager::LoadBehaviorTreeTemplate(const char* behaviorTreeName, XmlNodeRef behaviorTreeXmlNode, BehaviorTreeTemplate& behaviorTreeTemplate)
 {
+	const bool isLoadingFromEditor = false;
+
 #if defined(DEBUG_MODULAR_BEHAVIOR_TREE)
 	behaviorTreeTemplate.mbtFilename = behaviorTreeName;
 #endif
@@ -170,35 +178,74 @@ bool BehaviorTreeManager::LoadBehaviorTreeTemplate(const char* behaviorTreeName,
 
 	if (XmlNodeRef metaExtensionsXml = behaviorTreeXmlNode->findChild("MetaExtensions"))
 	{
-		MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "MetaExtensions");
-		behaviorTreeTemplate.metaExtensionTable.LoadFromXml(metaExtensionsXml);
-	}
-
-	if (XmlNodeRef timestampsXml = behaviorTreeXmlNode->findChild("Timestamps"))
-	{
-		MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "Timestamps");
-		behaviorTreeTemplate.defaultTimestampCollection.LoadFromXml(timestampsXml);
+		MEMSTAT_CONTEXT(EMemStatContextType::Other, "MetaExtensions");
+		if (!behaviorTreeTemplate.metaExtensionTable.LoadFromXml(metaExtensionsXml))
+		{
+			return false;
+		}
 	}
 
 	if (XmlNodeRef variablesXml = behaviorTreeXmlNode->findChild("Variables"))
 	{
-		MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "Variables");
-		behaviorTreeTemplate.variableDeclarations.LoadFromXML(variablesXml, behaviorTreeName);
+		MEMSTAT_CONTEXT(EMemStatContextType::Other, "Variables");
+		if (!behaviorTreeTemplate.variableDeclarations.LoadFromXML(variablesXml, behaviorTreeName))
+		{
+			return false;
+		}
+	}
+
+	if (XmlNodeRef eventsXml = behaviorTreeXmlNode->findChild("Events"))
+	{
+		MEMSTAT_CONTEXT(EMemStatContextType::Other, "Events");
+		if (!behaviorTreeTemplate.eventsDeclaration.LoadFromXML(eventsXml, behaviorTreeName))
+		{
+			return false;
+		}
 	}
 
 	if (XmlNodeRef signalsXml = behaviorTreeXmlNode->findChild("SignalVariables"))
 	{
-		MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "Signals");
-		behaviorTreeTemplate.signalHandler.LoadFromXML(behaviorTreeTemplate.variableDeclarations, signalsXml, behaviorTreeName);
+		MEMSTAT_CONTEXT(EMemStatContextType::Other, "Signals");
+		if (!behaviorTreeTemplate.signalHandler.LoadFromXML(behaviorTreeTemplate.variableDeclarations, behaviorTreeTemplate.eventsDeclaration, signalsXml, behaviorTreeName, isLoadingFromEditor))
+		{
+			return false;
+		}
 	}
 
-	LoadContext context(GetNodeFactory(), behaviorTreeName, behaviorTreeTemplate.variableDeclarations);
-	behaviorTreeTemplate.rootNode = XmlLoader().CreateBehaviorTreeRootNodeFromBehaviorTreeXml(behaviorTreeXmlNode, context);
+	if (XmlNodeRef timestampsXml = behaviorTreeXmlNode->findChild("Timestamps"))
+	{
+		MEMSTAT_CONTEXT(EMemStatContextType::Other, "Timestamps");
+		if (!behaviorTreeTemplate.defaultTimestampCollection.LoadFromXml(behaviorTreeTemplate.eventsDeclaration, timestampsXml, behaviorTreeName, isLoadingFromEditor))
+		{
+			return false;
+		}
+	}
+
+	LoadContext context(GetNodeFactory(), behaviorTreeName, behaviorTreeTemplate.variableDeclarations, behaviorTreeTemplate.eventsDeclaration, behaviorTreeTemplate.defaultTimestampCollection);
+	behaviorTreeTemplate.rootNode = XmlLoader().CreateBehaviorTreeRootNodeFromBehaviorTreeXml(behaviorTreeXmlNode, context, isLoadingFromEditor);
 
 	if (!behaviorTreeTemplate.rootNode)
 		return false;
 
 	return true;
+}
+
+void BehaviorTreeManager::RegisterGameEventsInSignalManager(BehaviorTreeInstancePtr pInstance)
+{
+	for (const Variables::Event& e : pInstance->behaviorTreeTemplate->eventsDeclaration.GetGameEvents())
+	{
+		const AISignals::ISignalDescription& signalDesc = gEnv->pAISystem->GetSignalManager()->RegisterGameSignalDescription(e.name);
+		m_gameSignalDescriptionsSet.insert(&signalDesc);
+	}
+}
+
+void BehaviorTreeManager::DeregisterGameEventsInSignalManager()
+{
+	for (const AISignals::ISignalDescription* signalDesc : m_gameSignalDescriptionsSet)
+	{
+		gEnv->pAISystem->GetSignalManager()->DeregisterGameSignalDescription(*signalDesc);
+	}
+	m_gameSignalDescriptionsSet.clear();
 }
 
 void BehaviorTreeManager::LoadFromDiskIntoCache(const char* behaviorTreeName)
@@ -207,7 +254,7 @@ void BehaviorTreeManager::LoadFromDiskIntoCache(const char* behaviorTreeName)
 	if (findResult != m_behaviorTreeCache.end())
 		return;
 
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Other, 0, "Load Modular Behavior Tree From Disk: %s", behaviorTreeName);
+	MEMSTAT_CONTEXT_FMT(EMemStatContextType::Other, "Load Modular Behavior Tree From Disk: %s", behaviorTreeName);
 
 	XmlNodeRef behaviorTreeXmlNode = XmlLoader().LoadBehaviorTreeXmlFile("Scripts/AI/BehaviorTrees/", behaviorTreeName);
 
@@ -267,6 +314,7 @@ void BehaviorTreeManager::StopAllBehaviorTreeInstances()
 		BehaviorVariablesContext variables(
 		  instance.variables
 		  , instance.behaviorTreeTemplate->variableDeclarations
+		  , instance.behaviorTreeTemplate->eventsDeclaration
 		  , instance.variables.Changed()
 		  );
 
@@ -279,15 +327,18 @@ void BehaviorTreeManager::StopAllBehaviorTreeInstances()
 		  , variables
 		  , instance.timestampCollection
 		  , instance.blackboard
-#ifdef USING_BEHAVIOR_TREE_LOG
+		  , m_frameStartTime
+		  , m_frameDeltaTime
+#ifdef DEBUG_MODULAR_BEHAVIOR_TREE
 		  , instance.behaviorLog
-#endif
+#endif // DEBUG_MODULAR_BEHAVIOR_TREE
 		  );
 
 		instance.behaviorTreeTemplate->rootNode->Terminate(context);
 	}
 
 	m_instances.clear();
+	DeregisterGameEventsInSignalManager();
 }
 
 #ifdef CRYAISYSTEM_DEBUG
@@ -315,24 +366,38 @@ void BehaviorTreeManager::DrawMemoryInformation()
 bool BehaviorTreeManager::StartModularBehaviorTree(const EntityId entityId, const char* treeName)
 {
 	BehaviorTreeInstancePtr instance = CreateBehaviorTreeInstanceFromDiskCache(treeName);
+
+	if (!instance)
+	{
+		return false;
+	}
+
+	RegisterGameEventsInSignalManager(instance);
 	return StartBehaviorInstance(entityId, instance, treeName);
 }
 
 bool BehaviorTreeManager::StartModularBehaviorTreeFromXml(const EntityId entityId, const char* treeName, XmlNodeRef treeXml)
 {
 	BehaviorTreeInstancePtr instance = CreateBehaviorTreeInstanceFromXml(treeName, treeXml);
+
+	if (!instance)
+	{
+		return false;
+	}
+
 	return StartBehaviorInstance(entityId, instance, treeName);
 }
 
 bool BehaviorTreeManager::StartBehaviorInstance(const EntityId entityId, BehaviorTreeInstancePtr instance, const char* treeName)
 {
 	StopModularBehaviorTree(entityId);
+
 	if (instance.get())
 	{
 		m_instances.insert(std::make_pair(entityId, instance));
-#ifdef USING_BEHAVIOR_TREE_EXECUTION_STACKS_FILE_LOG
+#ifdef DEBUG_MODULAR_BEHAVIOR_TREE
 		m_executionStackFileLoggerInstances.insert(std::make_pair(entityId, ExecutionStackFileLoggerPtr(new ExecutionStackFileLogger(entityId))));
-#endif
+#endif // DEBUG_MODULAR_BEHAVIOR_TREE
 		return true;
 	}
 	else
@@ -352,6 +417,7 @@ void BehaviorTreeManager::StopModularBehaviorTree(const EntityId entityId)
 		BehaviorVariablesContext variables(
 		  instance.variables
 		  , instance.behaviorTreeTemplate->variableDeclarations
+		  , instance.behaviorTreeTemplate->eventsDeclaration
 		  , instance.variables.Changed()
 		  );
 
@@ -364,22 +430,27 @@ void BehaviorTreeManager::StopModularBehaviorTree(const EntityId entityId)
 		  , variables
 		  , instance.timestampCollection
 		  , instance.blackboard
-#ifdef USING_BEHAVIOR_TREE_LOG
+		  , m_frameStartTime
+		  , m_frameDeltaTime
+#ifdef DEBUG_MODULAR_BEHAVIOR_TREE
 		  , instance.behaviorLog
-#endif
+#endif // DEBUG_MODULAR_BEHAVIOR_TREE
 		  );
 
 		instance.behaviorTreeTemplate->rootNode->Terminate(context);
 		m_instances.erase(it);
 	}
 
-#ifdef USING_BEHAVIOR_TREE_EXECUTION_STACKS_FILE_LOG
+#ifdef DEBUG_MODULAR_BEHAVIOR_TREE
 	m_executionStackFileLoggerInstances.erase(entityId);
-#endif
+#endif // DEBUG_MODULAR_BEHAVIOR_TREE
 }
 
-void BehaviorTreeManager::Update()
+void BehaviorTreeManager::Update(const CTimeValue frameStartTime, const float frameDeltaTime)
 {
+	m_frameStartTime = frameStartTime;
+	m_frameDeltaTime = frameDeltaTime;
+
 	EntityIdVector newErrorStatusTree;
 
 	Instances::iterator it = m_instances.begin();
@@ -400,12 +471,18 @@ void BehaviorTreeManager::Update()
 
 		BehaviorTreeInstance& instance = *(it->second.get());
 
-		BehaviorVariablesContext variables(instance.variables, instance.behaviorTreeTemplate->variableDeclarations, instance.variables.Changed());
+		BehaviorVariablesContext variables(instance.variables, instance.behaviorTreeTemplate->variableDeclarations, instance.behaviorTreeTemplate->eventsDeclaration, instance.variables.Changed());
 		instance.variables.ResetChanged();
 
 #ifdef DEBUG_MODULAR_BEHAVIOR_TREE
+		const bool debugThisAgent = (GetAISystem()->GetAgentDebugTarget() == entityId);
 		DebugTree debugTree;
 #endif // DEBUG_MODULAR_BEHAVIOR_TREE
+
+#ifdef DEBUG_MODULAR_BEHAVIOR_TREE_WEB
+		TGameWebDebugClientId webDebugClientId;
+		const bool webDebugThisAgent = DoesEntityWantToDoWebDebugging(entityId, &webDebugClientId);
+#endif // DEBUG_MODULAR_BEHAVIOR_TREE_WEB
 
 		UpdateContext updateContext(
 		  entityId
@@ -413,11 +490,15 @@ void BehaviorTreeManager::Update()
 		  , variables
 		  , instance.timestampCollection
 		  , instance.blackboard
-#ifdef USING_BEHAVIOR_TREE_LOG
-		  , instance.behaviorLog
-#endif // USING_BEHAVIOR_TREE_LOG
+		  , m_frameStartTime
+		  , m_frameDeltaTime
 #ifdef DEBUG_MODULAR_BEHAVIOR_TREE
-		  , &debugTree
+		  , instance.behaviorLog
+#	ifdef DEBUG_MODULAR_BEHAVIOR_TREE_WEB
+		  , (debugThisAgent || webDebugThisAgent) ? &debugTree : nullptr
+#	else
+		  , debugThisAgent ? &debugTree : nullptr
+#	endif // DEBUG_MODULAR_BEHAVIOR_TREE_WEB
 #endif // DEBUG_MODULAR_BEHAVIOR_TREE
 		  );
 
@@ -447,20 +528,22 @@ void BehaviorTreeManager::Update()
 		}
 
 #ifdef DEBUG_MODULAR_BEHAVIOR_TREE
-		const bool debugThisAgent = (GetAISystem()->GetAgentDebugTarget() == entityId);
 		if (debugThisAgent)
 		{
 			UpdateDebugVisualization(updateContext, entityId, debugTree, instance, agentEntity);
 		}
 
-		if (gAIEnv.CVars.LogModularBehaviorTreeExecutionStacks == 1 && debugThisAgent || gAIEnv.CVars.LogModularBehaviorTreeExecutionStacks == 2)
+		if (gAIEnv.CVars.behaviorTree.LogModularBehaviorTreeExecutionStacks == 1 && debugThisAgent || gAIEnv.CVars.behaviorTree.LogModularBehaviorTreeExecutionStacks == 2)
 		{
 			UpdateExecutionStackLogging(updateContext, entityId, debugTree, instance);
 		}
 #endif // DEBUG_MODULAR_BEHAVIOR_TREE
 
 #ifdef DEBUG_MODULAR_BEHAVIOR_TREE_WEB
-		UpdateWebDebugChannel(entityId, updateContext, debugTree, instance, bExecutionError);
+		if (webDebugThisAgent)
+		{
+			UpdateWebDebugChannel(webDebugClientId, updateContext, debugTree, instance, bExecutionError);
+		}
 #endif
 	}
 
@@ -508,7 +591,13 @@ BehaviorTreeInstance* BehaviorTreeManager::GetBehaviorTree(const EntityId entity
 	Instances::const_iterator it = m_instances.find(entityId);
 	if (it != m_instances.end())
 		return it->second.get();
-	return NULL;
+	return nullptr;
+}
+
+BehaviorTree::Blackboard* BehaviorTreeManager::GetBehaviorTreeBlackboard(const EntityId entityId)
+{
+	BehaviorTreeInstance* pBTInstance = GetBehaviorTree(entityId);
+	return pBTInstance ? &pBTInstance->blackboard : nullptr;
 }
 
 Variables::Collection* BehaviorTreeManager::GetBehaviorVariableCollection_Deprecated(const EntityId entityId) const
@@ -542,31 +631,30 @@ void BehaviorTreeManager::Unsubscribe(const TGameWebDebugClientId clientId)
 #ifdef DEBUG_MODULAR_BEHAVIOR_TREE
 void BehaviorTreeManager::UpdateDebugVisualization(UpdateContext updateContext, const EntityId entityId, DebugTree debugTree, BehaviorTreeInstance& instance, IEntity* agentEntity)
 {
-	#ifdef USING_BEHAVIOR_TREE_VISUALIZER
+	#ifdef DEBUG_MODULAR_BEHAVIOR_TREE
 	BehaviorTree::TreeVisualizer treeVisualizer(updateContext);
 	treeVisualizer.Draw(
 	  debugTree
 	  , instance.behaviorTreeTemplate->mbtFilename
 	  , agentEntity->GetName()
-		#ifdef USING_BEHAVIOR_TREE_LOG
 	  , instance.behaviorLog
-		#endif // USING_BEHAVIOR_TREE_LOG
 	  , instance.timestampCollection
 	  , instance.blackboard
-		#ifdef USING_BEHAVIOR_TREE_EVENT_DEBUGGING
 	  , instance.eventsLog
-		#endif // USING_BEHAVIOR_TREE_EVENT_DEBUGGING
 	  );
-	#endif // USING_BEHAVIOR_TREE_VISUALIZER
+	#endif // DEBUG_MODULAR_BEHAVIOR_TREE
 
 	#ifdef DEBUG_VARIABLE_COLLECTION
-	Variables::DebugHelper::DebugDraw(true, instance.variables, instance.behaviorTreeTemplate->variableDeclarations);
+	if (gAIEnv.CVars.behaviorTree.ModularBehaviorTreeDebugVariables)
+	{
+		Variables::DebugHelper::DebugDraw(true, instance.variables, instance.behaviorTreeTemplate->variableDeclarations);
+	}
 	#endif // DEBUG_VARIABLE_COLLECTION
 
 }
 #endif // DEBUG_MODULAR_BEHAVIOR_TREE
 
-#ifdef USING_BEHAVIOR_TREE_EXECUTION_STACKS_FILE_LOG
+#ifdef DEBUG_MODULAR_BEHAVIOR_TREE
 void BehaviorTreeManager::UpdateExecutionStackLogging(UpdateContext updateContext, const EntityId entityId, DebugTree debugTree, BehaviorTreeInstance& instance)
 {
 	ExecutionStackFileLoggerInstances::const_iterator itTreeHistory = m_executionStackFileLoggerInstances.find(entityId);
@@ -576,27 +664,35 @@ void BehaviorTreeManager::UpdateExecutionStackLogging(UpdateContext updateContex
 		logger->LogDebugTree(debugTree, updateContext, instance);
 	}
 }
-#endif
+#endif // DEBUG_MODULAR_BEHAVIOR_TREE
 
 #ifdef DEBUG_MODULAR_BEHAVIOR_TREE_WEB
-void BehaviorTreeManager::UpdateWebDebugChannel(const EntityId entityId, UpdateContext& updateContext, DebugTree& debugTree, BehaviorTreeInstance& instance, const bool bExecutionError)
+bool BehaviorTreeManager::DoesEntityWantToDoWebDebugging(const EntityId entityIdToCheckForWebDebugging, TGameWebDebugClientId* pOutClientId) const
 {
-	if (!m_bRegisteredAsDebugChannel)
-		return;
-
-	TGameWebDebugClientId clientId = GAME_WEBDEBUG_INVALID_CLIENT_ID;
-	for (WebSubscribers::const_iterator it = m_webSubscribers.begin(); it != m_webSubscribers.end(); ++it)
+	if (m_bRegisteredAsDebugChannel)
 	{
-		if (it->second != entityId)
-			continue;
-
-		clientId = it->first;
-		break;
+		for (WebSubscribers::const_iterator it = m_webSubscribers.begin(); it != m_webSubscribers.end(); ++it)
+		{
+			if (it->second == entityIdToCheckForWebDebugging)
+			{
+				if (pOutClientId)
+				{
+					*pOutClientId = it->first;
+				}
+				return true;
+			}
+		}
 	}
 
-	if (clientId == GAME_WEBDEBUG_INVALID_CLIENT_ID)
-		return;
+	if (pOutClientId)
+	{
+		*pOutClientId = GAME_WEBDEBUG_INVALID_CLIENT_ID;
+	}
+	return false;
+}
 
+void BehaviorTreeManager::UpdateWebDebugChannel(const TGameWebDebugClientId clientId, UpdateContext& updateContext, DebugTree& debugTree, BehaviorTreeInstance& instance, const bool bExecutionError)
+{
 	IGameWebDebugService* pWebDebugService = GetIGameWebDebugService();
 	if (pWebDebugService)
 	{
@@ -624,11 +720,11 @@ void BehaviorTreeManager::HandleEvent(const EntityId entityId, Event& event)
 		behaviorTreeInstance->timestampCollection.HandleEvent(event.GetCRC());
 		BehaviorTree::EventContext context(entityId);
 		behaviorTreeInstance->behaviorTreeTemplate->rootNode->SendEvent(context, event);
-#ifdef USING_BEHAVIOR_TREE_EVENT_DEBUGGING
+#ifdef DEBUG_MODULAR_BEHAVIOR_TREE
 		behaviorTreeInstance->eventsLog.AddMessage(event.GetName());
-#endif // USING_BEHAVIOR_TREE_EVENT_DEBUGGING
+#endif // DEBUG_MODULAR_BEHAVIOR_TREE
 	}
-#ifdef USING_BEHAVIOR_TREE_EVENT_DEBUGGING
+#ifdef DEBUG_MODULAR_BEHAVIOR_TREE
 	else
 	{
 		const char* entityName = "";
@@ -639,6 +735,6 @@ void BehaviorTreeManager::HandleEvent(const EntityId entityId, Event& event)
 		errorText.Format("BehaviorTreeManager: The event '%s' was not handled because the entity '%s' is not running a behavior tree.", event.GetName(), entityName);
 		gEnv->pLog->LogError(errorText.c_str());
 	}
-#endif // USING_BEHAVIOR_TREE_EVENT_DEBUGGING
+#endif // DEBUG_MODULAR_BEHAVIOR_TREE
 }
 }

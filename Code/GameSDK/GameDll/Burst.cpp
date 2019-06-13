@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -159,10 +159,6 @@ void CBurst::StartFire()
 
 void CBurst::NetStartFire()
 {
-	IEntityClass* ammo = GetShared()->fireparams.ammo_type_class;
-
- 	int ammoCount = m_pWeapon->GetAmmoCount(ammo); 
-
 	m_pWeapon->PlayAction(
 		GetFragmentIds().burst_fire,
 		0, false, CItem::eIPAF_Default, -1.0f, 

@@ -1,17 +1,8 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// ------------------------------------------------------------------------
-//  File name:   CREGeomCache.h
-//  Created:     17/10/2012 by Axel Gneiting
-//  Description: Backend part of geometry cache rendering
-// -------------------------------------------------------------------------
-//
-////////////////////////////////////////////////////////////////////////////
-
-#ifndef _CREGEOMCACHE_
-#define _CREGEOMCACHE_
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
+
+#include <CryRenderer/RenderElements/RendElement.h>
 
 #if defined(USE_GEOM_CACHES)
 
@@ -35,14 +26,12 @@ public:
 	CREGeomCache();
 	~CREGeomCache();
 
-	bool        Update(const int flags, const bool bTesselation);
+	bool        Update(const EStreamMasks StreamMask, const bool bTesselation);
 	static void UpdateModified();
 
 	// CRenderElement interface
-	virtual bool mfUpdate(EVertexFormat eVertFormat, int Flags, bool bTessellation) override;
-	virtual void mfPrepare(bool bCheckOverflow) override;
-	virtual bool mfDraw(CShader* ef, SShaderPass* sfm) override;
-
+	virtual bool mfUpdate(InputLayoutHandle eVertFormat, EStreamMasks StreamMask, bool bTessellation) override;
+	
 	// CREGeomCache interface
 	virtual void                       InitializeRenderElement(const uint numMeshes, _smart_ptr<IRenderMesh>* pMeshes, uint16 materialId);
 	virtual void                       SetupMotionBlur(CRenderObject* pRenderObject, const SRenderingPassInfo& passInfo);
@@ -53,9 +42,9 @@ public:
 	virtual void                       DisplayFilledBuffer(const int threadId);
 
 	// accessors for new render pipeline
-	virtual EVertexFormat GetVertexFormat() const override;
+	virtual InputLayoutHandle GetVertexFormat() const override;
 	virtual bool          GetGeometryInfo(SGeometryInfo& streams, bool bSupportTessellation = false) override;
-	virtual void          DrawToCommandList(CRenderObject* pObj, const SGraphicsPipelinePassContext& ctx) override;
+	virtual void          DrawToCommandList(CRenderObject* pObj, const SGraphicsPipelinePassContext& ctx, CDeviceCommandList* commandList) override;
 
 private:
 	uint16        m_materialId;
@@ -76,5 +65,4 @@ private:
 	static std::vector<CREGeomCache*> ms_updateList[2];
 };
 
-#endif
 #endif

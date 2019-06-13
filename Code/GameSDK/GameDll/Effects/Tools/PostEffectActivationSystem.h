@@ -1,9 +1,13 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef _POST_EFFECT_ACTIVATION_SYSTEM_
 #define _POST_EFFECT_ACTIVATION_SYSTEM_
 
 #pragma once
+
+#include <CryMemory/CrySizer.h>
+
+struct IItemParamsNode;
 
 // Defines
 const int MAX_POST_EFFECT_NAME = 64;

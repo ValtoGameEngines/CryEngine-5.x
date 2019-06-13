@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 
@@ -11,6 +11,8 @@ History:
 
 #ifndef STEREOZOOM_H
 #define STEREOZOOM_H
+
+#include <CrySystem/XML/IXml.h>
 
 namespace Stereo3D
 {

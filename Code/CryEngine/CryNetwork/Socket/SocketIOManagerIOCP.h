@@ -1,11 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __SOCKETIOMANAGERIOCP_H__
 #define __SOCKETIOMANAGERIOCP_H__
 
 #pragma once
 
-#if CRY_PLATFORM_WINDOWS
+#if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_DURANGO
 	#define HAS_SOCKETIOMANAGER_IOCP
 #endif
 

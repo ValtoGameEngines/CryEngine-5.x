@@ -1,45 +1,37 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   3dengineload.cpp
-//  Version:     v1.00
-//  Created:     28/5/2001 by Vladimir Kajalin
-//  Compilers:   Visual Studio.NET
-//  Description: Level loading
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
+#include "3dEngineLoad.h"
 #include "3dEngine.h"
-#include "terrain.h"
-#include "ObjMan.h"
-#include "VisAreas.h"
-#include <CryParticleSystem/IParticles.h>
-#include "ParticleSystem/ParticleSystem.h"
-#include "DecalManager.h"
-#include "Vegetation.h"
-#include "Brush.h"
-#include "MatMan.h"
-#include "IndexedMesh.h"
-#include "SkyLightManager.h"
-#include "ObjectsTree.h"
-#include "LightEntity.h"
-#include "WaterWaveRenderNode.h"
-#include "RoadRenderNode.h"
-#include "PhysCallbacks.h"
-#include "TimeOfDay.h"
-#include "LightEntity.h"
-#include "RenderMeshMerger.h"
-#include "FogVolumeRenderNode.h"
-#include "RopeRenderNode.h"
-#include "MergedMeshRenderNode.h"
 #include "BreezeGenerator.h"
-#include <CryAnimation/ICryAnimation.h>
-#include <CryAction/IMaterialEffects.h>
+#include "Brush.h"
 #include "ClipVolumeManager.h"
+#include "DecalManager.h"
+#include "FogVolumeRenderNode.h"
+#include "IndexedMesh.h"
+#include "LightEntity.h"
+#include "MatMan.h"
+#include "MergedMeshRenderNode.h"
+#include "ObjectsTree.h"
+#include "ObjMan.h"
+#include "ParticleSystem/ParticleSystem.h"
+#include "PhysCallbacks.h"
+#include "RenderMeshMerger.h"
+#include "RoadRenderNode.h"
+#include "RopeRenderNode.h"
+#include "SkyLightManager.h"
+#include "StatObjFoliage.h"
+#include "terrain.h"
+#include "TimeOfDay.h"
+#include "Vegetation.h"
+#include "VisAreas.h"
+#include "WaterWaveRenderNode.h"
+
+#include <CryAction/IMaterialEffects.h>
+#include <CryAnimation/ICryAnimation.h>
+#include <CryEntitySystem/IEntitySystem.h>
+#include <CryParticleSystem/IParticles.h>
 
 #if defined(FEATURE_SVO_GI)
 	#include "SVO/SceneTreeManager.h"
@@ -86,9 +78,9 @@ void C3DEngine::LoadDefaultAssets()
 	if (GetRenderer())
 	{
 		GetRenderer()->InitSystemResources(FRR_SYSTEM_RESOURCES);
-		m_nBlackTexID = GetRenderer()->EF_LoadTexture("EngineAssets/Textures/black.dds", FT_DONT_STREAM)->GetTextureID();
-		m_nBlackCMTexID = GetRenderer()->EF_LoadTexture("EngineAssets/Textures/BlackCM.dds", FT_DONT_RELEASE | FT_DONT_STREAM)->GetTextureID();
-		m_nWhiteTexID = GetRenderer()->EF_LoadTexture("EngineAssets/Textures/white.dds", FT_DONT_STREAM)->GetTextureID();
+		m_nBlackTexID = GetRenderer()->EF_LoadTexture("%ENGINE%/EngineAssets/Textures/black.dds", FT_DONT_STREAM)->GetTextureID();
+		m_nBlackCMTexID = GetRenderer()->EF_LoadTexture("%ENGINE%/EngineAssets/Textures/BlackCM.dds", FT_DONT_RELEASE | FT_DONT_STREAM)->GetTextureID();
+		m_nWhiteTexID = GetRenderer()->EF_LoadTexture("%ENGINE%/EngineAssets/Textures/white.dds", FT_DONT_STREAM)->GetTextureID();
 	}
 
 	//Add a call to refresh the loading screen and call the loading tick functions to ensure that no big gaps in coverage occur.
@@ -100,43 +92,29 @@ void C3DEngine::LoadDefaultAssets()
 
 	GetMatMan()->InitDefaults();
 
-	m_pMatFogVolEllipsoid = GetMatMan()->LoadMaterial("EngineAssets/Materials/Fog/FogVolumeEllipsoid", false);
-	m_pMatFogVolBox = GetMatMan()->LoadMaterial("EngineAssets/Materials/Fog/FogVolumeBox", false);
+	m_pMatFogVolEllipsoid = GetMatMan()->LoadMaterial("%ENGINE%/EngineAssets/Materials/Fog/FogVolumeEllipsoid", false);
+	m_pMatFogVolBox = GetMatMan()->LoadMaterial("%ENGINE%/EngineAssets/Materials/Fog/FogVolumeBox", false);
 
 	if (GetRenderer())
 	{
-		if (!m_pRESky)
-		{
-			m_pRESky = (CRESky*)GetRenderer()->EF_CreateRE(eDATA_Sky); //m_pRESky->m_fAlpha = 1.f;
-		}
-		if (!m_pREHDRSky)
-		{
-			m_pREHDRSky = (CREHDRSky*)GetRenderer()->EF_CreateRE(eDATA_HDRSky);
-		}
-
-		if (!m_pFarTreeSprites)
-		{
-			m_pFarTreeSprites = GetRenderer()->EF_LoadShader("FarTreeSprites", 0);
-		}
-
 		if (!m_ptexIconLowMemoryUsage)
 		{
-			m_ptexIconLowMemoryUsage = GetRenderer()->EF_LoadTexture("EngineAssets/Icons/LowMemoryUsage.tif", FT_DONT_STREAM);
+			m_ptexIconLowMemoryUsage = GetRenderer()->EF_LoadTexture("%ENGINE%/EngineAssets/Icons/LowMemoryUsage.tif", FT_DONT_STREAM);
 		}
 
 		if (!m_ptexIconAverageMemoryUsage)
 		{
-			m_ptexIconAverageMemoryUsage = GetRenderer()->EF_LoadTexture("EngineAssets/Icons/AverageMemoryUsage.tif", FT_DONT_STREAM);
+			m_ptexIconAverageMemoryUsage = GetRenderer()->EF_LoadTexture("%ENGINE%/EngineAssets/Icons/AverageMemoryUsage.tif", FT_DONT_STREAM);
 		}
 
 		if (!m_ptexIconHighMemoryUsage)
 		{
-			m_ptexIconHighMemoryUsage = GetRenderer()->EF_LoadTexture("EngineAssets/Icons/HighMemoryUsage.tif", FT_DONT_STREAM);
+			m_ptexIconHighMemoryUsage = GetRenderer()->EF_LoadTexture("%ENGINE%/EngineAssets/Icons/HighMemoryUsage.tif", FT_DONT_STREAM);
 		}
 
 		if (!m_ptexIconEditorConnectedToConsole)
 		{
-			m_ptexIconEditorConnectedToConsole = GetRenderer()->EF_LoadTexture("EngineAssets/Icons/LivePreview.TIF", FT_DONT_STREAM);
+			m_ptexIconEditorConnectedToConsole = GetRenderer()->EF_LoadTexture("%ENGINE%/EngineAssets/Icons/LivePreview.TIF", FT_DONT_STREAM);
 		}
 	}
 }
@@ -148,7 +126,7 @@ bool C3DEngine::InitLevelForEditor(const char* szFolderName, const char* szMissi
 	CRY_ASSERT_MESSAGE(0, "InitLevelForEditor not supported on consoles yet");
 	return false;
 #else
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	m_bInUnload = false;
 	m_bEditor = true;
@@ -190,9 +168,6 @@ bool C3DEngine::InitLevelForEditor(const char* szFolderName, const char* szMissi
 	m_pMergedMeshesManager->Init();
 
 	m_pBreezeGenerator->Initialize();
-
-	if (m_pSkyLightManager)
-		m_pSkyLightManager->InitSkyDomeMesh();
 
 	// recreate particles and decals
 	if (m_pPartManager)
@@ -239,20 +214,19 @@ bool C3DEngine::InitLevelForEditor(const char* szFolderName, const char* szMissi
 
 	GetObjManager()->LoadOcclusionMesh(szFolderName);
 
-	//	delete m_pObjectsTree[nSID];
-	//	m_pObjectsTree[nSID] = NULL;
 	return (true);
 #endif
 }
 
-bool C3DEngine::LoadTerrain(XmlNodeRef pDoc, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable, int nSID, Vec3 vSegmentOrigin)
+bool C3DEngine::LoadTerrain(XmlNodeRef pDoc, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "C3DEngine::LoadTerrain");
 
 	PrintMessage("===== Loading %s =====", COMPILED_HEIGHT_MAP_FILE_NAME);
 
 	// open file
-	FILE* f = GetPak()->FOpen(GetLevelFilePath(COMPILED_HEIGHT_MAP_FILE_NAME), "rbx");
+	FILE* f = GetPak()->FOpen(GetLevelFilePath(COMPILED_HEIGHT_MAP_FILE_NAME), "rb");
 	if (!f)
 		return 0;
 
@@ -267,16 +241,23 @@ bool C3DEngine::LoadTerrain(XmlNodeRef pDoc, std::vector<struct IStatObj*>** ppS
 	SwapEndian(header, (header.nFlags & SERIALIZATION_FLAG_BIG_ENDIAN) ? eBigEndian : eLittleEndian);
 	m_bLevelFilesEndian = (header.nFlags & SERIALIZATION_FLAG_BIG_ENDIAN) ? eBigEndian : eLittleEndian;
 
+	// detect old header format where unitSize_InMeters was an int (now it is float)
+	if (header.TerrainInfo.unitSize_InMeters < 0.25f || header.TerrainInfo.unitSize_InMeters > 64.f)
+	{
+		int unitSize_InMeters = *(int*)&header.TerrainInfo.unitSize_InMeters;
+		header.TerrainInfo.unitSize_InMeters = (float)unitSize_InMeters;
+	}
+
 	if (header.nChunkSize)
 	{
-		MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Terrain, 0, "Terrain");
+		MEMSTAT_CONTEXT(EMemStatContextType::Terrain, "Terrain");
 
 		if (!m_pTerrain)
 			m_pTerrain = (CTerrain*)CreateTerrain(header.TerrainInfo);
 
-		m_pTerrain->LoadSurfaceTypesFromXML(pDoc, nSID);
+		m_pTerrain->LoadSurfaceTypesFromXML(pDoc);
 
-		if (!m_pTerrain->Load(f, header.nChunkSize - sizeof(STerrainChunkHeader), &header, ppStatObjTable, ppMatTable, nSID, vSegmentOrigin))
+		if (!m_pTerrain->Load(f, header.nChunkSize - sizeof(STerrainChunkHeader), &header, ppStatObjTable, ppMatTable))
 		{
 			delete m_pTerrain;
 			m_pTerrain = NULL;
@@ -292,12 +273,12 @@ bool C3DEngine::LoadTerrain(XmlNodeRef pDoc, std::vector<struct IStatObj*>** ppS
 
 bool C3DEngine::LoadVisAreas(std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	PrintMessage("===== Loading %s =====", COMPILED_VISAREA_MAP_FILE_NAME);
 
 	// open file
-	FILE* f = GetPak()->FOpen(GetLevelFilePath(COMPILED_VISAREA_MAP_FILE_NAME), "rbx");
+	FILE* f = GetPak()->FOpen(GetLevelFilePath(COMPILED_VISAREA_MAP_FILE_NAME), "rb");
 	if (!f)
 		return false;
 
@@ -332,6 +313,13 @@ bool C3DEngine::LoadVisAreas(std::vector<struct IStatObj*>** ppStatObjTable, std
 //////////////////////////////////////////////////////////////////////////
 void C3DEngine::UnloadLevel()
 {
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
+
+	if (m_pLevelLoadTimeslicer)
+	{
+		m_pLevelLoadTimeslicer.reset();
+	}
+
 	if (GetRenderer())
 	{
 		GetRenderer()->EnableLevelUnloading(true);
@@ -350,7 +338,16 @@ void C3DEngine::UnloadLevel()
 	{
 		GetRenderer()->FlushRTCommands(true, true, true);
 	}
-	
+
+	//////////////////////////////////////////////////////////////////////////
+	// delete all rendernodes marked for deletion
+	{
+		CryComment("Deleting render nodes");
+		for (int i = 0; i < CRY_ARRAY_COUNT(m_renderNodesToDelete); ++i)
+			TickDelayedRenderNodeDeletion();
+		CryComment("done");
+	}
+
 	// release CGF and materials table
 	for (uint32 i = 0; m_pLevelStatObjTable && i < m_pLevelStatObjTable->size(); i++)
 	{
@@ -375,9 +372,6 @@ void C3DEngine::UnloadLevel()
 
 	FreeFoliages();
 
-	if (m_pSkyLightManager)
-		m_pSkyLightManager->ReleaseSkyDomeMesh();
-
 	// free vegetation and brush CGF's
 	m_lstKilledVegetations.Reset();
 
@@ -389,16 +383,6 @@ void C3DEngine::UnloadLevel()
 		m_pPartManager->ClearDeferredReleaseResources();
 	}
 
-	if (gEnv->pCharacterManager)
-	{
-		CryComment("Deleting Characters");
-		gEnv->pCharacterManager->ClearResources(false);
-		CryComment("done");
-	}
-
-	//SAFE_DELETE(m_pObjManager);
-	// delete terrain
-
 	// delete decal manager
 	if (m_pDecalManager)
 	{
@@ -409,22 +393,14 @@ void C3DEngine::UnloadLevel()
 
 	if (m_pTerrain)
 	{
-		CryComment("Deleting Terain");
+		CryComment("Deleting Terrain");
 		SAFE_DELETE(m_pTerrain);
 		CryComment("done");
 	}
 
 	// delete outdoor objects
 	CryComment("Deleting Octree");
-	for (int nSID = 0; nSID < m_pObjectsTree.Count(); nSID++)
-	{
-		SAFE_DELETE(m_pObjectsTree[nSID]);
-	}
-	m_pObjectsTree.Reset();
-
-	// set as unsafe
-	for (int nSID = 0; nSID < m_safeToUseSegments.Count(); nSID++)
-		m_safeToUseSegments[nSID] = 0;
+	SAFE_DELETE(m_pObjectsTree);
 
 	// delete indoors
 	if (m_pVisAreaManager)
@@ -434,7 +410,12 @@ void C3DEngine::UnloadLevel()
 		CryComment("done");
 	}
 
-	CRY_ASSERT(m_pClipVolumeManager->GetClipVolumeCount() == 0);
+	// free all clip volumes marked for delete
+	{
+		m_pClipVolumeManager->TrimDeletedClipVolumes();
+		CRY_ASSERT(m_pClipVolumeManager->GetClipVolumeCount() == 0);
+	}
+
 	CRY_ASSERT(!COctreeNode::m_nNodesCounterAll);
 
 	if (m_pWaterWaveManager)
@@ -453,33 +434,23 @@ void C3DEngine::UnloadLevel()
 	CryComment("Removing Lights ...");
 	for (int i = 0; i < m_lstDynLights.Count(); i++)
 	{
-		CDLight* pLight = m_lstDynLights[i];
+		SRenderLight* pLight = m_lstDynLights[i];
 		FreeLightSourceComponents(pLight);
 	}
 	m_lstDynLights.Reset();
-	DeleteAllStaticLightSources();
 	SAFE_DELETE(m_pSun);
 	CryComment("done");
 	//////////////////////////////////////////////////////////////////////////
 
 	CleanLevelShaders();
 
-	if (m_pRESky)
-		m_pRESky->Release(true);
-	if (m_pREHDRSky)
-		m_pREHDRSky->Release(true);
-	m_pRESky = 0;
-	m_pREHDRSky = 0;
-	stl::free_container(m_skyMatName);
-	stl::free_container(m_skyLowSpecMatName);
+	stl::free_container(m_MoonTextureName);
+	for (int skyTypeIdx = 0; skyTypeIdx < eSkySpec_NumSkySpecs; ++skyTypeIdx)
+		SAFE_RELEASE(m_pSkyMat[skyTypeIdx]);
 
-	if (m_nCloudShadowTexId)
+	if (m_pCloudShadowTex.get())
 	{
-		ITexture* tex = GetRenderer()->EF_GetTextureByID(m_nCloudShadowTexId);
-		if (tex)
-			tex->Release();
-
-		m_nCloudShadowTexId = 0;
+		m_pCloudShadowTex.reset();
 		GetRenderer()->SetCloudShadowsParams(0, Vec3(0, 0, 0), 1, false, 1);
 		SetGlobalParameter(E3DPARAM_VOLFOG_SHADOW_ENABLE, Vec3(0, 0, 0));
 	}
@@ -503,27 +474,16 @@ void C3DEngine::UnloadLevel()
 		if (GetRenderer())
 		{
 			GetRenderer()->SetVolumetricCloudParams(0);
+			GetRenderer()->SetVolumetricCloudNoiseTex(0, 0);
 		}
 	}
 
-	if (m_nNightMoonTexId)
-	{
-		ITexture* tex = GetRenderer()->EF_GetTextureByID(m_nNightMoonTexId);
-		if (tex)
-			tex->Release();
-
-		m_nNightMoonTexId = 0;
-	}
-
 	//////////////////////////////////////////////////////////////////////////
-	if (m_pPartManager || m_pParticleSystem)
+	if (m_pPartManager)
 	{
 		CryComment("Purge particles");
 		// Force to clean all particles that are left, even if still referenced.
-		if (m_pPartManager)
-			m_pPartManager->ClearRenderResources(true);
-		if (m_pParticleSystem)
-			static_cast<pfx2::CParticleSystem*>(m_pParticleSystem.get())->ClearRenderResources();
+		m_pPartManager->ClearRenderResources(true);
 		CryComment("done");
 	}
 
@@ -547,16 +507,17 @@ void C3DEngine::UnloadLevel()
 		CryComment("done");
 	}
 
-	for (int nSID = 0; nSID < Get3DEngine()->m_pObjectsTree.Count(); nSID++)
-	{
-		assert(m_pObjectsTree[nSID] == NULL);
-	}
+	assert(m_pObjectsTree == NULL);
 
-	//[AlexMcC|28.04.10]: If we don't clear this array when chainloading, the first call to
-	// C3DEngine::RegisterEntity will create a COctTree and store it in m_pObjectsTree,
-	// which we'll leak when we hit CTerrain::CreateSegment
-	m_pObjectsTree.clear();
 	COctreeNode::StaticReset();
+	m_colorGradingCtrl.Reset();
+
+	// Now that all meshes and objects are deleted we final release permanent renderobjects
+	// as they hold references to materials.
+	if (GetRenderer())
+	{
+		GetRenderer()->FreeSystemResources(FRR_PERMANENT_RENDER_OBJECTS);
+	}
 
 	//////////////////////////////////////////////////////////////////////////
 	// Force delete all materials.
@@ -572,20 +533,13 @@ void C3DEngine::UnloadLevel()
 
 	if (!gEnv->IsDedicated())
 	{
-		SAFE_RELEASE_FORCE(m_ptexIconLowMemoryUsage);
-		SAFE_RELEASE_FORCE(m_ptexIconAverageMemoryUsage);
-		SAFE_RELEASE_FORCE(m_ptexIconHighMemoryUsage);
-		SAFE_RELEASE_FORCE(m_ptexIconEditorConnectedToConsole);
-
 		//////////////////////////////////////////////////////////////////////////
-		// Relases loaded default loaded textures.
+		// Releases loaded default loaded textures.
 		//////////////////////////////////////////////////////////////////////////
-		{
-			SAFE_RELEASE(m_ptexIconAverageMemoryUsage);
-			SAFE_RELEASE(m_ptexIconLowMemoryUsage);
-			SAFE_RELEASE(m_ptexIconHighMemoryUsage);
-			SAFE_RELEASE(m_ptexIconEditorConnectedToConsole);
-		}
+		SAFE_RELEASE(m_ptexIconAverageMemoryUsage);
+		SAFE_RELEASE(m_ptexIconLowMemoryUsage);
+		SAFE_RELEASE(m_ptexIconHighMemoryUsage);
+		SAFE_RELEASE(m_ptexIconEditorConnectedToConsole);
 	}
 	else
 	{
@@ -623,13 +577,14 @@ void C3DEngine::UnloadLevel()
 	m_nCustomShadowFrustumCount = 0;
 
 	Cry3DEngineBase::m_pRenderMeshMerger->Reset();
+	m_pTimeOfDay->Reset();
 
-	SAFE_DELETE(m_pTimeOfDay);
 	CLightEntity::StaticReset();
 	CVisArea::StaticReset();
 	CRoadRenderNode::FreeStaticMemoryUsage();
 	CFogVolumeRenderNode::StaticReset();
 	CRopeRenderNode::StaticReset();
+	CVegetation::StaticReset();
 
 	if (GetRenderer())
 	{
@@ -648,8 +603,8 @@ void C3DEngine::UnloadLevel()
 
 	//////////////////////////////////////////////////////////////////////////
 	// clear data used for SRenderingPass
-	stl::free_container(m_RenderingPassCameras[0]);
-	stl::free_container(m_RenderingPassCameras[1]);
+	m_RenderingPassCameras[0].reset_container();
+	m_RenderingPassCameras[1].reset_container();
 	stl::free_container(m_deferredRenderProxyStreamingPriorityUpdates);
 
 	for (auto& pFr : m_lstCustomShadowFrustums)
@@ -660,12 +615,19 @@ void C3DEngine::UnloadLevel()
 	stl::free_container(m_lstCustomShadowFrustums);
 
 	stl::free_container(m_collisionClasses);
+
+	CRY_ASSERT(m_lstStaticLights.empty());
+
+#if defined(USE_CRY_ASSERT)
+	for (auto& renderNodes : m_renderNodesToDelete)
+		CRY_ASSERT(renderNodes.empty());
+#endif
 }
 
 //////////////////////////////////////////////////////////////////////////
 void C3DEngine::LoadFlaresData()
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "Flare data");
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "Flare data");
 
 	string flareExportListPath = gEnv->p3DEngine->GetLevelFilePath(FLARE_EXPORT_FILE);
 	XmlNodeRef pFlareRootNode = gEnv->pSystem->LoadXmlFromFile(flareExportListPath);
@@ -705,297 +667,417 @@ void C3DEngine::LoadFlaresData()
 }
 
 //////////////////////////////////////////////////////////////////////////
-bool C3DEngine::LoadLevel(const char* szFolderName, const char* szMissionName)
+
+C3DEngineLevelLoadTimeslicer::C3DEngineLevelLoadTimeslicer(C3DEngine& owner, const char* szFolderName, XmlNodeRef&& missionXml)
+	: m_owner(owner)
+	, m_folderName(szFolderName)
+	, m_missionXml(std::move(missionXml))
+	, m_setInLoad(owner.m_bInLoad, true)
 {
-	LOADING_TIME_PROFILE_SECTION;
+}
+
+C3DEngineLevelLoadTimeslicer::~C3DEngineLevelLoadTimeslicer()
+{
+	switch (m_currentStep)
+	{
+#if PRELOAD_OBJECTS_SLICED
+	case EStep::UpdatePreloadLevelObjects:
+		{
+			if (ShouldPreloadLevelObjects())
+			{
+				m_owner.m_pObjManager->CancelPreloadLevelObjects();
+			}
+		}
+#endif
+	}
+}
+
+I3DEngine::ELevelLoadStatus C3DEngineLevelLoadTimeslicer::DoStep()
+{
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 #if !defined(SYS_ENV_AS_STRUCT)
 	PREFAST_ASSUME(gEnv);
 #endif
 
-	stl::scoped_set<bool> setInLoad(m_bInLoad, true);
+#define NEXT_STEP(step) return SetInProgress(step); case step: 
 
-	m_bInUnload = false;
-	m_bAreaActivationInUse = false;
-	m_bLayersActivated = false;
-	m_eShadowMode = ESM_NORMAL;
+	switch (m_currentStep)
+	{
+	case EStep::Init:
+	{
+		m_owner.m_bInUnload = false;
+		m_owner.m_bAreaActivationInUse = false;
+		m_owner.m_bLayersActivated = false;
+		m_owner.m_eShadowMode = ESM_NORMAL;
 
-	m_vPrevMainFrameCamPos.Set(-1000000.f, -1000000.f, -1000000.f);
-	m_vAverageCameraMoveDir = Vec3(0);
-	m_fAverageCameraSpeed = 0;
+		m_owner.m_vPrevMainFrameCamPos.Set(-1000000.f, -1000000.f, -1000000.f);
+		m_owner.m_vAverageCameraMoveDir = Vec3(0);
+		m_owner.m_fAverageCameraSpeed = 0;
 
-	ClearDebugFPSInfo();
+		m_owner.ClearDebugFPSInfo();
 
 #if CRY_PLATFORM_DESKTOP
-	m_bEditor = false;
+		m_owner.m_bEditor = false;
 #endif
 
-	gEnv->pEntitySystem->RegisterPhysicCallbacks();
+		gEnv->pEntitySystem->RegisterPhysicCallbacks();
 
-	assert(!m_bEditor);
+		assert(!m_owner.m_bEditor);
 
-	//////////////////////////////////////////////////////////////////////////
-	CryComment("initializing merged mesh manager");
-	m_pMergedMeshesManager->Init();
+		//////////////////////////////////////////////////////////////////////////
+		CryComment("initializing merged mesh manager");
+		m_owner.m_pMergedMeshesManager->Init();
 
-	//////////////////////////////////////////////////////////////////////////
-	m_pBreezeGenerator->Initialize();
+		//////////////////////////////////////////////////////////////////////////
+		m_owner.m_pBreezeGenerator->Initialize();
 
-	if (!szFolderName || !szFolderName[0])
-	{
-		Warning("%s: Level name is not specified", __FUNCTION__);
-		return 0;
+		if (m_folderName.empty())
+		{
+			m_owner.Warning("%s: Level name is not specified", __FUNCTION__);
+			return SetFailed();
+		}
+
+		m_owner.SetLevelPath(m_folderName);
 	}
 
-	if (!szMissionName || !szMissionName[0])
-	{ Warning("%s: Mission name is not specified", __FUNCTION__); }
-
-	char szMissionNameBody[256] = "NoMission";
-	if (!szMissionName)
-		szMissionName = szMissionNameBody;
-
-	SetLevelPath(szFolderName);
-
-	if (GetPak()->IsFileExist(GetLevelFilePath(LEVEL_CONFIG_FILE)))
-		GetISystem()->LoadConfiguration(GetLevelFilePath(LEVEL_CONFIG_FILE), 0, eLoadConfigLevel);
-
+	NEXT_STEP(EStep::LoadConfiguration)
 	{
-		// check is LevelData.xml file exist
-		char sMapFileName[_MAX_PATH];
-		cry_strcpy(sMapFileName, m_szLevelFolder);
-		cry_strcat(sMapFileName, LEVEL_DATA_FILE);
-		if (!IsValidFile(sMapFileName))
+		if (m_owner.GetPak()->IsFileExist(m_owner.GetLevelFilePath(LEVEL_CONFIG_FILE)))
+			GetISystem()->LoadConfiguration(m_owner.GetLevelFilePath(LEVEL_CONFIG_FILE), 0, eLoadConfigLevel);
+
 		{
-			PrintMessage("Error: Level not found: %s", sMapFileName);
-			return 0;
+			// check is LevelData.xml file exist
+			char sMapFileName[_MAX_PATH];
+			cry_strcpy(sMapFileName, m_owner.m_szLevelFolder);
+			cry_strcat(sMapFileName, LEVEL_DATA_FILE);
+			if (!m_owner.IsValidFile(sMapFileName))
+			{
+				m_owner.PrintMessage("Error: Level not found: %s", sMapFileName);
+				return SetFailed();
+			}
+		}
+
+		if (!m_owner.m_pObjManager)
+		{
+			m_owner.m_pObjManager = CryAlignedNew<CObjManager>();
+		}
+
+		CRY_ASSERT(m_owner.m_pClipVolumeManager->GetClipVolumeCount() == 0);
+		assert(gEnv->pCharacterManager);
+
+	}
+
+	NEXT_STEP(EStep::LoadUserShaders)
+	{
+		// Load and activate all shaders used by the level before activating any shaders
+		if (!m_owner.m_bEditor && m_owner.GetRenderer())
+		{
+			m_owner.LoadUsedShadersList();
+
+			m_owner.GetRenderer()->EF_Query(EFQ_SetDynTexSourceLayerInfo);
 		}
 	}
 
-	if (!m_pObjManager)
+	NEXT_STEP(EStep::LoadDefaultAssets)
 	{
-		m_pObjManager = CryAlignedNew<CObjManager>();
+		m_owner.LoadDefaultAssets();
+
+		// Load LevelData.xml File.
+		m_xmlLevelData = m_owner.GetSystem()->LoadXmlFromFile(m_owner.GetLevelFilePath(LEVEL_DATA_FILE));
+
+		if (m_xmlLevelData == 0)
+		{
+			m_owner.Error("%s: xml file not found (files missing?)", __FUNCTION__);  // files missing ?
+			return SetFailed();
+		}
+
+		// re-create decal manager
+		SAFE_DELETE(m_owner.m_pDecalManager);
+		m_owner.m_pDecalManager = new CDecalManager();
+
+		SAFE_DELETE(m_owner.m_pWaterWaveManager);
+		m_owner.m_pWaterWaveManager = new CWaterWaveManager();
+
 	}
 
-	CRY_ASSERT(m_pClipVolumeManager->GetClipVolumeCount() == 0);
-	assert(gEnv->pCharacterManager);
-
-	// Load and activate all shaders used by the level before activating any shaders
-	if (!m_bEditor && GetRenderer())
+	NEXT_STEP(EStep::LoadMaterials)
 	{
-		LoadUsedShadersList();
-
-		GetRenderer()->EF_Query(EFQ_SetDynTexSourceLayerInfo);
+		gEnv->pSystem->SetSystemGlobalState(ESYSTEM_GLOBAL_STATE_LEVEL_LOAD_START_MATERIALS);
+		if (m_owner.GetCVars()->e_PreloadMaterials)
+		{
+			// Preload materials.
+			m_owner.GetMatMan()->PreloadLevelMaterials();
+		}
+		if (m_owner.GetCVars()->e_PreloadDecals)
+		{
+			// Preload materials.
+			m_owner.GetMatMan()->PreloadDecalMaterials();
+		}
+#if !CRY_PLATFORM_DURANGO
+		if (IRenderer* pRenderer = m_owner.GetRenderer())
+		{
+			pRenderer->PrecachePostponedTextures();
+		}
+#else
+		m_owner.Warning("Disabling level texture precaching on Durango");
+#endif
 	}
 
-	LoadDefaultAssets();
-
-	if (m_pSkyLightManager)
-		m_pSkyLightManager->InitSkyDomeMesh();
-
-	// Load LevelData.xml File.
-	XmlNodeRef xmlLevelData = GetSystem()->LoadXmlFromFile(GetLevelFilePath(LEVEL_DATA_FILE));
-
-	if (xmlLevelData == 0)
+	NEXT_STEP(EStep::PreloadMergedMeshes)
 	{
-		Error("%s: xml file not found (files missing?)", __FUNCTION__);  // files missing ?
+		// Preload any geometry used by merged meshes
+		m_owner.m_pMergedMeshesManager->PreloadMeshes();
+	}
+
+#if PRELOAD_OBJECTS_SLICED
+
+	NEXT_STEP(EStep::StartPreloadLevelObjects)
+	{
+		gEnv->pSystem->SetSystemGlobalState(ESYSTEM_GLOBAL_STATE_LEVEL_LOAD_START_OBJECTS);
+		// preload level cgfs
+		if (ShouldPreloadLevelObjects())
+		{
+			m_owner.m_pObjManager->StartPreloadLevelObjects();
+		}
+	}
+
+	NEXT_STEP(EStep::UpdatePreloadLevelObjects)
+	{
+		if (ShouldPreloadLevelObjects())
+		{
+			switch (m_owner.m_pObjManager->UpdatePreloadLevelObjects())
+			{
+			case I3DEngine::ELevelLoadStatus::InProgress:
+				return SetInProgress(m_currentStep);
+
+			case I3DEngine::ELevelLoadStatus::Failed:
+				return SetFailed();
+
+			case I3DEngine::ELevelLoadStatus::Done:
+				// do nothing and continue with next step
+				break;
+			}
+		}
+	}
+
+#else
+
+	NEXT_STEP(EStep::PreloadLevelObjects)
+	{
+
+		gEnv->pSystem->SetSystemGlobalState(ESYSTEM_GLOBAL_STATE_LEVEL_LOAD_START_OBJECTS);
+		// preload level cgfs
+		if (m_owner.GetCVars()->e_StatObjPreload && !gEnv->IsEditor())
+		{
+			m_owner.m_pObjManager->PreloadLevelObjects();
+		}
+	}
+
+#endif
+
+	NEXT_STEP(EStep::PreloadLevelCharacters)
+	{
+		if (ShouldPreloadLevelObjects())
+		{
+			gEnv->pSystem->SetSystemGlobalState(ESYSTEM_GLOBAL_STATE_LEVEL_LOAD_START_CHARACTERS);
+			if (gEnv->pCharacterManager)
+			{
+				m_owner.PrintMessage("Starting loading level characters ...");
+				INDENT_LOG_DURING_SCOPE();
+				float fStartTime = m_owner.GetCurAsyncTimeSec();
+
+				gEnv->pCharacterManager->PreloadLevelModels();
+
+				float dt = m_owner.GetCurAsyncTimeSec() - fStartTime;
+				m_owner.PrintMessage("Finished loading level characters (%.1f sec)", dt);
+			}
+		}
+	}
+
+	NEXT_STEP(EStep::LoadSvoTiSettings)
+	{
+		assert(!m_owner.m_pLevelStatObjTable);
+		assert(!m_owner.m_pLevelMaterialsTable);
+		assert(!m_owner.m_arrObjectLayersActivity.Count());
+
+		m_owner.LoadCollisionClasses(m_xmlLevelData->findChild("CollisionClasses"));
+
+		gEnv->pSystem->SetSystemGlobalState(ESYSTEM_GLOBAL_STATE_LEVEL_LOAD_START_STATIC_WORLD);
+
+#if defined(FEATURE_SVO_GI)
+		if (m_owner.GetCVars()->e_svoTI_Active >= 0)
+		{
+			// Load SVOGI settings (must be called before loading of brushes, vegetation and textures)
+			// SVOGI is taken from environment presets, which is already loaded by TimeOfTheDay
+			m_owner.UpdateTISettings();
+		}
+#endif
+	}
+
+	NEXT_STEP(EStep::LoadTerrain)
+	{
+		// load terrain
+		XmlNodeRef nodeRef = m_xmlLevelData->findChild("SurfaceTypes");
+		if (!m_owner.LoadTerrain(nodeRef, &m_owner.m_pLevelStatObjTable, &m_owner.m_pLevelMaterialsTable))
+		{
+			m_owner.Error("Terrain file (%s) not found or file version error, please try to re-export the level", COMPILED_HEIGHT_MAP_FILE_NAME);
+			return SetFailed();
+		}
+	}
+
+	NEXT_STEP(EStep::LoadVisAreas)
+	{
+		// load indoors
+		if (!m_owner.LoadVisAreas(&m_owner.m_pLevelStatObjTable, &m_owner.m_pLevelMaterialsTable))
+		{
+			m_owner.Error("VisAreas file (%s) not found or file version error, please try to re-export the level", COMPILED_VISAREA_MAP_FILE_NAME);
+			return SetFailed();
+		}
+
+		COctreeNode::FreeLoadingCache();
+	}
+
+	NEXT_STEP(EStep::SyncMergedMeshesPreparation)
+	{
+		// Preload any geometry used by merged meshes
+		if (m_owner.m_pMergedMeshesManager->SyncPreparationStep() == false)
+		{
+			m_owner.Error("some merged meshes failed to prepare properly (missing cgfs, re-export?!)");
+		}
+	}
+
+	NEXT_STEP(EStep::LoadParticles)
+	{
+		// re-create particles and decals
+		if (m_owner.m_pPartManager)
+			m_owner.m_pPartManager->Reset();
+
+		//Update loading screen and important tick functions
+		SYNCHRONOUS_LOADING_TICK();
+
+		m_owner.LoadParticleEffects(m_folderName);
+	}
+
+	NEXT_STEP(EStep::LoadMissionData)
+	{
+		m_owner.PrintMessage("===== Loading mission settings from XML =====");
+
+		//Update loading screen and important tick functions
+		SYNCHRONOUS_LOADING_TICK();
+
+		// load mission xml data (for example, mission_mission0.xml)
+		m_owner.m_pTerrainWaterMat = 0;
+		m_owner.m_nWaterBottomTexId = 0;
+		m_owner.LoadMissionDataFromXML(m_missionXml);
+
+		//Update loading screen and important tick functions
+		SYNCHRONOUS_LOADING_TICK();
+
+		if (!m_owner.m_bShowTerrainSurface)
+		{
+			gEnv->pPhysicalWorld->SetHeightfieldData(NULL);
+		}
+
+		// init water if not initialized already (if no mission was found)
+		if (m_owner.m_pTerrain && !m_owner.m_pTerrain->GetOcean())
+		{
+			m_owner.PrintMessage("===== Creating Ocean =====");
+			m_owner.m_pTerrain->InitTerrainWater(m_owner.m_pTerrainWaterMat, m_owner.m_nWaterBottomTexId);
+		}
+
+		m_owner.PrintMessage("===== Load level physics data =====");
+		m_owner.LoadPhysicsData();
+		m_owner.LoadFlaresData();
+
+		// restore game state
+		m_owner.EnableOceanRendering(true);
+		m_owner.m_pObjManager->m_bLockCGFResources = 0;
+
+		m_owner.PrintMessage("===== loading occlusion mesh =====");
+
+		m_owner.GetObjManager()->LoadOcclusionMesh(m_folderName);
+
+		m_owner.PrintMessage("===== Finished loading static world =====");
+
+		m_owner.m_skipedLayers.clear();
+
+		if (gEnv->pMaterialEffects)
+		{
+			gEnv->pMaterialEffects->CompleteInit();
+		}
+	}
+
+	case EStep::Done:
+		return SetDone();
+
+	case EStep::Failed:
+	default:
+		return SetFailed();
+	}
+
+#undef NEXT_STEP
+}
+
+bool C3DEngineLevelLoadTimeslicer::ShouldPreloadLevelObjects() const
+{
+	return m_owner.GetCVars()->e_StatObjPreload && !gEnv->IsEditor();
+}
+
+bool C3DEngine::LoadLevel(const char* szFolderName, XmlNodeRef missionXml)
+{
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
+
+	C3DEngineLevelLoadTimeslicer slicer(*this, szFolderName, std::move(missionXml));
+	ELevelLoadStatus result;
+	do
+	{
+		result = slicer.DoStep();
+	} while (result == ELevelLoadStatus::InProgress);
+
+	return (result == ELevelLoadStatus::Done);
+}
+
+bool C3DEngine::LoadLevel(const char* szFolderName, const char* szMissionName)
+{
+	XmlNodeRef xmlMission = OpenMissionDataXML(szMissionName);
+	return LoadLevel(szFolderName, xmlMission);
+}
+
+bool C3DEngine::StartLoadLevel(const char* szFolderName, XmlNodeRef missionXml)
+{
+	if (m_pLevelLoadTimeslicer)
+	{
 		return false;
 	}
 
-	// re-create decal manager
-	SAFE_DELETE(m_pDecalManager);
-	m_pDecalManager = new CDecalManager();
+	m_pLevelLoadTimeslicer.reset(new C3DEngineLevelLoadTimeslicer(*this, szFolderName, std::move(missionXml)));
+	return true;
+}
 
-	SAFE_DELETE(m_pWaterWaveManager);
-	m_pWaterWaveManager = new CWaterWaveManager();
-
-	gEnv->pSystem->SetSystemGlobalState(ESYSTEM_GLOBAL_STATE_LEVEL_LOAD_START_MATERIALS);
-	if (GetCVars()->e_PreloadMaterials)
+I3DEngine::ELevelLoadStatus C3DEngine::UpdateLoadLevelStatus()
+{
+	if (!m_pLevelLoadTimeslicer)
 	{
-		// Preload materials.
-		GetMatMan()->PreloadLevelMaterials();
-	}
-	if (GetCVars()->e_PreloadDecals)
-	{
-		// Preload materials.
-		GetMatMan()->PreloadDecalMaterials();
+		return ELevelLoadStatus::Failed;
 	}
 
-	// Preload any geometry used by merged meshes
-	m_pMergedMeshesManager->PreloadMeshes();
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
-	gEnv->pSystem->SetSystemGlobalState(ESYSTEM_GLOBAL_STATE_LEVEL_LOAD_START_OBJECTS);
-	// preload level cgfs
-	if (GetCVars()->e_StatObjPreload && !gEnv->IsEditor())
+	switch (m_pLevelLoadTimeslicer->DoStep())
 	{
-		if (GetCVars()->e_StatObjPreload == 2)
-			GetSystem()->OutputLoadingTimeStats();
+	case ELevelLoadStatus::InProgress:
+		return ELevelLoadStatus::InProgress;
 
-		m_pObjManager->PreloadLevelObjects();
+	case ELevelLoadStatus::Done:
+		m_pLevelLoadTimeslicer.reset();
+		return ELevelLoadStatus::Done;
 
-		if (GetCVars()->e_StatObjPreload == 2)
-		{
-			GetSystem()->OutputLoadingTimeStats();
-		}
-
-		gEnv->pSystem->SetSystemGlobalState(ESYSTEM_GLOBAL_STATE_LEVEL_LOAD_START_CHARACTERS);
-		if (gEnv->pCharacterManager)
-		{
-			PrintMessage("Starting loading level characters ...");
-			INDENT_LOG_DURING_SCOPE();
-			float fStartTime = GetCurAsyncTimeSec();
-
-			gEnv->pCharacterManager->PreloadLevelModels();
-
-			float dt = GetCurAsyncTimeSec() - fStartTime;
-			PrintMessage("Finished loading level characters (%.1f sec)", dt);
-		}
+	case ELevelLoadStatus::Failed:
+	default:
+		m_pLevelLoadTimeslicer.reset();
+		return ELevelLoadStatus::Failed;
 	}
-
-	assert(!m_pLevelStatObjTable);
-	assert(!m_pLevelMaterialsTable);
-	assert(!m_arrObjectLayersActivity.Count());
-
-	int nSID = 0;
-
-	// load terrain
-	XmlNodeRef nodeRef = xmlLevelData->findChild("SurfaceTypes");
-
-	LoadCollisionClasses(xmlLevelData->findChild("CollisionClasses"));
-
-	gEnv->pSystem->SetSystemGlobalState(ESYSTEM_GLOBAL_STATE_LEVEL_LOAD_START_STATIC_WORLD);
-
-#if defined(FEATURE_SVO_GI)
-	if (GetCVars()->e_svoTI_Active >= 0)
-	{
-		// Load SVOGI settings (must be called before loading of brushes, vegetation and textures)
-		char szFileName[256];
-		cry_sprintf(szFileName, "mission_%s.xml", szMissionName);
-		XmlNodeRef xmlMission = GetSystem()->LoadXmlFromFile(Get3DEngine()->GetLevelFilePath(szFileName));
-		if (xmlMission)
-			LoadTISettings(xmlMission->findChild("Environment"));
-	}
-#endif
-
-	if (!m_pSegmentsManager)
-	{
-		if (!LoadTerrain(nodeRef, &m_pLevelStatObjTable, &m_pLevelMaterialsTable, nSID, Vec3(0, 0, 0)))
-		{
-			Error("Terrain file (%s) not found or file version error, please try to re-export the level", COMPILED_HEIGHT_MAP_FILE_NAME);
-			return false;
-		}
-
-		// load indoors
-		if (!LoadVisAreas(&m_pLevelStatObjTable, &m_pLevelMaterialsTable))
-		{
-			Error("VisAreas file (%s) not found or file version error, please try to re-export the level", COMPILED_VISAREA_MAP_FILE_NAME);
-			return false;
-		}
-	}
-	else
-	{
-		PrintMessage("===== Load terrain called with segments manager active =====");
-
-		PrintMessage("Loading level info");
-		XmlNodeRef levelInfo = GetISystem()->LoadXmlFromFile(GetLevelFilePath(LEVEL_INFO_FILE_NAME));
-		XmlNodeRef terrainInfoNode = levelInfo->findChild("TerrainInfo");
-		STerrainInfo terrainInfo;
-		terrainInfoNode->getAttr("UnitSize", terrainInfo.nUnitSize_InMeters);
-
-		//terrainInfoNode->getAttr("HeightmapSize", terrainInfo.nHeightMapSize_InUnits);
-		int xm, ym;
-		m_pSegmentsManager->GetTerrainSizeInMeters(xm, ym);
-		terrainInfo.nHeightMapSize_InUnits = max(xm, ym) / terrainInfo.nUnitSize_InMeters;
-
-		terrainInfoNode->getAttr("SectorSize", terrainInfo.nSectorSize_InMeters);
-		terrainInfoNode->getAttr("SectorsTableSize", terrainInfo.nSectorsTableSize_InSectors);
-		terrainInfoNode->getAttr("HeightmapZRatio", terrainInfo.fHeightmapZRatio);
-		terrainInfoNode->getAttr("OceanWaterLevel", terrainInfo.fOceanWaterLevel);
-
-		if (!m_pTerrain)
-		{
-			m_pTerrain = (CTerrain*)CreateTerrain(terrainInfo);
-			m_pTerrain->DeleteSegment(0, true);
-
-			int nCellSize = CTerrain::GetTerrainSize() > 2048 ? CTerrain::GetTerrainSize() >> 10 : 2;
-			nCellSize = max(nCellSize, GetCVars()->e_PhysMinCellSize);
-			int log2PODGridSize = 0;
-			if (nCellSize == 2)
-				log2PODGridSize = 2;
-			else if (nCellSize == 4)
-				log2PODGridSize = 1;
-			GetPhysicalWorld()->SetupEntityGrid(2, Vec3(0, 0, 0), // this call will destroy all physicalized stuff
-			                                    CTerrain::GetTerrainSize() / nCellSize, CTerrain::GetTerrainSize() / nCellSize, (float)nCellSize, (float)nCellSize, log2PODGridSize);
-		}
-		if (!m_pVisAreaManager)
-		{
-			m_pVisAreaManager = new CVisAreaManager();
-		}
-	}
-
-	COctreeNode::FreeLoadingCache();
-
-	// Preload any geometry used by merged meshes
-	if (m_pMergedMeshesManager->SyncPreparationStep() == false)
-	{
-		Error("some merged meshes failed to prepare properly (missing cgfs, re-export?!)");
-	}
-
-	// re-create particles and decals
-	if (m_pPartManager)
-		m_pPartManager->Reset();
-
-	//Update loading screen and important tick functions
-	SYNCHRONOUS_LOADING_TICK();
-
-	LoadParticleEffects(szFolderName);
-
-	PrintMessage("===== Loading mission settings from XML =====");
-
-	//Update loading screen and important tick functions
-	SYNCHRONOUS_LOADING_TICK();
-
-	// load leveldata.xml
-	m_pTerrainWaterMat = 0;
-	m_nWaterBottomTexId = 0;
-	LoadMissionDataFromXMLNode(szMissionName);
-
-	//Update loading screen and important tick functions
-	SYNCHRONOUS_LOADING_TICK();
-
-	if (!m_bShowTerrainSurface)
-	{
-		gEnv->pPhysicalWorld->SetHeightfieldData(NULL);
-	}
-
-	// init water if not initialized already (if no mission was found)
-	if (m_pTerrain && !m_pTerrain->GetOcean())
-	{
-		PrintMessage("===== Creating Ocean =====");
-		m_pTerrain->InitTerrainWater(m_pTerrainWaterMat, m_nWaterBottomTexId);
-	}
-
-	PrintMessage("===== Load level physics data =====");
-	LoadPhysicsData();
-	LoadFlaresData();
-
-	// restore game state
-	EnableOceanRendering(true);
-	m_pObjManager->m_bLockCGFResources = 0;
-
-	PrintMessage("===== loading occlusion mesh =====");
-
-	GetObjManager()->LoadOcclusionMesh(szFolderName);
-
-	PrintMessage("===== Finished loading static world =====");
-
-	m_skipedLayers.clear();
-
-	if (gEnv->pMaterialEffects)
-	{
-		gEnv->pMaterialEffects->CompleteInit();
-	}
-
-	return (true);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -1077,39 +1159,59 @@ void C3DEngine::FreeFoliages()
 	m_arrEntsInFoliage.Reset();
 }
 
-void C3DEngine::LoadTerrainSurfacesFromXML(XmlNodeRef pDoc, bool bUpdateTerrain, int nSID)
+void C3DEngine::LoadTerrainSurfacesFromXML(XmlNodeRef pDoc, bool bUpdateTerrain)
 {
 	if (!m_pTerrain)
 		return;
 
-#ifdef SEG_WORLD
-	if (nSID < 0)
-	{
-		int cnt = m_pTerrain->GetMaxSegmentsCount();
-		for (nSID = 0; nSID < cnt; ++nSID)
-		{
-			if (!IsSegmentSafeToUse(nSID))
-				continue;
+	m_pTerrain->LoadSurfaceTypesFromXML(pDoc);
 
-			LoadTerrainSurfacesFromXML(pDoc, bUpdateTerrain, nSID);
-		}
-		return;
+	m_pTerrain->UpdateSurfaceTypes();
+
+	m_pTerrain->InitHeightfieldPhysics();
+}
+
+void C3DEngine::SetDefaultValuesForLoadMissionDataFromXML()
+{
+	m_vFogColor(1, 1, 1);
+	m_fMaxViewDistHighSpec = 8000;
+	m_fMaxViewDistLowSpec = 1000;
+	m_fTerrainDetailMaterialsViewDistRatio = 1;
+	m_vDefFogColor = m_vFogColor;
+}
+
+void C3DEngine::LoadMissionDataFromXML(XmlNodeRef missionXml)
+{
+	SetDefaultValuesForLoadMissionDataFromXML();
+	if (missionXml)
+	{
+		LoadEnvironmentSettingsFromXML(missionXml->findChild("Environment"));
+		LoadTimeOfDaySettingsFromXML(missionXml->findChild("TimeOfDay"));
 	}
-#endif
-
-	m_pTerrain->LoadSurfaceTypesFromXML(pDoc, nSID);
-
-	if (!IsSegmentOperationInProgress())
+	else
 	{
-		m_pTerrain->UpdateSurfaceTypes(nSID);
+		Error("%s: Mission file is not provided", __FUNCTION__);
+	}
+}
 
-		m_pTerrain->InitHeightfieldPhysics(nSID);
+XmlNodeRef C3DEngine::OpenMissionDataXML(const char* szMissionName)
+{
+	if (szMissionName && szMissionName[0])
+	{
+		char szFileName[256];
+		cry_sprintf(szFileName, "mission_%s.xml", szMissionName);
+		return GetSystem()->LoadXmlFromFile(Get3DEngine()->GetLevelFilePath(szFileName));
+	}
+	else
+	{
+		Error("%s: Mission name is not defined", __FUNCTION__);
+		return XmlNodeRef();
 	}
 }
 
 void C3DEngine::LoadMissionDataFromXMLNode(const char* szMissionName)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	if (!m_pTerrain)
 	{
@@ -1117,34 +1219,15 @@ void C3DEngine::LoadMissionDataFromXMLNode(const char* szMissionName)
 		return;
 	}
 
-	if (GetRenderer())
-	{
-		GetRenderer()->MakeMainContextActive();
-	}
-
-	// set default values
-	m_vFogColor(1, 1, 1);
-	m_fMaxViewDistHighSpec = 8000;
-	m_fMaxViewDistLowSpec = 1000;
-	m_fTerrainDetailMaterialsViewDistRatio = 1;
-	m_vDefFogColor = m_vFogColor;
-
 	// mission environment
-	if (szMissionName && szMissionName[0])
+	if (XmlNodeRef xmlMission = OpenMissionDataXML(szMissionName))
 	{
-		char szFileName[256];
-		cry_sprintf(szFileName, "mission_%s.xml", szMissionName);
-		XmlNodeRef xmlMission = GetSystem()->LoadXmlFromFile(Get3DEngine()->GetLevelFilePath(szFileName));
-		if (xmlMission)
-		{
-			LoadEnvironmentSettingsFromXML(xmlMission->findChild("Environment"), GetDefSID());
-			LoadTimeOfDaySettingsFromXML(xmlMission->findChild("TimeOfDay"));
-		}
-		else
-			Error("%s: Mission file not found: %s", __FUNCTION__, szFileName);
+		LoadMissionDataFromXML(xmlMission);
 	}
 	else
-		Error("%s: Mission name is not defined", __FUNCTION__);
+	{
+		SetDefaultValuesForLoadMissionDataFromXML();
+	}
 }
 
 char* C3DEngine::GetXMLAttribText(XmlNodeRef pInputNode, const char* szLevel1, const char* szLevel2, const char* szDefaultValue)
@@ -1181,6 +1264,19 @@ char* C3DEngine::GetXMLAttribText(XmlNodeRef pInputNode, const char* szLevel1, c
 	return szResText;
 }
 
+bool C3DEngine::GetXMLAttribBool(XmlNodeRef pInputNode, const char* szLevel1, const char* szLevel2, bool bDefaultValue)
+{
+	bool bResult = bDefaultValue;
+
+	XmlNodeRef nodeLevel = pInputNode->findChild(szLevel1);
+	if (nodeLevel && nodeLevel->haveAttr(szLevel2))
+	{
+		nodeLevel->getAttr(szLevel2, bResult);
+	}
+
+	return bResult;
+}
+
 void C3DEngine::UpdateMoonDirection()
 {
 	float moonLati(-gf_PI + gf_PI * m_moonRotationLatitude / 180.0f);
@@ -1194,7 +1290,7 @@ void C3DEngine::UpdateMoonDirection()
 	m_moonDirection = Vec3(sinLon * cosLat, sinLon * sinLat, cosLon);
 }
 
-void C3DEngine::LoadEnvironmentSettingsFromXML(XmlNodeRef pInputNode, int nSID)
+void C3DEngine::LoadEnvironmentSettingsFromXML(XmlNodeRef pInputNode)
 {
 	PrintComment("Loading environment settings from XML ...");
 
@@ -1215,24 +1311,7 @@ void C3DEngine::LoadEnvironmentSettingsFromXML(XmlNodeRef pInputNode, int nSID)
 		m_duskStart = m_dawnEnd;
 	}
 
-	// get moon info
-	m_moonRotationLatitude = (float) atof(GetXMLAttribText(pInputNode, "Moon", "Latitude", "240"));
-	m_moonRotationLongitude = (float) atof(GetXMLAttribText(pInputNode, "Moon", "Longitude", "45"));
-	UpdateMoonDirection();
-
-	m_nightMoonSize = (float) atof(GetXMLAttribText(pInputNode, "Moon", "Size", "0.5"));
-
-	{
-		char moonTexture[256];
-		cry_strcpy(moonTexture, GetXMLAttribText(pInputNode, "Moon", "Texture", ""));
-
-		ITexture* pTex(0);
-		if (moonTexture[0] != '\0' && GetRenderer())
-		{
-			pTex = GetRenderer()->EF_LoadTexture(moonTexture, FT_DONT_STREAM);
-		}
-		m_nNightMoonTexId = pTex ? pTex->GetTextureID() : 0;
-	}
+	UpdateMoonParams();
 
 	// max view distance
 	m_fMaxViewDistHighSpec = (float)atol(GetXMLAttribText(pInputNode, "Fog", "ViewDistance", "8000"));
@@ -1243,23 +1322,23 @@ void C3DEngine::LoadEnvironmentSettingsFromXML(XmlNodeRef pInputNode, int nSID)
 
 	float fTerrainDetailMaterialsViewDistRatio = (float)atof(GetXMLAttribText(pInputNode, "Terrain", "DetailLayersViewDistRatio", "1.0"));
 	if (m_fTerrainDetailMaterialsViewDistRatio != fTerrainDetailMaterialsViewDistRatio && GetTerrain())
-		GetTerrain()->ResetTerrainVertBuffers(NULL, nSID);
+		GetTerrain()->ResetTerrainVertBuffers(NULL);
 	m_fTerrainDetailMaterialsViewDistRatio = fTerrainDetailMaterialsViewDistRatio;
 
 	// SkyBox
-	m_skyMatName = GetXMLAttribText(pInputNode, "SkyBox", "Material", "Materials/Sky/Sky");
-	m_skyLowSpecMatName = GetXMLAttribText(pInputNode, "SkyBox", "MaterialLowSpec", "Materials/Sky/Sky");
-
-	// Forces the engine to reload the material of the skybox in the next time it renders it.
-	m_pSkyMat = NULL;
-	m_pSkyLowSpecMat = NULL;
+	const string defSkyMatName = GetXMLAttribText(pInputNode, "SkyBox", "Material", "");
+	const string lowSkyMatName = GetXMLAttribText(pInputNode, "SkyBox", "MaterialLowSpec", "");
+	m_pSkyMat[eSkySpec_Def] = defSkyMatName.empty() ? nullptr : GetMatMan()->LoadMaterial(defSkyMatName.c_str(), false);
+	m_pSkyMat[eSkySpec_Low] = lowSkyMatName.empty() ? nullptr : GetMatMan()->LoadMaterial(lowSkyMatName.c_str(), false);
+	if (!m_pSkyMat[eSkySpec_Low])
+		m_pSkyMat[eSkySpec_Low] = m_pSkyMat[eSkySpec_Def];
 
 	m_fSkyBoxAngle = (float)atof(GetXMLAttribText(pInputNode, "SkyBox", "Angle", "0.0"));
 	m_fSkyBoxStretching = (float)atof(GetXMLAttribText(pInputNode, "SkyBox", "Stretching", "1.0"));
 
 	// set terrain water, sun road and bottom shaders
 	char szTerrainWaterMatName[256];
-	cry_strcpy(szTerrainWaterMatName, GetXMLAttribText(pInputNode, "Ocean", "Material", "EngineAssets/Materials/Water/Ocean_default"));
+	cry_strcpy(szTerrainWaterMatName, GetXMLAttribText(pInputNode, "Ocean", "Material", "%ENGINE%/EngineAssets/Materials/Water/Ocean_default"));
 	m_pTerrainWaterMat = szTerrainWaterMatName[0] ? GetMatMan()->LoadMaterial(szTerrainWaterMatName, false) : NULL;
 
 	if (m_pTerrain)
@@ -1271,8 +1350,6 @@ void C3DEngine::LoadEnvironmentSettingsFromXML(XmlNodeRef pInputNode, int nSID)
 
 	m_oceanWindDirection = (float) atof(GetXMLAttribText(pInputNode, "OceanAnimation", "WindDirection", "1.0"));
 	m_oceanWindSpeed = (float) atof(GetXMLAttribText(pInputNode, "OceanAnimation", "WindSpeed", "4.0"));
-	m_oceanWavesSpeed = (float) atof(GetXMLAttribText(pInputNode, "OceanAnimation", "WavesSpeed", "1.0"));
-	m_oceanWavesSpeed = clamp_tpl<float>(m_oceanWavesSpeed, 0.0f, 1.0f);
 	m_oceanWavesAmount = (float) atof(GetXMLAttribText(pInputNode, "OceanAnimation", "WavesAmount", "1.5"));
 	m_oceanWavesAmount = clamp_tpl<float>(m_oceanWavesAmount, 0.4f, 3.0f);
 	m_oceanWavesSize = (float) atof(GetXMLAttribText(pInputNode, "OceanAnimation", "WavesSize", "0.75"));
@@ -1284,57 +1361,14 @@ void C3DEngine::LoadEnvironmentSettingsFromXML(XmlNodeRef pInputNode, int nSID)
 	m_oceanCausticDepth = (float) atof(GetXMLAttribText(pInputNode, "Ocean", "CausticDepth", "8.0"));
 	m_oceanCausticIntensity = (float) atof(GetXMLAttribText(pInputNode, "Ocean", "CausticIntensity", "1.0"));
 
-	// re-scale speed based on size - the smaller the faster waves move
-	m_oceanWavesSpeed /= clamp_tpl<float>(m_oceanWavesSize, 0.45f, 1.0f);
+	UpdateSkyParams();
+	UpdateWindParams();
 
-	// get wind
-	Vec3 vWindSpeed = StringToVector(GetXMLAttribText(pInputNode, "EnvState", "WindVector", "1,0,0"));
-	SetWind(vWindSpeed);
-
-	// Define breeze generation
-	if (m_pBreezeGenerator)
-	{
-		m_pBreezeGenerator->Shutdown();
-
-		const char* pText = GetXMLAttribText(pInputNode, "EnvState", "BreezeGeneration", "false");
-		m_pBreezeGenerator->m_enabled = !strcmp(pText, "true") || !strcmp(pText, "1");
-		m_pBreezeGenerator->m_strength = (float)atof(GetXMLAttribText(pInputNode, "EnvState", "BreezeStrength", "1.f"));
-		m_pBreezeGenerator->m_variance = (float)atof(GetXMLAttribText(pInputNode, "EnvState", "BreezeVariation", "1.f"));
-		m_pBreezeGenerator->m_lifetime = (float)atof(GetXMLAttribText(pInputNode, "EnvState", "BreezeLifeTime", "15.f"));
-		m_pBreezeGenerator->m_count = (uint32)max(0, atoi(GetXMLAttribText(pInputNode, "EnvState", "BreezeCount", "4")));
-		m_pBreezeGenerator->m_radius = (float)atof(GetXMLAttribText(pInputNode, "EnvState", "BreezeRadius", "5.f"));
-		m_pBreezeGenerator->m_spawn_radius = (float)atof(GetXMLAttribText(pInputNode, "EnvState", "BreezeSpawnRadius", "25.f"));
-		m_pBreezeGenerator->m_spread = (float)atof(GetXMLAttribText(pInputNode, "EnvState", "BreezeSpread", "0.f"));
-		m_pBreezeGenerator->m_movement_speed = (float)atof(GetXMLAttribText(pInputNode, "EnvState", "BreezeMovementSpeed", "8.f"));
-		m_pBreezeGenerator->m_awake_thresh = (float)atof(GetXMLAttribText(pInputNode, "EnvState", "BreezeAwakeThreshold", "0"));
-		m_pBreezeGenerator->m_wind_speed = vWindSpeed;
-		m_pBreezeGenerator->m_fixed_height = (float)atof(GetXMLAttribText(pInputNode, "EnvState", "BreezeFixedHeight", "-1.f"));
-
-		m_pBreezeGenerator->Initialize();
-	}
-
-	// Per-level mergedmeshes pool size (on consoles)
+	// Per-level merged meshes pool size (on consoles)
 	Cry3DEngineBase::m_mergedMeshesPoolSize = atoi(GetXMLAttribText(pInputNode, "EnvState", "ConsoleMergedMeshesPool", MMRM_DEFAULT_POOLSIZE_STR));
 
-	// update relevant time of day settings
-	ITimeOfDay* pTimeOfDay(GetTimeOfDay());
-	if (pTimeOfDay)
 	{
-		CTimeOfDay::SEnvironmentInfo envTODInfo;
-		{
-			const char* pText = GetXMLAttribText(pInputNode, "EnvState", "SunLinkedToTOD", "true");
-			envTODInfo.bSunLinkedToTOD = !strcmp(pText, "true") || !strcmp(pText, "1");
-		}
-		// get rotation of sun around z axis (needed to define an arbitrary path over zenit for day/night cycle position calculations)
-		envTODInfo.sunRotationLatitude = (float) atof(GetXMLAttribText(pInputNode, "Lighting", "SunRotation", "240"));
-		envTODInfo.sunRotationLongitude = (float) atof(GetXMLAttribText(pInputNode, "Lighting", "Longitude", "90"));
-
-		pTimeOfDay->SetEnvironmentSettings(envTODInfo);
-	}
-
-	{
-		const char* pText = GetXMLAttribText(pInputNode, "EnvState", "ShowTerrainSurface", "true");
-		m_bShowTerrainSurface = !strcmp(pText, "true") || !strcmp(pText, "1");
+		m_bShowTerrainSurface = GetXMLAttribBool(pInputNode, "EnvState", "ShowTerrainSurface", true);
 	}
 
 	{
@@ -1360,12 +1394,32 @@ void C3DEngine::LoadEnvironmentSettingsFromXML(XmlNodeRef pInputNode, int nSID)
 		{
 			m_nGsmCache = cvar->GetIVal();
 		}
+		else
+		{
+			m_nGsmCache = 0;
+		}
 	}
 
 	{
-		const char* pText = GetXMLAttribText(pInputNode, "Terrain", "HeightMapAO", "false");
-		m_bHeightMapAoEnabled = !strcmp(pText, "true") || !strcmp(pText, "1");
+		m_bHeightMapAoEnabled = GetXMLAttribBool(pInputNode, "Terrain", "HeightMapAO", false);
 	}
+
+	{
+		bool bIntegrateObjectsIntoTerrain = GetCVars()->e_TerrainIntegrateObjectsMaxVertices && GetXMLAttribBool(pInputNode, "Terrain", "IntegrateObjects", false);
+
+		if (bIntegrateObjectsIntoTerrain != m_bIntegrateObjectsIntoTerrain && GetTerrain())
+		{
+			GetTerrain()->ResetTerrainVertBuffers(NULL);
+			m_bIntegrateObjectsIntoTerrain = bIntegrateObjectsIntoTerrain;
+		}
+	}
+
+	// Enable automatic base texture update based on terrain detail materials info. This cvar used only by the editor for now.
+	// TODO: support on-the-fly in-engine base texture generation (including roughness and normals) without exporting it from the editor.
+	GetCVars()->e_TerrainAutoGenerateBaseTexture = GetXMLAttribBool(pInputNode, "Terrain", "AutoGenerateBaseTexture", false);
+
+	// Enable support for offline-procedural vegetation. Allows export of automatically distributed objects as normal permanent objects
+	m_supportOfflineProceduralVegetation = GetXMLAttribBool(pInputNode, "Terrain", "SupportOfflineProceduralVegetation", false);
 
 	{
 		int nMinSpec = 3;//atoi(pText);
@@ -1382,46 +1436,19 @@ void C3DEngine::LoadEnvironmentSettingsFromXML(XmlNodeRef pInputNode, int nSID)
 	}
 
 	{
-		const char* pText = GetXMLAttribText(pInputNode, "EnvState", "SunShadowsFromTerrain", "false");
-		m_bSunShadowsFromTerrain = (!strcmp(pText, "true") || !strcmp(pText, "1")) && GetCVars()->e_GsmCastFromTerrain;
+		m_bSunShadowsFromTerrain = GetXMLAttribBool(pInputNode, "EnvState", "SunShadowsFromTerrain", false) && GetCVars()->e_GsmCastFromTerrain;
 	}
 
 	{
-		const char* pText = GetXMLAttribText(pInputNode, "EnvState", "UseLayersActivation", "false");
-		Get3DEngine()->m_bAreaActivationInUse = !strcmp(pText, "true") || !strcmp(pText, "1");
+		Get3DEngine()->m_bAreaActivationInUse = GetXMLAttribBool(pInputNode, "EnvState", "UseLayersActivation", false);
 	}
 
-	// load cloud shadow parameters
-	{
-		char cloudShadowTexture[256];
-		cry_strcpy(cloudShadowTexture, GetXMLAttribText(pInputNode, "CloudShadows", "CloudShadowTexture", ""));
-
-		ITexture* pTex = 0;
-		if (cloudShadowTexture[0] != '\0' && GetRenderer())
-			pTex = GetRenderer()->EF_LoadTexture(cloudShadowTexture);
-
-		m_nCloudShadowTexId = pTex ? pTex->GetTextureID() : 0;
-
-		// Get animation parameters
-		const Vec3 cloudShadowSpeed = StringToVector(GetXMLAttribText(pInputNode, "CloudShadows", "CloudShadowSpeed", "0,0,0"));
-
-		const float cloudShadowTiling = (float)atof(GetXMLAttribText(pInputNode, "CloudShadows", "CloudShadowTiling", "1.0"));
-		const float cloudShadowBrightness = (float)atof(GetXMLAttribText(pInputNode, "CloudShadows", "CloudShadowBrightness", "1.0"));
-
-		const char* pText = GetXMLAttribText(pInputNode, "CloudShadows", "CloudShadowInvert", "false");
-		const bool cloudShadowInvert = !strcmp(pText, "true") || !strcmp(pText, "1");
-
-		if (GetRenderer())
-		{
-			GetRenderer()->SetCloudShadowsParams(m_nCloudShadowTexId, cloudShadowSpeed, cloudShadowTiling, cloudShadowInvert, cloudShadowBrightness);
-		}
-	}
+	UpdateCloudShadows();
 
 	// load volumetric cloud parameters
 	{
 #if 0 //disable spherical cloud layer until it works correctly.
-		const char* pText = GetXMLAttribText(pInputNode, "VolumetricCloud", "SphericalCloud", "false");
-		const bool sphericalCloud = !strcmp(pText, "true") || !strcmp(pText, "1");
+		const bool sphericalCloud = GetXMLAttribBool(pInputNode, "VolumetricCloud", "SphericalCloud", false);
 		const float volCloudEarthRadius = max(0.0f, (float)atof(GetXMLAttribText(pInputNode, "VolumetricCloud", "EarthRadius", "6360000.0")));
 #else
 		const bool sphericalCloud = false;
@@ -1447,10 +1474,8 @@ void C3DEngine::LoadEnvironmentSettingsFromXML(XmlNodeRef pInputNode, int nSID)
 		const Vec3 edgeTurbulenceNoiseScale = StringToVector(GetXMLAttribText(pInputNode, "VolumetricCloud", "EdgeTurbulenceNoiseScale", "1,1,1"));
 		SetGlobalParameter(E3DPARAM_VOLCLOUD_TURBULENCE_NOISE_SCALE, edgeTurbulenceNoiseScale);
 
-		const char* pTextEdgeErode = GetXMLAttribText(pInputNode, "VolumetricCloud", "EdgeTurbulenceNoiseErode", "true");
-		const float edgeTurbulenceNoiseErode = (!strcmp(pTextEdgeErode, "true") || !strcmp(pTextEdgeErode, "1")) ? 1.0f : 0.0f;
-		const char* pTextEdgeAbs = GetXMLAttribText(pInputNode, "VolumetricCloud", "EdgeTurbulenceNoiseAbsolute", "true");
-		const float edgeTurbulenceNoiseAbsolute = (!strcmp(pTextEdgeAbs, "true") || !strcmp(pTextEdgeAbs, "1")) ? 1.0f : 0.0f;
+		const float edgeTurbulenceNoiseErode = GetXMLAttribBool(pInputNode, "VolumetricCloud", "EdgeTurbulenceNoiseErode", true) ? 1.0f : 0.0f;
+		const float edgeTurbulenceNoiseAbsolute = GetXMLAttribBool(pInputNode, "VolumetricCloud", "EdgeTurbulenceNoiseAbsolute", true) ? 1.0f : 0.0f;
 		SetGlobalParameter(E3DPARAM_VOLCLOUD_TURBULENCE_NOISE_PARAMS, Vec3(edgeTurbulenceNoiseErode, edgeTurbulenceNoiseAbsolute, 0.0f));
 
 		const float maxGlobalCloudDensity = min(1.0f, max(0.0f, (float)atof(GetXMLAttribText(pInputNode, "VolumetricCloud", "MaxGlobalCloudDensity", "0.04"))));
@@ -1467,20 +1492,31 @@ void C3DEngine::LoadEnvironmentSettingsFromXML(XmlNodeRef pInputNode, int nSID)
 		{
 			char cloudVolumeTexture[256];
 			cry_strcpy(cloudVolumeTexture, GetXMLAttribText(pInputNode, "VolumetricCloud", "CloudVolumeTexture", ""));
-			ITexture* pTex = 0;
+			ITexture* pTex = nullptr;
 			if (cloudVolumeTexture[0] != '\0')
-				pTex = GetRenderer()->EF_LoadTexture(cloudVolumeTexture);
+				pTex = GetRenderer()->EF_LoadTexture(cloudVolumeTexture, FT_DONT_STREAM);
 			int volCloudTexId = pTex ? pTex->GetTextureID() : 0;
 			GetRenderer()->SetVolumetricCloudParams(volCloudTexId);
+
+			cry_strcpy(cloudVolumeTexture, GetXMLAttribText(pInputNode, "VolumetricCloud", "GlobalCloudNoiseVolumeTexture", ""));
+			pTex = nullptr;
+			if (cloudVolumeTexture[0] != '\0')
+				pTex = GetRenderer()->EF_LoadTexture(cloudVolumeTexture, FT_DONT_STREAM);
+			int volCloudNoiseTexId = pTex ? pTex->GetTextureID() : 0;
+
+			cry_strcpy(cloudVolumeTexture, GetXMLAttribText(pInputNode, "VolumetricCloud", "EdgeTurbulenceNoiseVolumeTexture", ""));
+			pTex = nullptr;
+			if (cloudVolumeTexture[0] != '\0')
+				pTex = GetRenderer()->EF_LoadTexture(cloudVolumeTexture, FT_DONT_STREAM);
+			int volCloudEdgeNoiseTexId = pTex ? pTex->GetTextureID() : 0;
+
+			GetRenderer()->SetVolumetricCloudNoiseTex(volCloudNoiseTexId, volCloudEdgeNoiseTexId);
 		}
 	}
 
 	{
-		const char* pText = GetXMLAttribText(pInputNode, "VolFogShadows", "Enable", "false");
-		const bool enable = !strcmp(pText, "true") || !strcmp(pText, "1");
-
-		pText = GetXMLAttribText(pInputNode, "VolFogShadows", "EnableForClouds", "false");
-		const bool enableForClouds = !strcmp(pText, "true") || !strcmp(pText, "1");
+		const bool enable = GetXMLAttribBool(pInputNode, "VolFogShadows", "Enable", false);
+		const bool enableForClouds = GetXMLAttribBool(pInputNode, "VolFogShadows", "EnableForClouds", false);
 
 		SetGlobalParameter(E3DPARAM_VOLFOG_SHADOW_ENABLE, Vec3(enable ? 1.0f : 0.0f, enableForClouds ? 1.0f : 0.0f, 0.0f));
 	}
@@ -1499,14 +1535,73 @@ void C3DEngine::LoadEnvironmentSettingsFromXML(XmlNodeRef pInputNode, int nSID)
 	}
 
 #if defined(FEATURE_SVO_GI)
-	LoadTISettings(pInputNode);
+	UpdateTISettings();
 #endif
 
-	if (pTimeOfDay)
-		pTimeOfDay->Update();
+	GetTimeOfDay()->Update();
 
 	if (GetSystem()->GetISystemEventDispatcher())
 		GetSystem()->GetISystemEventDispatcher()->OnSystemEvent(ESYSTEM_EVENT_ENVIRONMENT_SETTINGS_CHANGED, 0, 0);
+}
+
+void C3DEngine::UpdateMoonParams()
+{
+	const auto& moon = GetTimeOfDay()->GetMoonParams();
+
+	m_moonRotationLatitude = moon.latitude;
+	m_moonRotationLongitude = moon.longitude;
+	m_nightMoonSize = moon.size;
+	m_MoonTextureName = moon.texture;
+
+	UpdateMoonDirection();
+}
+
+void C3DEngine::UpdateSkyParams()
+{
+	const auto& sky = GetTimeOfDay()->GetSkyParams();
+
+	// Selective overwrite
+	if (!sky.materialDefSpec.empty())
+		m_pSkyMat[eSkySpec_Def] = GetMatMan()->LoadMaterial(sky.materialDefSpec.c_str(), false);
+	else
+		m_pSkyMat[eSkySpec_Def] = nullptr;
+
+	if (!sky.materialLowSpec.empty())
+		m_pSkyMat[eSkySpec_Low] = GetMatMan()->LoadMaterial(sky.materialLowSpec.c_str(), false);
+	else
+		m_pSkyMat[eSkySpec_Low] = m_pSkyMat[eSkySpec_Def];
+}
+
+void C3DEngine::UpdateWindParams()
+{
+	const auto& wind = GetTimeOfDay()->GetWindParams();
+	SetWind(wind.windVector);
+
+	// Define breeze generation
+	if (m_pBreezeGenerator)
+	{
+		m_pBreezeGenerator->Shutdown();
+
+		m_pBreezeGenerator->SetParams(wind);
+
+		m_pBreezeGenerator->Initialize();
+	}
+}
+
+void C3DEngine::UpdateCloudShadows()
+{
+	if (GetRenderer())
+	{
+		const auto& cloudParams = GetTimeOfDay()->GetCloudShadowsParams();
+
+		if (!m_pCloudShadowTex.get() && !cloudParams.texture.empty())
+		{
+			m_pCloudShadowTex.Assign_NoAddRef(GetRenderer()->EF_LoadTexture(cloudParams.texture.c_str(), FT_DONT_STREAM));
+		}
+
+		const int textureId = m_pCloudShadowTex.get() ? m_pCloudShadowTex->GetTextureID() : 0;
+		GetRenderer()->SetCloudShadowsParams(textureId, cloudParams.speed, cloudParams.tiling, cloudParams.invert, cloudParams.brightness);
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -1515,16 +1610,13 @@ void C3DEngine::LoadTimeOfDaySettingsFromXML(XmlNodeRef node)
 	if (node)
 	{
 		GetTimeOfDay()->Serialize(node, true);
-		ITimeOfDay::SAdvancedInfo info;
-		GetTimeOfDay()->GetAdvancedInfo(info);
-		GetTimeOfDay()->SetTime(info.fStartTime, true);
 	}
 }
 
 //////////////////////////////////////////////////////////////////////////
 void C3DEngine::LoadParticleEffects(const char* szFolderName)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	if (m_pPartManager)
 	{
@@ -1566,15 +1658,15 @@ IStatObj* C3DEngine::CreateStatObjOptionalIndexedMesh(bool createIndexedMesh)
 	return pStatObj;
 }
 
-bool C3DEngine::RestoreTerrainFromDisk(int nSID)
+bool C3DEngine::RestoreTerrainFromDisk()
 {
 	if (m_pTerrain && m_pObjManager && !m_bEditor && GetCVars()->e_TerrainDeformations)
 	{
-		m_pTerrain->ResetTerrainVertBuffers(NULL, nSID);
+		m_pTerrain->ResetTerrainVertBuffers(NULL);
 
-		if (FILE* f = GetPak()->FOpen(GetLevelFilePath(COMPILED_HEIGHT_MAP_FILE_NAME), "rbx"))
+		if (FILE* f = GetPak()->FOpen(GetLevelFilePath(COMPILED_HEIGHT_MAP_FILE_NAME), "rb"))
 		{
-			GetTerrain()->ReloadModifiedHMData(f, nSID);
+			GetTerrain()->ReloadModifiedHMData(f);
 			GetPak()->FClose(f);
 		}
 	}
@@ -1582,17 +1674,14 @@ bool C3DEngine::RestoreTerrainFromDisk(int nSID)
 	ResetParticlesAndDecals();
 
 	// update roads
-	for (int id = 0; id < Get3DEngine()->m_pObjectsTree.Count(); id++)
+	if (m_pObjectsTree && GetCVars()->e_TerrainDeformations)
 	{
-		if (m_pObjectsTree[id] && GetCVars()->e_TerrainDeformations)
+		PodArray<IRenderNode*> lstRoads;
+		m_pObjectsTree->GetObjectsByType(lstRoads, eERType_Road, NULL);
+		for (int i = 0; i < lstRoads.Count(); i++)
 		{
-			PodArray<IRenderNode*> lstRoads;
-			m_pObjectsTree[id]->GetObjectsByType(lstRoads, eERType_Road, NULL);
-			for (int i = 0; i < lstRoads.Count(); i++)
-			{
-				CRoadRenderNode* pRoad = (CRoadRenderNode*)lstRoads[i];
-				pRoad->OnTerrainChanged();
-			}
+			CRoadRenderNode* pRoad = (CRoadRenderNode*)lstRoads[i];
+			pRoad->OnTerrainChanged();
 		}
 	}
 
@@ -1616,9 +1705,9 @@ void C3DEngine::ReRegisterKilledVegetationInstances()
 //////////////////////////////////////////////////////////////////////////
 bool C3DEngine::LoadUsedShadersList()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "LoadUsedShadersList");
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "LoadUsedShadersList");
 
 	GetRenderer()->EF_Query(EFQ_SetShaderCombinations);
 
@@ -1628,8 +1717,8 @@ bool C3DEngine::LoadUsedShadersList()
 //////////////////////////////////////////////////////////////////////////
 bool C3DEngine::PrecreateDecals()
 {
-	LOADING_TIME_PROFILE_SECTION;
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "PrecreateDecals");
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "PrecreateDecals");
 
 	CObjManager::DecalsToPrecreate& decals(GetObjManager()->m_decalsToPrecreate);
 	// pre-create ...
@@ -1661,8 +1750,8 @@ bool C3DEngine::PrecreateDecals()
 //////////////////////////////////////////////////////////////////////////
 void C3DEngine::PostLoadLevel()
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "PostLoadLevel");
-	LOADING_TIME_PROFILE_SECTION;
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "PostLoadLevel");
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	//////////////////////////////////////////////////////////////////////////
 	// Submit water material to physics

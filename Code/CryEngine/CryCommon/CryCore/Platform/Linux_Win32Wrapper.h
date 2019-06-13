@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   Linux_Win32Wrapper.h
@@ -40,11 +40,7 @@ typedef struct _MEMORYSTATUS
 
 extern void GlobalMemoryStatus(LPMEMORYSTATUS lpmem);
 
-#if CRY_PLATFORM_64BIT
-	#define MEMORY_ALLOCATION_ALIGNMENT 16
-#else
-	#define MEMORY_ALLOCATION_ALIGNMENT 8
-#endif
+#define MEMORY_ALLOCATION_ALIGNMENT 16
 
 #define S_OK                          0
 #define THREAD_PRIORITY_NORMAL        0

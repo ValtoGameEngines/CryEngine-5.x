@@ -1,35 +1,18 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-/*************************************************************************
-   -------------------------------------------------------------------------
-   $Id$
-   $DateTime$
-   Description:
-
-   -------------------------------------------------------------------------
-   History:
-   - 3:8:2004   11:23 : Created by Márcio Martins
-
-*************************************************************************/
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <CryGame/IGame.h>
 #include <CryGame/IGameFramework.h>
-#include <IGameObjectSystem.h>
-#include <IGameObject.h>
-#include <CryCore/Platform/IPlatformOS.h>
-#include <IActorSystem.h>
-#include <CryCore/StlUtils.h>
 #include <CryPhysics/RayCastQueue.h>
 #include <CryPhysics/IntersectionTestQueue.h>
 
-#include "TelemetryCollector.h"
-
 #include "Network/GameNetworkDefines.h"
-#include "Network/Lobby/MatchMakingTelemetry.h"
-
-#include <CryCore/Platform/CryWindows.h>
+#include "TelemetryCollector.h"
+#include <CryCore/Platform/IPlatformOS.h>
+#include <CryInput/IInput.h>
+#include <CryLobby/ICryLobbyEvent.h>
+#include <CryAction/IActionMapManager.h>
 
 #define GAME_NAME     "GAMESDK"
 #define GAME_LONGNAME "CRYENGINE GAME SDK"
@@ -74,12 +57,14 @@ class CScriptBind_MatchMaking;
 class CScriptBind_Turret;
 class CScriptBind_ProtectedBinds;
 class CScriptBind_LightningArc;
+class CScriptBind_DialogSystem;
 class CWeaponSystem;
 class CGameTokenSignalCreator;
 
 class CProfileOptions;
 class CTacticalManager;
 class CWarningsManager;
+class CMatchmakingTelemetry;
 #if defined(ENABLE_PROFILING_CODE)
 class CTelemetryBuffer;
 #endif
@@ -110,6 +95,7 @@ class CHUDMissionObjectiveSystem; // TODO : Remove me?
 class CGameBrowser;
 class CGameLobby;
 class CGameLobbyManager;
+class CGameStateRecorder;
 #if IMPLEMENT_PC_BLADES
 class CGameServerLists;
 #endif //IMPLEMENT_PC_BLADES
@@ -155,13 +141,8 @@ class CStatsEntityIdRegistry;
 
 class CMovingPlatformMgr;
 class CGamePhysicsSettings;
-
-namespace Graphics
-{
-class CColorGradientManager;
-//	class CScreenFader;
-//	class CPostEffectBlender;
-}
+class CDialogSystem;
+class CSubtitleManager;
 
 enum AsyncState
 {
@@ -223,17 +204,6 @@ enum EDifficulty
 	eDifficulty_PostHuman,
 
 	eDifficulty_COUNT,
-};
-
-//! Platform defines
-enum EPlatform
-{
-	ePlatform_Unknown = 0,
-	ePlatform_PC,
-	ePlatform_XBoxOne,
-	ePlatform_PS4,
-
-	ePlatform_COUNT,
 };
 
 //! Controller layout types
@@ -387,8 +357,6 @@ public:
 	virtual IGame::ExportFilesInfo ExportLevelData(const char* levelName, const char* missionName) const;
 	virtual void                   LoadExportedLevelData(const char* levelName, const char* missionName);
 
-	virtual void                   RegisterGameFlowNodes();
-	void                           UnregisterGameFlowNodes();
 	// ~IGame
 
 	// IGameFrameworkListener
@@ -570,6 +538,7 @@ public:
 	CDownloadMgr*            GetDownloadMgr()               { return m_pDownloadMgr; }
 	CDLCManager*             GetDLCManager()                { return m_pDLCManager; }
 	CWorldBuilder*           GetWorldBuilder()              { return m_pWorldBuilder; }
+	CDialogSystem*           GetDialogSystem()              { return m_pDialogSystem; }
 
 	CGameCache&              GetGameCache()                 { CRY_ASSERT_MESSAGE(m_pGameCache, "Can't obtain GameCache object until CGame::Init() is called!"); return *m_pGameCache; }
 	const CGameCache&        GetGameCache() const           { CRY_ASSERT_MESSAGE(m_pGameCache, "Can't obtain GameCache object until CGame::Init() is called!"); return *m_pGameCache; }
@@ -632,9 +601,6 @@ public:
 
 	void         QueueDeferredKill(const EntityId entityId);
 
-	void         OnEditorDisplayRenderUpdated(bool displayHelpers) { m_editorDisplayHelpers = displayHelpers; }
-	bool         DisplayEditorHelpersEnabled() const               { return m_editorDisplayHelpers; }
-
 	void         SetRenderingToHMD(bool bRenderingToHMD)           { m_RenderingToHMD = bRenderingToHMD; }
 	bool         IsRenderingToHMD() const                          { return m_RenderingToHMD; }
 
@@ -644,6 +610,9 @@ public:
 #if CRY_PLATFORM_DURANGO
 	const GUID* GetPlayerSessionId() const { return &m_playerSessionId; }
 #endif
+
+	void RegisterPhysicsCallbacks();
+	void UnregisterPhysicsCallbacks();
 
 protected:
 
@@ -690,7 +659,7 @@ protected:
 		EPlatform platformId;
 		BYTE      devices;      // Devices to use when registering actions
 
-		SPlatformInfo(EPlatform _platformId = ePlatform_Unknown) : platformId(_platformId), devices(eAID_KeyboardMouse | eAID_XboxPad | eAID_PS4Pad) {}
+		SPlatformInfo(EPlatform _platformId = EPlatform::Current) : platformId(_platformId), devices(eAID_KeyboardMouse | eAID_XboxPad | eAID_PS4Pad) {}
 	};
 	SPlatformInfo m_platformInfo;
 
@@ -750,7 +719,9 @@ protected:
 	static void CmdFlyCamSetPoint(IConsoleCmdArgs* pArgs);
 	static void CmdFlyCamPlay(IConsoleCmdArgs* pArgs);
 
+#if defined(USE_CRY_ASSERT)
 	static void CmdIgnoreAllAsserts(IConsoleCmdArgs* pArgs);
+#endif
 
 	static void CmdReloadPlayer(IConsoleCmdArgs* cmdArgs);
 
@@ -808,6 +779,8 @@ protected:
 
 	CWeaponSystem*        m_pWeaponSystem;
 	CGamePhysicsSettings* m_pGamePhysicsSettings;
+	CDialogSystem*        m_pDialogSystem;
+	CSubtitleManager*     m_pSubtitleManager;
 
 	bool                  m_bReload;
 	bool                  m_gameTypeMultiplayer;
@@ -815,7 +788,6 @@ protected:
 	bool                  m_userProfileChanged;
 	bool                  m_bLastSaveDirty;
 	bool                  m_needsInitPatchables;
-	bool                  m_editorDisplayHelpers;
 	bool                  m_RenderingToHMD;
 
 	// script binds
@@ -833,6 +805,7 @@ protected:
 	CScriptBind_Turret*            m_pScriptBindTurret;
 	CScriptBind_ProtectedBinds*    m_pScriptBindProtected;
 	CScriptBind_LightningArc*      m_pScriptBindLightningArc;
+	CScriptBind_DialogSystem*      m_pScriptBindDialogSystem;
 
 	//vis table
 	CPlayerVisTable*          m_pPlayerVisTable;
@@ -843,6 +816,7 @@ protected:
 	CMatchmakingTelemetry*    m_pMatchMakingTelemetry;
 	CDataPatchDownloader*     m_pDataPatchDownloader;
 	CGameLocalizationManager* m_pGameLocalizationManager;
+	CGameStateRecorder*       m_pGameStateRecorder;
 #if USE_LAGOMETER
 	CLagOMeter*               m_pLagOMeter;
 #endif
@@ -903,6 +877,8 @@ public:
 	TStringStringMap* GetVariantOptions() { return &m_variantOptions; }
 
 private:
+	static int OnCreatePhysicalEntityLogged(const EventPhys* pEvent);
+
 	TStringStringMap m_variantOptions;
 
 	typedef std::map<CryFixedStringT<128>, int> TRichPresenceMap;
@@ -1021,6 +997,9 @@ private:
 #endif
 
 	uint64                   m_stereoOutputFunctorId;
+
+	uint64 m_maxPlayerCallbackIndex = -1;
+	uint64 m_migrationTimeoutCallbackIndex = -1;
 };
 
 extern CGame* g_pGame;

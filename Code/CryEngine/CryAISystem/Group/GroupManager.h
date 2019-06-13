@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __GroupManager_h__
 #define __GroupManager_h__
@@ -22,7 +22,8 @@ public:
 
 	uint32                GetGroupMemberCount(const GroupID& groupID) const;
 
-	Group::NotificationID NotifyGroup(const GroupID& groupID, tAIObjectID senderID, const char* name);
+	Group::NotificationID NotifyGroup(const GroupID& groupID, EntityId senderID, const char* name);
+	Group::NotificationID NotifyGroup(const GroupID& groupID, AISignals::SignalSharedPtr signal);
 
 	void                  Serialize(TSerialize ser);
 

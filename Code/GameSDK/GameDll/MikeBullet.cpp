@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -20,6 +20,7 @@ History:
 #include "Player.h"
 #include "GameRules.h"
 #include <CryParticleSystem/ParticleParams.h>
+#include <Cry3DEngine/GeomRef.h>
 #include "FireMode.h"
 #include <CryAISystem/IFactionMap.h>
 
@@ -65,7 +66,6 @@ void CBurnEffectManager::AddBurnPoint(
 {
 	int surfaceType = pCollision.idmat[1];
 
-	CGameRules* pGameRules = g_pGame->GetGameRules();
 	IEntity* pEntity = pCollision.iForeignData[1] == PHYS_FOREIGN_ID_ENTITY ? (IEntity*)pCollision.pForeignData[1] : NULL;
 	
 	const SMikeBulletParams::SBurnParams* pBurnParams = NULL;
@@ -261,7 +261,6 @@ void CBurnEffectManager::CreateBurnEffect(const EventPhysCollision& pCollision, 
 		hitDir = pCollision.vloc[0].GetNormalized();
 	}
 	Vec3 surfacePosition = pCollision.pt;
-	Vec3 halfVector = (surfaceNormal + (-hitDir)).GetNormalized();
 
 	CItemParticleEffectCache& particleCache = g_pGame->GetGameSharedParametersStorage()->GetItemResourceCache().GetParticleEffectCache();
 	IParticleEffect* pParticleEffect = particleCache.GetCachedParticle(pBurnPoint->m_pBurnParams->m_effectName);
@@ -487,7 +486,7 @@ void CMikeBullet::SetParams(const SProjectileDesc& projectileDesc)
 
 void CMikeBullet::HandleEvent(const SGameObjectEvent& event)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 	CBullet::HandleEvent(event);
 
 	if (!m_pAmmoParams->pMikeBulletParams)

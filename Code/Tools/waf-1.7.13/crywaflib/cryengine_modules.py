@@ -1,4 +1,4 @@
-# Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+# Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 
 ###############################################################################
@@ -460,7 +460,7 @@ def LoadFileLists(ctx, kw):
 		# Handle PCH files
 		if pch_file != '' and found_pch == False:
 			# PCH specified but not found
-			ctx.cry_file_error('[%s] Could not find PCH file "%s" in provided file list (%s).\nPlease verify that the name of the pch is the same as provided in a WAF file and that the PCH is not stored in an UberFile.' % (kw['target'], pch_file, ', '.join(file_lists)), 'wscript' )
+			ctx.cry_file_error('[%s] Could not find PCH file "%s" in provided file list (%s).\nPlease verify that the name of the pch is the same as provided in a WAF file and that the PCH is not stored in an UberFile.' % (kw['target'], pch_file, ', '.join(kw['file_list'])), 'wscript' )
 		
 		# Try some heuristic when to use PCH files
 		if ctx.is_option_true('use_uber_files') and found_pch and len(uber_file_relative_list) > 0 and ctx.options.file_filter == "" and ctx.cmd != 'generate_uber_files':
@@ -744,6 +744,32 @@ def MonolithicBuildModule(ctx, *k, **kw):
 	kw['source'] = tmp_src		
 		
 	return ctx.objects(*k, **kw)
+	
+def MonolithicBuildStaticModule(ctx, *k, **kw):
+	""" 
+	Util function to collect all libs and linker settings for monolithic builds
+	(Which apply all of those only to the final link as no DLLs or libs are produced)
+	"""
+	# Set up member for monolithic build settings
+	if not hasattr(ctx, 'monolitic_build_settings'):
+		ctx.monolitic_build_settings = {}
+		
+	# For game specific modules, store with a game unique prefix
+	prefix = ''
+	if kw.get('game_project', False):		
+		prefix = kw['game_project'] + '_'
+
+	# Collect libs for later linking
+	def _append(key, values):
+		if not ctx.monolitic_build_settings.get(key):
+			ctx.monolitic_build_settings[key] = []
+		ctx.monolitic_build_settings[key] += values
+		
+	_append(prefix + 'use',         [ kw['target']] + kw['use'] )	
+	_append(prefix + 'lib',           kw['lib'] )
+	_append(prefix + 'libpath',       kw['libpath'] )
+	#_append(prefix + 'use_module',    kw['use_module']  )
+	#_append(prefix + 'linkflags',     kw['linkflags'] )
 		
 ###############################################################################
 def BuildTaskGenerator(ctx, kw):
@@ -909,10 +935,12 @@ def CryEngineStaticModule(ctx, *k, **kw):
 	set_cryengine_flags(ctx, kw)
 
 	ConfigureTaskGenerator(ctx, kw)
+	
+	if _is_monolithic_build(ctx, kw['target']): # For monolithc builds, simply collect all build settings
+		MonolithicBuildStaticModule(ctx, getattr(ctx, 'game_project', None), *k, **kw)
 		
 	CreateStaticModule(ctx, *k, **kw)
 
-	
 ###############################################################################
 @feature('create_static_library')
 @before_method('process_source')
@@ -1125,7 +1153,9 @@ def CryLauncher(ctx, *k, **kw):
 		kw_per_launcher['is_package_host'] 		= True
 		kw_per_launcher['resource_path'] 		= ctx.launch_node().make_node(ctx.game_code_folder(project) + '/Resources')
 		kw_per_launcher['project_name'] 		= project
+		kw_per_launcher['defines']              += [ 'CRY_IS_APPLICATION' ]
 		executable_name = ctx.get_executable_name(project)
+
 		
 		# Avoid two project with the same executable name to link to the same output_file_name simultaneously. 
 		# Two link.exe writing to the same file in parallel does not work.
@@ -1199,6 +1229,7 @@ def CryDedicatedServer(ctx, *k, **kw):
 		kw_per_launcher['is_package_host'] 	            = True
 		kw_per_launcher['resource_path'] 				= ctx.launch_node().make_node(ctx.game_code_folder(project) + '/Resources')
 		kw_per_launcher['project_name'] 				= project
+		kw_per_launcher['defines']                      += [ 'CRY_IS_APPLICATION' ]
 		executable_name = ctx.get_dedicated_server_executable_name( project )
 		
 		# Avoid two project with the same executable name to link to the same output_file_name simultaneously. 
@@ -1229,6 +1260,7 @@ def CryConsoleApplication(ctx, *k, **kw):
 	set_cryengine_flags(ctx, kw)
 	SetupRunTimeLibraries(ctx,kw)
 	kw.setdefault('win_linkflags', []).extend(['/SUBSYSTEM:CONSOLE'])
+	kw['defines'] += [ 'CRY_IS_APPLICATION' ]
 	
 	ConfigureTaskGenerator(ctx, kw)
 		
@@ -1273,7 +1305,7 @@ def CryEditor(ctx, *k, **kw):
 			
 	kw['features'] += [ 'generate_rc_file' ]
 	kw['cxxflags'] += ['/EHsc', '/GR', '/bigobj', '/Zm200', '/wd4251', '/wd4275' ]
-	kw['defines']  += [ 'SANDBOX_EXPORTS', 'PLUGIN_IMPORTS', 'EDITOR_COMMON_IMPORTS' ]
+	kw['defines']  += [ 'SANDBOX_EXPORTS', 'PLUGIN_IMPORTS', 'EDITOR_COMMON_IMPORTS', 'CRY_IS_APPLICATION' ]
 	kw.setdefault('win_linkflags', []).extend(['/SUBSYSTEM:WINDOWS'])
 	
 	ConfigureTaskGenerator(ctx, kw)
@@ -1295,6 +1327,8 @@ def CryGenericExecutable(ctx, *k, **kw):
 	# Setup TaskGenerator specific settings	
 	SetupRunTimeLibraries(ctx,kw)
 	ConfigureTaskGenerator(ctx, kw)
+	
+	kw['defines']  += [ 'CRY_IS_APPLICATION' ]
 		
 	if not BuildTaskGenerator(ctx, kw):
 		return
@@ -1303,7 +1337,7 @@ def CryGenericExecutable(ctx, *k, **kw):
 	
 ###############################################################################
 @conf
-def CryPlugin(ctx, *k, **kw):
+def CryEditorPlugin(ctx, *k, **kw):
 	"""
 	Wrapper for CryEngine Editor Plugins
 	"""
@@ -1317,7 +1351,8 @@ def CryPlugin(ctx, *k, **kw):
 	kw['cxxflags'] += ['/EHsc', '/GR', '/wd4251', '/wd4275']
 	kw['defines']   += [ 'PLUGIN_EXPORTS', 'EDITOR_COMMON_IMPORTS', 'NOT_USE_CRY_MEMORY_MANAGER' ]
 	kw['output_sub_folder']  = 'EditorPlugins'
-	kw['use']  += ['EditorCommon']
+	kw['use']  += ['EditorCommon', 'Sandbox']
+	kw['includes'] +=  [ctx.CreateRootRelativePath('Code/Sandbox/EditorQt/Include'), ctx.CreateRootRelativePath('Code/Sandbox/EditorQt')]
 		
 	ConfigureTaskGenerator(ctx, kw)
 		
@@ -1339,12 +1374,14 @@ def CryPluginModule(ctx, *k, **kw):
 	ctx.set_editor_module_flags(kw)
 	SetupRunTimeLibraries(ctx,kw)
 	kw['cxxflags'] += [ '/EHsc', '/GR', '/wd4251', '/wd4275' ]
-	kw['defines']  += [ 'PLUGIN_EXPORTS', 'EDITOR_COMMON_EXPORTS', 'NOT_USE_CRY_MEMORY_MANAGER' ]
+	kw['defines']  += [ 'PLUGIN_EXPORTS', 'NOT_USE_CRY_MEMORY_MANAGER' ]
 	
 	ConfigureTaskGenerator(ctx, kw)
 		
 	if not BuildTaskGenerator(ctx, kw):
 		return
+		
+	kw['features'] += ['create_dynamic_library']
 		
 	ctx.shlib(*k, **kw)
 	
@@ -1366,6 +1403,7 @@ def CryResourceCompiler(ctx, *k, **kw):
 	kw['output_sub_folder'] = ctx.CreateRootRelativePath('Tools/rc')
 	
 	kw.setdefault('win_linkflags', []).extend(['/SUBSYSTEM:CONSOLE'])
+	kw['defines']  += [ 'CRY_IS_APPLICATION' ]
 	
 	ConfigureTaskGenerator(ctx, kw)
 

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   BoidsProxy.h
@@ -16,6 +16,7 @@
 #pragma once
 
 #include <CryEntitySystem/IEntityComponent.h>
+#include <CryMemory/CrySizer.h>
 
 class CFlock;
 class CBoidObject;
@@ -26,9 +27,9 @@ class CBoidObject;
 //////////////////////////////////////////////////////////////////////////
 class CBoidsProxy : public IEntityComponent
 {
-	CRY_ENTITY_COMPONENT_INTERFACE_AND_CLASS(CBoidsProxy,"CBoidsProxy",0x382D896A7C224637,0xB32321C67EC5F588)
+	CRY_ENTITY_COMPONENT_INTERFACE_AND_CLASS_GUID(CBoidsProxy, "CBoidsProxy", "382d896a-7c22-4637-b323-21c67ec5f588"_cry_guid)
 
-	CBoidsProxy();
+		CBoidsProxy();
 	virtual ~CBoidsProxy();
 
 public:
@@ -45,19 +46,19 @@ public:
 	//////////////////////////////////////////////////////////////////////////
 	virtual EEntityProxy GetProxyType() const final { return ENTITY_PROXY_BOIDS; }
 	virtual void Release() final;
-	virtual	void ProcessEvent( SEntityEvent &event ) final;
-	virtual uint64 GetEventMask() const final;
-	virtual bool Init( IEntity *pEntity,SEntitySpawnParams &params ) final { return true; }
-	virtual void Reload( IEntity *pEntity,SEntitySpawnParams &params ) final;
-	virtual void GameSerialize( TSerialize ser ) final;
+	virtual	void ProcessEvent(const SEntityEvent& event) final;
+	virtual Cry::Entity::EventFlags GetEventMask() const final;
+	virtual bool Init(IEntity *pEntity, SEntitySpawnParams &params) final { return true; }
+	virtual void Reload(IEntity *pEntity, SEntitySpawnParams &params) final;
+	virtual void GameSerialize(TSerialize ser) final;
 	//////////////////////////////////////////////////////////////////////////
 
 	//////////////////////////////////////////////////////////////////////////
-	void SetFlock( CFlock *pFlock );
+	void SetFlock(CFlock *pFlock);
 	CFlock* GetFlock() { return m_pFlock; }
-	void OnTrigger( bool bEnter,SEntityEvent &event );
+	void OnTrigger(bool bEnter, const SEntityEvent &event);
 
-	virtual void GetMemoryUsage(ICrySizer *pSizer )const final
+	virtual void GetMemoryUsage(ICrySizer *pSizer)const final
 	{
 		pSizer->AddObject(this, sizeof(*this));
 		pSizer->AddObject(m_pFlock);
@@ -81,9 +82,9 @@ private:
 //////////////////////////////////////////////////////////////////////////
 struct CBoidObjectProxy : public IEntityComponent
 {
-	CRY_ENTITY_COMPONENT_INTERFACE_AND_CLASS(CBoidObjectProxy,"CBoidObjectProxy",0x191DC4B2C2224E1E,0x81BDFE1D882C9F3E)
+	CRY_ENTITY_COMPONENT_INTERFACE_AND_CLASS_GUID(CBoidObjectProxy, "CBoidObjectProxy", "191dc4b2-c222-4e1e-81bd-fe1d882c9f3e"_cry_guid)
 
-	CBoidObjectProxy();
+		CBoidObjectProxy();
 	virtual ~CBoidObjectProxy() {}
 
 public:
@@ -99,17 +100,17 @@ public:
 	// IEntityComponent interface implementation.
 	//////////////////////////////////////////////////////////////////////////
 	virtual EEntityProxy GetProxyType() const override { return ENTITY_PROXY_BOID_OBJECT; }
-	virtual	void ProcessEvent( SEntityEvent &event ) override;
-	virtual uint64 GetEventMask() const final;
-	virtual void GameSerialize( TSerialize ser ) override;
+	virtual	void ProcessEvent(const SEntityEvent& event) override;
+	virtual Cry::Entity::EventFlags GetEventMask() const final;
+	virtual void GameSerialize(TSerialize ser) override;
 	virtual bool NeedGameSerialize() override { return false; };
 	//////////////////////////////////////////////////////////////////////////
 
 	//////////////////////////////////////////////////////////////////////////
-	void SetBoid( CBoidObject *pBoid ) { m_pBoid = pBoid; };
+	void SetBoid(CBoidObject *pBoid) { m_pBoid = pBoid; };
 	CBoidObject* GetBoid() { return m_pBoid; }
 
-	virtual void GetMemoryUsage(ICrySizer *pSizer )const override
+	virtual void GetMemoryUsage(ICrySizer *pSizer)const override
 	{
 		pSizer->AddObject(this, sizeof(*this));
 		pSizer->AddObject(m_pBoid);

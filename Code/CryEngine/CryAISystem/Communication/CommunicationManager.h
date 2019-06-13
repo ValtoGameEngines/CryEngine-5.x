@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __CommunicationManager_h__
 #define __CommunicationManager_h__
@@ -194,16 +194,16 @@ private:
 
 	struct PlayingCommunication
 	{
-		PlayingCommunication() : actorID(0), eventListener(NULL), skipSound(false), minSilence(-1.0f), startTime(-1.0f){};
+		PlayingCommunication() : actorID(0), eventListener(NULL), skipSound(false), minSilence(-1.0f), startTime(.0f){};
 		PlayingCommunication(const PlayingCommunication& comm) : actorID(comm.actorID), channel(comm.channel), eventListener(NULL), animName(comm.animName), skipSound(comm.skipSound), minSilence(comm.minSilence), startTime(comm.startTime){}
 
 		EntityId                                      actorID;
 		CommunicationChannel::Ptr                     channel;
 		ICommunicationManager::ICommInstanceListener* eventListener;
-		string animName;
-		bool   skipSound;
-		float  minSilence;
-		float  startTime;
+		string     animName;
+		bool       skipSound;
+		float      minSilence;
+		CTimeValue startTime;
 	};
 
 	typedef std::map<CommPlayID, PlayingCommunication> PlayingCommunications;

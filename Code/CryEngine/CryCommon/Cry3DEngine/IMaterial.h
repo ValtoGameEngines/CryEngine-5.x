@@ -1,40 +1,29 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   IMaterial.h
-//  Version:     v1.00
-//  Created:     16/9/2004 by Timur.
-//  Compilers:   Visual Studio.NET 2003
-//  Description: IMaterial interface declaration.
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
-struct ISurfaceType;
-struct ISurfaceTypeManager;
+
+#include <CryRenderer/IShader.h>
+#include <CryRenderer/Tarray.h>
+#include <CryThreading/CryThread.h>
+#include <Cry3DEngine/CGF/CryHeaders.h>
+
+class CCamera;
 class ICrySizer;
 
-#include <CryRenderer/IShader.h> // EEfResTextures
-
-struct SShaderItem;
-struct SShaderParam;
-struct IShader;
-struct IShaderPublicParams;
+struct CMaterialCGF;
+struct CRenderChunk;
 struct IMaterial;
 struct IMaterialManager;
 struct IRenderShaderResources;
-class CCamera;
-struct CMaterialCGF;
-struct CRenderChunk;
+struct IShader;
+struct IShaderPublicParams;
+struct ISurfaceType;
+struct ISurfaceTypeManager;
 struct SEfTexModificator;
 struct SInputShaderResources;
-
-#include <CryRenderer/Tarray.h>
-
-#include <Cry3DEngine/CGF/CryHeaders.h>  // MAX_SUB_MATERIALS
+struct SShaderItem;
+struct SShaderParam;
 
 //! Special names for materials.
 #define MTL_SPECIAL_NAME_COLLISION_PROXY         "collision_proxy"
@@ -50,7 +39,7 @@ enum
 // Description:
 //    IMaterial is an interface to the material object, SShaderItem host which is a combination of IShader and SShaderInputResources.
 //    Material bind together rendering algorithm (Shader) and resources needed to render this shader, textures, colors, etc...
-//    All materials except for pure sub material childs have a unique name which directly represent .mtl file on disk.
+//    All materials except for pure sub material children have a unique name which directly represent .mtl file on disk.
 //    Ex: "Materials/Fire/Burn"
 //    Materials can be created by Sandbox MaterialEditor.
 //////////////////////////////////////////////////////////////////////////
@@ -71,7 +60,7 @@ enum EMaterialFlags
 	MTL_FLAG_NOTINSTANCED              = 0x1000,         //!< Do not instantiate this material.
 	MTL_FLAG_COLLISION_PROXY           = 0x2000,         //!< This material is the collision proxy.
 	MTL_FLAG_SCATTER                   = 0x4000,         //!< Use scattering for this material.
-	MTL_FLAG_REQUIRE_FORWARD_RENDERING = 0x8000,         //!< This material has to be rendered in foward rendering passes (alpha/additive blended).
+	MTL_FLAG_REQUIRE_FORWARD_RENDERING = 0x8000,         //!< This material has to be rendered in forward rendering passes (alpha/additive blended).
 	MTL_FLAG_NON_REMOVABLE             = 0x10000,        //!< Material with this flag once created are never removed from material manager (Used for decal materials, this flag should not be saved).
 	MTL_FLAG_HIDEONBREAK               = 0x20000,        //!< Non-physicalized subsets with such materials will be removed after the object breaks.
 	MTL_FLAG_UIMATERIAL                = 0x40000,        //!< Used for UI in Editor. Don't need show it DB.
@@ -79,9 +68,9 @@ enum EMaterialFlags
 	MTL_FLAG_RAYCAST_PROXY             = 0x100000,
 	MTL_FLAG_REQUIRE_NEAREST_CUBEMAP   = 0x200000,       //!< Materials with alpha blending requires special processing for shadows.
 	MTL_FLAG_CONSOLE_MAT               = 0x400000,
-	MTL_FLAG_DELETE_PENDING            = 0x800000,       //!< Internal use only.
 	MTL_FLAG_BLEND_TERRAIN             = 0x1000000,
 	MTL_FLAG_TRACEABLE_TEXTURE         = 0x2000000,      //!< Diffuse texture keeps low-res copy for raytracing (in decals, for instance)
+	MTL_FLAG_REFRACTIVE                = 0x4000000,      //!< Refractive shader or has a sum-material with a refractive shader
 };
 
 #define MTL_FLAGS_SAVE_MASK     (MTL_FLAG_WIRE | MTL_FLAG_2SIDED | MTL_FLAG_ADDITIVE | MTL_FLAG_DETAIL_DECAL | MTL_FLAG_LIGHTING | MTL_FLAG_TRACEABLE_TEXTURE | \
@@ -101,7 +90,7 @@ enum EPostEffectFlags
 };
 
 //! Bit offsets for shader layer flags.
-enum EMaterialLayerFlags
+enum EMaterialLayerFlags : uint32
 {
 	// Active layers flags
 	MTL_LAYER_FROZEN        = 0x0001,
@@ -132,12 +121,12 @@ enum EMaterialLayerFlags
 };
 
 //! Copy flags.
-enum EMaterialCopyFlags
+enum EMaterialCopyFlags : uint32
 {
 	MTL_COPY_DEFAULT  = 0,
-	MTL_COPY_NAME     = BIT(0),
-	MTL_COPY_TEMPLATE = BIT(1),
-	MTL_COPY_TEXTURES = BIT(2),
+	MTL_COPY_NAME     = BIT32(0),
+	MTL_COPY_TEMPLATE = BIT32(1),
+	MTL_COPY_TEXTURES = BIT32(2),
 };
 
 struct IMaterialHelpers
@@ -236,6 +225,7 @@ struct IMaterialLayer
 	// </interfuscator:shuffle>
 };
 
+//! Represents an .mtl instance that can be applied to geometry in the scene
 struct IMaterial
 {
 	// TODO: Remove it!
@@ -247,6 +237,7 @@ struct IMaterial
 	virtual ~IMaterial() {};
 
 	// Reference counting.
+	virtual bool              IsValid() const = 0;
 	virtual void              AddRef() = 0;
 	virtual void              Release() = 0;
 	virtual int               GetNumRefs() = 0;
@@ -267,9 +258,9 @@ struct IMaterial
 	virtual int  GetFlags() const = 0;
 
 	//! Returns true if this is the default material.
-	virtual bool IsDefault() = 0;
+	virtual bool IsDefault() const = 0;
 
-	virtual int  GetSurfaceTypeId() = 0;
+	virtual int  GetSurfaceTypeId() const = 0;
 
 	//! Assign a different surface type to this material.
 	virtual void          SetSurfaceType(const char* sSurfaceTypeName) = 0;
@@ -338,7 +329,7 @@ struct IMaterial
 	//! If Multi material return Default material if wrong id.
 	virtual IMaterial* GetSafeSubMtl(int nSlot) = 0;
 
-	//! Fill an array of integeres representing surface ids of the sub materials or the material itself.
+	//! Fill an array of integers representing surface ids of the sub materials or the material itself.
 	//! \param pSurfaceIdsTable Pointer to the array of int with size enough to hold MAX_SUB_MATERIALS surface type ids.
 	//! \return Number of filled items.
 	virtual int FillSurfaceTypeIds(int pSurfaceIdsTable[]) = 0;
@@ -352,17 +343,12 @@ struct IMaterial
 	virtual void  SetTexture(int textureId, int textureSlot = EFTT_DIFFUSE) = 0;
 	virtual void  SetSubTexture(int textureId, int subMaterialSlot, int textureSlot = EFTT_DIFFUSE) = 0;
 
-	//! Set Optional Camera for material (Used for monitors that look thru camera).
+	//! Set Optional Camera for material (Used for monitors that look throug camera).
 	virtual void   SetCamera(CCamera& cam) = 0;
 
 	virtual void   GetMemoryUsage(ICrySizer* pSizer) const = 0;
 
 	virtual size_t GetResourceMemoryUsage(ICrySizer* pSizer) = 0;
-
-	//! Makes this specific material enter sketch mode.
-	//! \param mode Only the following modes are supported: 0=no sketch, 1=normal sketch mode, 2=fast sketch mode.
-	//! \see I3DEngine::LoadCGF
-	virtual void SetSketchMode(int mode) = 0;
 
 	// Debug routine.
 	//! Trace leaking materials by callstack.
@@ -377,7 +363,7 @@ struct IMaterial
 	virtual void PrecacheMaterial(const float fEntDistance, struct IRenderMesh* pRenderMesh, bool bFullUpdate, bool bDrawNear = false) = 0;
 
 	//! Estimates texture memory usage for this material.
-	//! When nMatID is not negative only caluclate for one sub-material.
+	//! When nMatID is not negative only calculate for one sub-material.
 	virtual int GetTextureMemoryUsage(ICrySizer* pSizer, int nMatID = -1) = 0;
 
 	//! Set & retrieve a material link name.
@@ -396,6 +382,7 @@ struct IMaterial
 #endif
 };
 
+//! \cond INTERNAL
 //! IMaterialManagerListener is a callback interface to listen for special events of material manager, (used by Editor).
 struct IMaterialManagerListener
 {
@@ -403,20 +390,21 @@ struct IMaterialManagerListener
 	virtual ~IMaterialManagerListener(){}
 
 	//! Called when material manager tries to load a material.
-	//! \param NLoadingFlags Zero or a bitwise combination of the flagas defined in ELoadingFlags.
+	//! \param NLoadingFlags Zero or a bitwise combination of the flags defined in ELoadingFlags.
 	virtual IMaterial* OnLoadMaterial(const char* sMtlName, bool bForceCreation = false, unsigned long nLoadingFlags = 0) = 0;
 	virtual void       OnCreateMaterial(IMaterial* pMaterial) = 0;
 	virtual void       OnDeleteMaterial(IMaterial* pMaterial) = 0;
 	// </interfuscator:shuffle>
 };
+//! \endcond
 
 //! IMaterialManager interface provide access to the material manager implemented in 3DEngine.
 struct IMaterialManager
 {
 	//! Loading flags.
-	enum ELoadingFlags
+	enum ELoadingFlags : uint32
 	{
-		ELoadingFlagsPreviewMode = BIT(0),
+		ELoadingFlagsPreviewMode = BIT32(0),
 	};
 
 	// <interfuscator:shuffle>
@@ -456,7 +444,7 @@ struct IMaterialManager
 	virtual IMaterial* CloneMultiMaterial(IMaterial* pMtl, const char* sSubMtlName = 0) = 0;
 
 	//! Associate a special listener callback with material manager inside 3DEngine.
-	//! This listener callback is used primerly by the editor.
+	//! This listener callback is used primely by the editor.
 	virtual void SetListener(IMaterialManagerListener* pListener) = 0;
 
 	//! Retrieve a default engine material.

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "BehaviorTreeNodes_Game.h"
@@ -73,7 +73,7 @@ namespace BehaviorTree
 			}
 		}
 
-		virtual LoadResult LoadFromXml(const XmlNodeRef& xml, const LoadContext& context)
+		virtual LoadResult LoadFromXml(const XmlNodeRef& xml, const struct LoadContext& context, const bool isLoadingFromEditor)
 		{
 			const char* formationName = xml->getAttr("name");
 			if (!formationName)
@@ -84,7 +84,7 @@ namespace BehaviorTree
 
 			m_formationNameCRC32 = CCrc32::ComputeLowercase(formationName);
 
-			return LoadChildFromXml(xml, context);
+			return LoadChildFromXml(xml, context, isLoadingFromEditor);
 		}
 
 		virtual Status Update(const UpdateContext& context)
@@ -209,20 +209,20 @@ namespace BehaviorTree
 			IAIActor* pIAIActor = CastToIAIActorSafe(pAIObject);
 			if (pIAIActor)
 			{
-				SendSignal(pIAIActor, "ACT_JOIN_FORMATION",pEntityToFollow);
+				SendSignal(pIAIActor, gEnv->pAISystem->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnActJoinFormation(), pEntityToFollow);
 				return true;
 			}
 
 			return false;
 		}
 
-		void SendSignal(IAIActor* pIAIActor, const char* signalName, IEntity* pSender)
+		void SendSignal(IAIActor* pIAIActor, const AISignals::ISignalDescription& signalDescription, IEntity* pSender)
 		{
 			assert(pIAIActor);
-			IAISignalExtraData*	pData = gEnv->pAISystem->CreateSignalExtraData();
+			AISignals::IAISignalExtraData*	pData = gEnv->pAISystem->CreateSignalExtraData();
 			const int goalPipeId = gEnv->pAISystem->AllocGoalPipeId();
 			pData->iValue = goalPipeId;
-			pIAIActor->SetSignal( 10, signalName, pSender, pData );
+			pIAIActor->SetSignal(gEnv->pAISystem->GetSignalManager()->CreateSignal(AISIGNAL_ALLOW_DUPLICATES, signalDescription, pSender ? pSender->GetId() : INVALID_ENTITYID, pData));
 		}
 	};
 
@@ -453,7 +453,7 @@ namespace BehaviorTree
 							pActor->KnockDown(impulseScale);
 							hasBeenKnockedDown = true;
 
-							SendSignal(attackerId, "OnMeleeKnockedDownTarget");
+							SendOnMeleeKnockedDownTargetSignal(attackerId);
 						}
 					}
 				}
@@ -488,13 +488,12 @@ namespace BehaviorTree
 				}
 			}
 
-			void SendSignal(EntityId entityId, const char* signalName)
+			void SendOnMeleeKnockedDownTargetSignal(EntityId entityId)
 			{
 				Agent agent(entityId);
 				if(agent.IsValid())
 				{
-					IAISignalExtraData*	pData = gEnv->pAISystem->CreateSignalExtraData();
-					agent.GetAIActor()->SetSignal( 10, signalName, agent.GetEntity(), NULL );
+					agent.GetAIActor()->SetSignal(gEnv->pAISystem->GetSignalManager()->CreateSignal(AISIGNAL_ALLOW_DUPLICATES, gEnv->pAISystem->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnMeleeKnockedDownTarget(), entityId));
 				}
 			}
 
@@ -597,7 +596,7 @@ namespace BehaviorTree
 		}
 		// ------------------------------------------------------------------------------------------------------------------------
 
-		virtual LoadResult LoadFromXml(const XmlNodeRef& xml, const LoadContext& context) override
+		virtual LoadResult LoadFromXml(const XmlNodeRef& xml, const struct LoadContext& context, const bool isLoadingFromEditor) override
 		{
 			s_dictionaries.target.Get(xml, "target", m_target, true);
 
@@ -714,7 +713,7 @@ namespace BehaviorTree
 			// Check if target is in navigation mesh
 			if (m_failIfTargetNotInNavigationMesh)
 			{
-				if (!gEnv->pAISystem->GetNavigationSystem()->IsLocationContainedWithinTriangleInNavigationMesh(agent.GetAIActor()->GetNavigationTypeID(), targetPosition, 5.0f, 0.5f))
+				if (!gEnv->pAISystem->GetNavigationSystem()->IsLocationValidInNavigationMesh(agent.GetAIActor()->GetNavigationTypeID(), targetPosition, nullptr, 5.0f, 0.5f))
 				{
 					return false;
 				}
@@ -857,9 +856,9 @@ namespace BehaviorTree
 		{
 		}
 
-		virtual LoadResult LoadFromXml(const XmlNodeRef& xml, const LoadContext& context) override
+		virtual LoadResult LoadFromXml(const XmlNodeRef& xml, const struct LoadContext& context, const bool isLoadingFromEditor) override
 		{
-			IF_UNLIKELY (BaseClass::LoadFromXml(xml, context) == LoadFailure)
+			IF_UNLIKELY (BaseClass::LoadFromXml(xml, context, isLoadingFromEditor) == LoadFailure)
 				return LoadFailure;
 
 			if (!xml->getAttr("distance", m_distance))
@@ -1088,9 +1087,9 @@ namespace BehaviorTree
 		{
 		}
 
-		virtual LoadResult LoadFromXml(const XmlNodeRef& xml, const LoadContext& context) override
+		virtual LoadResult LoadFromXml(const XmlNodeRef& xml, const struct LoadContext& context, const bool isLoadingFromEditor) override
 		{
-			IF_UNLIKELY (BaseClass::LoadFromXml(xml, context) == LoadFailure)
+			IF_UNLIKELY (BaseClass::LoadFromXml(xml, context, isLoadingFromEditor) == LoadFailure)
 				return LoadFailure;
 
 			xml->getAttr("radiusForAgentVsPlayer", m_radiusForAgentVsPlayer);
@@ -1105,7 +1104,7 @@ namespace BehaviorTree
 			// Please read the description above for an overview of what the
 			// code below is trying to accomplish.
 
-			FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+			CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 			CActor* actor = static_cast<CActor*>(g_pGame->GetIGameFramework()->GetIActorSystem()->GetActor(context.entityId));
 			IF_UNLIKELY (!actor)

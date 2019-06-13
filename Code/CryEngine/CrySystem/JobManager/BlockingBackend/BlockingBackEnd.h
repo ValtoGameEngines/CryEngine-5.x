@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   ThreadBackEnd.h
@@ -25,11 +25,6 @@ class CWorkerBackEndProfiler;
 
 namespace JobManager {
 namespace BlockingBackEnd {
-namespace detail {
-// stack size for each worker thread of the blocking backend
-enum {eStackSize = 32 * 1024 };
-
-}   // namespace detail
 
 // forward declarations
 class CBlockingBackEnd;
@@ -62,10 +57,14 @@ private:
 	uint32                   m_nRegularWorkerThreads;
 };
 
+bool   IsBlockingWorkerId(uint32 workerId);
+// maps the workerId of a blocking worker to a unique index in [0, GetNumWorkerThreads()[
+uint32 GetIndexFromWorkerId(uint32 workerId);
+
 // the implementation of the PC backend
 // has n-worker threads which use atomic operations to pull from the job queue
-// and uses a semaphore to signal the workers if there is work requiered
-class CBlockingBackEnd : public IBackend
+// and uses a semaphore to signal the workers if there is work required
+class CBlockingBackEnd final : public IBackend
 {
 public:
 	CBlockingBackEnd(JobManager::SInfoBlock** pRegularWorkerFallbacks, uint32 nRegularWorkerThreads);
@@ -77,11 +76,16 @@ public:
 
 	virtual void   AddJob(JobManager::CJobDelegator& crJob, const JobManager::TJobHandle cJobHandle, JobManager::SInfoBlock& rInfoBlock);
 
+	virtual bool   AddTempWorkerUntilJobStateIsComplete(JobManager::SJobState& pJobState) { return false; }
+
 	virtual uint32 GetNumWorkerThreads() const { return m_nNumWorker; }
 
 	void           AddBlockingFallbackJob(JobManager::SInfoBlock* pInfoBlock, uint32 nWorkerThreadID);
 
-#if defined(JOBMANAGER_SUPPORT_FRAMEPROFILER)
+	virtual bool KickTempWorker() { return false; }
+	virtual bool StopTempWorker() { return false; }
+
+#if defined(JOBMANAGER_SUPPORT_STATOSCOPE)
 	JobManager::IWorkerBackEndProfiler* GetBackEndWorkerProfiler() const { return m_pBackEndWorkerProfiler; }
 #endif
 
@@ -98,7 +102,7 @@ private:
 	uint32                   m_nRegularWorkerThreads;
 
 	// members required for profiling jobs in the frame profiler
-#if defined(JOBMANAGER_SUPPORT_FRAMEPROFILER)
+#if defined(JOBMANAGER_SUPPORT_STATOSCOPE)
 	JobManager::IWorkerBackEndProfiler* m_pBackEndWorkerProfiler;
 #endif
 };

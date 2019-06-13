@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include <CryCore/Platform/platform.h>
@@ -428,7 +428,7 @@ bool ReadRichGameMediaHeader(const char* filename, FILE* pFile, RichSaveGames::R
 bool ReadRichGameMetaData(const string& filename, CPlayerProfileManager::SSaveGameMetaData& metaData)
 {
 	ICryPak* pCryPak = gEnv->pCryPak;
-	FILE* pFile = pCryPak->FOpen(filename, "rbx"); // x=don't chache full file
+	FILE* pFile = pCryPak->FOpen(filename, "rb");
 	if (!pFile)
 		return false;
 
@@ -498,7 +498,6 @@ bool CRichSaveGameHelper::GetSaveGames(CPlayerProfileManager::SUserEntry* pEntry
 	profilePrefix += '_';
 	size_t profilePrefixLen = profilePrefix.length();
 
-	ICryPak* pCryPak = gEnv->pCryPak;
 	_finddata_t fd;
 
 	path.TrimRight("/\\");
@@ -601,7 +600,7 @@ public:
 #ifdef TEST_THUMBNAIL_AUTOCAPTURE
 		// the image file we write out is always in 16:9 format, e.g. 256x144
 		// or scaled depending on renderer height
-		const int h = gEnv->pRenderer->GetHeight();
+		const int h = gEnv->pRenderer->GetOverlayHeight();
 		const int imageDepth = RichSaveGames::THUMBNAIL_DEFAULT_DEPTH;
 		int imageHeight = std::min(RichSaveGames::THUMBNAIL_DEFAULT_HEIGHT, h);
 		int imageWidth = imageHeight * 16 / 9;
@@ -732,8 +731,8 @@ public:
 		// debug: get screen shot here
 		if (thumbnailSize > 0)
 		{
-			int w = gEnv->pRenderer->GetWidth();
-			int h = gEnv->pRenderer->GetHeight();
+			int w = gEnv->pRenderer->GetOverlayWidth();
+			int h = gEnv->pRenderer->GetOverlayHeight();
 
 			// initialize to stretch thumbnail
 			int captureDestWidth = m_thumbnailWidth;
@@ -774,9 +773,9 @@ public:
 
 			const bool bAlpha = m_thumbnailDepth == 4;
 			const int bpl = m_thumbnailWidth * m_thumbnailDepth;
-			uint8* pBuf = m_thumbnailData.begin() + captureDestOffY * bpl + captureDestOffX * m_thumbnailDepth;
-			gEnv->pRenderer->ReadFrameBufferFast(pBuf, m_thumbnailWidth, w, h, eRB_BackBuffer, bAlpha, captureDestWidth, captureDestHeight); // no inverse needed
-			// gEnv->pRenderer->ReadFrameBufferFast((uint32*)pBuf, m_thumbnailWidth, m_thumbnailHeight); // needs inverse
+			uint32* pBuf = static_cast<uint32*>(m_thumbnailData.begin() + captureDestOffY * bpl + captureDestOffX * m_thumbnailDepth);
+			gEnv->pRenderer->ReadFrameBuffer(pBuf, captureDestWidth, captureDestHeight); // no inverse needed
+			// gEnv->pRenderer->ReadFrameBuffer(pBuf, m_thumbnailWidth, m_thumbnailHeight); // needs inverse
 			// bFlipImage = true;
 		}
 #endif
@@ -881,7 +880,7 @@ public:
 		}
 
 		ICryPak* pCryPak = gEnv->pCryPak;
-		FILE* pFile = pCryPak->FOpen(filename, "rbx"); // x=don't chache full file
+		FILE* pFile = pCryPak->FOpen(filename, "rb");
 		if (!pFile)
 			return false;
 
@@ -1066,7 +1065,7 @@ bool CRichSaveGameHelper::GetSaveGameThumbnail(CPlayerProfileManager::SUserEntry
 	filename.append(strippedName);
 
 	ICryPak* pCryPak = gEnv->pCryPak;
-	FILE* pFile = pCryPak->FOpen(filename, "rbx"); // x=don't chache full file
+	FILE* pFile = pCryPak->FOpen(filename, "rb");
 	if (!pFile)
 		return false;
 

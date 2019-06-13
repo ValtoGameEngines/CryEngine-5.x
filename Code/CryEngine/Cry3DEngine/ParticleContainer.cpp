@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   ParticleContainer.h
@@ -101,7 +101,10 @@ void CParticleContainer::OnEffectChange()
 	m_nEnvFlags = m_pParams->nEnvFlags;
 
 	// Update existing particle history arrays if needed.
+#if CRY_PLATFORM_DESKTOP
 	int nPrevSteps = m_nHistorySteps;
+#endif
+
 	m_nHistorySteps = m_pParams->GetTailSteps();
 
 	// Do not use coverage buffer culling for 'draw near' or 'on top' particles
@@ -153,7 +156,7 @@ CParticleSubEmitter* CParticleContainer::AddEmitter(CParticleSource* pSource)
 
 CParticle* CParticleContainer::AddParticle(SParticleUpdateContext& context, const CParticle& part)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_PARTICLE);
+	CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
 
 	const ResourceParticleParams& params = GetParams();
 
@@ -265,7 +268,7 @@ void CParticleContainer::EmitParticle(const EmitParticleData* pData)
 
 void CParticleContainer::ComputeStaticBounds(AABB& bb, bool bWithSize, float fMaxLife)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_PARTICLE);
+	CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
 
 	const ResourceParticleParams& params = GetParams();
 
@@ -319,7 +322,7 @@ void CParticleContainer::ComputeStaticBounds(AABB& bb, bool bWithSize, float fMa
 
 void CParticleContainer::UpdateState()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_PARTICLE);
+	CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
 
 	UpdateContainerLife();
 
@@ -567,7 +570,7 @@ void CParticleContainer::UpdateParticleStates(SParticleUpdateContext& context)
 			else
 			{
 				part.Hide();
-				m_Counts.ParticlesReject++;
+				m_Counts.particles.reject++;
 			}
 		}
 		else
@@ -647,20 +650,6 @@ void CParticleContainer::UpdateEffects()
 	}
 }
 
-/* Water sorting / filtering:
-
-                  Effect:::::::::::::::::::::::::::
-   Emitter	Camera		above					both					below
-   -------	------		-----					----					-----
-   above		above			AFTER					AFTER					skip
-        below			BEFORE				BEFORE				skip
-
-   both		above			AFTER\below		AFTER[\below]	BEFORE\above
-        below			BEFORE\below	AFTER[\above]	AFTER\above
-
-   below		above			skip					BEFORE				BEFORE
-        below			skip					AFTER					AFTER
- */
 void CParticleContainer::Render(SRendParams const& RenParams, SPartRenderParams const& PRParams, const SRenderingPassInfo& passInfo)
 {
 	FUNCTION_PROFILER_CONTAINER(this);
@@ -736,7 +725,7 @@ void CParticleContainer::Render(SRendParams const& RenParams, SPartRenderParams 
 	else if (nRenderFlags & REN_SPRITE)
 	{
 		// Copy pre-computed render and state flags.
-		uint64 nObjFlags = pParams->nRenObjFlags & PRParams.m_nRenObjFlags;
+		ERenderObjectFlags nObjFlags = ERenderObjectFlags(pParams->nRenObjFlags & PRParams.m_nRenObjFlags);
 
 		IF (pParams->eFacing == pParams->eFacing.Water, 0)
 		{
@@ -778,12 +767,12 @@ void CParticleContainer::Render(SRendParams const& RenParams, SPartRenderParams 
 		CRenderObject* pRenderObject = pCachedRO[threadId];
 		if (!pRenderObject)
 		{
-			pRenderObject = CreateRenderObject(nObjFlags);
+			pRenderObject = CreateRenderObject(nObjFlags, passInfo);
 			pCachedRO[threadId] = pRenderObject;
 		}
 
 		SAddParticlesToSceneJob& job = CParticleManager::Instance()->GetParticlesToSceneJob(passInfo);
-		job.pPVC = this;
+		job.pVertexCreator = this;
 		job.pRenderObject = pRenderObject;
 		SRenderObjData* pOD = job.pRenderObject->GetObjData();
 
@@ -796,36 +785,38 @@ void CParticleContainer::Render(SRendParams const& RenParams, SPartRenderParams 
 				nObjFlags &= ~FOB_OCTAGONAL;
 		}
 		
-		job.pRenderObject->m_ObjFlags = (nObjFlags & ~0xFF) | RenParams.dwFObjFlags;
+		job.pRenderObject->m_ObjFlags = ERenderObjectFlags(nObjFlags & ~0xFF) | RenParams.dwFObjFlags;
+		job.pRenderObject->SetInstanceDataDirty();
 
 		pOD->m_FogVolumeContribIdx = PRParams.m_nFogVolumeContribIdx;
 
 		pOD->m_LightVolumeId = PRParams.m_nDeferredLightVolumeId;
 
-		if (GetMain().m_pTempData)
-			*((Vec4*)&pOD->m_fTempVars[0]) = GetMain().m_pTempData->userData.vEnvironmentProbeMults;
+		if (const auto pTempData = GetMain().m_pTempData)
+			*((Vec4f*)&pOD->m_fTempVars[0]) = Vec4f(pTempData->userData.vEnvironmentProbeMults);
 		else
-			*((Vec4*)&pOD->m_fTempVars[0]) = Vec4(1.0f, 1.0f, 1.0f, 1.0f);
-		;
+			*((Vec4f*)&pOD->m_fTempVars[0]) = Vec4f(1.0f, 1.0f, 1.0f, 1.0f);
 
 		// Set sort distance based on params and bounding box.
 		if (pParams->fSortBoundsScale == PRParams.m_fMainBoundsScale)
 			job.pRenderObject->m_fDistance = PRParams.m_fCamDistance;
 		else
 			job.pRenderObject->m_fDistance = GetMain().GetNearestDistance(passInfo.GetCamera().GetPosition(), pParams->fSortBoundsScale);
-		job.pRenderObject->m_fDistance += pParams->fSortOffset;
+		job.pRenderObject->m_fSort = pParams->fSortOffset;
+		static_cast<CREParticle*>(job.pRenderObject->m_pRE)->SetBBox(m_bbWorld);
+		job.pRenderObject->m_pRE->m_CustomTexBind[0] = RenParams.nTextureID;
 
 		//
 		// Set remaining SAddParticlesToSceneJob data.
 		//
 
 		job.pShaderItem = &pParams->pMaterial->GetShaderItem();
-		if (job.pShaderItem->m_pShader && (job.pShaderItem->m_pShader->GetFlags() & EF_REFRACTIVE))
-			SetScreenBounds(passInfo.GetCamera(), pOD->m_screenBounds);
 		if (pParams->fTexAspect == 0.f)
 			non_const(*m_pParams).UpdateTextureAspect();
 
-		job.nCustomTexId = RenParams.nTextureID;
+		int passId = passInfo.IsShadowPass() ? 1 : 0;
+		int passMask = BIT(passId);
+		pRenderObject->m_passReadyMask |= passMask;
 
 		passInfo.GetIRenderView()->AddPermanentObject(
 			pRenderObject,
@@ -833,26 +824,28 @@ void CParticleContainer::Render(SRendParams const& RenParams, SPartRenderParams 
 	}
 }
 
-CRenderObject* CParticleContainer::CreateRenderObject(uint64 nObjFlags)
+CRenderObject* CParticleContainer::CreateRenderObject(uint64 nObjFlags, const SRenderingPassInfo& passInfo)
 {
 	const ResourceParticleParams* pParams = m_pParams;
 	CRenderObject* pRenderObject = gEnv->pRenderer->EF_GetObject();
 	SRenderObjData* pOD = pRenderObject->GetObjData();
 
 	pRenderObject->m_pRE = gEnv->pRenderer->EF_CreateRE(eDATA_Particle);
-	pRenderObject->m_II.m_Matrix.SetIdentity();
+	pRenderObject->SetMatrix(Matrix34::CreateIdentity(), passInfo);
 	pRenderObject->m_RState = uint8(nObjFlags);
+	pRenderObject->m_pCurrMaterial = pParams->pMaterial;
 	pOD->m_pParticleShaderData = &GetEffect()->GetParams().ShaderData;
 
-	IF(!!pParams->fHeatScale, 0)
+	if (pParams->fHeatScale)
 	{
 		pOD->m_nVisionScale = MAX_HEATSCALE;
 		uint32 nHeatAmount = pParams->fHeatScale.GetStore();
 		pOD->m_nVisionParams = (nHeatAmount << 24) | (nHeatAmount << 16) | (nHeatAmount << 8) | (0);
 	}
-
-	pRenderObject->m_ParticleObjFlags = (pParams->bHalfRes ? CREParticle::ePOF_HALF_RES : 0)
-		| (pParams->bVolumeFog ? CREParticle::ePOF_VOLUME_FOG : 0);
+	if (pParams->bHalfRes)
+		pRenderObject->m_ObjFlags |= FOB_HALF_RES;
+	if (pParams->bVolumeFog)
+		pRenderObject->m_ObjFlags |= FOB_VOLUME_FOG;
 
 	return pRenderObject;
 }
@@ -882,35 +875,6 @@ void CParticleContainer::ResetRenderObjects()
 		m_pAfterWaterRO[threadId] = nullptr;
 		m_pBeforeWaterRO[threadId] = nullptr;
 		m_pRecursiveRO[threadId] = nullptr;
-	}
-}
-
-void CParticleContainer::SetScreenBounds(const CCamera& cam, uint8 aScreenBounds[4])
-{
-	const int32 align16 = (16 - 1);
-	const int32 shift16 = 4;
-	int iOut[4];
-	int nWidth = cam.GetViewSurfaceX();
-	int nHeight = cam.GetViewSurfaceZ();
-	AABB posAABB = AABB(cam.GetPosition(), 1.00f);
-	if (!posAABB.IsIntersectBox(m_bbWorld))
-	{
-		cam.CalcScreenBounds(&iOut[0], &m_bbWorld, nWidth, nHeight);
-		if (((iOut[2] - iOut[0]) == nWidth) && ((iOut[3] - iOut[1]) == nHeight))
-		{
-			iOut[2] += 16;  // Split fullscreen particles and fullscreen geometry. Better to use some sort of ID/Flag, but this will do the job for now
-		}
-		aScreenBounds[0] = min(iOut[0] >> shift16, (int32)255);
-		aScreenBounds[1] = min(iOut[1] >> shift16, (int32)255);
-		aScreenBounds[2] = min((iOut[2] + align16) >> shift16, (int32)255);
-		aScreenBounds[3] = min((iOut[3] + align16) >> shift16, (int32)255);
-	}
-	else
-	{
-		aScreenBounds[0] = 0;
-		aScreenBounds[1] = 0;
-		aScreenBounds[2] = min((nWidth >> shift16) + 1, (int32)255);
-		aScreenBounds[3] = min((nHeight >> shift16) + 1, (int32)255);
 	}
 }
 
@@ -1035,33 +999,29 @@ void CParticleContainer::Reset()
 // Stat functions.
 void CParticleContainer::GetCounts(SParticleCounts& counts) const
 {
-	counts.EmittersAlloc += 1.f;
-	counts.ParticlesAlloc += m_Particles.size();
+	counts.components.alloc += 1.f;
+	counts.components.alive += GetContainerLife() <= GetAge();
+	counts.particles.alloc += m_Particles.size();
+	counts.particles.alive += m_Particles.size();
 
 	if (GetTimeToUpdate() == 0.f)
 	{
 		// Was updated this frame.
-		AddArray(FloatArray(counts), FloatArray(m_Counts));
-		counts.EmittersActive += 1.f;
-		counts.ParticlesActive += m_Particles.size();
-		counts.SubEmittersActive += m_Emitters.size();
-
-		if (m_Counts.ParticlesCollideTest)
-		{
-			counts.nCollidingEmitters += 1;
-			counts.nCollidingParticles += (int)m_Counts.ParticlesCollideTest;
-		}
+		reinterpret_cast<SContainerCounts&>(counts) += m_Counts;
+		counts.components.updated += 1.f;
+		counts.particles.updated += m_Particles.size();
+		counts.spawners.updated += m_Emitters.size();
 
 		if ((m_nEnvFlags & REN_ANY) && !m_bbWorldDyn.IsReset())
 		{
-			counts.DynamicBoundsVolume += m_bbWorldDyn.GetVolume();
-			counts.StaticBoundsVolume += m_bbWorld.GetVolume();
+			counts.volume.dyn += m_bbWorldDyn.GetVolume();
+			counts.volume.stat += m_bbWorld.GetVolume();
 			if (!m_bbWorld.ContainsBox(m_bbWorldDyn))
 			{
 				AABB bbDynClip = m_bbWorldDyn;
 				bbDynClip.ClipToBox(m_bbWorld);
 				float fErrorVol = m_bbWorldDyn.GetVolume() - bbDynClip.GetVolume();
-				counts.ErrorBoundsVolume += fErrorVol;
+				counts.volume.error += fErrorVol;
 			}
 		}
 	}

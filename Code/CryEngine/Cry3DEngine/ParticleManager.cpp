@@ -1,21 +1,9 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   ParticleManager.cpp
-//  Version:     v1.00
-//  Created:     28/5/2001 by Vladimir Kajalin
-//  Compilers:   Visual Studio.NET
-//  Description: Manage particle effects and emitters
-// -------------------------------------------------------------------------
-//  History:
-//	- 03:2006				 : Modified by Jan Müller (Serialization)
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
+#include "ParticleManager.h"
 #include <ParticleSystem/ParticleEffect.h>
 #include <ParticleSystem/ParticleEmitter.h>
-#include "ParticleManager.h"
 #include "ParticleEmitter.h"
 #include "ParticleContainer.h"
 #include "ParticleMemory.h"
@@ -27,14 +15,14 @@
 #include <CryThreading/IJobManager_JobDelegator.h>
 #include <CrySystem/ZLib/IZLibCompressor.h>
 #include <CrySerialization/ClassFactory.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 #define LIBRARY_PATH    "Libs/"
 #define EFFECTS_SUBPATH LIBRARY_PATH "Particles/"
-#define LEVEL_PATH      "Levels/"
 
 using namespace minigui;
 
-CRY_PFX2_DBG
+ParticleAllocator::TPoolsList ParticleAllocator::s_pools;
 
 //////////////////////////////////////////////////////////////////////////
 // Single direct entry point for particle clients.
@@ -51,12 +39,28 @@ void DestroyParticleManager(IParticleManager* pParticleManager)
 //////////////////////////////////////////////////////////////////////////
 // CParticleBatchDataManager implementation
 
+SAddParticlesToSceneJob& CParticleBatchDataManager::GetParticlesToSceneJob(const SRenderingPassInfo& passInfo)
+{
+	SAddParticlesToSceneJob& job = *m_ParticlesToScene[passInfo.ThreadID()].push_back();
+	if (passInfo.IsShadowPass())
+	{
+		const auto* pFrustum = passInfo.GetIRenderView()->GetShadowFrustumOwner();
+		job.pCamera = &pFrustum->FrustumPlanes[passInfo.ShadowFrustumSide()];
+	}
+	else
+	{
+		job.pCamera = &passInfo.GetCamera();
+	}
+	return job;
+}
+
 void CParticleBatchDataManager::PrepareForRender(const SRenderingPassInfo& passInfo)
 {
 	if (passInfo.GetRecursiveLevel() == 0)
 		m_ParticlesToScene[passInfo.ThreadID()].resize(0);
 	m_ParticlesJobStart[passInfo.ThreadID()][passInfo.GetRecursiveLevel()] = m_ParticlesToScene[passInfo.ThreadID()].size();
 }
+
 void CParticleBatchDataManager::FinishParticleRenderTasks(const SRenderingPassInfo& passInfo)
 {
 	FUNCTION_PROFILER_CONTAINER(this);
@@ -103,6 +107,7 @@ ITimer* g_pParticleTimer = NULL;
 
 //////////////////////////////////////////////////////////////////////////
 CParticleManager::CParticleManager(bool bEnable)
+	: m_pParticleSystem(pfx2::GetIParticleSystem())
 {
 	m_bEnabled = bEnable;
 	m_bRegisteredListener = false;
@@ -114,13 +119,17 @@ CParticleManager::CParticleManager(bool bEnable)
 	g_pParticleTimer = gEnv->pTimer;
 	m_pLastDefaultParams = &GetDefaultParams();
 
-	if (GetPhysicalWorld())
-	{
-		GetPhysicalWorld()->AddEventClient(EventPhysAreaChange::id, &StaticOnPhysAreaChange, 0);
+	REGISTER_COMMAND("e_ParticleListEmitters", &CmdParticleListEmitters, 0, "Writes all emitters to log");
+	REGISTER_COMMAND("e_ParticleListEffects", &CmdParticleListEffects, 0, "Writes all effects used and counts to log");
+	REGISTER_COMMAND("e_ParticleMemory", &CmdParticleMemory, 0, "Displays current particle memory usage");
 
-		REGISTER_COMMAND("e_ParticleListEmitters", &CmdParticleListEmitters, 0, "Writes all emitters to log");
-		REGISTER_COMMAND("e_ParticleListEffects", &CmdParticleListEffects, 0, "Writes all effects used and counts to log");
-		REGISTER_COMMAND("e_ParticleMemory", &CmdParticleMemory, 0, "Displays current particle memory usage");
+	// Convert deprecated cvar
+	int& cvarCollisions = GetCVars()->e_ParticlesCollisions;
+	if (GetCVars()->e_ParticlesObjectCollisions >= 0)
+	{
+		cvarCollisions = GetCVars()->e_ParticlesObjectCollisions + 1;
+		if (cvarCollisions >= 4)
+			cvarCollisions = 3 + AlphaBit('p');
 	}
 
 	// reset tracking data for dumping vertex/index pool usage
@@ -141,7 +150,6 @@ CParticleManager::~CParticleManager()
 	{
 		Get3DEngine()->GetIVisAreaManager()->RemoveListener(this);
 	}
-	GetPhysicalWorld()->RemoveEventClient(EventPhysAreaChange::id, &StaticOnPhysAreaChange, 0);
 	Reset();
 
 	// Destroy references to shaders.
@@ -153,28 +161,8 @@ CParticleManager::~CParticleManager()
 	}
 }
 
-struct SortEffectStats
+void CParticleManager::CollectEffectStats(TEffectStats& mapEffectStats, size_t iSortField) const
 {
-	typedef CParticleManager::TEffectStats::value_type SEffectStatEntry;
-
-	float SParticleCounts::* _pSortField;
-
-	SortEffectStats(float SParticleCounts::* pSortField)
-		: _pSortField(pSortField) {}
-
-	bool operator()(const SEffectStatEntry& a, const SEffectStatEntry& b) const
-	{
-		return a.second.*_pSortField > b.second.*_pSortField;
-	}
-};
-
-void CParticleManager::CollectEffectStats(TEffectStats& mapEffectStats, float SParticleCounts::* pSortField) const
-{
-	CRY_ASSERT_MESSAGE(false, "CParticleManager::CollectEffectStats is deprecated");
-
-	/* Disabled as sorting a std::sort on a map is not allowed
-	//
-
 	SParticleCounts countsTotal;
 	for (const auto& e : m_Emitters)
 	{
@@ -183,23 +171,33 @@ void CParticleManager::CollectEffectStats(TEffectStats& mapEffectStats, float SP
 			SParticleCounts countsEmitter;
 			c.GetCounts(countsEmitter);
 			SParticleCounts& countsEffect = mapEffectStats[c.GetEffect()];
-			AddArray(FloatArray(countsEffect), FloatArray(countsEmitter));
-			AddArray(FloatArray(countsTotal), FloatArray(countsEmitter));
+			countsEffect += countsEmitter;
+			countsTotal += countsEmitter;
 		}
 	}
 
 	// Add total to list.
 	mapEffectStats[NULL] = countsTotal;
 
-	
 	// Re-sort by selected stat.
-	std::sort(mapEffectStats.begin(), mapEffectStats.end(), SortEffectStats(pSortField));
-	*/
+	auto compare = [iSortField](const TEffectStats::value_type& a, const TEffectStats::value_type& b)
+	{
+		return a.second[iSortField] >= b.second[iSortField];
+	};
+	std::sort(mapEffectStats.begin(), mapEffectStats.end(), compare);
 }
+
+#define VectorIndexOf(Vector, field) (&(*(Vector*)0).field - ((Vector*)0)->begin())
+
 
 void CParticleManager::GetCounts(SParticleCounts& counts)
 {
 	counts = m_GlobalCounts;
+}
+
+void CParticleManager::DisplayStats(Vec2& location, float lineHeight)
+{
+	m_pParticleSystem->DisplayStats(location, lineHeight);
 }
 
 void CParticleManager::GetMemoryUsage(ICrySizer* pSizer) const
@@ -237,7 +235,9 @@ void CParticleManager::PrintParticleMemory()
 	pSizer->Add(*this);
 	m_Emitters.GetMemoryUsage(pSizer);
 
-	stl::SPoolMemoryUsage memParticle = ParticleObjectAllocator().GetTotalMemory();
+#if !defined(EXCLUDE_NORMAL_LOG)
+	stl::SPoolMemoryUsage memParticle = ParticleAllocator::GetTotalMemory();
+#endif
 
 	CryLogAlways("Particle heap: %d KB used, %d KB freed, %d KB unused",
 	             int(memParticle.nUsed >> 10), int(memParticle.nPoolFree() >> 10), int(memParticle.nNonPoolFree() >> 10));
@@ -247,6 +247,12 @@ void CParticleManager::PrintParticleMemory()
 }
 
 void CParticleManager::Reset()
+{
+	ClearData();
+	m_pParticleSystem->Reset();
+}
+
+void CParticleManager::ClearData()
 {
 	m_bRegisteredListener = false;
 
@@ -269,15 +275,35 @@ void CParticleManager::Reset()
 #endif
 }
 
+void CParticleManager::FinishParticleRenderTasks(const SRenderingPassInfo& passInfo)
+{
+	m_pParticleSystem->FinishRenderTasks(passInfo);
+	CParticleBatchDataManager::FinishParticleRenderTasks(passInfo);
+}
+
 //////////////////////////////////////////////////////////////////////////
 void CParticleManager::ClearRenderResources(bool bForceClear)
 {
+	m_pParticleSystem->ClearRenderResources();
+	
+	const bool bClearEmitters = !GetCVars()->e_ParticlesPreload || bForceClear;
+
+#if !defined(_RELEASE)
+	if (bClearEmitters)
+	{
+		for (const auto& pEmitter : m_Emitters)
+		{
+			assert(pEmitter.Unique()); // All external references need to be released before this point to prevent leaks
+		}
+	}
+#endif
+
 	if (GetCVars()->e_ParticlesDebug & AlphaBit('m'))
 		PrintParticleMemory();
 
-	Reset();
+	ClearData();
 
-	if (!GetCVars()->e_ParticlesPreload || bForceClear)
+	if (bClearEmitters)
 	{
 		m_Effects.clear();
 		m_LoadedLibs.clear();
@@ -295,10 +321,9 @@ void CParticleManager::ClearRenderResources(bool bForceClear)
 
 	stl::free_container(m_Effects);
 
-	ParticleObjectAllocator().ResetUsage();
+	ParticleAllocator::FreeMemory();
 
 	m_pPartLightShader = 0;
-	m_PhysEnv.FreeMemory();
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -408,9 +433,9 @@ IParticleEffect* CParticleManager::FindEffect(cstr sEffectName, cstr sSource, bo
 	if (!m_bEnabled || !sEffectName || !*sEffectName)
 		return NULL;
 
-	LOADING_TIME_PROFILE_SECTION(gEnv->pSystem);
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY)(gEnv->pSystem);
 
-	pfx2::PParticleEffect pPfx2 = Cry3DEngineBase::m_pParticleSystem->FindEffect(sEffectName);
+	pfx2::PParticleEffect pPfx2 = m_pParticleSystem->FindEffect(sEffectName);
 	if (pPfx2)
 		return pPfx2.get();
 
@@ -443,19 +468,26 @@ IParticleEffect* CParticleManager::FindEffect(cstr sEffectName, cstr sSource, bo
 		}
 	}
 
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "Particles");
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_ParticleEffect, EMemStatContextFlags::MSF_Instance, "%s", sEffectName);
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "Particles");
+	MEMSTAT_CONTEXT(EMemStatContextType::ParticleEffect, sEffectName);
 
 	assert(pEffect);
 	if (pEffect->IsEnabled() || pEffect->GetChildCount())
 	{
 		if (bLoad)
 			pEffect->LoadResources(true, sSource);
-
 		if (GetCVars()->e_ParticlesConvertPfx1)
 		{
-			m_pParticleSystem->ConvertEffect(pEffect, GetCVars()->e_ParticlesConvertPfx1 > 1);
+			bool bForce = !!(GetCVars()->e_ParticlesConvertPfx1 & 2);
+			bool bSubstitute = !!(GetCVars()->e_ParticlesConvertPfx1 & 4);
+			auto pEffectPfx2 = m_pParticleSystem->ConvertEffect(pEffect, bForce);
+			if (bSubstitute)
+			{
+				pEffectPfx2->SetSubstitutedPfx1(true);
+				return pEffectPfx2;
+			}
 		}
+
 		return pEffect;
 	}
 
@@ -607,6 +639,8 @@ void CParticleManager::LogEvents()
 
 void CParticleManager::OnFrameStart()
 {
+	m_pParticleSystem->OnFrameStart();
+	
 #ifdef bEVENT_TIMINGS
 	LogEvents();
 #endif
@@ -626,8 +660,7 @@ void CParticleManager::OnFrameStart()
 
 void CParticleManager::Update()
 {
-	CRY_PROFILE_REGION(PROFILE_3DENGINE, "ParticleManager Update");
-	CRYPROFILE_SCOPE_PROFILE_MARKER("ParticleManager Update");
+	CRY_PROFILE_SECTION(PROFILE_3DENGINE, "ParticleManager Update");
 
 	if (m_bEnabled && GetCVars()->e_Particles)
 	{
@@ -636,12 +669,9 @@ void CParticleManager::Update()
 		PARTICLE_LIGHT_PROFILER();
 
 		{
-			FRAME_PROFILER("SyncComputeVerticesJobs", GetSystem(), PROFILE_PARTICLE);
+			CRY_PROFILE_SECTION(PROFILE_PARTICLE, "SyncComputeVerticesJobs");
 			GetRenderer()->SyncComputeVerticesJobs();
 		}
-
-		CleanOldPhysAreaChangedProxies();
-		UpdatePhysAreasChanged();
 
 		DumpAndResetVertexIndexPoolUsage();
 
@@ -655,7 +685,7 @@ void CParticleManager::Update()
 		if (GetSystem()->IsPaused() || (GetCVars()->e_ParticlesDebug & AlphaBit('z')))
 			return;
 
-		uint32 nActiveEmitter = 0;
+		m_PhysEnv.Update();
 
 		// Check emitter states.
 		for (auto& e : m_Emitters)
@@ -669,14 +699,19 @@ void CParticleManager::Update()
 
 			e.Update();
 
+			bool bUpdatedEnviron = false;
 			if (e.IsActive())
 			{
 				// Has particles
 				if (e.GetEnvFlags() & EFF_ANY)
+				{
 					e.UpdateEffects();
+					bUpdatedEnviron = true;
+				}
+				else if (bUpdatedEnviron)
+					m_PhysEnv.Update();
 				if (e.GetEnvFlags() & REN_ANY)
 					e.Register(true);
-				nActiveEmitter++;
 				if (bRenderedLastFrame)
 					e.AddUpdateParticlesJob();
 			}
@@ -692,6 +727,10 @@ void CParticleManager::Update()
 				EraseEmitter(&e);
 			}
 		}
+
+		m_pParticleSystem->Update();
+
+		m_PhysEnv.FinishUpdate();
 	}
 }
 
@@ -699,22 +738,22 @@ void CParticleManager::Update()
 CParticleEmitter* CParticleManager::CreateEmitter(const ParticleLoc& loc, const IParticleEffect* pEffect, const SpawnParams* pSpawnParams)
 {
 	PARTICLE_LIGHT_PROFILER();
-	FUNCTION_PROFILER(GetISystem(), PROFILE_PARTICLE);
+	CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
 
 	if (!pEffect)
 		return NULL;
 
-	void* pAlloc;
-	if (static_cast<const CParticleEffect*>(pEffect)->GetEnvironFlags(true) & EFF_FORCE)
-		// Place emitters that create forces first in the list, so they are updated first.
-		pAlloc = m_Emitters.push_front_new();
-	else
-		pAlloc = m_Emitters.push_back_new();
+	void* pAlloc = m_Emitters.push_back_new();
 	if (!pAlloc)
 		return NULL;
 
 	CParticleEmitter* pEmitter = new(pAlloc) CParticleEmitter(pEffect, loc, pSpawnParams);
 	pEmitter->IParticleEmitter::AddRef();
+
+	if (pEmitter->GetEnvFlags() & EFF_FORCE)
+		if (m_Emitters.size() > 1)
+			// Move emitters that create forces to the front, so they are updated first.
+			m_Emitters.move(m_Emitters.begin(), pEmitter);
 
 	for (auto& pListener : m_ListenersList)
 	{
@@ -726,7 +765,7 @@ CParticleEmitter* CParticleManager::CreateEmitter(const ParticleLoc& loc, const 
 IParticleEmitter* CParticleManager::CreateEmitter(const ParticleLoc& loc, const ParticleParams& Params, const SpawnParams* pSpawnParams)
 {
 	PARTICLE_LIGHT_PROFILER();
-	FUNCTION_PROFILER(GetISystem(), PROFILE_PARTICLE);
+	CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
 
 	if (!m_bEnabled)
 		return NULL;
@@ -753,7 +792,7 @@ void CParticleManager::EraseEmitter(CParticleEmitter* pEmitter)
 		// Free resources.
 		pEmitter->Reset();
 
-		if (pEmitter->Unique() == 1 && !pEmitter->m_pOcNode)
+		if (pEmitter->Unique() == 1 && !pEmitter->GetParent())
 		{
 			// Free object itself if no other refs.
 			for (auto& pListener : m_ListenersList)
@@ -835,10 +874,10 @@ void CParticleManager::UpdateEngineData()
 	if (GetCVars())
 	{
 		// Update allowed particle features.
-		if (GetCVars()->e_ParticlesObjectCollisions < 2)
+		if (GetCVars()->e_ParticlesCollisions < 3)
 		{
 			m_nAllowedEnvironmentFlags &= ~ENV_DYNAMIC_ENT;
-			if (GetCVars()->e_ParticlesObjectCollisions < 1)
+			if (GetCVars()->e_ParticlesCollisions < 2)
 				m_nAllowedEnvironmentFlags &= ~ENV_STATIC_ENT;
 		}
 		if (!GetCVars()->e_ParticlesLights || !GetCVars()->e_DynamicLights)
@@ -852,14 +891,25 @@ void CParticleManager::UpdateEngineData()
 	m_RenderFlags.SetState(GetCVars()->e_ParticlesShadows - 1, FOB_INSHADOW);
 	m_RenderFlags.SetState(GetCVars()->e_ParticlesSoftIntersect - 1, FOB_SOFT_PARTICLE);
 
+	bool bInvalidateCachedRenderObjects = false;
+
 	if (GetRenderer())
 	{
 		bool bParticleTesselation = false;
 		GetRenderer()->EF_Query(EFQ_ParticlesTessellation, bParticleTesselation);
 		m_RenderFlags.SetState(int(bParticleTesselation) - 1, FOB_ALLOW_TESSELLATION);
+
+		bInvalidateCachedRenderObjects = (m_bParticleTessellation != bParticleTesselation);
+		m_bParticleTessellation = bParticleTesselation;
 	}
 
-	if (m_pLastDefaultParams != &GetDefaultParams())
+	if (ICVar* pZPass = GetConsole()->GetCVar("r_UseZPass"))
+	{
+		if (pZPass->GetIVal() < 2)
+			m_RenderFlags.SetState(-1, FOB_ZPREPASS);
+	}
+
+	if (m_pLastDefaultParams != &GetDefaultParams() || bInvalidateCachedRenderObjects)
 	{
 		// Default effect or config spec changed.
 		m_pLastDefaultParams = &GetDefaultParams();
@@ -925,8 +975,8 @@ class CLibPathIterator
 {
 public:
 
-	CLibPathIterator(cstr sLevelPath = "")
-		: sPath(*sLevelPath ? sLevelPath : LEVEL_PATH), bDone(false)
+	CLibPathIterator(cstr sLevelPath)
+		: sPath(sLevelPath), bDone(false)
 	{}
 	operator bool() const
 	{ return !bDone; }
@@ -1077,8 +1127,8 @@ bool CParticleManager::LoadLibrary(cstr sParticlesLibrary, cstr sParticlesLibrar
 
 XmlNodeRef CParticleManager::ReadLibrary(cstr sParticlesLibrary)
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "ParticleLibraries");
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_ParticleLibrary, 0, "Particle lib (%s)", sParticlesLibrary);
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "ParticleLibraries");
+	MEMSTAT_CONTEXT(EMemStatContextType::ParticleLibrary, sParticlesLibrary);
 
 	string sLibSubPath = PathUtil::Make(EFFECTS_SUBPATH, sParticlesLibrary, "xml");
 	if (GetCVars()->e_ParticlesUseLevelSpecificLibs)
@@ -1145,8 +1195,8 @@ bool CParticleManager::LoadLibrary(cstr sParticlesLibrary, XmlNodeRef& libNode, 
 	if (!m_bEnabled)
 		return false;
 
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "ParticleLibraries");
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_ParticleLibrary, 0, "Particle lib (%s)", sParticlesLibrary);
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "ParticleLibraries");
+	MEMSTAT_CONTEXT(EMemStatContextType::ParticleLibrary, sParticlesLibrary);
 
 	CRY_DEFINE_ASSET_SCOPE("ParticleLibrary", sParticlesLibrary);
 
@@ -1178,7 +1228,7 @@ IParticleEffect* CParticleManager::LoadEffect(cstr sEffectName, XmlNodeRef& effe
 	if (!m_bEnabled)
 		return NULL;
 
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_ParticleEffect, 0, "%s", sEffectName);
+	MEMSTAT_CONTEXT(EMemStatContextType::ParticleEffect, sEffectName);
 
 	CParticleEffect* pEffect = FindLoadedEffect(sEffectName);
 	if (!pEffect)
@@ -1221,25 +1271,12 @@ void CParticleManager::ClearCachedLibraries()
 		PrintParticleMemory();
 }
 
-IParticleEffectIteratorPtr CParticleManager::GetEffectIterator()
-{
-	return new CParticleEffectIterator(this);
-}
-
 void CParticleManager::RenderDebugInfo()
 {
-	bool bRefractivePartialResolveDebugView = false;
-#if REFRACTION_PARTIAL_RESOLVE_DEBUG_VIEWS
-	static ICVar* pRefractionPartialResolvesDebugCVar = gEnv->pConsole->GetCVar("r_RefractionPartialResolvesDebug");
-	if (pRefractionPartialResolvesDebugCVar && pRefractionPartialResolvesDebugCVar->GetIVal() == eRPR_DEBUG_VIEW_3D_BOUNDS)
-	{
-		bRefractivePartialResolveDebugView = true;
-	}
-#endif
-	if ((GetCVars()->e_ParticlesDebug & AlphaBit('b')) || gEnv->IsEditing() || bRefractivePartialResolveDebugView)
+	if ((GetCVars()->e_ParticlesDebug & AlphaBit('b')) || gEnv->IsEditing())
 	{
 		// Debug particle BBs.
-		FUNCTION_PROFILER(GetISystem(), PROFILE_PARTICLE);
+		CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
 		for (auto& e : m_Emitters)
 			if (!e.GetSpawnParams().bNowhere)
 				e.RenderDebugInfo();
@@ -1268,6 +1305,7 @@ int CParticleManager::AddEventTiming(cstr sEvent, const CParticleContainer* pCon
 //////////////////////////////////////////////////////////////////////////
 void CParticleManager::Serialize(TSerialize ser)
 {
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	ser.BeginGroup("ParticleEmitters");
 
 	if (ser.IsWriting())
@@ -1349,7 +1387,7 @@ void CParticleManager::ListEffects()
 {
 	// Collect all container stats, sum into effects map.
 	TEffectStats mapEffectStats;
-	CollectEffectStats(mapEffectStats, &SParticleCounts::ParticlesActive);
+	CollectEffectStats(mapEffectStats, VectorIndexOf(SParticleCounts, particles.updated));
 
 	// Header for CSV-formatted effect list.
 	CryLogAlways(
@@ -1361,11 +1399,11 @@ void CParticleManager::ListEffects()
 	  "Coll test, Coll hit, Clip, "
 	  "Reiter, Reject"
 	  );
-
+#if !defined(EXCLUDE_NORMAL_LOG)
 	for (auto& me : mapEffectStats)
 	{
 		SParticleCounts const& counts = me.second;
-		float fPixToScreen = 1.f / ((float)GetRenderer()->GetWidth() * (float)GetRenderer()->GetHeight());
+		float fPixToScreen = 1.f / ((float)GetRenderer()->GetOverlayWidth() * (float)GetRenderer()->GetOverlayHeight());
 		CryLogAlways(
 		  "%s, "
 		  "%.0f, %.0f, %.0f, "
@@ -1375,14 +1413,15 @@ void CParticleManager::ListEffects()
 		  "%.2f, %.2f, %.2f, "
 		  "%.0f, %.2f",
 		  me.first ? me.first->GetFullName().c_str() : "TOTAL",
-		  counts.EmittersRendered, counts.EmittersActive, counts.EmittersAlloc,
-		  counts.ParticlesRendered, counts.ParticlesActive, counts.ParticlesAlloc,
-		  counts.PixelsRendered * fPixToScreen, counts.PixelsProcessed * fPixToScreen,
-		  counts.StaticBoundsVolume, counts.DynamicBoundsVolume, counts.ErrorBoundsVolume,
-		  counts.ParticlesCollideTest, counts.ParticlesCollideHit, counts.ParticlesClip,
-		  counts.ParticlesReiterate, counts.ParticlesReject
+		  counts.components.rendered, counts.components.updated, counts.components.alive,
+		  counts.particles.rendered, counts.particles.updated, counts.particles.alive,
+		  counts.pixels.rendered * fPixToScreen, counts.pixels.updated * fPixToScreen,
+		  counts.volume.stat, counts.volume.dyn, counts.volume.error,
+		  counts.particles.collideTest, counts.particles.collideHit, counts.particles.clip,
+		  counts.particles.reiterate, counts.particles.reject
 		  );
 	}
+#endif
 }
 
 void CParticleManager::CreatePerfHUDWidget()
@@ -1406,9 +1445,8 @@ void CParticleManager::DumpAndResetVertexIndexPoolUsage()
 	if (GetCVars()->e_ParticlesProfile == 2)
 		return;
 
-	const stl::SPoolMemoryUsage memParticles = ParticleObjectAllocator().GetTotalMemory();
-
-	bool bOutOfMemory = m_bOutOfVertexIndexPoolMemory || ((GetCVars()->e_ParticlesPoolSize * 1024) - memParticles.nUsed) == 0;
+	const stl::SPoolMemoryUsage memParticles = ParticleAllocator::GetTotalMemory();
+	bool bOutOfMemory = m_bOutOfVertexIndexPoolMemory;
 	// dump information if we are out of memory or if dumping is enabled
 	if (bOutOfMemory || GetCVars()->e_ParticlesProfile == 1)
 	{
@@ -1418,7 +1456,7 @@ void CParticleManager::DumpAndResetVertexIndexPoolUsage()
 		float fTextColorOutOfMemory[] = { 1.0f, 0.0f, 0.0f, 1.0f };
 		float fTextColor[] = { 1.0f, 1.0f, 1.0f, 1.0f };
 		float* pColor = bOutOfMemory ? fTextColorOutOfMemory : fTextColor;
-		float fScreenPix = (float)(GetRenderer()->GetWidth() * GetRenderer()->GetHeight());
+		float fScreenPix = (float)(GetRenderer()->GetOverlayWidth() * GetRenderer()->GetOverlayHeight());
 
 		SParticleCounts CurCounts;
 		m_pPartManager->GetCounts(CurCounts);
@@ -1431,10 +1469,6 @@ void CParticleManager::DumpAndResetVertexIndexPoolUsage()
 		gEnv->pRenderer->EF_Query(EFQ_GetMaxParticleContainer, nMaxParticleContainer);
 
 		IRenderAuxText::Draw2dLabel(fTextSideOffset, fTopOffset, fTextSize, pColor, false, "== Particle Profiler ==");
-		fTopOffset += 18.0f;
-
-		IRenderAuxText::Draw2dLabel(fTextSideOffset, fTopOffset, fTextSize, pColor, false, "- Particle Object Pool (Size %4d KB)",
-		                             GetCVars()->e_ParticlesPoolSize);
 		fTopOffset += 18.0f;
 
 		IRenderAuxText::Draw2dLabel(fTextSideOffset, fTopOffset, fTextSize, pColor, false, "\tUsed %4u Max Used %4u Free %4u (KB)",
@@ -1478,10 +1512,10 @@ void CParticleManager::DumpAndResetVertexIndexPoolUsage()
 		IRenderAuxText::Draw2dLabel(fTextSideOffset, fTopOffset, fTextSize, pColor, false, "\tLimit    %3d", (int)GetCVars()->e_ParticlesMaxScreenFill);
 		fTopOffset += 18.0f;
 
-		IRenderAuxText::Draw2dLabel(fTextSideOffset, fTopOffset, fTextSize, pColor, false, "\tProcessed %3d", (int)(CurCounts.PixelsProcessed / fScreenPix));
+		IRenderAuxText::Draw2dLabel(fTextSideOffset, fTopOffset, fTextSize, pColor, false, "\tProcessed %3d", (int)(CurCounts.pixels.updated / fScreenPix));
 		fTopOffset += 18.0f;
 
-		IRenderAuxText::Draw2dLabel(fTextSideOffset, fTopOffset, fTextSize, pColor, false, "\tRendered  %3d", (int)(CurCounts.PixelsRendered / fScreenPix));
+		IRenderAuxText::Draw2dLabel(fTextSideOffset, fTopOffset, fTextSize, pColor, false, "\tRendered  %3d", (int)(CurCounts.pixels.rendered / fScreenPix));
 		fTopOffset += 18.0f;
 		fTopOffset += 18.0f;
 
@@ -1567,7 +1601,7 @@ bool CParticleWidget::ShouldUpdate()
 
 void CParticleWidget::Update()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_PARTICLE);
+	CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
 
 	m_pTable->ClearTable();
 
@@ -1578,19 +1612,19 @@ void CParticleWidget::Update()
 	switch (m_displayMode)
 	{
 	case PARTICLE_DISP_MODE_PARTICLE:
-		m_pPartMgr->CollectEffectStats(mapEffectStats, &SParticleCounts::ParticlesRendered);
+		m_pPartMgr->CollectEffectStats(mapEffectStats, VectorIndexOf(SParticleCounts, particles.rendered));
 		break;
 
 	case PARTICLE_DISP_MODE_FILL:
-		m_pPartMgr->CollectEffectStats(mapEffectStats, &SParticleCounts::PixelsRendered);
+		m_pPartMgr->CollectEffectStats(mapEffectStats, VectorIndexOf(SParticleCounts, pixels.rendered));
 		break;
 
 	case PARTICLE_DISP_MODE_EMITTER:
-		m_pPartMgr->CollectEffectStats(mapEffectStats, &SParticleCounts::EmittersRendered);
+		m_pPartMgr->CollectEffectStats(mapEffectStats, VectorIndexOf(SParticleCounts, components.rendered));
 		break;
 	}
 
-	if (mapEffectStats[NULL].ParticlesAlloc)
+	if (mapEffectStats[NULL].components.alive)
 	{
 		float fPixToScreen = 1.f / (gEnv->pRenderer->GetWidth() * gEnv->pRenderer->GetHeight());
 		for (auto& me : mapEffectStats)
@@ -1600,16 +1634,16 @@ void CParticleWidget::Update()
 			SParticleCounts const& counts = me.second;
 			if (m_displayMode == PARTICLE_DISP_MODE_EMITTER)
 			{
-				m_pTable->AddData(1, col, "%d", (int)counts.EmittersRendered);
-				m_pTable->AddData(2, col, "%d", (int)counts.EmittersActive);
-				m_pTable->AddData(3, col, "%d", (int)counts.EmittersAlloc);
+				m_pTable->AddData(1, col, "%d", (int)counts.components.rendered);
+				m_pTable->AddData(2, col, "%d", (int)counts.components.updated);
+				m_pTable->AddData(3, col, "%d", (int)counts.components.alive);
 			}
 			else
 			{
-				m_pTable->AddData(1, col, "%d", (int)counts.ParticlesRendered);
-				m_pTable->AddData(2, col, "%d", (int)counts.ParticlesActive);
-				m_pTable->AddData(3, col, "%d", (int)counts.ParticlesAlloc);
-				m_pTable->AddData(4, col, "%.2f", counts.PixelsRendered * fPixToScreen);
+				m_pTable->AddData(1, col, "%d", (int)counts.particles.rendered);
+				m_pTable->AddData(2, col, "%d", (int)counts.particles.updated);
+				m_pTable->AddData(3, col, "%d", (int)counts.particles.alive);
+				m_pTable->AddData(4, col, "%.2f", counts.pixels.rendered * fPixToScreen);
 			}
 		}
 	}
@@ -1627,128 +1661,4 @@ CParticleManager::SEffectsKey::SEffectsKey(const cstr& sName)
 	pZLib->MD5Init(&context);
 	pZLib->MD5Update(&context, (const char*)lowerName.c_str(), lowerName.size());
 	pZLib->MD5Final(&context, c16);
-}
-
-//////////////////////////////////////////////////////////////////////////
-uint32 CParticleManager::GetPhysAreaChangedProxy(CParticleEmitter* pEmitter, uint16 uPhysicsMask)
-{
-	size_t nIndex = ~0;
-	SPhysAreaNodeProxy* proxy = ::new(m_physAreaChangedProxies.push_back_new(nIndex))SPhysAreaNodeProxy();
-
-	proxy->pEmitter = pEmitter;
-	proxy->uPhysicsMask = uPhysicsMask;
-	proxy->bIsValid = true;
-	proxy->bbox = pEmitter->GetBBox();
-	return nIndex;
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CParticleManager::UpdatePhysAreaChangedProxy(CParticleEmitter* pEmitter, uint32 nProxyId, bool bValid)
-{
-	m_physAreaChangedProxies[nProxyId].bbox = pEmitter->GetBBox();
-	m_physAreaChangedProxies[nProxyId].bIsValid = bValid;
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CParticleManager::CleanOldPhysAreaChangedProxies()
-{
-	// Ensure list is continues in memory
-	m_physAreaChangedProxies.CoalesceMemory();
-
-	const uint32 nSize = m_physAreaChangedProxies.size();
-	if (nSize == 0)
-		return;
-
-	SPhysAreaNodeProxy* pFrontIter = &m_physAreaChangedProxies[0];
-	SPhysAreaNodeProxy* pBackIter = &m_physAreaChangedProxies[nSize - 1];
-	const SPhysAreaNodeProxy* pHead = pFrontIter;
-	uint32 nNumItemsToDelete = 0;
-
-	// Move invalid nodes to the back of the array
-	do
-	{
-		while (pFrontIter->bIsValid && pFrontIter < pBackIter)
-		{
-			++pFrontIter;
-		}
-		while (!pBackIter->bIsValid && pFrontIter < pBackIter)
-		{
-			--pBackIter;
-			++nNumItemsToDelete;
-		}
-
-		if (pFrontIter < pBackIter)
-		{
-			// Replace invalid front element with back element
-			// Note: No need to swap because we cut the data from the array at the end anyway
-			memcpy(pFrontIter, pBackIter, sizeof(SPhysAreaNodeProxy));
-			pFrontIter->pEmitter->m_nPhysAreaChangedProxyId = (uint32)(pFrontIter - pHead);
-			pBackIter->bIsValid = false;
-
-			--pBackIter;
-			++pFrontIter;
-			++nNumItemsToDelete;
-		}
-	}
-	while (pFrontIter < pBackIter);
-
-	// Cut off invalid elements
-	m_physAreaChangedProxies.resize(nSize - nNumItemsToDelete);
-}
-
-void CParticleManager::AddUpdatedPhysArea(const SAreaChangeRecord& rec)
-{
-	// Merge with existing bb if close enough and same medium
-	AUTO_LOCK(m_PhysAreaChangeLock);
-	static const float fMERGE_THRESHOLD = 2.f;
-	float fNewVolume = rec.boxAffected.GetVolume();
-	for (uint i = 0; i < m_listPhysAreasChanged.size(); i++)
-	{
-		if (m_listPhysAreasChanged[i].uPhysicsMask == rec.uPhysicsMask)
-		{
-			AABB bbUnion = rec.boxAffected;
-			bbUnion.Add(m_listPhysAreasChanged[i].boxAffected);
-			if (bbUnion.GetVolume() <= (fNewVolume + m_listPhysAreasChanged[i].boxAffected.GetVolume()) * fMERGE_THRESHOLD)
-			{
-				m_listPhysAreasChanged[i].boxAffected = bbUnion;
-				return;
-			}
-		}
-	}
-	m_listPhysAreasChanged.push_back(rec);
-}
-
-void CParticleManager::UpdatePhysAreasChanged()
-{
-	FUNCTION_PROFILER_3DENGINE;
-	AUTO_LOCK(m_PhysAreaChangeLock);
-	if (m_listPhysAreasChanged.empty())
-		return;
-
-	// Check area against registered proxies
-	int nSizeAreasChanged = (int)m_listPhysAreasChanged.size();
-	int nSizeProxies = m_physAreaChangedProxies.size();
-
-	// Access elements via [i] as the thread safe list does not always safe its element in a continues array
-	for (int i = 0; i < nSizeProxies; ++i)
-	{
-		const SPhysAreaNodeProxy& proxy = m_physAreaChangedProxies[i];
-
-		IF (!proxy.bIsValid, 0)
-		{
-			continue;
-		}
-
-		for (int j = 0; j < nSizeAreasChanged; ++j)
-		{
-			const SAreaChangeRecord& rec = m_listPhysAreasChanged[j];
-			if ((proxy.uPhysicsMask & rec.uPhysicsMask) && Overlap::AABB_AABB(proxy.bbox, rec.boxAffected))
-			{
-				proxy.pEmitter->OnPhysAreaChange();
-				break;
-			}
-		}
-	}
-
-	m_listPhysAreasChanged.resize(0);
 }

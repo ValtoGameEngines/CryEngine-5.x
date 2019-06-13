@@ -1,4 +1,4 @@
-# Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+# Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 from waflib.Configure import conf
 
 def load_clang_common_settings(v):
@@ -17,6 +17,7 @@ def load_clang_common_settings(v):
 	v['CC_SRC_F'] = v['CXX_SRC_F'] = []
 	v['CC_TGT_F'] = v['CXX_TGT_F'] = ['-c', '-o']
 	
+	v['CPPPATH_SYSTEM_ST'] = '-isystem%s'
 	v['CPPPATH_ST'] = '-I%s'
 	v['DEFINES_ST'] = '-D%s'
 	
@@ -87,7 +88,8 @@ def load_clang_common_settings(v):
 		'-Wno-reorder',
 		'-Wno-conversion-null',
 		'-Wno-overloaded-virtual',
-		'-Wno-shift-sign-overflow'
+		'-Wno-shift-sign-overflow',
+		'-Wno-deprecated-register'
 		]
 		
 	# Copy common flags to prevent modifing references
@@ -97,7 +99,7 @@ def load_clang_common_settings(v):
 	v['CXXFLAGS'] += COMMON_COMPILER_FLAGS[:] + [
 		'-fno-rtti', # Disable RTTI
 		'-fno-exceptions', # Disable Exceptions
-		'-std=c++11', # Enable c++11 features
+		'-std=c++14', # Enable c++14 features
 	]
 	
 	# Linker Flags

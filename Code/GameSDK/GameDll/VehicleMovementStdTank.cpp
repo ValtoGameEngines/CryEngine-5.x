@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -15,6 +15,7 @@ History:
 #include "Game.h"
 #include "GameCVars.h"
 #include <CryGame/GameUtils.h>
+#include <CryRenderer/IRenderAuxGeom.h>
 
 #include "IVehicleSystem.h"
 #include "VehicleMovementStdTank.h"
@@ -140,7 +141,7 @@ void CVehicleMovementTank::SetLatFriction(float latFric)
 // NOTE: This function must be thread-safe. Before adding stuff contact MarcoC.
 void CVehicleMovementTank::ProcessMovement(const float deltaTime)
 { 
-  FUNCTION_PROFILER( gEnv->pSystem, PROFILE_GAME );
+  CRY_PROFILE_FUNCTION( PROFILE_GAME );
   
   m_netActionSync.UpdateObject(this);
 
@@ -407,8 +408,6 @@ void CVehicleMovementTank::DebugDrawMovement(const float deltaTime)
 
   CVehicleMovementStdWheeled::DebugDrawMovement(deltaTime);
 
-  IPhysicalEntity* pPhysics = GetPhysics();
-  IRenderer* pRenderer = gEnv->pRenderer;
 //  float color[4] = {1,1,1,1};
 //  float green[4] = {0,1,0,1};
   ColorB colRed(255,0,0,255);
@@ -419,7 +418,7 @@ void CVehicleMovementTank::DebugDrawMovement(const float deltaTime)
 //------------------------------------------------------------------------
 bool CVehicleMovementTank::RequestMovement(CMovementRequest& movementRequest)
 {
-	FUNCTION_PROFILER( gEnv->pSystem, PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
  
 	m_movementAction.isAI = true;
 	if (!m_isEnginePowered)
@@ -467,7 +466,7 @@ bool CVehicleMovementTank::RequestMovement(CMovementRequest& movementRequest)
 // NOTE: This function must be thread-safe. Before adding stuff contact MarcoC.
 void CVehicleMovementTank::ProcessAI(const float deltaTime)
 {
-	FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	float dt = max( deltaTime, 0.005f);
 
@@ -585,16 +584,15 @@ void CVehicleMovementTank::Update(const float deltaTime)
 	if (IsProfilingMovement())
 	{
 		if (m_steeringImpulseMin > 0.f && m_wheelContactsLeft != 0 && m_wheelContactsRight != 0)
-		{  
-			const Matrix34& worldTM = m_pVehicle->GetEntity()->GetWorldTM();   
-			Vec3 localVel = worldTM.GetInvertedFast().TransformVector(m_statusDyn.v);
+		{
+			const Matrix34& worldTM = m_pVehicle->GetEntity()->GetWorldTM();
 			Vec3 localW = worldTM.GetInvertedFast().TransformVector(m_statusDyn.w);
 			float speed = m_statusDyn.v.len();
 			float speedRatio = min(1.f, speed/m_maxSpeed);
 
 			const float maxW = 0.3f*gf_PI;
-			float steer = abs(m_currSteer)>0.001f ? m_currSteer : 0.f;    
-			float desired = steer * maxW; 
+			float steer = abs(m_currSteer)>0.001f ? m_currSteer : 0.f;
+			float desired = steer * maxW;
 			float curr = -localW.z;
 			float err = desired - curr; // err>0 means correction to right 
 			Limit(err, -maxW, maxW);

@@ -1,9 +1,9 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
-#include <CryCore/Platform/CryWindows.h>
-#include <CrySystem/IConsole.h>
+#include <CryString/CryString.h>
+#include <CryString/CryFixedString.h>
 #include <algorithm>
 #include <type_traits>
 
@@ -23,8 +23,34 @@ struct IsValidStringType : std::false_type {};
 template<>
 struct IsValidStringType<string> : std::true_type {};
 
+template<>
+struct IsValidStringType<wstring> : std::true_type {};
+
 template<size_t Size>
 struct IsValidStringType<CryStackStringT<char, Size>> : std::true_type {};
+
+template<size_t Size>
+struct IsValidStringType<CryStackStringT<wchar_t, Size>> : std::true_type {};
+
+template<size_t Size>
+struct IsValidStringType<CryFixedStringT<Size>> : std::true_type {};
+
+template<size_t Size>
+struct IsValidStringType<CryFixedWStringT<Size>> : std::true_type {};
+
+template<typename>
+struct SStringConstants 
+{
+	static constexpr const char* ForwardSlash = "/";
+	static constexpr const char* BackSlash = "\\";
+};
+
+template<>
+struct SStringConstants<wstring>
+{
+	static constexpr const wchar_t* ForwardSlash = L"/";
+	static constexpr const wchar_t* BackSlash = L"\\";
+};
 }
 
 //! Convert a path to the uniform form.
@@ -35,7 +61,11 @@ inline /*TString*/ ToUnixPath(const TString& strPath)
 	if (strPath.find('\\') != TString::npos)
 	{
 		auto path = strPath;
+#ifdef CRY_STRING
 		path.replace('\\', '/');
+#else
+		std::replace(path.begin(), path.end(), '\\', '/');
+#endif
 		return path;
 	}
 	return strPath;
@@ -54,7 +84,11 @@ inline /*TString*/ ToDosPath(const TString& strPath)
 	if (strPath.find('/') != TString::npos)
 	{
 		auto path = strPath;
+#ifdef CRY_STRING
 		path.replace('/', '\\');
+#else
+		std::replace(path.begin(), path.end(), '/', '\\');
+#endif
 		return path;
 	}
 	return strPath;
@@ -63,6 +97,20 @@ inline /*TString*/ ToDosPath(const TString& strPath)
 inline string ToDosPath(const char* szPath)
 {
 	return ToDosPath(string(szPath));
+}
+
+inline bool IsStrValid(const char* str)
+{
+	return str && *str;
+}
+
+inline bool IsRelativePath(const char* p)
+{
+	if (!IsStrValid(p))
+	{
+		return true;
+	}
+	return p[0] != '/' && p[0] != '\\' && !strchr(p, ':');
 }
 
 //! Split full file name to path and filename.
@@ -108,7 +156,7 @@ inline /*void*/ Split(const char* szFilepath, TString& path, TString& filename, 
 }
 
 //! Split full file name to path and filename.
-//! \param[in] filepath Full file name inclusing path.
+//! \param[in] filepath Full file name including path.
 //! \param[out] path Extracted file path.
 //! \param[out] file Extracted file (with extension).
 template<typename TString>
@@ -119,7 +167,7 @@ inline /*void*/ Split(const TString& filepath, TString& path, TString& file)
 	Split(filepath, path, file, extension);
 	if (!extension.empty())
 	{
-		file += "." + extension;
+		file += '.' + extension;
 	}
 }
 
@@ -215,7 +263,7 @@ inline const char* GetFile(const char* szFilepath)
 
 //! Remove extension for given file.
 template<typename TString>
-typename std::enable_if<detail::IsValidStringType<TString>::value>::type
+typename std::enable_if<detail::IsValidStringType<TString>::value, void>::type
 inline /*void*/ RemoveExtension(TString& filepath)
 {
 	const char* szFilepath = filepath.c_str();
@@ -230,7 +278,7 @@ inline /*void*/ RemoveExtension(TString& filepath)
 			return;
 		case '.':
 			// there's an extension in this file name
-			filepath = filepath.erase(p - szFilepath);
+			filepath.erase(p - szFilepath);
 			return;
 		}
 	}
@@ -315,8 +363,8 @@ inline /*TString*/ AddSlash(const TString& path)
 	if (path.empty() || path[path.length() - 1] == '/')
 		return path;
 	if (path[path.length() - 1] == '\\')
-		return path.substr(0, path.length() - 1) + "/";
-	return path + "/";
+		return path.substr(0, path.length() - 1) + detail::SStringConstants<TString>::ForwardSlash;
+	return path + detail::SStringConstants<TString>::ForwardSlash;
 }
 
 inline string AddSlash(const char* szPath)
@@ -332,8 +380,8 @@ inline /*TString*/ AddBackslash(const TString& path)
 	if (path.empty() || path[path.length() - 1] == '\\')
 		return path;
 	if (path[path.length() - 1] == '/')
-		return path.substr(0, path.length() - 1) + "\\";
-	return path + "\\";
+		return path.substr(0, path.length() - 1) + detail::SStringConstants<TString>::BackSlash;
+	return path + detail::SStringConstants<TString>::BackSlash;
 }
 
 inline string AddBackslash(const char* szPath)
@@ -344,26 +392,21 @@ inline string AddBackslash(const char* szPath)
 //! Replace extension for given file.
 template<typename TString>
 typename std::enable_if<detail::IsValidStringType<TString>::value, TString>::type
-inline /*TString*/ ReplaceExtension(const TString& filepath, const char* szExtension)
+inline /*TString*/ ReplaceExtension(const TString& filepath, const TString& extension)
 {
-	CRY_ASSERT(szExtension != nullptr);
-
 	auto str = filepath;
-	if (szExtension != nullptr)
+	RemoveExtension(str);
+	if (extension[0] != '\0' && extension[0] != '.')
 	{
-		RemoveExtension(str);
-		if (szExtension[0] != 0 && szExtension[0] != '.')
-		{
-			str += ".";
-		}
-		str += szExtension;
+		str += ".";
 	}
+	str += extension;
 	return str;
 }
 
 inline string ReplaceExtension(const char* szFilepath, const char* szExtension)
 {
-	return ReplaceExtension(string(szFilepath), szExtension);
+	return ReplaceExtension(string(szFilepath), string(szExtension));
 }
 
 //! Makes a fully specified file path from path and file name.
@@ -765,7 +808,10 @@ inline /*void*/ UnifyFilePath(TString& path)
 }
 }
 
+#ifndef CRY_COMMON_HELPERS_ONLY
 #include <CrySystem/File/ICryPak.h>
+#include <CrySystem/ICmdLine.h>
+#include <CrySystem/IConsole.h>
 
 namespace PathUtil
 {
@@ -773,6 +819,39 @@ inline string GetGameFolder()
 {
 	CRY_ASSERT(gEnv && gEnv->pCryPak);
 	return gEnv->pCryPak->GetGameFolder();
+}
+
+inline string GetProjectFolder()
+{
+	static bool checkedForCmdLineProjectArg = false;
+	static string cmdLineProjectPath;
+	if (cmdLineProjectPath.IsEmpty() && !checkedForCmdLineProjectArg)
+	{
+		CRY_ASSERT_MESSAGE(gEnv && gEnv->pSystem && gEnv->pSystem->GetICmdLine(), "PathUtil::GetProjectFolder() was called before system was initialized");
+		const ICmdLineArg* project = gEnv->pSystem->GetICmdLine()->FindArg(eCLAT_Pre, "project");
+		if (project)
+		{
+			cmdLineProjectPath = PathUtil::GetParentDirectory(project->GetValue());
+		}
+		else
+		{
+			ICVar* pSysProject = gEnv->pConsole->GetCVar("sys_project");
+			if (pSysProject && pSysProject->GetString())
+			{
+				string sysProjectStr = PathUtil::GetParentDirectory(pSysProject->GetString());
+				if (PathUtil::IsRelativePath(sysProjectStr))
+				{
+					cmdLineProjectPath = PathUtil::Make(GetEnginePath(), sysProjectStr);
+				}
+				else
+				{
+					cmdLineProjectPath = sysProjectStr;
+				}
+			}
+		}
+		checkedForCmdLineProjectArg = true;
+	}
+	return PathUtil::ToUnixPath(cmdLineProjectPath);
 }
 
 inline string GetLocalizationFolder()
@@ -799,4 +878,24 @@ inline string MakeGamePath(const char* szPath)
 {
 	return MakeGamePath(string(szPath));
 }
+
+//! Make a project correct path out of any input path.
+template<typename TString>
+typename std::enable_if<detail::IsValidStringType<TString>::value, TString>::type
+inline /*TString*/ MakeProjectPath(const TString& path)
+{
+	const auto fullpath = ToUnixPath(path);
+	const auto rootDataFolder = ToUnixPath(AddSlash(PathUtil::GetProjectFolder()));
+	if (fullpath.length() > rootDataFolder.length() && strnicmp(fullpath.c_str(), rootDataFolder.c_str(), rootDataFolder.length()) == 0)
+	{
+		return fullpath.substr(rootDataFolder.length(), fullpath.length() - rootDataFolder.length());
+	}
+	return fullpath;
 }
+
+inline string MakeProjectPath(const char* szPath)
+{
+	return MakeProjectPath(string(szPath));
+}
+}
+#endif

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -17,6 +17,7 @@
 #include "StdAfx.h"
 #include "GameRulesSimpleEntityBasedObjective.h"
 #include <CrySystem/XML/IXml.h>
+#include <CrySystem/ConsoleRegistration.h>
 #include "GameRules.h"
 #include "Utility/CryWatch.h"
 
@@ -26,6 +27,7 @@
 #include "GameRulesModules/GameRulesSpawningBase.h"
 #include "GameRulesModules/IGameRulesRoundsModule.h"
 #include "ActorManager.h"
+#include "GameCVars.h"
 
 #define SIMPLE_ENTITY_BASED_OBJECTIVE_FLAGS_ADD_EXISTING_ENTITY		0x80
 #define SIMPLE_ENTITY_BASED_OBJECTIVE_FLAGS_REMOVE								0x40
@@ -81,7 +83,7 @@ void CGameRulesSimpleEntityBasedObjective::LoadRandomEntitySelectData(XmlNodeRef
 {
 	if (xmlChild->getAttr("time", entityDetails.m_randomChangeTimeLength))
 	{
-		entityDetails.m_randomChangeTimeLength = MAX(entityDetails.m_randomChangeTimeLength, 1.f);
+		entityDetails.m_randomChangeTimeLength = std::max(entityDetails.m_randomChangeTimeLength, 1.f);
 
 		entityDetails.m_useRandomChangeTimer = true;
 		entityDetails.m_timeToRandomChange = entityDetails.m_randomChangeTimeLength;
@@ -220,7 +222,7 @@ void CGameRulesSimpleEntityBasedObjective::Init(XmlNodeRef xml)
 	m_moduleRMIIndex = pGameRules->RegisterModuleRMIListener(this);
 	pGameRules->RegisterClientConnectionListener(this);
 
-	gEnv->pEntitySystem->AddSink(this, IEntitySystem::OnSpawn | IEntitySystem::OnRemove, 0);
+	gEnv->pEntitySystem->AddSink(this, IEntitySystem::OnSpawn | IEntitySystem::OnRemove);
 
 	CRY_ASSERT_MESSAGE(m_pObjective, "Sub-objective not created, this will crash!");
 }
@@ -397,8 +399,6 @@ void CGameRulesSimpleEntityBasedObjective::CallScriptUpdateFunction( TEntityIdVe
 //------------------------------------------------------------------------
 void CGameRulesSimpleEntityBasedObjective::OnStartGame()
 {
-	CGameRules *pGameRules = g_pGame->GetGameRules();
-
 	if (gEnv->bServer)
 	{
 		int numEntityTypes = m_entityDetails.size();

@@ -1,141 +1,19 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// -------------------------------------------------------------------------
-//  File name:   terrain.h
-//  Version:     v1.00
-//  Created:     28/5/2001 by Vladimir Kajalin
-//  Compilers:   Visual Studio.NET
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
+#pragma once
 
-#ifndef TERRAIN_H
-#define TERRAIN_H
+#include "TerrainModifications.h"
 
-#include "TerrainModifications.h"           // CTerrainModifications
-
-// lowest level of the outdoor world
-#define TERRAIN_BOTTOM_LEVEL      0
-
-#define TERRAIN_BASE_TEXTURES_NUM 2
-
-// max view distance for objects shadow is size of object multiplied by this number
-#define OBJ_MAX_SHADOW_VIEW_DISTANCE_RATIO 4
-
-#define TERRAIN_NODE_TREE_DEPTH            16
-
-#define OCEAN_IS_VERY_FAR_AWAY             1000000.f
-
-#define ARR_TEX_OFFSETS_SIZE_DET_MAT       16
+#define TERRAIN_BOTTOM_LEVEL     0
+#define TERRAIN_NODE_TREE_DEPTH  16
+#define TERRAIN_TEX_OFFSETS_SIZE 16
+#define OCEAN_IS_VERY_FAR_AWAY   1000000.f
 
 enum { nHMCacheSize = 64 };
 
 class CTerrainUpdateDispatcher;
 
-// Heightmap data
-class CHeightMap : public Cry3DEngineBase
-{
-public:
-	// Access to heightmap data
-	float                GetZSafe(int x, int y, int nSID);
-	float                GetZ(int x, int y, int nSID, bool bUpdatePos = false) const;
-	void                 SetZ(const int x, const int y, float fHeight, int nSID);
-	float                GetZfromUnits(uint32 nX_units, uint32 nY_units, int nSID) const;
-	void                 SetZfromUnits(uint32 nX_units, uint32 nY_units, float fHeight, int nSID);
-	float                GetZMaxFromUnits(uint32 nX0_units, uint32 nY0_units, uint32 nX1_units, uint32 nY1_units, int nSID) const;
-	uint8                GetSurfTypefromUnits(uint32 nX_units, uint32 nY_units, int nSID) const;
-	static float         GetHeightFromUnits_Callback(int ix, int iy);
-	static unsigned char GetSurfaceTypeFromUnits_Callback(int ix, int iy);
-
-	uint8                GetSurfaceTypeID(int x, int y, int nSID) const;
-	float                GetZApr(float x1, float y1, int nSID) const;
-	float                GetZMax(float x0, float y0, float x1, float y1, int nSID) const;
-	bool                 GetHole(int x, int y, int nSID) const;
-	bool                 IntersectWithHeightMap(Vec3 vStartPoint, Vec3 vStopPoint, float fDist, int nMaxTestsToScip, int nSID);
-	bool                 IsMeshQuadFlipped(const int x, const int y, const int nUnitSize, const int nSID) const;
-
-#ifdef SUPP_HMAP_OCCL
-	bool Intersect(Vec3 vStartPoint, Vec3 vStopPoint, float fDist, int nMaxTestsToScip, Vec3& vLastVisPoint, int nSID);
-	bool IsBoxOccluded
-	(
-	  const AABB& objBox,
-	  float fDistance,
-	  bool bTerrainNode,
-	  OcclusionTestClient* const __restrict pOcclTestVars,
-	  int nSID,
-	  const SRenderingPassInfo& passInfo
-	);
-#endif
-	// Exact test.
-	struct SRayTrace
-	{
-		float      fInterp;
-		Vec3       vHit;
-		Vec3       vNorm;
-		IMaterial* pMaterial;
-
-		SRayTrace() : fInterp(0), vHit(0, 0, 0), vNorm(0, 0, 1), pMaterial(0) {}
-		SRayTrace(float fT, Vec3 const& vH, Vec3 const& vN, IMaterial* pM)
-			: fInterp(fT), vHit(vH), vNorm(vN), pMaterial(pM)
-		{}
-	};
-	bool RayTrace(Vec3 const& vStart, Vec3 const& vEnd, SRayTrace* prt, int nSID);
-
-	CHeightMap()
-	{
-		m_nUnitsToSectorBitShift = m_nBitShift = 0;
-		m_fHeightmapZRatio = 0;
-		m_bHeightMapModified = 0;
-		ResetHeightMapCache();
-	}
-
-	void ResetHeightMapCache()
-	{
-		memset(m_arrCacheHeight, 0, sizeof(m_arrCacheHeight));
-		assert(sizeof(m_arrCacheHeight[0]) == 8);
-		memset(m_arrCacheSurfType, 0, sizeof(m_arrCacheSurfType));
-		assert(sizeof(m_arrCacheSurfType[0]) == 8);
-	}
-
-	int   m_nBitShift;
-	int   m_nUnitsToSectorBitShift;
-	int   m_bHeightMapModified;
-	float m_fHeightmapZRatio;
-
-protected:
-
-	//protected: passes some internal data to avoid repetitive member loading
-	bool IsPointUnderGround(CTerrain* const __restrict pTerrain,
-	                        int nUnitsToSectorBitShift,
-	                        uint32 nX_units,
-	                        uint32 nY_units,
-	                        float fTestZ, int nSID);
-
-	inline bool IsPointUnderGround(uint32 nX_units, uint32 nY_units, float fTestZ, int nSID)
-	{
-		CTerrain* const __restrict pTerrain = Cry3DEngineBase::GetTerrain();
-		return IsPointUnderGround(pTerrain, m_nUnitsToSectorBitShift, nX_units, nY_units, fTestZ, nSID);
-	}
-
-	struct SCachedHeight
-	{
-		SCachedHeight() { x = y = 0; fHeight = 0; }
-		uint16 x, y;
-		float  fHeight;
-	};
-
-	struct SCachedSurfType
-	{
-		SCachedSurfType() { x = y = surfType = 0; }
-		uint16 x, y;
-		uint32 surfType;
-	};
-
-	static CRY_ALIGN(128) SCachedHeight m_arrCacheHeight[nHMCacheSize * nHMCacheSize];
-	static CRY_ALIGN(128) SCachedSurfType m_arrCacheSurfType[nHMCacheSize * nHMCacheSize];
-};
+typedef std::pair<struct CTerrainNode*, uint32> STerrainVisItem;
 
 struct SSurfaceType
 {
@@ -156,8 +34,6 @@ struct SSurfaceType
 			}
 			else if (ucProjAxis == ucDefProjAxis)
 				return pLayerMat;
-
-			//assert(!"SSurfaceType::GetMaterialOfProjection: Material not found");
 		}
 
 		return NULL;
@@ -177,7 +53,7 @@ struct SSurfaceType
 	PodArray<int>        lstnVegetationGroups;
 	float                fMaxMatDistanceXY;
 	float                fMaxMatDistanceZ;
-	float                arrRECustomData[4][ARR_TEX_OFFSETS_SIZE_DET_MAT];
+	float                arrRECustomData[4][TERRAIN_TEX_OFFSETS_SIZE];
 	uint8                ucDefProjAxis;
 	uint8                ucThisSurfaceTypeId;
 	float                fCustomMaxDistance;
@@ -206,6 +82,7 @@ struct CTextureCache : public Cry3DEngineBase
 	int    GetPoolTexDim() { return m_nPoolDim * m_nDim; }
 	void   ResetTexturePool();
 	int    GetPoolSize();
+	int    GetPoolItemsNum();
 };
 
 #pragma pack(push,4)
@@ -246,12 +123,12 @@ struct StatInstGroupChunk
 	int    nMaterialId;
 
 	//! flags similar to entity render flags
-	int   m_dwRndFlags;
+	uint64 m_dwRndFlags;
 
-	float fStiffness;
-	float fDamping;
-	float fVariance;
-	float fAirResistance;
+	float  fStiffness;
+	float  fDamping;
+	float  fVariance;
+	float  fAirResistance;
 
 	AUTO_STRUCT_INFO_LOCAL;
 };
@@ -267,69 +144,8 @@ struct SNameChunk
 
 #pragma pack(pop)
 
-enum ETerrainDataLoadStep
-{
-	eTDLS_NotStarted,
-	eTDLS_Initialize,
-	eTDLS_BuildSectorsTree,
-	eTDLS_SetupEntityGrid,
-	eTDLS_ReadTables,
-	eTDLS_LoadVegetationStatObjs,
-	eTDLS_LoadBrushStatObjs,
-	eTDLS_LoadMaterials,
-	eTDLS_LoadTerrainNodes,
-	eTDLS_StartLoadObjectTree,
-	eTDLS_LoadObjectTree,
-	eTDLS_FinishUp,
-	eTDLS_Complete,
-	eTDLS_Error
-};
-
-struct STerrainDataLoadStatus
-{
-	STerrainDataLoadStatus()
-	{
-		Clear();
-	}
-
-	void Clear()
-	{
-		loadingStep = eTDLS_NotStarted;
-		vegetationIndex = 0;
-		brushesIndex = 0;
-		materialsIndex = 0;
-		offset = 0;
-
-		lstVegetation.Clear();
-		lstBrushes.Clear();
-		lstMaterials.Clear();
-		arrUnregisteredObjects.Clear();
-
-		statObjTable.clear();
-		matTable.clear();
-	}
-
-	ETerrainDataLoadStep         loadingStep;
-	PodArray<StatInstGroupChunk> lstVegetation;
-	int                          vegetationIndex;
-	PodArray<SNameChunk>         lstBrushes;
-	int                          brushesIndex;
-	PodArray<SNameChunk>         lstMaterials;
-	int                          materialsIndex;
-	std::vector<IStatObj*>       statObjTable;
-	std::vector<IMaterial*>      matTable;
-	ptrdiff_t                    offset;
-	PodArray<IRenderNode*>       arrUnregisteredObjects;
-};
-
-struct TSegmentRect
-{
-	Rectf localRect;
-	int   nSID;
-};
-
 // The Terrain Class
-class CTerrain : public ITerrain, public CHeightMap
+class CTerrain : public ITerrain, public Cry3DEngineBase
 {
 	friend struct CTerrainNode;
 
@@ -338,101 +154,77 @@ public:
 	CTerrain(const STerrainInfo& TerrainInfo);
 	~CTerrain();
 
-	void                    InitHeightfieldPhysics(int nSID);
-	void                    SetMaterialMapping(int nSID);
-	inline static const int GetTerrainSize()       { return m_nTerrainSize; }
-	inline static const int GetSectorSize()        { return m_nSectorSize; }
-	inline static const int GetHeightMapUnitSize() { return m_nUnitSize; }
-	inline static const int GetSectorsTableSize(int nSID)
-	{
-#ifdef SEG_WORLD
-		CTerrain* pThis = Get3DEngine()->GetTerrain();
-		AABB aabb;
-		if (!pThis->GetSegmentBounds(nSID, aabb))
-		{
-			assert(0);
-			return 0;
-		}
-		int i = (int) (aabb.max.x - aabb.min.x) >> (pThis->m_nBitShift + pThis->m_nUnitsToSectorBitShift);
-		return i;
-#else
-		return m_nSectorsTableSize;
-#endif
-	}
-	inline static const float GetInvUnitSize()  { return m_fInvUnitSize; }
+	// Access to heightmap data
+	float            GetZSafe(float x, float y);
+	float            GetZ(float x, float y, bool bUpdatePos = false) const;
+	void             SetZ(const float x, const float y, float fHeight);
+	uint8            GetSurfaceTypeID(float x, float y) const;
+	SSurfaceTypeItem GetSurfaceTypeItem(float x, float y) const;
+	float            GetZApr(float x, float y) const;
+	Vec4             GetNormalAndZ(float x, float y, float size = 0) const;
+	float            GetZMax(float x0, float y0, float x1, float y1) const;
+	bool             GetHole(float x, float y) const;
+	bool             IntersectWithHeightMap(Vec3 vStartPoint, Vec3 vStopPoint, float fDist, int nMaxTestsToScip);
+	bool             IsMeshQuadFlipped(const float x, const float y, const float unitSize) const;
 
-	ILINE const int           GetTerrainUnits() { return m_nTerrainSizeDiv; }
-	ILINE void                ClampUnits(uint32& xu, uint32& yu)
-	{
-		xu = (int)xu < 0 ? 0 : (int)xu < GetTerrainUnits() ? xu : GetTerrainUnits();//min(max((int)xu, 0), GetTerrainUnits());
-		yu = (int)yu < 0 ? 0 : (int)yu < GetTerrainUnits() ? yu : GetTerrainUnits();//min(max((int)xu, 0), GetTerrainUnits());
-	}
-#ifdef SEG_WORLD
-	CTerrainNode* GetSecInfoUnits(int xu, int yu, int nSID)
-#else
-	ILINE CTerrainNode * GetSecInfoUnits(int xu, int yu, int nSID)
-#endif
-	{
-#ifdef SEG_WORLD
-		nSID = WorldToSegment(xu, yu, m_nBitShift, nSID);
-		if (nSID < 0)
-			return 0;
-		if (!m_pParentNodes[nSID])
-			return 0;
-	#ifdef _DEBUG
-		Array2d<struct CTerrainNode*>& arrTerrainNode = m_arrSecInfoPyramid[nSID][0];
-		int x = xu >> m_nUnitsToSectorBitShift;
-		int y = yu >> m_nUnitsToSectorBitShift;
-		assert(x < arrTerrainNode.m_nSize && y < arrTerrainNode.m_nSize);
-	#endif
+#ifdef SUPP_HMAP_OCCL
+	bool Intersect(Vec3 vStartPoint, Vec3 vStopPoint, float fDist, int nMaxTestsToScip, Vec3& vLastVisPoint);
+	bool IsBoxOccluded
+	(
+		const AABB& objBox,
+		float fDistance,
+		bool bTerrainNode,
+		OcclusionTestClient* const __restrict pOcclTestVars,
+		const SRenderingPassInfo& passInfo
+	);
 #endif
 
-		if (m_arrSecInfoPyramid.IsEmpty() || m_arrSecInfoPyramid[nSID].IsEmpty())
+	// Exact test.
+	struct SRayTrace
+	{
+		float      fInterp;
+		Vec3       vHit;
+		Vec3       vNorm;
+		IMaterial* pMaterial;
+
+		SRayTrace() : fInterp(0), vHit(0, 0, 0), vNorm(0, 0, 1), pMaterial(0) {}
+		SRayTrace(float fT, Vec3 const& vH, Vec3 const& vN, IMaterial* pM)
+			: fInterp(fT), vHit(vH), vNorm(vN), pMaterial(pM)
+		{}
+	};
+	bool              RayTrace(Vec3 const& vStart, Vec3 const& vEnd, SRayTrace* prt, bool bClampAbove = true);
+
+	void              InitHeightfieldPhysics();
+	void              SetMaterialMapping();
+	static int        GetTerrainSize()               { return m_nTerrainSize; }
+	static int        GetSectorSize()                { return m_nSectorSize; }
+	static float      GetHeightMapUnitSize()         { return m_fUnitSize; }
+	static float      GetHeightMapUnitSizeInverted() { return m_fInvUnitSize; }
+	static int        GetSectorsTableSize()          { return m_nSectorsTableSize; }
+	static float      GetInvUnitSize()               { return m_fInvUnitSize; }
+	int               GetHeightmapUnits() const      { return m_nTerrainUnits; }
+
+	ILINE bool InsideTerrainUnits(int xu, int yu) const
+	{
+		return min(xu, yu) >= 0 && max(xu, yu) < m_nTerrainUnits;
+	}
+	ILINE void ClampUnits(int& xu, int& yu) const
+	{
+		xu = crymath::clamp(xu, 0, GetHeightmapUnits() - 1);
+		yu = crymath::clamp(yu, 0, GetHeightmapUnits() - 1);
+	}
+	CTerrainNode* GetSecInfo(float x, float y) const
+	{
+		if (x < 0 || y < 0 || x >= m_nTerrainSize || y >= m_nTerrainSize || !m_pParentNode)
 			return nullptr;
-
-		return m_arrSecInfoPyramid[nSID][0][xu >> m_nUnitsToSectorBitShift][yu >> m_nUnitsToSectorBitShift];
+		return GetSecInfoUnits(int(x * GetInvUnitSize()), int(y * GetInvUnitSize()));
 	}
-	ILINE CTerrainNode* GetSecInfoUnits(int xu, int yu, int nUnitsToSectorBitShift, int nSID)
+	ILINE CTerrainNode* GetSecInfo(const Vec3& pos) const
 	{
-#ifdef SEG_WORLD
-		assert(nSID >= 0);
-#endif
-		return m_arrSecInfoPyramid[nSID][0][xu >> nUnitsToSectorBitShift][yu >> nUnitsToSectorBitShift];
+		return GetSecInfo(pos.x, pos.y);
 	}
-	CTerrainNode* GetSecInfo(int x, int y, int nSID)
-	{
-#ifdef SEG_WORLD
-		nSID = WorldToSegment(x, y, 0, nSID);
-		if (nSID < 0)
-			return 0;
-#else
-		if (x < 0 || y < 0 || x >= m_nTerrainSize || y >= m_nTerrainSize || !m_pParentNodes[nSID])
-			return 0;
-#endif
-		return GetSecInfoUnits(x >> m_nBitShift, y >> m_nBitShift, nSID);
-	}
-	CTerrainNode* GetSecInfo(const Vec3& pos)
-	{
-		for (int nSID = 0; nSID < m_arrSecInfoPyramid.Count() && nSID < m_pParentNodes.Count(); nSID++)
-		{
-			if (m_pParentNodes[nSID])
-				if (Overlap::Point_AABB2D(pos, m_pParentNodes[nSID]->GetBBoxVirtual()))
-					return GetSecInfo((int)pos.x, (int)pos.y, nSID);
-		}
-		assert(!"Requested segment is not loaded");
-		return NULL;
-	}
-	CTerrainNode* GetSecInfo(int x, int y)
-	{
-		Vec3 vPos((float)x, (float)y, 0);
-		return GetSecInfo(vPos);
-	}
-	ILINE CTerrainNode* GetSecInfo(const Vec3& pos, int nSID)
-	{
-		return GetSecInfo((int)pos.x, (int)pos.y, nSID);
-	}
-	ILINE float GetWaterLevel()                       { return m_fOceanWaterLevel; /* ? m_fOceanWaterLevel : WATER_LEVEL_UNKNOWN;*/ }
-	ILINE void  SetWaterLevel(float fOceanWaterLevel) { m_fOceanWaterLevel = fOceanWaterLevel; }
+	ILINE float GetWaterLevel()                      { return m_fOceanWaterLevel; /* ? m_fOceanWaterLevel : WATER_LEVEL_UNKNOWN;*/ }
+	ILINE void  SetWaterLevel(float oceanWaterLevel) { m_fOceanWaterLevel = oceanWaterLevel; }
 
 	//////////////////////////////////////////////////////////////////////////
 	// ITerrain Implementation.
@@ -442,46 +234,31 @@ public:
 	bool Load_Tables_T(T*& f, int& nDataSize, std::vector<struct IStatObj*>*& pStatObjTable, std::vector<IMaterial*>*& pMatTable, bool bHotUpdate, bool bSW, EEndian eEndian);
 
 	template<class T>
-	bool                 Load_T(T*& f, int& nDataSize, STerrainChunkHeader* pTerrainChunkHeader, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable, bool bHotUpdate, SHotUpdateInfo* pExportInfo, int nSID, Vec3 vSegmentOrigin);
+	bool                 Load_T(T*& f, int& nDataSize, STerrainChunkHeader* pTerrainChunkHeader, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable, bool bHotUpdate, SHotUpdateInfo* pExportInfo);
 
-	virtual bool         GetCompiledData(byte* pData, int nDataSize, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable, std::vector<struct IStatInstGroup*>** ppStatInstGroupTable, EEndian eEndian, SHotUpdateInfo* pExportInfo, int nSID, const Vec3& segmentOffset);
-	virtual int          GetCompiledDataSize(SHotUpdateInfo* pExportInfo, int nSID);
-	virtual void         GetStatObjAndMatTables(DynArray<IStatObj*>* pStatObjTable, DynArray<IMaterial*>* pMatTable, DynArray<IStatInstGroup*>* pStatInstGroupTable, uint32 nObjTypeMask, int nSID);
+	virtual bool         GetCompiledData(byte* pData, int nDataSize, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable, std::vector<struct IStatInstGroup*>** ppStatInstGroupTable, EEndian eEndian, SHotUpdateInfo* pExportInfo);
+	virtual int          GetCompiledDataSize(SHotUpdateInfo* pExportInfo);
+	virtual void         GetStatObjAndMatTables(DynArray<IStatObj*>* pStatObjTable, DynArray<IMaterial*>* pMatTable, DynArray<IStatInstGroup*>* pStatInstGroupTable, uint32 nObjTypeMask);
 
-	virtual int          GetTablesSize(SHotUpdateInfo* pExportInfo, int nSID);
-	virtual void         SaveTables(byte*& pData, int& nDataSize, std::vector<struct IStatObj*>*& pStatObjTable, std::vector<IMaterial*>*& pMatTable, std::vector<struct IStatInstGroup*>*& pStatInstGroupTable, EEndian eEndian, SHotUpdateInfo* pExportInfo, int nSID);
-	virtual void         GetTables(std::vector<struct IStatObj*>*& pStatObjTable, std::vector<IMaterial*>*& pMatTable, std::vector<struct IStatInstGroup*>*& pStatInstGroupTable, int nSID);
-	virtual void         ReleaseTables(std::vector<struct IStatObj*>*& pStatObjTable, std::vector<IMaterial*>*& pMatTable, std::vector<struct IStatInstGroup*>*& pStatInstGroupTable);
+	virtual int          GetTablesSize(SHotUpdateInfo* pExportInfo);
+	virtual void         SaveTables(byte*& pData, int& nDataSize, std::vector<struct IStatObj*>*& pStatObjTable, std::vector<IMaterial*>*& pMatTable, std::vector<struct IStatInstGroup*>*& pStatInstGroupTable, EEndian eEndian, SHotUpdateInfo* pExportInfo);
 
-	virtual IRenderNode* AddVegetationInstance(int nStaticGroupIndex, const Vec3& vPos, const float fScale, uint8 ucBright, uint8 angle, uint8 angleX, uint8 angleY, int nSID);
-	virtual void         SetOceanWaterLevel(float fOceanWaterLevel);
+	virtual IRenderNode* AddVegetationInstance(int nStaticGroupIndex, const Vec3& vPos, const float fScale, uint8 ucBright, uint8 angle, uint8 angleX, uint8 angleY);
+	virtual void         SetOceanWaterLevel(float oceanWaterLevel);
 
-	virtual void         ReleaseInactiveSegments();
-	virtual int          CreateSegment(Vec3 vSegmentSize, Vec3 vSegmentOrigin = Vec3(0, 0, 0), const char* pcPath = 0);
-	virtual bool         SetSegmentPath(int nSID, const char* pcPath);
-	virtual const char*  GetSegmentPath(int nSID);
-	virtual bool         SetSegmentOrigin(int nSID, Vec3 vSegmentOrigin, bool callOffsetPosition = true);
-	virtual const Vec3& GetSegmentOrigin(int nSID) const;
-	virtual bool        DeleteSegment(int nSID, bool bDeleteNow);
-	virtual int         FindSegment(Vec3 vPt);
-	virtual int         FindSegment(int x, int y);
-	virtual int         GetMaxSegmentsCount() const;
-	virtual bool        GetSegmentBounds(int nSID, AABB& bbox);
-	virtual int         WorldToSegment(Vec3& vPt, int nSID = DEFAULT_SID);
-	virtual int         WorldToSegment(int& x, int& y, int nBitShift, int nSID = DEFAULT_SID);
-	virtual void        SplitWorldRectToSegments(const Rectf& worldRect, PodArray<TSegmentRect>& segmentRects);
-	virtual void        MarkAndOffsetCloneRegion(const AABB& region, const Vec3& offset);
-	virtual void        CloneRegion(const AABB& region, const Vec3& offset, float zRotation, const uint16* pIncludeLayers, int numIncludeLayers);
-	virtual void        ClearCloneSources();
-	virtual void        ChangeOceanMaterial(IMaterial* pMat);
+	virtual void         MarkAndOffsetCloneRegion(const AABB& region, const Vec3& offset);
+	virtual void         CloneRegion(const AABB& region, const Vec3& offset, float zRotation, const uint16* pIncludeLayers, int numIncludeLayers);
+	virtual void         ClearCloneSources();
+	virtual void         ChangeOceanMaterial(IMaterial* pMat);
+	virtual void         OnTerrainPaintActionComplete() {}
 	//////////////////////////////////////////////////////////////////////////
 
-	void          RemoveAllStaticObjects(int nSID);
+	void          RemoveAllStaticObjects();
 	void          ApplyForceToEnvironment(Vec3 vPos, float fRadius, float fAmountOfForce);
 	//	void CheckUnload();
-	void          CloseTerrainTextureFile(int nSID);
+	void          CloseTerrainTextureFile();
 	void          DrawVisibleSectors(const SRenderingPassInfo& passInfo);
-	virtual int   GetDetailTextureMaterials(IMaterial* materials[], int nSID);
+	virtual int   GetDetailTextureMaterials(IMaterial* materials[]);
 	void          MakeCrater(Vec3 vExploPos, float fExploRadius);
 	bool          RemoveObjectsInArea(Vec3 vExploPos, float fExploRadius);
 	float         GetDistanceToSectorWithWater() { return m_fDistanceToSectorWithWater; }
@@ -489,73 +266,44 @@ public:
 	void          GetObjects(PodArray<struct SRNInfo>* pLstObjects);
 	void          GetObjectsAround(Vec3 vPos, float fRadius, PodArray<struct SRNInfo>* pEntList, bool bSkip_ERF_NO_DECALNODE_DECALS, bool bSkipDynamicObjects);
 	class COcean* GetOcean() { return m_pOcean; }
-	Vec3          GetTerrainSurfaceNormal(Vec3 vPos, float fRange, int nSID = GetDefSID());
-	Vec3          GetTerrainSurfaceNormal_Int(int x, int y, int nSID);
+	Vec3          GetTerrainSurfaceNormal(Vec3 vPos, float fRange);
+	Vec3          GetTerrainSurfaceNormal_Int(float x, float y);
 	void          GetTerrainAlignmentMatrix(const Vec3& vPos, const float amount, Matrix33& matrix33);
 	int           GetActiveTextureNodesCount() { return m_lstActiveTextureNodes.Count(); }
-	int           GetActiveProcObjNodesCount() { return m_lstActiveProcObjNodes.Count(); }
+	int           GetActiveProcObjNodesCount(int& objectsNum, int& maxSectorsNum);
 	int           GetNotReadyTextureNodesCount();
-	void          GetTextureCachesStatus(int& nCount0, int& nCount1)
-	{ nCount0 = m_texCache[0].GetPoolSize(); nCount1 = m_texCache[1].GetPoolSize(); }
+	void          GetTextureCachesStatus(int& nCount0, int& nCount1) { nCount0 = m_texCache[0].GetPoolSize(); nCount1 = m_texCache[1].GetPoolSize(); }
 
-	void CheckVis(const SRenderingPassInfo& passInfo);
-	int  UpdateOcean(const SRenderingPassInfo& passInfo);
-	int  RenderOcean(const SRenderingPassInfo& passInfo);
-	void UpdateNodesIncrementaly(const SRenderingPassInfo& passInfo);
-	void CheckNodesGeomUnload(int nSID, const SRenderingPassInfo& passInfo);
-	void GetStreamingStatus(int& nLoadedSectors, int& nTotalSectors);
-	void InitTerrainWater(IMaterial* pTerrainWaterMat, int nWaterBottomTexId);
-	void ResetTerrainVertBuffers(const AABB* pBox, int nSID);
-	void SetTerrainSectorTexture(int nTexSectorX, int nTexSectorY, unsigned int textureId, bool bMergeNotAllowed, int nSID = GetDefSID());
-	void SetDetailLayerProperties(int nId, float fScaleX, float fScaleY, uint8 ucProjAxis, const char* szSurfName, const PodArray<int>& lstnVegetationGroups, IMaterial* pMat, int nSID);
-	bool IsOceanVisible() { return m_bOceanIsVisible != 0; }
-	void SetTerrainElevation(int x1, int y1, int nSizeX, int nSizeY, float* pTerrainBlock, unsigned char* pSurfaceData, int nSurfOrgX, int nSurfOrgY, int nSurfSizeX, int nSurfSizeY, uint32* pResolMap, int nResolMapSizeX, int nResolMapSizeY, int nSID);
-	void HighlightTerrain(int x1, int y1, int x2, int y2, int nSID = GetDefSID());
-	bool CanPaintSurfaceType(int x, int y, int r, uint16 usGlobalSurfaceType);
-	void GetVisibleSectorsInAABB(PodArray<struct CTerrainNode*>& lstBoxSectors, const AABB& boxBox);
-	void LoadSurfaceTypesFromXML(XmlNodeRef pDoc, int nSID);
-	void UpdateSurfaceTypes(int nSID);
-	bool RenderArea(Vec3 vPos, float fRadius, _smart_ptr<IRenderMesh>& arrLightRenderMeshs, CRenderObject* pObj, IMaterial* pMaterial, const char* szComment, float* pCustomData, Plane* planes, const SRenderingPassInfo& passInfo);
-	void IntersectWithShadowFrustum(PodArray<IShadowCaster*>* plstResult, ShadowMapFrustum* pFrustum, int nSID, const SRenderingPassInfo& passInfo);
-	void IntersectWithBox(const AABB& aabbBox, PodArray<CTerrainNode*>* plstResult, int nSID);
-	void MarkAllSectorsAsUncompiled(int nSID);
-	void BuildErrorsTableForArea(float* pLodErrors, int nMaxLods, int X1, int Y1, int X2, int Y2, float* pTerrainBlock,
-	                             uint8* pSurfaceData, int nSurfOffsetX, int nSurfOffsetY, int nSurfSizeX, int nSurfSizeY, bool& bHasHoleEdges);
+	void          CheckVis(const SRenderingPassInfo& passInfo, uint32 passCullMask);
+	int           UpdateOcean(const SRenderingPassInfo& passInfo);
+	int           RenderOcean(const SRenderingPassInfo& passInfo);
+	void          UpdateNodesIncrementaly(const SRenderingPassInfo& passInfo);
+	void          ProcessActiveProcObjNodes(bool bSyncUpdate = false);
+	bool          CheckUpdateProcObjectsInArea(const AABB& areaBox, bool bForceSyncUpdate);
+	void          CheckNodesGeomUnload(const SRenderingPassInfo& passInfo);
+	void          GetStreamingStatus(int& nLoadedSectors, int& nTotalSectors);
+	void          InitTerrainWater(IMaterial* pTerrainWaterMat, int nWaterBottomTexId);
+	void          ResetTerrainVertBuffers(const AABB* pBox);
+	void          SetTerrainSectorTexture(int nTexSectorX, int nTexSectorY, unsigned int textureId, bool bMergeNotAllowed);
+	void          SetDetailLayerProperties(int nId, float fScaleX, float fScaleY, uint8 ucProjAxis, const char* szSurfName, const PodArray<int>& lstnVegetationGroups, IMaterial* pMat);
+	bool          IsOceanVisible() { return m_bOceanIsVisible != 0; }
+	void          SetTerrainElevation(int x1, int y1, int nSizeX, int nSizeY, float* pTerrainBlock, SSurfaceTypeItem* pSurfaceData, int nSurfOrgX, int nSurfOrgY, int nSurfSizeX, int nSurfSizeY, uint32* pResolMap, int nResolMapSizeX, int nResolMapSizeY);
+	void          HighlightTerrain(int x1, int y1, int x2, int y2);
+	bool          CanPaintSurfaceType(int x, int y, int r, uint16 usGlobalSurfaceType);
+	void          LoadSurfaceTypesFromXML(XmlNodeRef pDoc);
+	void          UpdateSurfaceTypes();
+	bool          RenderArea(Vec3 vPos, float fRadius, _smart_ptr<IRenderMesh>& arrLightRenderMeshs, CRenderObject* pObj, IMaterial* pMaterial, const char* szComment, float* pCustomData, Plane* planes, const SRenderingPassInfo& passInfo);
+	void          IntersectWithShadowFrustum(PodArray<IShadowCaster*>* plstResult, ShadowMapFrustum* pFrustum, const SRenderingPassInfo& passInfo);
+	void          IntersectWithBox(const AABB& aabbBox, PodArray<CTerrainNode*>* plstResult);
+	void          MarkAllSectorsAsUncompiled();
+	void          GetResourceMemoryUsage(ICrySizer* pSizer, const AABB& crstAABB);
+	void          UpdateSectorMeshes(const SRenderingPassInfo& passInfo);
+	void          AddVisSector(CTerrainNode* pNode, uint32 passCullMask);
 
-	void GetResourceMemoryUsage(ICrySizer* pSizer, const AABB& crstAABB, int nSID);
-	void UpdateSectorMeshes(const SRenderingPassInfo& passInfo);
-	void AddVisSector(CTerrainNode* newsec);
+	void          GetVegetationMaterials(std::vector<IMaterial*>*& pMatTable);
+	void          LoadVegetationData(PodArray<struct StatInstGroup>& rTable, PodArray<StatInstGroupChunk>& lstFileChunks, int i);
 
-	void ReleaseHeightmapGeometryAroundSegment(int nSID);
-	void ResetHeightmapGeometryAroundSegment(int nSID);
-
-	Vec3 GetSegmentOrigin(int nSID);
-	void GetVegetationMaterials(std::vector<IMaterial*>*& pMatTable);
-	void LoadVegetationData(PodArray<struct StatInstGroup>& rTable, PodArray<StatInstGroupChunk>& lstFileChunks, int i);
-
-protected:
-
-	PodArray<CTerrainNode*>          m_pParentNodes;
-	PodArray<CTerrainNode*>          m_lstSectors;
-
-	PodArray<Vec3>                   m_arrSegmentOrigns;
-
-	PodArray<Vec2i>                  m_arrSegmentSizeUnits;
-	PodArray<string>                 m_arrSegmentPaths;
-	PodArray<STerrainDataLoadStatus> m_arrLoadStatuses;
-	PodArray<int>                    m_arrDeletedSegments;
-
-	void       BuildSectorsTree(bool bBuildErrorsTable, int nSID);
-	int        GetTerrainNodesAmount(int nSID);
-	bool       OpenTerrainTextureFile(SCommonFileHeader& hdrDiffTexHdr, STerrainTextureFileHeader& hdrDiffTexInfo, const char* szFileName, uint8*& ucpDiffTexTmpBuffer, int& nDiffTexIndexTableSize, int nSID);
-	ILINE bool IsRenderNodeIncluded(IRenderNode* pNode, const AABB& region, const uint16* pIncludeLayers, int numIncludeLayers);
-
-	////////////////////////////////////////////////////////////////////////////////////////////////////
-	// Variables
-	////////////////////////////////////////////////////////////////////////////////////////////////////
-
-public:
-	CTerrainNode* GetParentNode(int nId) { return (nId >= 0 && nId < m_pParentNodes.Count()) ? m_pParentNodes.GetAt(nId) : NULL; }
+	CTerrainNode* GetParentNode() const { return m_pParentNode; }
 
 	bool          Recompile_Modified_Incrementaly_RoadRenderNodes();
 
@@ -563,27 +311,22 @@ public:
 
 	void          SetHeightMapMaxHeight(float fMaxHeight);
 
-	SSurfaceType* GetSurfaceTypePtr(int x, int y, int nSID)
+	SSurfaceType* GetSurfaceTypePtr(float x, float y)
 	{
-#ifdef SEG_WORLD
-		nSID = WorldToSegment(x, y, 0, nSID);
-		if (nSID < 0)
-			return NULL;
-#endif
-		int nType = GetSurfaceTypeID(x, y, nSID);
+		int nType = GetSurfaceTypeID(x, y);
 		assert(nType >= 0 && nType < SRangeInfo::e_max_surface_types);
-		return (nType < SRangeInfo::e_undefined) ? &m_SSurfaceType[nSID][nType] : NULL;
+		return (nType < SRangeInfo::e_undefined) ? &m_SSurfaceType[nType] : NULL;
 	}
 
-	SSurfaceType* GetSurfaceTypes(int nSID)           { return &m_SSurfaceType[nSID][0]; }
-	int           GetSurfaceTypeCount(int nSID) const { return (int) m_SSurfaceType[nSID].size(); }
+	SSurfaceType* GetSurfaceTypes()                 { return m_SSurfaceType.GetElements(); }
+	int           GetSurfaceTypeCount() const       { return (int) m_SSurfaceType.size(); }
 
-	int           GetTerrainTextureNodeSizeMeters()   { return GetSectorSize(); }
+	int           GetTerrainTextureNodeSizeMeters() { return GetSectorSize(); }
 
-	int           GetTerrainTextureNodeSizePixels(int nLayer, int nSID)
+	int           GetTerrainTextureNodeSizePixels(int nLayer)
 	{
 		assert(nLayer >= 0 && nLayer < 2);
-		return m_arrBaseTexInfos[nSID].m_TerrainTextureLayer[nLayer].nSectorSizePixels;
+		return m_arrBaseTexInfos.m_TerrainTextureLayer[nLayer].nSectorSizePixels;
 	}
 
 	void GetMaterials(IMaterial*& pTerrainEf)
@@ -599,16 +342,15 @@ public:
 	int m_nWhiteTexId;
 	int m_nBlackTexId;
 
-	PodArray<PodArray<Array2d<struct CTerrainNode*>>> m_arrSecInfoPyramid;         //[TERRAIN_NODE_TREE_DEPTH];
+	PodArray<Array2d<struct CTerrainNode*>> m_arrSecInfoPyramid;         //[TERRAIN_NODE_TREE_DEPTH];
 
-	float                         GetTerrainTextureMultiplier(int nSID) const { return m_arrBaseTexInfos[nSID].m_hdrDiffTexInfo.fBrMultiplier; }
+	float                         GetTerrainTextureMultiplier() const { return m_arrBaseTexInfos.m_hdrDiffTexInfo.fBrMultiplier; }
 
 	void                          ActivateNodeTexture(CTerrainNode* pNode, const SRenderingPassInfo& passInfo);
 	void                          ActivateNodeProcObj(CTerrainNode* pNode);
-	CTerrainNode*                 FindMinNodeContainingBox(const AABB& someBox, int nSID);
-	int                           FindMinNodesContainingBox(const AABB& someBox, PodArray<CTerrainNode*>& arrNodes);
-	int                           GetTerrainLightmapTexId(Vec4& vTexGenInfo, int nSID);
-	void GetAtlasTexId(int& nTex0, int& nTex1, int& nTex2, int nSID);
+	CTerrainNode*                 FindMinNodeContainingBox(const AABB& someBox);
+	int                           GetTerrainLightmapTexId(Vec4& vTexGenInfo);
+	void                          GetAtlasTexId(int& nTex0, int& nTex1, int& nTex2);
 
 	_smart_ptr<IRenderMesh>       MakeAreaRenderMesh(const Vec3& vPos, float fRadius, IMaterial* pMat, const char* szLSourceName, Plane* planes);
 
@@ -655,8 +397,12 @@ public:
 	{
 		while (nDataSize & 3)
 		{
+#if defined(USE_CRY_ASSERT)
 			int nRes = GetPak()->FSeek(f, 1, SEEK_CUR);
 			assert(nRes == 0);
+#else
+			GetPak()->FSeek(f, 1, SEEK_CUR);
+#endif
 			assert(nDataSize);
 			nDataSize--;
 		}
@@ -675,20 +421,58 @@ public:
 		assert(nDataSize >= 0);
 	}
 
-	int ReloadModifiedHMData(FILE* f, int nSID);
+	int         ReloadModifiedHMData(FILE* f);
 
-protected: // ------------------------------------------------------------------------
+	bool        IsHeightMapModified() const { return m_bHeightMapModified; }
+	void        SetHeightMapModified()      { m_bHeightMapModified = true; }
+	static void ResetHeightMapCache();
+
+protected:
+
+	void                BuildSectorsTree(bool bBuildErrorsTable);
+	int                 GetTerrainNodesAmount();
+	bool                OpenTerrainTextureFile(SCommonFileHeader& hdrDiffTexHdr, STerrainTextureFileHeader& hdrDiffTexInfo, const char* szFileName, uint8*& ucpDiffTexTmpBuffer, int& nDiffTexIndexTableSize);
+	bool                IsRenderNodeIncluded(IRenderNode* pNode, const AABB& region, const uint16* pIncludeLayers, int numIncludeLayers);
+
+	float               GetZfromUnits(int nX_units, int nY_units) const;
+	float               GetZMaxFromUnits(int nX0_units, int nY0_units, int nX1_units, int nY1_units) const;
+	Vec4                Get4ZUnits(int nX_units, int nY_units) const;
+	uint8               GetSurfTypeFromUnits(int nX_units, int nY_units) const;
+	SSurfaceTypeItem    GetSurfTypeItemfromUnits(int nX_units, int nY_units) const;
+	bool                IsPointUnderGround(int nX_units, int nY_units, float fTestZ);
+
+	ILINE CTerrainNode* GetSecInfoUnits(int xu, int yu) const
+	{
+		return m_arrSecInfoPyramid[0][xu >> m_nUnitsToSectorBitShift][yu >> m_nUnitsToSectorBitShift];
+	}
+	ILINE CTerrainNode* GetSecInfoUnitsSafe(int xu, int yu) const
+	{
+		if (m_arrSecInfoPyramid.IsEmpty())
+			return nullptr;
+		return GetSecInfoUnits(xu, yu);
+	}
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////
+	// Variables
+	////////////////////////////////////////////////////////////////////////////////////////////////////
+
 	friend class CTerrainUpdateDispatcher;
+
+	CTerrainNode*         m_pParentNode = nullptr;
+	int                   m_terrainPaintingFrameId = 0;
 
 	CTerrainModifications m_StoredModifications;                // to serialize (load/save) terrain heighmap changes and limit the modification
 	int                   m_nLoadedSectors;                     //
-	int                   m_bOceanIsVisible;                    //
-
-	float                 m_fDistanceToSectorWithWater;         //
+	bool                  m_bOceanIsVisible;                    //
 	bool                  m_bProcVegetationInUse;
+	bool                  m_bHeightMapModified;
+	int                   m_nUnitsToSectorBitShift;
+	float                 m_fHeightmapZRatio;
+	float                 m_fDistanceToSectorWithWater;         //
 
 	struct SBaseTexInfo
 	{
+		SBaseTexInfo() { ZeroStruct(*this); }
 		int                            m_nDiffTexIndexTableSize;
 		SCommonFileHeader              m_hdrDiffTexHdr;
 		STerrainTextureFileHeader      m_hdrDiffTexInfo;
@@ -700,74 +484,101 @@ protected: // ------------------------------------------------------------------
 		}
 	};
 
-	PodArray<SBaseTexInfo>           m_arrBaseTexInfos;
+	SBaseTexInfo                   m_arrBaseTexInfos;
 
-	_smart_ptr<IMaterial>            m_pTerrainEf;
-	_smart_ptr<IMaterial>            m_pImposterEf;
+	_smart_ptr<IMaterial>          m_pTerrainEf;
 
-	float                            m_fOceanWaterLevel;
+	float                          m_fOceanWaterLevel;
 
-	PodArray<struct CTerrainNode*>   m_lstVisSectors;
-	PodArray<struct CTerrainNode*>   m_lstUpdatedSectors;
+	PodArray<STerrainVisItem>      m_lstVisSectors;
+	PodArray<struct CTerrainNode*> m_lstUpdatedSectors;
+	int                            m_checkVisSectorsCount = 0;
 
-	PodArray<PodArray<SSurfaceType>> m_SSurfaceType;
+	PodArray<SSurfaceType>         m_SSurfaceType;
 
-	static int                       m_nUnitSize;    // in meters
-	static float                     m_fInvUnitSize; // in 1/meters
-	static int                       m_nTerrainSize; // in meters
-	int                              m_nTerrainSizeDiv;
-	static int                       m_nSectorSize; // in meters
-#ifndef SEG_WORLD
-	static int                       m_nSectorsTableSize; // sector width/height of the finest LOD level (sector count is the square of this value)
-#endif
+	static float                   m_fUnitSize;      // in meters
+	static float                   m_fInvUnitSize;   // in 1/meters
+	static int                     m_nTerrainSize;   // in meters
+	int                            m_nTerrainUnits;  // in units
+	static int                     m_nSectorSize;       // in meters
+	static int                     m_nSectorsTableSize; // sector width/height of the finest LOD level (sector count is the square of this value)
 
-	class COcean*             m_pOcean;
+	class COcean*                  m_pOcean;
 
-	PodArray<CTerrainNode*>   m_lstActiveTextureNodes;
-	PodArray<CTerrainNode*>   m_lstActiveProcObjNodes;
+	PodArray<CTerrainNode*>        m_lstActiveTextureNodes;
+	PodArray<CTerrainNode*>        m_lstActiveProcObjNodes;
+	bool                           m_isOfflineProceduralVegetationReady = false;
 
-	CTextureCache m_texCache[3]; // RGB, Normal and Height
+	CTextureCache                  m_texCache[3]; // RGB, Normal and Height
 
-	EEndian                   m_eEndianOfTexture;
+	EEndian                        m_eEndianOfTexture;
 
-	static bool               m_bOpenTerrainTextureFileNoLog;
+	static bool                    m_bOpenTerrainTextureFileNoLog;
 
-	CTerrainUpdateDispatcher* m_pTerrainUpdateDispatcher;
+	CTerrainUpdateDispatcher*      m_pTerrainUpdateDispatcher;
+
+	// Height and SurfaceType cache
+	union SCachedHeight
+	{
+		SCachedHeight() : packedValue(0)
+		{
+			static_assert(sizeof(x) + sizeof(y) + sizeof(fHeight) == sizeof(packedValue), "SCachedHeight: Unexpected data size!");
+		}
+		SCachedHeight(const SCachedHeight &other)
+			: packedValue(other.packedValue)
+		{}
+
+		struct
+		{
+			uint16 x, y;
+			float  fHeight;
+		};
+		uint64 packedValue;
+	};
+
+	union SCachedSurfType
+	{
+		struct
+		{
+			uint16 x, y;
+			uint32 surfType;
+		};
+		uint64 packedValue;
+
+		SCachedSurfType() : packedValue(0)
+		{
+			static_assert(sizeof(x) + sizeof(y) + sizeof(surfType) == sizeof(packedValue), "SCachedSurfType: Unexpected data size!");
+		}
+		SCachedSurfType(const SCachedSurfType &other)
+			: packedValue(other.packedValue)
+		{}
+	};
+
+	static CRY_ALIGN(128) SCachedHeight m_arrCacheHeight[nHMCacheSize * nHMCacheSize];
+	static CRY_ALIGN(128) SCachedSurfType m_arrCacheSurfType[nHMCacheSize * nHMCacheSize];
+
+	static float GetHeightFromUnits_Callback(int ix, int iy);
+	static uint8 GetSurfaceTypeFromUnits_Callback(int ix, int iy);
 
 #if defined(FEATURE_SVO_GI)
 	PodArray<ColorB>* m_pTerrainRgbLowResSystemCopy;
+	int               m_terrainRgbLowResSystemCopyUserData = 0;
 #endif
 
 	_smart_ptr<IRenderMesh> m_pSharedRenderMesh;
 
 public:
-	bool    SetCompiledData(byte* pData, int nDataSize, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable, bool bHotUpdate, SHotUpdateInfo* pExportInfo, int nSID, Vec3 vSegmentOrigin);
-	bool    Load(FILE* f, int nDataSize, struct STerrainChunkHeader* pTerrainChunkHeader, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable, int nSID, Vec3 vSegmentOrigin);
+	bool    SetCompiledData(byte* pData, int nDataSize, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable, bool bHotUpdate, SHotUpdateInfo* pExportInfo);
+	bool    Load(FILE* f, int nDataSize, struct STerrainChunkHeader* pTerrainChunkHeader, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable);
 	EEndian GetEndianOfTexture() { return m_eEndianOfTexture; }
 
 	void    ClearVisSectors()
 	{
 		m_lstVisSectors.Clear();
+		m_checkVisSectorsCount = 0;
 	}
 
 #if defined(FEATURE_SVO_GI)
-	const PodArray<ColorB>* GetTerrainRgbLowResSystemCopy() { return m_pTerrainRgbLowResSystemCopy; }
+	const PodArray<ColorB>* GetTerrainRgbLowResSystemCopy(int** ppUserData = nullptr) { if (ppUserData) *ppUserData = &m_terrainRgbLowResSystemCopyUserData; return m_pTerrainRgbLowResSystemCopy; }
 #endif
-	virtual bool            StreamCompiledData(byte* pData, int nDataSize, int nSID, const Vec3& vSegmentOrigin);
-	virtual void            CancelStreamCompiledData(int nSID);
-
-private:
-	void StreamStep_Initialize(STerrainDataLoadStatus& status, byte* pData, int nDataSize, int nSID, const Vec3& vSegmentOrigin);
-	void StreamStep_BuildSectorsTree(STerrainDataLoadStatus& status, byte* pData, int nDataSize, int nSID, const Vec3& vSegmentOrigin);
-	void StreamStep_SetupEntityGrid(STerrainDataLoadStatus& status, byte* pData, int nDataSize, int nSID, const Vec3& vSegmentOrigin);
-	void StreamStep_ReadTables(STerrainDataLoadStatus& status, byte* pData, int nDataSize, int nSID, const Vec3& vSegmentOrigin);
-	void StreamStep_LoadVegetationStatObjs(STerrainDataLoadStatus& status, byte* pData, int nDataSize, int nSID, const Vec3& vSegmentOrigin);
-	void StreamStep_LoadBrushStatObjs(STerrainDataLoadStatus& status, byte* pData, int nDataSize, int nSID, const Vec3& vSegmentOrigin);
-	void StreamStep_LoadMaterials(STerrainDataLoadStatus& status, byte* pData, int nDataSize, int nSID, const Vec3& vSegmentOrigin);
-	void StreamStep_LoadTerrainNodes(STerrainDataLoadStatus& status, byte* pData, int nDataSize, int nSID, const Vec3& vSegmentOrigin);
-	void StreamStep_StartLoadObjectTree(STerrainDataLoadStatus& status, byte* pData, int nDataSize, int nSID, const Vec3& vSegmentOrigin);
-	void StreamStep_LoadObjectTree(STerrainDataLoadStatus& status, byte* pData, int nDataSize, int nSID, const Vec3& vSegmentOrigin);
-	void StreamStep_FinishUp(STerrainDataLoadStatus& status, byte* pData, int nDataSize, int nSID, const Vec3& vSegmentOrigin);
 };
-
-#endif // TERRAIN_H

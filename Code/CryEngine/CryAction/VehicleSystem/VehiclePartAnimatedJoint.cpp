@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -271,7 +271,7 @@ void CVehiclePartAnimatedJoint::SetMoveable(bool allowTranslationMovement)
 	m_isMoveable = true;
 	m_isTransMoveable = allowTranslationMovement;
 
-	CryCreateClassInstance("AnimationPoseModifier_OperatorQueue", m_operatorQueue);
+	CryCreateClassInstanceForInterface(cryiidof<IAnimationOperatorQueue>(), m_operatorQueue);
 	m_pVehicle->SetObjectUpdate(this, IVehicle::eVOU_PassengerUpdate);
 }
 
@@ -308,9 +308,9 @@ bool CVehiclePartAnimatedJoint::ChangeState(EVehiclePartState state, int flags)
 }
 
 //------------------------------------------------------------------------
-const Matrix34& CVehiclePartAnimatedJoint::GetLocalTM(bool relativeToParentPart, bool forced)
+Matrix34 CVehiclePartAnimatedJoint::GetLocalTM(bool relativeToParentPart, bool forced)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	if (m_pCharInstance && m_jointId > -1)
 	{
@@ -394,7 +394,7 @@ void CVehiclePartAnimatedJoint::SerMatrix(TSerialize ser, Matrix34& mat)
 //------------------------------------------------------------------------
 void CVehiclePartAnimatedJoint::Serialize(TSerialize ser, EEntityAspects aspects)
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "Vehicle part animated joint serialization");
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "Vehicle part animated joint serialization");
 
 	CVehiclePartBase::Serialize(ser, aspects);
 
@@ -414,13 +414,13 @@ void CVehiclePartAnimatedJoint::Serialize(TSerialize ser, EEntityAspects aspects
 }
 
 //------------------------------------------------------------------------
-const Matrix34& CVehiclePartAnimatedJoint::GetWorldTM()
+Matrix34 CVehiclePartAnimatedJoint::GetWorldTM()
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	if (m_pCharInstance && m_jointId > -1)
 	{
-		const Matrix34& localTM = GetLocalTM(false);
+		Matrix34 localTM = GetLocalTM(false);
 		m_worldTM = m_pVehicle->GetEntity()->GetWorldTM() * localTM;
 	}
 	else
@@ -456,7 +456,7 @@ const AABB& CVehiclePartAnimatedJoint::GetLocalBounds()
 //------------------------------------------------------------------------
 void CVehiclePartAnimatedJoint::Update(float frameTime)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	CVehiclePartBase::Update(frameTime);
 

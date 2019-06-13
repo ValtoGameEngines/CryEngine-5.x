@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // Game effect - Ideal for handling a specific visual game feature.
 
@@ -8,6 +8,7 @@
 #include "Effects/GameEffectsSystem.h"
 #include <CryAnimation/ICryAnimation.h>
 #include "Actor.h"
+#include "Game.h"
 
 //--------------------------------------------------------------------------------------------------
 // Name: CGameEffect

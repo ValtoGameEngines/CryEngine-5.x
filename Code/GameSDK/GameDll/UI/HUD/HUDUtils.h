@@ -1,10 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __HUDUTILS_H__
 #define __HUDUTILS_H__
 
 #include "IViewSystem.h"
 #include "Actor.h"
+#include "Game.h"
 
 struct IHUDAsset;
 struct IFlashVariableObject;
@@ -274,6 +275,9 @@ namespace CHUDUtils
 	void* GetNearestTo(const Vec2& center, const float maxValidDistance);
 	void* GetNearestTo(const TCenterSortArray& array, const Vec2& center, const float maxValidDistance);
 
+	// Converts the silhouette parameters and activity state based on r,g,b,a values and enabled boolean respectively
+	uint32 ConverToSilhouetteParamValue(ColorF color, bool bEnable = true);
+	uint32 ConverToSilhouetteParamValue(float r, float g, float b, float a, bool bEnable = true);
 };
 
 

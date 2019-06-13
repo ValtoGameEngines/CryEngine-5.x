@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -24,15 +24,42 @@ History:
 
 #include "Utility/CryWatch.h"
 
-#include <CryCore/TypeInfo_impl.h>
 
 #include <IViewSystem.h>
 #include <IVehicleSystem.h>
 
 #include "PlayerVisTable.h"
+#include "Game.h"
+#include "GameRules.h"
 
 #include "LocalPlayerComponent.h"
 #include "VTOLVehicleManager/VTOLVehicleManager.h"
+#include <Actor.h>                                       
+#include <ActorDefinitions.h>                            
+#include <Cry3DEngine/I3DEngine.h>                       
+#include <CryAISystem/IAgent.h>                          
+#include <CryAISystem/IAISystem.h>                       
+#include <CryAnimation/ICryAnimation.h>                  
+#include <CryCore/StlUtils.h>                            
+#include <CryEntitySystem/IEntity.h>                     
+#include <CryEntitySystem/IEntitySystem.h>               
+#include <CryGame/CoherentValue.h>                       
+#include <CryGame/GameUtils.h>
+#include <CryGame/IGameFramework.h>                      
+#include <CryMath/Cry_Camera.h>                          
+#include <CryMath/Cry_Geo.h>                             
+#include <CryPhysics/physinterface.h>
+#include <CryPhysics/primitives.h>                       
+#include <CryRenderer/IRenderer.h>                       
+#include <CryRenderer/Tarray.h>                          
+#include <IActorSystem.h>                                
+#include <IItem.h>                                       
+#include <IMovementController.h>                         
+#include <Item.h>                                        
+#include <ItemDefinitions.h>                             
+#include <ItemSharedParams.h>                            
+#include <Weapon.h>                                      
+#include <WeaponFPAiming.h>                              
 
 namespace
 {
@@ -690,7 +717,6 @@ bool CSpectatorFollowCameraMode::UpdateView( const CPlayer& clientPlayer, SViewP
 			if( newZLength < minHeightDiff )
 			{
 				// can't move the camera far enough away from the player in this direction. Try moving it directly up a bit
-				int numHits = 0;
 
 				// (move back just slightly to avoid colliding with the wall we've already found...)
 				sphere.center += worldOffset_Norm * (worldOffset_Len-0.05f);
@@ -701,10 +727,10 @@ bool CSpectatorFollowCameraMode::UpdateView( const CPlayer& clientPlayer, SViewP
 				float raiseDist = minHeightDiff - (worldOffset_Len*worldOffset_Norm.z) - sphere.r;
 				if(newHitDist != 0)
 				{
-					raiseDist = MIN(minHeightDiff, newHitDist);
+					raiseDist = std::min(minHeightDiff, newHitDist);
 				}
 
-				raiseDist = MAX(0.0f, raiseDist);
+				raiseDist = std::max(0.0f, raiseDist);
 
 				targetWorldExtra.z += raiseDist*0.8f;
 			}
@@ -1390,7 +1416,7 @@ void CDeathCameraModeSinglePlayer::Init(const CPlayer* subject, const EntityId k
 
 bool CDeathCameraModeSinglePlayer::UpdateView(const CPlayer& clientPlayer, SViewParams& viewParams, float frameTime)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	m_fUpdateCounter -= frameTime;
 
@@ -1413,7 +1439,7 @@ bool CDeathCameraModeSinglePlayer::UpdateView(const CPlayer& clientPlayer, SView
 				pKilEnt->GetLocalBounds(localBounds);
 				m_fKillerHeightOffset = localBounds.GetCenter().z;
 
-				m_bIsKillerInFrustrum = gEnv->pRenderer->GetCamera().IsPointVisible(vKillerPos);
+				m_bIsKillerInFrustrum = GetISystem()->GetViewCamera().IsPointVisible(vKillerPos);
 			}
 
 			CPlayerVisTable::SVisibilityParams queryTargetParams(m_killerEid);

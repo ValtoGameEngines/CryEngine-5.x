@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    -------------------------------------------------------------------------
@@ -21,6 +21,7 @@
 #include "AIVehicle.h"
 #include <float.h>
 #include "DebugDrawContext.h"
+#include "Formation/AIFormationDescriptor.h"
 
 // Serialises a container of AI references
 // Perhaps this is too heavy on the templating and it could be virtualised
@@ -806,10 +807,7 @@ Vec3 CAIGroup::GetEnemyPositionKnown() const
 void CAIGroup::Update()
 {
 	CCCPOINT(CAIGroup_Update);
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
-
-	CAISystem* pAISystem(GetAISystem());
-
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 	UpdateReinforcementLogic();
 }
 
@@ -819,7 +817,7 @@ void CAIGroup::Update()
 // (MATT) This code looks rather complex - does it really help? {2009/02/12}
 void CAIGroup::UpdateReinforcementLogic()
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (/*m_reinforcementState == REINF_ALERTED_COMBAT_PENDING ||*/
 	  m_reinforcementState == REINF_DONE_PENDING)
@@ -1086,10 +1084,12 @@ void CAIGroup::UpdateReinforcementLogic()
 
 				// Tell the agent to call reinforcements.
 				CAIActor* const pUnit = CastToCAIActorSafe(pNearestCallerImg->m_refUnit.GetAIObject());
-				AISignalExtraData* pData = new AISignalExtraData;
+				AISignals::AISignalExtraData* pData = new AISignals::AISignalExtraData;
 				pData->nID = nearestSpot->pAI->GetEntityID();
 				pData->iValue = nearestSpot->type;
-				pUnit->SetSignal(1, "OnCallReinforcements", pUnit->GetEntity(), pData);
+
+				AISignals::SignalSharedPtr signal = gEnv->pAISystem->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, gEnv->pAISystem->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnCallReinforcements_DEPRECATED(), pUnit->GetEntityID(), pData);
+				pUnit->SetSignal(signal);
 				pNearestCallerImg->m_lastReinforcementTime = GetAISystem()->GetFrameStartTime();
 
 #ifdef CRYAISYSTEM_DEBUG
@@ -1319,7 +1319,7 @@ void CAIGroup::Serialize(TSerialize ser)
 void CAIGroup::DebugDraw()
 {
 	// Debug draw reinforcement logic.
-	if (gAIEnv.CVars.DebugDrawReinforcements == m_groupID)
+	if (gAIEnv.CVars.legacyGroupSystem.DebugDrawReinforcements == m_groupID)
 	{
 
 		int totalCount = 0;

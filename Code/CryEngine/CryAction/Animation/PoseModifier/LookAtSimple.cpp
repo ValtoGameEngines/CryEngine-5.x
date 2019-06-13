@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -41,7 +41,8 @@ bool CLookAtSimple::Prepare(const SAnimationPoseModifierParams& params)
 
 bool CLookAtSimple::Execute(const SAnimationPoseModifierParams& params)
 {
-	const IDefaultSkeleton& rIDefaultSkeleton = params.GetIDefaultSkeleton();
+	CRY_PROFILE_FUNCTION(PROFILE_ANIMATION);
+
 	const QuatT& transformation = params.pPoseData->GetJointAbsolute(m_stateExecute.jointId);
 
 	Vec3 offsetAbsolute = m_stateExecute.jointOffsetRelative * transformation.q;

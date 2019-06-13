@@ -1,16 +1,16 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
+//! \cond INTERNAL
 
 #pragma once
 
-#ifndef MovementUpdateContext_h
-	#define MovementUpdateContext_h
-
 struct IMovementActor;
 struct IMovementSystem;
-class CPipeUser;
-class IPathFollower;
+struct IPathFollower;
 struct SOBJECTSTATE;
 struct MovementRequest;
+
+class CPipeUser;
 
 namespace Movement
 {
@@ -26,13 +26,15 @@ struct MovementUpdateContext
 	  IMovementSystem& _movementSystem,
 	  IPathFollower& _pathFollower,
 	  Movement::IPlanner& _planner,
-	  const float _updateTime
+	  const float _updateTime,
+	  const CTimeValue _frameStartTime
 	  )
 		: actor(_actor)
 		, movementSystem(_movementSystem)
 		, pathFollower(_pathFollower)
 		, planner(_planner)
 		, updateTime(_updateTime)
+		, frameStartTime(_frameStartTime)
 	{
 	}
 
@@ -41,6 +43,7 @@ struct MovementUpdateContext
 	IPathFollower&      pathFollower;
 	Movement::IPlanner& planner;
 	const float         updateTime;
+	const CTimeValue    frameStartTime;
 };
 
-#endif // MovementUpdateContext_h
+//! \endcond

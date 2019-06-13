@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "Log.h"
@@ -9,13 +9,14 @@
 #include <CrySerialization/STL.h>
 #include <CryString/CryStringUtils.h>
 #include <CrySystem/File/ICryPak.h>
-#include <Schematyc/Utils/Assert.h>
-#include <Schematyc/Utils/ScopedConnection.h>
+#include <CrySystem/ConsoleRegistration.h>
+#include <CrySchematyc/Utils/Assert.h>
+#include <CrySchematyc/Utils/ScopedConnection.h>
 
 #include "CVars.h"
 #include "Core.h"
 
-SERIALIZATION_ENUM_BEGIN_NESTED(Schematyc, ELogMessageType, "Schematyc Log Message Type")
+SERIALIZATION_ENUM_BEGIN_NESTED(Schematyc, ELogMessageType, "CrySchematyc Log Message Type")
 SERIALIZATION_ENUM(Schematyc::ELogMessageType::Comment, "Comment", "Comment")
 SERIALIZATION_ENUM(Schematyc::ELogMessageType::Warning, "Warning", "Warning")
 SERIALIZATION_ENUM(Schematyc::ELogMessageType::Error, "Error", "Error")
@@ -38,7 +39,7 @@ inline ECriticalErrorStatus DisplayCriticalErrorMessage(const char* szMessage)
 	string message = szMessage;
 	message.append("\r\n\r\n");
 	message.append("Would you like to continue?\r\n\r\nClick 'Yes' to continue, 'No' to break or 'Cancel' to continue and ignore this error.");
-	switch (CryMessageBox(message.c_str(), "Schematyc - Critical Error!", eMB_YesNoCancel))
+	switch (CryMessageBox(message.c_str(), "CrySchematyc - Critical Error!", eMB_YesNoCancel))
 	{
 	case eQR_Yes:
 		{
@@ -50,7 +51,7 @@ inline ECriticalErrorStatus DisplayCriticalErrorMessage(const char* szMessage)
 		}
 	}
 #else
-	CryMessageBox(szMessage, "Schematyc - Critical Error!", eMB_Error);
+	CryMessageBox(szMessage, "CrySchematyc - Critical Error!", eMB_Error);
 #endif
 	return ECriticalErrorStatus::Break;
 }
@@ -92,7 +93,7 @@ public:
 		, m_bErrorObserverRegistered(false)
 	{
 		Initialize();
-		messageSignal.GetSlots().Connect(SCHEMATYC_MEMBER_DELEGATE(CFileOutput::OnLogMessage, *this), m_connectionScope);
+		messageSignal.GetSlots().Connect(SCHEMATYC_MEMBER_DELEGATE(&CFileOutput::OnLogMessage, *this), m_connectionScope);
 	}
 
 	~CFileOutput()
@@ -156,7 +157,7 @@ public:
 
 	void FlushMessages()
 	{
-		FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+		CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 		const uint32 valueSize = sizeof(MessageString::CharTraits::value_type);
 		CryAutoCriticalSection lock(m_criticalSection);
@@ -267,7 +268,7 @@ CLog::SStream::SStream(const char* _szName, LogStreamId _id)
 CLog::CLog()
 	: m_nextDynamicStreamId(ms_firstDynamicStreamId)
 {
-	m_pSettings = SSettingsPtr(new SSettings(SCHEMATYC_MEMBER_DELEGATE(CLog::OnSettingsModified, *this)));
+	m_pSettings = SSettingsPtr(new SSettings(SCHEMATYC_MEMBER_DELEGATE(&CLog::OnSettingsModified, *this)));
 }
 
 CLog::SSettings::SSettings(const SettingsModifiedCallback& _modifiedCallback)
@@ -277,7 +278,7 @@ CLog::SSettings::SSettings(const SettingsModifiedCallback& _modifiedCallback)
 void CLog::SSettings::Serialize(Serialization::IArchive& archive)
 {
 	archive(userStreams, "userStreams", "User Streams");
-	if (archive.isInput() && !modifiedCallback.IsEmpty())
+	if (archive.isInput() && modifiedCallback)
 	{
 		modifiedCallback();
 	}
@@ -378,8 +379,8 @@ const char* CLog::GetStreamName(LogStreamId streamId) const
 
 void CLog::VisitStreams(const LogStreamVisitor& visitor) const
 {
-	SCHEMATYC_CORE_ASSERT(!visitor.IsEmpty());
-	if (!visitor.IsEmpty())
+	SCHEMATYC_CORE_ASSERT(visitor);
+	if (visitor)
 	{
 		for (const SStream& stream : m_streams)
 		{
@@ -412,7 +413,7 @@ void CLog::PopScope(SLogScope* pScope)
 
 void CLog::Comment(LogStreamId streamId, const char* szFormat, va_list va_args)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	char messageBuffer[1024] = "";
 	LogUtils::FormatMessage(messageBuffer, szFormat, va_args);
@@ -421,7 +422,7 @@ void CLog::Comment(LogStreamId streamId, const char* szFormat, va_list va_args)
 
 void CLog::Warning(LogStreamId streamId, const char* szFormat, va_list va_args)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	char messageBuffer[1024] = "";
 	LogUtils::FormatMessage(messageBuffer, szFormat, va_args);
@@ -435,7 +436,7 @@ void CLog::Warning(LogStreamId streamId, const char* szFormat, va_list va_args)
 
 void CLog::Error(LogStreamId streamId, const char* szFormat, va_list va_args)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	char messageBuffer[1024] = "";
 	LogUtils::FormatMessage(messageBuffer, szFormat, va_args);

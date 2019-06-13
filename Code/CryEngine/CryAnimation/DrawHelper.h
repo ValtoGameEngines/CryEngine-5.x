@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -90,5 +90,11 @@ void Arrow(const QuatT& location, const Vec3& direction, float length, ColorB co
 void CurvedArrow(const QuatT& location, float moveSpeed, float travelAngle, float turnSpeed, float slope, ColorB color);
 
 void Pose(const CDefaultSkeleton& rDefaultSkeleton, const Skeleton::CPoseData& poseData, const QuatT& location, ColorB color);
+
+//! Performs a wireframe draw of the specified IRenderMesh instance using the debug renderer (auxiliary geometry renderer).
+//! \param mesh IRenderMesh instance to be drawn.
+//! \param renderMatrix World-space transform specifying where to draw the wireframe.
+//! \param color Color in which to draw the wireframe.
+void Wireframe(IRenderMesh& mesh, const Matrix34& renderMatrix, const ColorB& color);
 
 } // namespace DrawHelper

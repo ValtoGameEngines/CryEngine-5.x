@@ -1,27 +1,31 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "PreviewWidget.h"
 
 #include <QBoxLayout>
-#include <QParentWndWidget.h>
+#include <QVBoxLayout>
 #include <QPushButton>
 #include <QSplitter>
 #include <QViewport.h>
 #include <QViewportConsumer.h>
 #include <CryEntitySystem/IEntitySystem.h>
 #include <CrySerialization/IArchiveHost.h>
-#include <QAdvancedPropertyTree.h>
+#include <QAdvancedPropertyTreeLegacy.h>
 
 #include "Objects/DisplayContext.h"
 #include "QViewportEvents.h"
 #include "IEditor.h"
 
+#include <Cry3DEngine/I3DEngine.h>
+
 namespace Schematyc {
 
 CPreviewSettingsWidget::CPreviewSettingsWidget(CPreviewWidget& previewWidget)
 {
-	m_pPropertyTree = new QAdvancedPropertyTree("Preview Settings");
+	QVBoxLayout* pLayout = new QVBoxLayout(this);
+
+	m_pPropertyTree = new QAdvancedPropertyTreeLegacy("Preview Settings");
 	m_pPropertyTree->setExpandLevels(4);
 	m_pPropertyTree->setValueColumnWidth(0.6f);
 	m_pPropertyTree->setAutoRevert(false);
@@ -30,12 +34,12 @@ CPreviewSettingsWidget::CPreviewSettingsWidget(CPreviewWidget& previewWidget)
 
 	m_pPropertyTree->attach(Serialization::SStruct(previewWidget));
 
-	addWidget(m_pPropertyTree);
+	pLayout->addWidget(m_pPropertyTree);
 }
 
 void CPreviewSettingsWidget::showEvent(QShowEvent* pEvent)
 {
-	QScrollableBox::showEvent(pEvent);
+	QWidget::showEvent(pEvent);
 
 	if (m_pPropertyTree)
 	{
@@ -50,13 +54,15 @@ CGizmoTranslateOp::CGizmoTranslateOp(ITransformManipulator& gizmo, IScriptCompon
 
 void CGizmoTranslateOp::OnInit()
 {
-	m_initTransform = m_componentInstance.GetTransform().ToMatrix34();
+	m_initTransform.SetIdentity();
+	if (m_componentInstance.GetTransform())
+		m_initTransform = m_initTransform = m_componentInstance.GetTransform()->ToMatrix34();
 }
 
 void CGizmoTranslateOp::OnMove(const Vec3& offset)
 {
-	CTransform transform = m_componentInstance.GetTransform();
-	transform.SetTranslation(m_initTransform.GetTranslation() + offset);
+	CTransformPtr transform = m_componentInstance.GetTransform();
+	transform->SetTranslation(m_initTransform.GetTranslation() + offset);
 	m_componentInstance.SetTransform(transform);
 
 	gEnv->pSchematyc->GetScriptRegistry().ElementModified(m_componentInstance);
@@ -64,14 +70,19 @@ void CGizmoTranslateOp::OnMove(const Vec3& offset)
 
 void CGizmoTranslateOp::OnRelease()
 {
-	m_gizmo.SetCustomTransform(true, m_componentInstance.GetTransform().ToMatrix34());
+	if (m_componentInstance.GetTransform())
+		m_gizmo.SetCustomTransform(true, m_componentInstance.GetTransform()->ToMatrix34());
 }
 
 CPreviewWidget::CPreviewWidget(QWidget* pParent)
 	: QWidget(pParent)
 {
+	IRenderer::SGraphicsPipelineDescription graphicsPipelineDesc;
+	graphicsPipelineDesc.type = EGraphicsPipelineType::Minimum;
+	graphicsPipelineDesc.shaderFlags = SHDF_SECONDARY_VIEWPORT | SHDF_ALLOWHDR | SHDF_FORWARD_MINIMAL;
+
 	m_pMainLayout = new QBoxLayout(QBoxLayout::TopToBottom);
-	m_pViewport = new QViewport(gEnv, this);
+	m_pViewport = new QViewport(gEnv, graphicsPipelineDesc, this);
 
 	m_viewportSettings.rendering.fps = false;
 	m_viewportSettings.grid.showGrid = true;
@@ -81,7 +92,7 @@ CPreviewWidget::CPreviewWidget(QWidget* pParent)
 
 	connect(m_pViewport, SIGNAL(SignalRender(const SRenderContext &)), SLOT(OnRender(const SRenderContext &)));
 
-	gEnv->pSchematyc->GetScriptRegistry().GetChangeSignalSlots().Connect(SCHEMATYC_MEMBER_DELEGATE(CPreviewWidget::OnScriptRegistryChange, *this), m_connectionScope);
+	gEnv->pSchematyc->GetScriptRegistry().GetChangeSignalSlots().Connect(SCHEMATYC_MEMBER_DELEGATE(&CPreviewWidget::OnScriptRegistryChange, *this), m_connectionScope);
 }
 
 CPreviewWidget::~CPreviewWidget()
@@ -121,7 +132,7 @@ void CPreviewWidget::SetClass(const IScriptClass* pScriptClass)
 		{
 			m_pObjectPreviewer->DestroyObject(m_objectId);
 
-			m_classGUID = SGUID();
+			m_classGUID = CryGUID();
 			m_pObjectPreviewer = nullptr;
 			m_objectId = ObjectId::Invalid;
 		}
@@ -129,6 +140,7 @@ void CPreviewWidget::SetClass(const IScriptClass* pScriptClass)
 
 	if (pScriptClass)
 	{
+		CRY_ASSERT_MESSAGE(pScriptClass->GetType() == Schematyc::EScriptElementType::Class, "Unsupported element type.");
 		if (pScriptClass->GetGUID() != m_classGUID)
 		{
 			releaseClass();
@@ -170,7 +182,7 @@ void CPreviewWidget::SetComponentInstance(const IScriptComponentInstance* pCompo
 {
 	auto releaseComponentInstance = [this]()
 	{
-		m_componentInstanceGUID = SGUID();
+		m_componentInstanceGUID = CryGUID();
 
 		if (m_pGizmo)
 		{
@@ -189,9 +201,9 @@ void CPreviewWidget::SetComponentInstance(const IScriptComponentInstance* pCompo
 
 			m_pGizmo = m_pViewport->GetGizmoManager()->AddManipulator(this);
 
-			auto onBeginDrag = [this](IDisplayViewport*, ITransformManipulator*, Vec2i&, int)
+			auto onBeginDrag = [this](IDisplayViewport*, ITransformManipulator*, const Vec2i&, int)
 			{
-				if (GetIEditor()->GetEditMode() == eEditModeMove)
+				if (GetIEditor()->GetLevelEditorSharedState()->GetEditMode() == CLevelEditorSharedState::EditMode::Move)
 				{
 					IScriptComponentInstance* pComponentInstance = DynamicCast<IScriptComponentInstance>(gEnv->pSchematyc->GetScriptRegistry().GetElement(m_componentInstanceGUID));
 					if (pComponentInstance)
@@ -208,7 +220,7 @@ void CPreviewWidget::SetComponentInstance(const IScriptComponentInstance* pCompo
 			};
 			m_pGizmo->signalBeginDrag.Connect(onBeginDrag);
 
-			auto onDrag = [this](IDisplayViewport*, ITransformManipulator*, Vec2i&, Vec3 offset, int)
+			auto onDrag = [this](IDisplayViewport*, ITransformManipulator*, const Vec2i&, const Vec3& offset, int)
 			{
 				if (m_pGizmoTransformOp)
 				{
@@ -267,20 +279,20 @@ void CPreviewWidget::Serialize(Serialization::IArchive& archive)
 	{
 		m_pObjectPreviewer->SerializeProperties(archive);
 
-		std::set<IComponentPreviewer*> componentPreviewers;
+		std::set<IEntityComponentPreviewer*> componentPreviewers;
 
-		auto visitComponent = [&componentPreviewers](const CComponent& component) -> EVisitStatus
+		auto visitComponent = [&componentPreviewers](const IEntityComponent& component) -> EVisitStatus
 		{
-			IComponentPreviewer* pComponentPreviewer = component.GetPreviewer();
+			IEntityComponentPreviewer* pComponentPreviewer = nullptr; //component.GetPreviewer();
 			if (pComponentPreviewer)
 			{
 				componentPreviewers.insert(pComponentPreviewer);
 			}
 			return EVisitStatus::Continue;
 		};
-		pObject->VisitComponents(ObjectComponentConstVisitor::FromLambda(visitComponent));
+		pObject->VisitComponents(visitComponent);
 
-		for (IComponentPreviewer* pComponentPreviewer : componentPreviewers)
+		for (IEntityComponentPreviewer* pComponentPreviewer : componentPreviewers)
 		{
 			pComponentPreviewer->SerializeProperties(archive); // #SchematycTODO : How do we avoid name collisions? Do we need to fully qualify component names?
 		}
@@ -293,7 +305,7 @@ void CPreviewWidget::Serialize(Serialization::IArchive& archive)
 	}
 }
 
-bool CPreviewWidget::GetManipulatorMatrix(RefCoordSys coordSys, Matrix34& tm)
+bool CPreviewWidget::GetManipulatorMatrix(Matrix34& tm)
 {
 	return false;
 }
@@ -303,9 +315,9 @@ void CPreviewWidget::GetManipulatorPosition(Vec3& position)
 	if (!GUID::IsEmpty(m_componentInstanceGUID))
 	{
 		const IScriptComponentInstance* pComponentInstance = DynamicCast<const IScriptComponentInstance>(gEnv->pSchematyc->GetScriptRegistry().GetElement(m_componentInstanceGUID));
-		if (pComponentInstance)
+		if (pComponentInstance && pComponentInstance->GetTransform())
 		{
-			position = pComponentInstance->GetTransform().GetTranslation();
+			position = pComponentInstance->GetTransform()->GetTranslation();
 		}
 	}
 	else
@@ -321,17 +333,21 @@ void CPreviewWidget::OnRender(const SRenderContext& context)
 	{
 		m_pObjectPreviewer->RenderObject(*pObject, *context.renderParams, *context.passInfo);
 
-		auto visitComponent = [pObject, &context](const CComponent& component) -> EVisitStatus
+		auto visitComponent = [pObject, &context](const IEntityComponent& component) -> EVisitStatus
 		{
-			const IComponentPreviewer* pComponentPreviewer = component.GetPreviewer();
+			const IEntityComponentPreviewer* pComponentPreviewer = nullptr;// component.GetPreviewer();
 			if (pComponentPreviewer)
 			{
-				pComponentPreviewer->Render(*pObject, component, *context.renderParams, *context.passInfo);
+				SGeometryDebugDrawInfo dd;
+				SEntityPreviewContext preview(dd);
+				preview.pRenderParams = context.renderParams;
+				preview.pPassInfo = context.passInfo;
+				pComponentPreviewer->Render(*pObject->GetEntity(), component, preview);
 			}
 
 			return EVisitStatus::Continue;
 		};
-		pObject->VisitComponents(ObjectComponentConstVisitor::FromLambda(visitComponent));
+		pObject->VisitComponents(visitComponent);
 	}
 }
 

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -10,6 +10,8 @@ History:
 #include "FeatureTestMgr.h"
 #include "AutoTester.h"
 #include "FeatureTester.h"
+#include "GameCVars.h"
+#include <CrySystem/ConsoleRegistration.h>
 
 #if ENABLE_FEATURE_TESTER_MGR
 
@@ -211,8 +213,6 @@ void CFeatureTestMgr::ForceRun(const char* testNameFilter)
 			m_bRunning = true;
 
 			CryLogAlways("Forcefully running Map Tests: %s", m_pRunningTest->Name());
-
-			const float currTime = gEnv->pTimer->GetCurrTime();
 
 			// If test doesn't start
 			if (!m_pRunningTest->Start())

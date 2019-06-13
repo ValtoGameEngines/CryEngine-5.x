@@ -1,39 +1,93 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "CollisionAvoidanceSystem.h"
-#include "Walkability/WalkabilityCacheManager.h"
 #include "Navigation/NavigationSystem/NavigationSystem.h"
+#include "Navigation/MNM/NavMeshQueryManager.h"
 
 #include "DebugDrawContext.h"
 
-//#pragma optimize("", off)
-//#pragma inline_depth(0)
+namespace Cry
+{
+namespace AI
+{
+namespace CollisionAvoidance
+{
 
-CollisionAvoidanceSystem::CollisionAvoidanceSystem()
+static const float kEpsilon = 0.00001f;
+
+CCollisionAvoidanceSystem::CCollisionAvoidanceSystem()
+	: m_isUpdating(false)
 {
 }
 
-CollisionAvoidanceSystem::AgentID CollisionAvoidanceSystem::CreateAgent(tAIObjectID objectID)
+bool CCollisionAvoidanceSystem::RegisterAgent(IAgent* pAgent)
 {
-	uint32 id = m_agents.size();
-	m_agents.resize(id + 1);
+	if (!pAgent)
+	{
+		CRY_ASSERT_MESSAGE(pAgent, "Parameter 'pAgent' must be non-null.");
+		return false;
+	}
 
-	m_agentAvoidanceVelocities.resize(m_agents.size());
+	if (m_isUpdating)
+	{
+		CRY_ASSERT_MESSAGE(!m_isUpdating, "Collision Avoidance System should not be updating while an agent is being registered.");
+		return false;
+	}
+
+	// The magic number '3' was already a constraint. See ComputeFeasibleArea function.
+	if (m_registeredAgentsPtrs.size() + 3 >= FeasibleAreaMaxVertexCount)
+	{
+		// With this early return we avoid registering more agents that the maximum allowed to prevent memory corruptions in 'ComputeFeasibleArea' function.
+		CRY_ASSERT_MESSAGE(m_registeredAgentsPtrs.size() + 3 < FeasibleAreaMaxVertexCount, "Maximum number of agents is 61 (value of enum 'FeasibleAreaMaxVertexCount' minus 3).");
+		return false;
+	}
+
+	auto actorIt = std::find(m_registeredAgentsPtrs.begin(), m_registeredAgentsPtrs.end(), pAgent);
+	if (actorIt == m_registeredAgentsPtrs.end())
+	{
+		m_registeredAgentsPtrs.push_back(pAgent);
+	}
+	return true;
+}
+
+bool CCollisionAvoidanceSystem::UnregisterAgent(IAgent* pAgent)
+{
+	if (pAgent)
+	{
+		if (!m_isUpdating)
+		{
+			const std::vector<IAgent*>::const_iterator it = std::remove(m_registeredAgentsPtrs.begin(), m_registeredAgentsPtrs.end(), pAgent);
+			if (it != m_registeredAgentsPtrs.end())
+			{
+				m_registeredAgentsPtrs.erase(it, m_registeredAgentsPtrs.end());
+				return true;
+			}
+			CRY_ASSERT_MESSAGE(it != m_registeredAgentsPtrs.end(), "Parameter 'pAgent' was not registered.");
+		}
+		CRY_ASSERT_MESSAGE(!m_isUpdating, "Collision Avoidance System should not be updating while an agent is being unregistered.");
+	}
+	CRY_ASSERT_MESSAGE(pAgent, "Parameter 'pAgent' must be non-null.");
+	return false;
+}
+
+CCollisionAvoidanceSystem::AgentID CCollisionAvoidanceSystem::CreateAgent(NavigationAgentTypeID navigationTypeID, const INavMeshQueryFilter* pQueryFilter)
+{
+	const size_t id = m_agents.size();
+	const size_t newSize = id + 1;
+	m_agents.resize(newSize);
+
+	m_agentAvoidanceVelocities.resize(newSize);
 	m_agentAvoidanceVelocities[id].zero();
 
-	m_agentObjectIDs.resize(m_agents.size());
-	m_agentObjectIDs[id] = objectID;
-
-	m_agentNames.resize(m_agents.size());
-
-	IAIObject* aiObject = gAIEnv.pAIObjectManager->GetAIObject(objectID);
-	m_agentNames[id] = aiObject->GetName();
+	m_agentsNavigationProperties.resize(newSize);
+	m_agentsNavigationProperties[id].agentTypeId = navigationTypeID;
+	m_agentsNavigationProperties[id].pQueryFilter = pQueryFilter;
 
 	return id;
 }
 
-CollisionAvoidanceSystem::ObstacleID CollisionAvoidanceSystem::CreateObstable()
+CCollisionAvoidanceSystem::ObstacleID CCollisionAvoidanceSystem::CreateObstable()
 {
 	uint32 id = m_obstacles.size();
 	m_obstacles.resize(id + 1);
@@ -41,67 +95,56 @@ CollisionAvoidanceSystem::ObstacleID CollisionAvoidanceSystem::CreateObstable()
 	return id;
 }
 
-void CollisionAvoidanceSystem::RemoveAgent(AgentID agentID)
-{
-}
-
-void CollisionAvoidanceSystem::RemoveObstacle(ObstacleID obstacleID)
-{
-}
-
-void CollisionAvoidanceSystem::SetAgent(AgentID agentID, const Agent& params)
+void CCollisionAvoidanceSystem::SetAgent(AgentID agentID, const SAgentParams& params)
 {
 	m_agents[agentID] = params;
 }
 
-const CollisionAvoidanceSystem::Agent& CollisionAvoidanceSystem::GetAgent(AgentID agentID) const
+const SAgentParams& CCollisionAvoidanceSystem::GetAgent(AgentID agentID) const
 {
 	return m_agents[agentID];
 }
 
-void CollisionAvoidanceSystem::SetObstacle(ObstacleID obstacleID, const Obstacle& params)
+void CCollisionAvoidanceSystem::SetObstacle(ObstacleID obstacleID, const SObstacleParams& params)
 {
 	m_obstacles[obstacleID] = params;
 }
 
-const CollisionAvoidanceSystem::Obstacle& CollisionAvoidanceSystem::GetObstacle(ObstacleID obstacleID) const
+const SObstacleParams& CCollisionAvoidanceSystem::GetObstacle(ObstacleID obstacleID) const
 {
 	return m_obstacles[obstacleID];
 }
 
-const Vec2& CollisionAvoidanceSystem::GetAvoidanceVelocity(AgentID agentID)
+const Vec2& CCollisionAvoidanceSystem::GetAvoidanceVelocity(AgentID agentID)
 {
 	return m_agentAvoidanceVelocities[agentID];
 }
 
-void CollisionAvoidanceSystem::Reset(bool bUnload)
+void CCollisionAvoidanceSystem::Reset()
 {
-	if (bUnload)
-	{
-		stl::free_container(m_agents);
-		stl::free_container(m_agentAvoidanceVelocities);
-		stl::free_container(m_obstacles);
+	m_avoidingAgentsPtrs.clear();
+	m_agents.clear();
+	m_agentAvoidanceVelocities.clear();
+	m_obstacles.clear();
 
-		stl::free_container(m_agentObjectIDs);
-		stl::free_container(m_agentNames);
-
-		stl::free_container(m_constraintLines);
-		stl::free_container(m_nearbyAgents);
-		stl::free_container(m_nearbyObstacles);
-	}
-	else
-	{
-		m_agents.clear();
-		m_agentAvoidanceVelocities.clear();
-		m_obstacles.clear();
-
-		m_agentObjectIDs.clear();
-		m_agentNames.clear();
-	}
+	m_agentsNavigationProperties.clear();
 }
 
-bool CollisionAvoidanceSystem::ClipPolygon(const Vec2* polygon, size_t vertexCount, const ConstraintLine& line, Vec2* output,
-                                           size_t* outputVertexCount) const
+void CCollisionAvoidanceSystem::Clear()
+{
+	stl::free_container(m_agents);
+	stl::free_container(m_agentAvoidanceVelocities);
+	stl::free_container(m_obstacles);
+
+	stl::free_container(m_agentsNavigationProperties);
+
+	stl::free_container(m_constraintLines);
+	stl::free_container(m_nearbyAgents);
+	stl::free_container(m_nearbyObstacles);
+}
+
+bool CCollisionAvoidanceSystem::ClipPolygon(const Vec2* polygon, size_t vertexCount, const SConstraintLine& line, Vec2* output,
+	size_t* outputVertexCount) const
 {
 	bool shapeChanged = false;
 	const Vec2* outputStart = output;
@@ -147,7 +190,7 @@ bool CollisionAvoidanceSystem::ClipPolygon(const Vec2* polygon, size_t vertexCou
 	return shapeChanged;
 }
 
-size_t CollisionAvoidanceSystem::ComputeFeasibleArea(const ConstraintLine* lines, size_t lineCount, float radius, Vec2* feasibleArea) const
+size_t CCollisionAvoidanceSystem::ComputeFeasibleArea(const SConstraintLine* lines, size_t lineCount, float radius, Vec2* feasibleArea) const
 {
 	Vec2 buf0[FeasibleAreaMaxVertexCount];
 	Vec2* original = buf0;
@@ -156,7 +199,7 @@ size_t CollisionAvoidanceSystem::ComputeFeasibleArea(const ConstraintLine* lines
 	Vec2* clipped = buf1;
 	Vec2* output = clipped;
 
-	assert(3 + lineCount <= FeasibleAreaMaxVertexCount);
+	CRY_ASSERT_MESSAGE(3 + lineCount <= FeasibleAreaMaxVertexCount, "More agents/obstacles than the maximum supported are being handled. This will cause memory buffers to go beyond their limit, possibly corrupting memory. This shouldn't happen since the system should not allow to register more agents than the maximum which is equivalent to 'FeasibleAreaMaxVertexCount' - 3. See RegisterAgent function.");
 
 	const float HalfSize = 1.0f + radius;
 
@@ -170,7 +213,7 @@ size_t CollisionAvoidanceSystem::ComputeFeasibleArea(const ConstraintLine* lines
 
 	for (size_t i = 0; i < lineCount; ++i)
 	{
-		const ConstraintLine& constraint = lines[i];
+		const SConstraintLine& constraint = lines[i];
 
 		if (ClipPolygon(original, outputCount, constraint, clipped, &outputCount))
 		{
@@ -185,13 +228,13 @@ size_t CollisionAvoidanceSystem::ComputeFeasibleArea(const ConstraintLine* lines
 	}
 
 	PREFAST_SUPPRESS_WARNING(6385)
-	memcpy(feasibleArea, output, outputCount * sizeof(Vec2));
+		memcpy(feasibleArea, output, outputCount * sizeof(Vec2));
 
 	return outputCount;
 }
 
-bool CollisionAvoidanceSystem::ClipVelocityByFeasibleArea(const Vec2& velocity, Vec2* feasibleArea, size_t vertexCount,
-                                                          Vec2& output) const
+bool CCollisionAvoidanceSystem::ClipVelocityByFeasibleArea(const Vec2& velocity, Vec2* feasibleArea, size_t vertexCount,
+	Vec2& output) const
 {
 	if (Overlap::Point_Polygon2D(velocity, feasibleArea, vertexCount))
 	{
@@ -223,7 +266,7 @@ size_t IntersectLineSegCircle(const Vec2& center, float radius, const Vec2& a, c
 {
 	const Vec2 v1 = b - a;
 	const float lineSegmentLengthSq = v1.GetLength2();
-	if (lineSegmentLengthSq < 0.00001f)
+	if (lineSegmentLengthSq < kEpsilon)
 		return 0;
 
 	const Vec2 v2 = center - a;
@@ -238,7 +281,7 @@ size_t IntersectLineSegCircle(const Vec2& center, float radius, const Vec2& a, c
 	if (distToCenterSq > radiusSq)
 		return 0;
 
-	if (fabs_tpl(distToCenterSq - radiusSq) < 0.00001f)
+	if (fabs_tpl(distToCenterSq - radiusSq) < kEpsilon)
 	{
 		output[0] = midpt;
 
@@ -246,7 +289,7 @@ size_t IntersectLineSegCircle(const Vec2& center, float radius, const Vec2& a, c
 	}
 
 	float distToIntersection;
-	if (fabs_tpl(distToCenterSq) < 0.00001f)
+	if (fabs_tpl(distToCenterSq) < kEpsilon)
 		distToIntersection = radius;
 	else
 	{
@@ -258,14 +301,14 @@ size_t IntersectLineSegCircle(const Vec2& center, float radius, const Vec2& a, c
 	size_t resultCount = 0;
 	const Vec2 solution1 = midpt + vIntersect;
 	if ((solution1.x - a.x) * vIntersect.x + (solution1.y - a.y) * vIntersect.y > 0.0f &&
-	    (solution1.x - b.x) * vIntersect.x + (solution1.y - b.y) * vIntersect.y < 0.0f)
+		(solution1.x - b.x) * vIntersect.x + (solution1.y - b.y) * vIntersect.y < 0.0f)
 	{
 		output[resultCount++] = solution1;
 	}
 
 	const Vec2 solution2 = midpt - vIntersect;
 	if ((solution2.x - a.x) * vIntersect.x + (solution2.y - a.y) * vIntersect.y > 0.0f &&
-	    (solution2.x - b.x) * vIntersect.x + (solution2.y - b.y) * vIntersect.y < 0.0f)
+		(solution2.x - b.x) * vIntersect.x + (solution2.y - b.y) * vIntersect.y < 0.0f)
 	{
 		output[resultCount++] = solution2;
 	}
@@ -273,11 +316,10 @@ size_t IntersectLineSegCircle(const Vec2& center, float radius, const Vec2& a, c
 	return resultCount;
 }
 
-size_t CollisionAvoidanceSystem::ComputeOptimalAvoidanceVelocity(Vec2* feasibleArea, size_t vertexCount, const Agent& agent,
-                                                                 const float minSpeed, const float maxSpeed, CandidateVelocity* output) const
+size_t CCollisionAvoidanceSystem::ComputeOptimalAvoidanceVelocity(Vec2* feasibleArea, size_t vertexCount, const SAgentParams& agent,
+	const float minSpeed, const float maxSpeed, SCandidateVelocity* output) const
 {
 	const Vec2& desiredVelocity = agent.desiredVelocity;
-	const Vec2& currentVelocity = agent.currentVelocity;
 	if (vertexCount > 2)
 	{
 		Vec2 velocity;
@@ -346,25 +388,16 @@ size_t CollisionAvoidanceSystem::ComputeOptimalAvoidanceVelocity(Vec2* feasibleA
 	return 0;
 }
 
-bool CollisionAvoidanceSystem::FindFirstWalkableVelocity(AgentID agentID, CandidateVelocity* candidates,
-                                                         size_t candidateCount, Vec2& output) const
+bool CCollisionAvoidanceSystem::FindFirstWalkableVelocity(AgentID agentID, SCandidateVelocity* candidates,
+	size_t candidateCount, Vec2& output) const
 {
-	const Agent& agent = m_agents[agentID];
-	const tAIObjectID aiObjectID = m_agentObjectIDs[agentID];
-
-	CAIObject* aiObject = gAIEnv.pObjectContainer->GetAIObject(aiObjectID);
-	const CAIActor* actor = aiObject->CastToCAIActor();
-	if (!actor)
-		return false;
+	const SAgentParams& agent = m_agents[agentID];
 
 	for (size_t i = 0; i < candidateCount; ++i)
 	{
-		CandidateVelocity& candidate = candidates[i];
+		SCandidateVelocity& candidate = candidates[i];
 
-		const Vec3 from = agent.currentLocation;
-		const Vec3 to = agent.currentLocation + Vec3(candidate.velocity.x * 0.125f, candidate.velocity.y * 0.125f, 0.0f);
-
-		output = ClampSpeedWithNavigationMesh(actor->GetNavigationTypeID(), agent.currentLocation, agent.currentVelocity, candidate.velocity);
+		output = ClampSpeedWithNavigationMesh(m_agentsNavigationProperties[agentID], agent.currentLocation, agent.currentVelocity, candidate.velocity);
 		if (output.GetLength2() < 0.1)
 			continue;
 		return true;
@@ -373,24 +406,69 @@ bool CollisionAvoidanceSystem::FindFirstWalkableVelocity(AgentID agentID, Candid
 	return false;
 }
 
-void CollisionAvoidanceSystem::Update(float updateTime)
+void CCollisionAvoidanceSystem::PopulateState()
 {
-	Agents::iterator it = m_agents.begin();
-	Agents::iterator end = m_agents.end();
-	size_t index = 0;
+	Reset();
+
+	static_assert(int(ETreatType::Count) == 3, "Unexpected enum count!");
+	for (IAgent* pAgent : m_registeredAgentsPtrs)
+	{
+		SAgentParams agentParams;
+		SObstacleParams obstacleParams;
+
+		switch (pAgent->GetTreatmentDuringUpdateTick(agentParams, obstacleParams))
+		{
+		case ETreatType::Agent:
+		{
+			if (m_avoidingAgentsPtrs.size() < m_avoidingAgentsPtrs.max_size())
+			{
+				CCollisionAvoidanceSystem::AgentID agentID = CreateAgent(pAgent->GetNavigationTypeId(), pAgent->GetNavigationQueryFilter());
+				SetAgent(agentID, agentParams);
+
+				m_avoidingAgentsPtrs.push_back(pAgent);
+			}
+			break;
+		}
+		case ETreatType::Obstacle:
+		{
+			CCollisionAvoidanceSystem::ObstacleID obstacleID = CreateObstable();
+			SetObstacle(obstacleID, obstacleParams);
+			break;
+		}
+		}
+	}
+}
+
+void CCollisionAvoidanceSystem::ApplyResults(float updateTime)
+{
+	if (gAIEnv.CVars.collisionAvoidance.CollisionAvoidanceUpdateVelocities || gAIEnv.CVars.collisionAvoidance.CollisionAvoidanceEnableRadiusIncrement)
+	{
+		for (size_t i = 0, count = m_avoidingAgentsPtrs.size(); i < count; ++i)
+		{
+			const Vec2 avoidanceVelocity = GetAvoidanceVelocity(i);
+			m_avoidingAgentsPtrs[i]->ApplyComputedVelocity(avoidanceVelocity, updateTime);
+		}
+	}
+}
+
+void CCollisionAvoidanceSystem::Update(float updateTime)
+{
+	m_isUpdating = true;
+
+	PopulateState();
 
 	const bool debugDraw = gAIEnv.CVars.DebugDraw > 0;
-	const float Epsilon = 0.00001f;
+	const float Epsilon = kEpsilon;
 	const size_t MaxAgentsConsidered = 8;
 
-	for (; it != end; ++it, ++index)
+	for (size_t index = 0, size = m_agents.size(); index < size; ++index)
 	{
-		Agent& agent = *it;
+		const SAgentParams& agent = m_agents[index];
 
 		Vec2& newVelocity = m_agentAvoidanceVelocities[index];
-		newVelocity = agent.desiredVelocity;
+		newVelocity = Vec2(agent.desiredVelocity);
 
-		float desiredSpeedSq = agent.desiredVelocity.GetLength2();
+		float desiredSpeedSq = agent.desiredVelocity.GetLengthSquared2D();
 		if (desiredSpeedSq < Epsilon)
 			continue;
 
@@ -398,13 +476,13 @@ void CollisionAvoidanceSystem::Update(float updateTime)
 		m_nearbyAgents.clear();
 		m_nearbyObstacles.clear();
 
-		const float range = gAIEnv.CVars.CollisionAvoidanceRange;
+		const float range = gAIEnv.CVars.collisionAvoidance.CollisionAvoidanceRange;
 
 		ComputeNearbyObstacles(agent, index, range, m_nearbyObstacles);
 		ComputeNearbyAgents(agent, index, range, m_nearbyAgents);
 
 		size_t obstacleConstraintCount = ComputeConstraintLinesForAgent(agent, index, 1.0f, m_nearbyAgents, MaxAgentsConsidered,
-		                                                                m_nearbyObstacles, m_constraintLines);
+			m_nearbyObstacles, m_constraintLines);
 
 		size_t agentConstraintCount = m_constraintLines.size() - obstacleConstraintCount;
 		size_t constraintCount = m_constraintLines.size();
@@ -413,18 +491,17 @@ void CollisionAvoidanceSystem::Update(float updateTime)
 		if (!constraintCount)
 			continue;
 
-		Vec2 candidate = agent.desiredVelocity;
 		// TODO: as a temporary solution, avoid to reset the new Velocity.
 		// In this case if no ORCA speed can be found, we use our desired one
 		//newVelocity.zero();
 
 		Vec2 feasibleArea[FeasibleAreaMaxVertexCount];
 		size_t vertexCount = ComputeFeasibleArea(&m_constraintLines.front(), constraintCount, agent.maxSpeed,
-		                                         feasibleArea);
+			feasibleArea);
 
-		float minSpeed = gAIEnv.CVars.CollisionAvoidanceMinSpeed;
+		float minSpeed = gAIEnv.CVars.collisionAvoidance.CollisionAvoidanceMinSpeed;
 
-		CandidateVelocity candidates[FeasibleAreaMaxVertexCount + 1]; // +1 for clipped desired velocity
+		SCandidateVelocity candidates[FeasibleAreaMaxVertexCount + 1]; // +1 for clipped desired velocity
 		size_t candidateCount = ComputeOptimalAvoidanceVelocity(feasibleArea, vertexCount, agent, minSpeed, agent.maxSpeed, &candidates[0]);
 
 		if (!candidateCount || !FindFirstWalkableVelocity(index, candidates, candidateCount, newVelocity))
@@ -432,7 +509,7 @@ void CollisionAvoidanceSystem::Update(float updateTime)
 			m_constraintLines.clear();
 
 			obstacleConstraintCount = ComputeConstraintLinesForAgent(agent, index, 0.25f, m_nearbyAgents, considerCount,
-			                                                         m_nearbyObstacles, m_constraintLines);
+				m_nearbyObstacles, m_constraintLines);
 
 			agentConstraintCount = m_constraintLines.size() - obstacleConstraintCount;
 			constraintCount = m_constraintLines.size();
@@ -440,7 +517,7 @@ void CollisionAvoidanceSystem::Update(float updateTime)
 			while (considerCount > 0)
 			{
 				vertexCount = ComputeFeasibleArea(&m_constraintLines.front(), m_constraintLines.size(), agent.maxSpeed,
-				                                  feasibleArea);
+					feasibleArea);
 
 				candidateCount = ComputeOptimalAvoidanceVelocity(feasibleArea, vertexCount, agent, minSpeed, agent.maxSpeed, &candidates[0]);
 
@@ -450,8 +527,8 @@ void CollisionAvoidanceSystem::Update(float updateTime)
 				if (m_nearbyAgents.empty())
 					break;
 
-				const NearbyAgent& furthestNearbyAgent = m_nearbyAgents[considerCount - 1];
-				const Agent& furthestAgent = m_agents[furthestNearbyAgent.agentID];
+				const SNearbyAgent& furthestNearbyAgent = m_nearbyAgents[considerCount - 1];
+				const SAgentParams& furthestAgent = m_agents[furthestNearbyAgent.agentID];
 
 				if (furthestNearbyAgent.distanceSq <= sqr(agent.radius + agent.radius + furthestAgent.radius))
 					break;
@@ -463,173 +540,148 @@ void CollisionAvoidanceSystem::Update(float updateTime)
 
 		if (debugDraw)
 		{
-			if (IAIObject* object = gAIEnv.pAIObjectManager->GetAIObject(m_agentObjectIDs[index]))
+			const char* szAgentName = m_avoidingAgentsPtrs[index]->GetDebugName();
+			if(*gAIEnv.CVars.collisionAvoidance.DebugDrawCollisionAvoidanceAgentName && szAgentName
+				&& !stricmp(szAgentName, gAIEnv.CVars.collisionAvoidance.DebugDrawCollisionAvoidanceAgentName))
 			{
-				if (CAIActor* actor = object->CastToCAIActor())
+				const Vec3 agentLocation = agent.currentLocation;
+
+				CDebugDrawContext dc;
+
+				dc->DrawCircleOutline(agentLocation, agent.maxSpeed, Col_Blue);
+
+				dc->SetBackFaceCulling(false);
+				dc->SetAlphaBlended(true);
+
+				Vec3 polygon3D[128];
+
+				for (size_t i = 0; i < vertexCount; ++i)
+					polygon3D[i] = Vec3(agentLocation.x + feasibleArea[i].x, agentLocation.y + feasibleArea[i].y,
+						agentLocation.z + 0.005f);
+
+				ColorB polyColor(255, 255, 255, 128);
+				polyColor.a = 96;
+
+				for (size_t i = 2; i < vertexCount; ++i)
+					gEnv->pRenderer->GetIRenderAuxGeom()->DrawTriangle(polygon3D[0], polyColor, polygon3D[i - 1], polyColor,
+						polygon3D[i], polyColor);
+
+				ConstraintLines::iterator fit = m_constraintLines.begin();
+				ConstraintLines::iterator fend = m_constraintLines.begin() + constraintCount;
+
+				ColorB lineColor[12] = {
+					ColorB(Col_Orange,        0.5f),
+					ColorB(Col_Tan,           0.5f),
+					ColorB(Col_NavyBlue,      0.5f),
+					ColorB(Col_Green,         0.5f),
+					ColorB(Col_BlueViolet,    0.5f),
+					ColorB(Col_IndianRed,     0.5f),
+					ColorB(Col_ForestGreen,   0.5f),
+					ColorB(Col_DarkSlateGrey, 0.5f),
+					ColorB(Col_Turquoise,     0.5f),
+					ColorB(Col_Gold,          0.5f),
+					ColorB(Col_Khaki,         0.5f),
+					ColorB(Col_CadetBlue,     0.5f),
+				};
+
+				for (; fit != fend; ++fit)
 				{
-					if (*gAIEnv.CVars.DebugDrawCollisionAvoidanceAgentName &&
-					    !stricmp(actor->GetName(), gAIEnv.CVars.DebugDrawCollisionAvoidanceAgentName))
-					{
-						Vec3 agentLocation = actor->GetPhysicsPos();
+					const SConstraintLine& line = *fit;
 
-						CDebugDrawContext dc;
+					ColorB color = lineColor[fit->objectID % 12];
 
-						dc->DrawCircleOutline(agentLocation, agent.maxSpeed, Col_Blue);
+					if (line.flags & SConstraintLine::ObstacleConstraint)
+						color = Col_Grey;
 
-						dc->SetBackFaceCulling(false);
-						dc->SetAlphaBlended(true);
-
-						Vec3 polygon3D[128];
-
-						for (size_t i = 0; i < vertexCount; ++i)
-							polygon3D[i] = Vec3(agentLocation.x + feasibleArea[i].x, agentLocation.y + feasibleArea[i].y,
-							                    agentLocation.z + 0.005f);
-
-						ColorB polyColor(255, 255, 255, 128);
-						polyColor.a = 96;
-
-						for (size_t i = 2; i < vertexCount; ++i)
-							gEnv->pRenderer->GetIRenderAuxGeom()->DrawTriangle(polygon3D[0], polyColor, polygon3D[i - 1], polyColor,
-							                                                   polygon3D[i], polyColor);
-
-						ConstraintLines::iterator fit = m_constraintLines.begin();
-						ConstraintLines::iterator fend = m_constraintLines.begin() + constraintCount;
-
-						ColorB lineColor[12] = {
-							ColorB(Col_Orange,        0.5f),
-							ColorB(Col_Tan,           0.5f),
-							ColorB(Col_NavyBlue,      0.5f),
-							ColorB(Col_Green,         0.5f),
-							ColorB(Col_BlueViolet,    0.5f),
-							ColorB(Col_IndianRed,     0.5f),
-							ColorB(Col_ForestGreen,   0.5f),
-							ColorB(Col_DarkSlateGrey, 0.5f),
-							ColorB(Col_Turquoise,     0.5f),
-							ColorB(Col_Gold,          0.5f),
-							ColorB(Col_Khaki,         0.5f),
-							ColorB(Col_CadetBlue,     0.5f),
-						};
-
-						for (; fit != fend; ++fit)
-						{
-							const ConstraintLine& line = *fit;
-
-							ColorB color = lineColor[fit->objectID % 12];
-
-							if (line.flags & ConstraintLine::ObstacleConstraint)
-								color = Col_Grey;
-
-							DebugDrawConstraintLine(agentLocation, line, color);
-						}
-					}
+					DebugDrawConstraintLine(agentLocation, line, color);
 				}
 			}
 		}
 	}
+
+	ApplyResults(updateTime);
+
+	m_isUpdating = false;
 }
 
-size_t CollisionAvoidanceSystem::ComputeNearbyAgents(const Agent& agent, size_t agentIndex, float range,
-                                                     NearbyAgents& nearbyAgents) const
+size_t CCollisionAvoidanceSystem::ComputeNearbyAgents(const SAgentParams& agent, size_t agentIndex, float range, NearbyAgents& nearbyAgents) const
 {
-	const float Epsilon = 0.00001f;
-
-	Agents::const_iterator ait = m_agents.begin();
-	Agents::const_iterator aend = m_agents.end();
-	size_t nearbyAgentIndex = 0;
-
-	Vec3 agentLocation = agent.currentLocation;
-	Vec2 agentLookDirection = agent.currentLookDirection;
-
-	for (; ait != aend; ++ait, ++nearbyAgentIndex)
-	{
-		if (agentIndex != nearbyAgentIndex)
-		{
-			const Agent& otherAgent = *ait;
-
-			const Vec2 relativePosition = Vec2(otherAgent.currentLocation) - Vec2(agentLocation);
-			const float distanceSq = relativePosition.GetLength2();
-
-			const bool nearby = distanceSq < sqr(range + otherAgent.radius);
-			const bool sameFloor = fabs_tpl(otherAgent.currentLocation.z - agentLocation.z) < 2.0f;
-
-			//Note: For some reason different agents end with the same location,
-			//yet the source of the problem has to be found
-			const bool ignore = (distanceSq < 0.0001f);
-
-			if (nearby && sameFloor && !ignore)
-			{
-				Vec2 direction = relativePosition.GetNormalized();
-				bool isVisible = agentLookDirection.Dot(Vec2(otherAgent.currentLocation) - (Vec2(agentLocation) - (direction * otherAgent.radius))) > 0.0f;
-
-				//if (isVisible)
-				{
-					bool isMoving = otherAgent.desiredVelocity.GetLength2() >= Epsilon;
-					bool canSeeMe = true;//otherAgent.currentLookDirection.Dot(agentLocation - (otherAgent.currentLocation + (direction * agent.radius))) > 0.0f;
-
-					nearbyAgents.push_back(NearbyAgent(distanceSq, static_cast<uint16>(nearbyAgentIndex),
-					                                   (canSeeMe ? NearbyAgent::CanSeeMe : 0)
-					                                   | (isMoving ? NearbyAgent::IsMoving : 0)));
-				}
-			}
-		}
-	}
+	ComputeNearbyAgents(agent, agentIndex, 0, agentIndex, range, nearbyAgents);
+	ComputeNearbyAgents(agent, agentIndex, agentIndex + 1, m_agents.size(), range, nearbyAgents);
 
 	std::sort(nearbyAgents.begin(), nearbyAgents.end());
 
 	return nearbyAgents.size();
 }
 
-size_t CollisionAvoidanceSystem::ComputeNearbyObstacles(const Agent& agent, size_t agentIndex, float range,
-                                                        NearbyObstacles& nearbyObstacles) const
+void CCollisionAvoidanceSystem::ComputeNearbyAgents(const SAgentParams& agent, size_t agentIndex, size_t fromIndex, size_t toIndex, float range, NearbyAgents& nearbyAgents) const
 {
-	const float Epsilon = 0.00001f;
+	CRY_ASSERT(toIndex <= m_agents.size());
 
-	Obstacles::const_iterator oit = m_obstacles.begin();
-	Obstacles::const_iterator oend = m_obstacles.end();
-	uint16 obstacleIndex = 0;
+	const Vec3 agentLocation = agent.currentLocation;
 
-	Vec3 agentLocation = agent.currentLocation;
-	Vec2 agentLookDirection = agent.currentLookDirection;
-
-	for (; oit != oend; ++oit, ++obstacleIndex)
+	for (size_t idx = fromIndex; idx < toIndex; ++idx)
 	{
-		const Obstacle& obstacle = *oit;
+		const SAgentParams& otherAgent = m_agents[idx];
 
-		const Vec2 relativePosition = Vec2(obstacle.currentLocation) - Vec2(agentLocation);
+		const Vec2 relativePosition = Vec2(otherAgent.currentLocation) - Vec2(agentLocation);
 		const float distanceSq = relativePosition.GetLength2();
 
+		const float bottomMax = max(agentLocation.z, otherAgent.currentLocation.z);
+		const float topMin = min(agentLocation.z + agent.height, otherAgent.currentLocation.z + otherAgent.height);
+		const bool sameFloor = bottomMax <= topMin;
+		const bool nearby = distanceSq < sqr(range + otherAgent.radius);
+
+		//Note: For some reason different agents end with the same location,
+		//yet the source of the problem has to be found
+		const bool ignore = (distanceSq < 0.0001f);
+
+		if (nearby && sameFloor && !ignore)
+		{
+			const uint16 flags = otherAgent.desiredVelocity.GetLengthSquared2D() >= kEpsilon ? SNearbyAgent::IsMoving : 0;
+			nearbyAgents.emplace_back(distanceSq, idx, flags);
+		}
+	}
+}
+
+size_t CCollisionAvoidanceSystem::ComputeNearbyObstacles(const SAgentParams& agent, size_t agentIndex, float range,
+	NearbyObstacles& nearbyObstacles) const
+{
+	const Vec2 agentLocation2D = agent.currentLocation;
+	const float agentHeightPos = agent.currentLocation.z;
+
+	for (uint16 obstacleIndex = 0; obstacleIndex < m_obstacles.size(); ++obstacleIndex)
+	{
+		const SObstacleParams& obstacle = m_obstacles[obstacleIndex];
+		
+		const Vec2 relativePosition = Vec2(obstacle.currentLocation) - agentLocation2D;
+		const float distanceSq = relativePosition.GetLength2();
+
+		const float bottomMax = max(agentHeightPos, obstacle.currentLocation.z);
+		const float topMin = min(agentHeightPos + agent.height, obstacle.currentLocation.z + obstacle.height);
+		const bool sameFloor = bottomMax <= topMin;
 		const bool nearby = distanceSq < sqr(range + obstacle.radius);
-		const bool sameFloor = fabs_tpl(obstacle.currentLocation.z - agentLocation.z) < 2.0f;
 
 		if (nearby && sameFloor)
 		{
-			Vec2 direction = relativePosition.GetNormalized();
-
-			//if (agent.currentLookDirection.Dot(relativePosition - (direction * obstacle.radius)) > 0.0f)
-			nearbyObstacles.push_back(NearbyObstacle(distanceSq, obstacleIndex));
+			nearbyObstacles.emplace_back(distanceSq, obstacleIndex);
 		}
 	}
 
 	return nearbyObstacles.size();
 }
 
-size_t CollisionAvoidanceSystem::ComputeConstraintLinesForAgent(const Agent& agent, size_t agentIndex, float timeHorizonScale,
-                                                                NearbyAgents& nearbyAgents, size_t maxAgentsConsidered, NearbyObstacles& nearbyObstacles, ConstraintLines& lines) const
+size_t CCollisionAvoidanceSystem::ComputeConstraintLinesForAgent(const SAgentParams& agent, size_t agentIndex, float timeHorizonScale,
+	NearbyAgents& nearbyAgents, size_t maxAgentsConsidered, NearbyObstacles& nearbyObstacles, ConstraintLines& lines) const
 {
-	const float Epsilon = 0.00001f;
-
-	NearbyObstacles::const_iterator oit = nearbyObstacles.begin();
-	NearbyObstacles::const_iterator oend = nearbyObstacles.end();
-
 	size_t obstacleCount = 0;
 
-	for (; oit != oend; ++oit)
+	for (const SNearbyObstacle& nearbyObstacle : nearbyObstacles)
 	{
-		const NearbyObstacle& nearbyObstacle = *oit;
-		const Obstacle& obstacle = m_obstacles[nearbyObstacle.obstacleID];
+		const SObstacleParams& obstacle = m_obstacles[nearbyObstacle.obstacleID];
 
-		ConstraintLine line;
-		line.flags = ConstraintLine::ObstacleConstraint;
+		SConstraintLine line;
+		line.flags = SConstraintLine::ObstacleConstraint;
 		line.objectID = nearbyObstacle.obstacleID;
 
 		ComputeObstacleConstraintLine(agent, obstacle, timeHorizonScale, line);
@@ -643,18 +695,20 @@ size_t CollisionAvoidanceSystem::ComputeConstraintLinesForAgent(const Agent& age
 
 	for (; ait != aend; ++ait)
 	{
-		const NearbyAgent& nearbyAgent = *ait;
-		const Agent& otherAgent = m_agents[nearbyAgent.agentID];
+		const SNearbyAgent& nearbyAgent = *ait;
+		const SAgentParams& otherAgent = m_agents[nearbyAgent.agentID];
 
-		ConstraintLine line;
+		SConstraintLine line;
 		line.objectID = nearbyAgent.agentID;
-		line.flags = ConstraintLine::AgentConstraint;
+		line.flags = SConstraintLine::AgentConstraint;
 
-		if (nearbyAgent.flags & NearbyAgent::IsMoving)
+		if (nearbyAgent.flags & SNearbyAgent::IsMoving)
+		{
 			ComputeAgentConstraintLine(agent, otherAgent, true, timeHorizonScale, line);
+		}
 		else
 		{
-			Obstacle obstacle;
+			SObstacleParams obstacle;
 			obstacle.currentLocation = otherAgent.currentLocation;
 			obstacle.radius = otherAgent.radius;
 
@@ -667,8 +721,8 @@ size_t CollisionAvoidanceSystem::ComputeConstraintLinesForAgent(const Agent& age
 	return obstacleCount;
 }
 
-void CollisionAvoidanceSystem::ComputeObstacleConstraintLine(const Agent& agent, const Obstacle& obstacle,
-                                                             float timeHorizonScale, ConstraintLine& line) const
+void CCollisionAvoidanceSystem::ComputeObstacleConstraintLine(const SAgentParams& agent, const SObstacleParams& obstacle,
+	float timeHorizonScale, SConstraintLine& line) const
 {
 	const Vec2 relativePosition = Vec2(obstacle.currentLocation) - Vec2(agent.currentLocation);
 
@@ -679,11 +733,8 @@ void CollisionAvoidanceSystem::ComputeObstacleConstraintLine(const Agent& agent,
 	static const float heuristicWeightForDistance = 0.01f;
 	static const float minimumTimeHorizonScale = 0.25f;
 	const float adjustedTimeHorizonScale = max(min(timeHorizonScale, (heuristicWeightForDistance * distanceSq)), minimumTimeHorizonScale);
-	const float TimeHorizon = gAIEnv.CVars.CollisionAvoidanceObstacleTimeHorizon * adjustedTimeHorizonScale;
-	const float TimeStep = gAIEnv.CVars.CollisionAvoidanceTimeStep;
-
+	const float TimeHorizon = gAIEnv.CVars.collisionAvoidance.CollisionAvoidanceObstacleTimeHorizon * adjustedTimeHorizonScale;
 	const float invTimeHorizon = 1.0f / TimeHorizon;
-	const float invTimeStep = 1.0f / TimeStep;
 
 	Vec2 u;
 
@@ -691,7 +742,7 @@ void CollisionAvoidanceSystem::ComputeObstacleConstraintLine(const Agent& agent,
 
 	if (distanceSq > radiiSq)
 	{
-		Vec2 w = agent.desiredVelocity - cutoffCenter;
+		Vec2 w = Vec2(agent.desiredVelocity) - cutoffCenter;
 		const float wLenSq = w.GetLength2();
 
 		const float dot = w.Dot(relativePosition);
@@ -717,88 +768,104 @@ void CollisionAvoidanceSystem::ComputeObstacleConstraintLine(const Agent& agent,
 			{
 				// left edge
 				line.direction = Vec2(relativePosition.x * edge - relativePosition.y * radii,
-				                      relativePosition.x * radii + relativePosition.y * edge) / distanceSq;
+					relativePosition.x * radii + relativePosition.y * edge) / distanceSq;
 			}
 			else
 			{
 				// right edge
 				line.direction = -Vec2(relativePosition.x * edge + relativePosition.y * radii,
-				                       -relativePosition.x * radii + relativePosition.y * edge) / distanceSq;
+					-relativePosition.x * radii + relativePosition.y * edge) / distanceSq;
 			}
 
 			line.point = cutoffCenter + radii * invTimeHorizon * Vec2(-line.direction.y, line.direction.x);
 		}
 	}
-	else if (distanceSq > 0.00001f)
+	else if (distanceSq > kEpsilon)
 	{
 		const float distance = sqrt_tpl(distanceSq);
 		const Vec2 w = relativePosition / distance;
 
 		line.direction = Vec2(-w.y, w.x);
-
-		const Vec2 point = ((radii - distance) * invTimeStep) * w;
-		const float dot = (agent.currentVelocity - point).Dot(line.direction);
 		line.point = cutoffCenter + obstacle.radius * invTimeHorizon * Vec2(-line.direction.y, line.direction.x);
 	}
 	else
 	{
-		const Vec2 w = agent.currentVelocity.GetNormalizedSafe(Vec2(0.0f, 1.0f));
+		const Vec2 currentVelocity2D = Vec2(agent.currentVelocity);
+		
+		const Vec2 w = currentVelocity2D.GetNormalizedSafe(Vec2(0.0f, 1.0f));
 		line.direction = Vec2(-w.y, w.x);
 
-		const float dot = agent.currentVelocity.Dot(line.direction);
-		line.point = dot * line.direction - agent.currentVelocity;
+		const float dot = currentVelocity2D.Dot(line.direction);
+		line.point = dot * line.direction - currentVelocity2D;
 	}
 }
 
-Vec2 CollisionAvoidanceSystem::ClampSpeedWithNavigationMesh(const NavigationAgentTypeID agentTypeID, const Vec3 agentPosition,
-                                                            const Vec2& currentVelocity, const Vec2& velocityToClamp) const
+Vec2 CCollisionAvoidanceSystem::ClampSpeedWithNavigationMesh(const SNavigationProperties& agentNavProperties, const Vec3& agentPosition,
+	const Vec3& currentVelocity, const Vec2& velocityToClamp) const
 {
 	Vec2 outputVelocity = velocityToClamp;
-	if (gAIEnv.CVars.CollisionAvoidanceClampVelocitiesWithNavigationMesh == 1)
+	if (gAIEnv.CVars.collisionAvoidance.CollisionAvoidanceClampVelocitiesWithNavigationMesh == 1)
 	{
-		const float TimeHorizon = 0.25f * gAIEnv.CVars.CollisionAvoidanceAgentTimeHorizon;
-		const float invTimeHorizon = 1.0f / gAIEnv.CVars.CollisionAvoidanceAgentTimeHorizon;
-		const float TimeStep = gAIEnv.CVars.CollisionAvoidanceTimeStep;
+		const float invTimeHorizon = 1.0f / gAIEnv.CVars.collisionAvoidance.CollisionAvoidanceAgentTimeHorizon;
+		const float TimeStep = gAIEnv.CVars.collisionAvoidance.CollisionAvoidanceTimeStep;
 
 		const Vec3 from = agentPosition;
 		const Vec3 to = agentPosition + Vec3(velocityToClamp.x, velocityToClamp.y, 0.0f);
 
-		if (NavigationMeshID meshID = gAIEnv.pNavigationSystem->GetEnclosingMeshID(agentTypeID, from))
+		if (NavigationMeshID meshID = gAIEnv.pNavigationSystem->GetEnclosingMeshID(agentNavProperties.agentTypeId, from))
 		{
 			const NavigationMesh& mesh = gAIEnv.pNavigationSystem->GetMesh(meshID);
 			const MNM::CNavMesh& navMesh = mesh.navMesh;
 
-			MNM::vector3_t startLoc = MNM::vector3_t(MNM::real_t(from.x), MNM::real_t(from.y), MNM::real_t(from.z));
-			MNM::vector3_t endLoc = MNM::vector3_t(MNM::real_t(to.x), MNM::real_t(to.y), MNM::real_t(to.z));
+			const MNM::vector3_t startMeshLoc = navMesh.ToMeshSpace(from);
+			MNM::vector3_t endMeshLoc = navMesh.ToMeshSpace(to);
 
 			const MNM::real_t horizontalRange(5.0f);
 			const MNM::real_t verticalRange(1.0f);
 
-			MNM::TriangleID triStart = navMesh.GetTriangleAt(startLoc, verticalRange, verticalRange);
+			const INavMeshQueryFilter* pFilter = agentNavProperties.pQueryFilter;
 
-			MNM::TriangleID triEnd = navMesh.GetTriangleAt(endLoc, verticalRange, verticalRange);
+			const MNM::TriangleID triStart = navMesh.QueryTriangleAt(
+				startMeshLoc,
+				verticalRange,
+				verticalRange,
+				MNM::ENavMeshQueryOverlappingMode::BoundingBox_Partial,
+				pFilter
+			);
+
+			MNM::TriangleID triEnd = navMesh.QueryTriangleAt(
+				endMeshLoc,
+				verticalRange,
+				verticalRange,
+				MNM::ENavMeshQueryOverlappingMode::BoundingBox_Partial,
+				pFilter
+			);
+
 			if (!triEnd)
 			{
 				MNM::vector3_t closestEndLocation;
-				triEnd = navMesh.GetClosestTriangle(endLoc, verticalRange, horizontalRange, nullptr, &closestEndLocation);
+				const MNM::aabb_t localAabb(MNM::vector3_t(-horizontalRange, -horizontalRange, -verticalRange), MNM::vector3_t(horizontalRange, horizontalRange, verticalRange));
+				const MNM::SClosestTriangle closestTriangle = navMesh.QueryClosestTriangle(endMeshLoc, localAabb, MNM::ENavMeshQueryOverlappingMode::BoundingBox_Partial, MNM::real_t::max(), pFilter);
+				closestEndLocation = closestTriangle.position;
+				triEnd = closestTriangle.id;
 				navMesh.PushPointInsideTriangle(triEnd, closestEndLocation, MNM::real_t(.05f));
-				endLoc = closestEndLocation;
+				endMeshLoc = closestEndLocation;
 			}
 
 			if (triStart && triEnd)
 			{
 				MNM::CNavMesh::RayCastRequest<512> raycastRequest;
-				MNM::CNavMesh::ERayCastResult result = navMesh.RayCast(startLoc, triStart, endLoc, triEnd, raycastRequest);
-				if (result == MNM::CNavMesh::eRayCastResult_Hit)
+				MNM::ERayCastResult result = navMesh.RayCast(startMeshLoc, triStart, endMeshLoc, triEnd, raycastRequest, pFilter);
+				if (result == MNM::ERayCastResult::Hit)
 				{
 					const float velocityMagnitude = min(TimeStep, raycastRequest.hit.distance.as_float());
-					const Vec3 newEndLoc = agentPosition + ((endLoc.GetVec3() - agentPosition) * velocityMagnitude);
+					const Vec3 newEndLoc = agentPosition + (navMesh.ToWorldSpace(endMeshLoc).GetVec3() - agentPosition) * velocityMagnitude;
 					const Vec3 newVelocity = newEndLoc - agentPosition;
 					outputVelocity = Vec2(newVelocity.x, newVelocity.y) * invTimeHorizon;
 				}
-				else if (result == MNM::CNavMesh::eRayCastResult_NoHit)
+				else if (result == MNM::ERayCastResult::NoHit)
 				{
-					const Vec3 newVelocity = endLoc.GetVec3() - agentPosition;
+					const Vec3 newVelocity = navMesh.ToWorldSpace(endMeshLoc).GetVec3() - agentPosition;
 					outputVelocity = Vec2(newVelocity.x, newVelocity.y);
 				}
 				else
@@ -811,19 +878,21 @@ Vec2 CollisionAvoidanceSystem::ClampSpeedWithNavigationMesh(const NavigationAgen
 	return outputVelocity;
 }
 
-void CollisionAvoidanceSystem::ComputeAgentConstraintLine(const Agent& agent, const Agent& obstacleAgent,
-                                                          bool reciprocal, float timeHorizonScale, ConstraintLine& line) const
+void CCollisionAvoidanceSystem::ComputeAgentConstraintLine(const SAgentParams& agent, const SAgentParams& obstacleAgent,
+	bool reciprocal, float timeHorizonScale, SConstraintLine& line) const
 {
+	const Vec2 agentCurrentVelocity(agent.currentVelocity);
+	
 	const Vec2 relativePosition = Vec2(obstacleAgent.currentLocation) - Vec2(agent.currentLocation);
-	const Vec2 relativeVelocity = agent.currentVelocity - obstacleAgent.currentVelocity;
+	const Vec2 relativeVelocity = agentCurrentVelocity - Vec2(obstacleAgent.currentVelocity);
 
 	const float distanceSq = relativePosition.GetLength2();
 	const float radii = agent.radius + obstacleAgent.radius;
 	const float radiiSq = sqr(radii);
 
 	const float TimeHorizon = timeHorizonScale *
-	                          (reciprocal ? gAIEnv.CVars.CollisionAvoidanceAgentTimeHorizon : gAIEnv.CVars.CollisionAvoidanceObstacleTimeHorizon);
-	const float TimeStep = gAIEnv.CVars.CollisionAvoidanceTimeStep;
+		(reciprocal ? gAIEnv.CVars.collisionAvoidance.CollisionAvoidanceAgentTimeHorizon : gAIEnv.CVars.collisionAvoidance.CollisionAvoidanceObstacleTimeHorizon);
+	const float TimeStep = gAIEnv.CVars.collisionAvoidance.CollisionAvoidanceTimeStep;
 
 	const float invTimeHorizon = 1.0f / TimeHorizon;
 	const float invTimeStep = 1.0f / TimeStep;
@@ -860,13 +929,13 @@ void CollisionAvoidanceSystem::ComputeAgentConstraintLine(const Agent& agent, co
 			{
 				// left edge
 				line.direction = Vec2(relativePosition.x * edge - relativePosition.y * radii,
-				                      relativePosition.x * radii + relativePosition.y * edge) / distanceSq;
+					relativePosition.x * radii + relativePosition.y * edge) / distanceSq;
 			}
 			else
 			{
 				// right edge
 				line.direction = -Vec2(relativePosition.x * edge + relativePosition.y * radii,
-				                       -relativePosition.x * radii + relativePosition.y * edge) / distanceSq;
+					-relativePosition.x * radii + relativePosition.y * edge) / distanceSq;
 			}
 
 			const float proj = relativeVelocity.Dot(line.direction);
@@ -888,13 +957,13 @@ void CollisionAvoidanceSystem::ComputeAgentConstraintLine(const Agent& agent, co
 	}
 
 	const float effort = reciprocal ? 0.5f : 1.0f;
-	line.point = agent.currentVelocity + effort * u;
+	line.point = agentCurrentVelocity + effort * u;
 }
 
-bool CollisionAvoidanceSystem::FindLineCandidate(const ConstraintLine* lines, size_t lineCount, size_t lineNumber, float radius,
-                                                 const Vec2& velocity, Vec2& candidate) const
+bool CCollisionAvoidanceSystem::FindLineCandidate(const SConstraintLine* lines, size_t lineCount, size_t lineNumber, float radius,
+	const Vec2& velocity, Vec2& candidate) const
 {
-	const ConstraintLine& line = lines[lineNumber];
+	const SConstraintLine& line = lines[lineNumber];
 
 	const float discriminant = sqr(radius) - sqr(line.direction.Cross(line.point));
 
@@ -909,13 +978,13 @@ bool CollisionAvoidanceSystem::FindLineCandidate(const ConstraintLine* lines, si
 
 	for (size_t i = 0; i < lineNumber; ++i)
 	{
-		const ConstraintLine& constraint = lines[i];
+		const SConstraintLine& constraint = lines[i];
 
 		const float determinant = line.direction.Cross(constraint.direction);
 		const float distanceSigned = constraint.direction.Cross(line.point - constraint.point);
 
 		// parallel constraints
-		if (fabs_tpl(determinant) < 0.00001f)
+		if (fabs_tpl(determinant) < kEpsilon)
 		{
 			if (distanceSigned < 0.0f)
 				return false;
@@ -946,8 +1015,8 @@ bool CollisionAvoidanceSystem::FindLineCandidate(const ConstraintLine* lines, si
 	return true;
 }
 
-bool CollisionAvoidanceSystem::FindCandidate(const ConstraintLine* lines, size_t lineCount, float radius, const Vec2& velocity,
-                                             Vec2& candidate) const
+bool CCollisionAvoidanceSystem::FindCandidate(const SConstraintLine* lines, size_t lineCount, float radius, const Vec2& velocity,
+	Vec2& candidate) const
 {
 	if (velocity.GetLength2() > sqr(radius))
 		candidate = velocity.GetNormalized() * radius;
@@ -956,7 +1025,7 @@ bool CollisionAvoidanceSystem::FindCandidate(const ConstraintLine* lines, size_t
 
 	for (size_t i = 0; i < lineCount; ++i)
 	{
-		const ConstraintLine& constraint = lines[i];
+		const SConstraintLine& constraint = lines[i];
 
 		if (LeftOf(constraint.direction, candidate - constraint.point) < 0.0f)
 		{
@@ -968,8 +1037,8 @@ bool CollisionAvoidanceSystem::FindCandidate(const ConstraintLine* lines, size_t
 	return true;
 }
 
-void CollisionAvoidanceSystem::DebugDrawConstraintLine(const Vec3& agentLocation, const ConstraintLine& line,
-                                                       const ColorB& color)
+void CCollisionAvoidanceSystem::DebugDrawConstraintLine(const Vec3& agentLocation, const SConstraintLine& line,
+	const ColorB& color)
 {
 	CDebugDrawContext dc;
 
@@ -984,7 +1053,7 @@ void CollisionAvoidanceSystem::DebugDrawConstraintLine(const Vec3& agentLocation
 	dc->DrawArrow(v1, Vec2(-line.direction.y, line.direction.x) * 0.35f, 0.095f, color);
 }
 
-void CollisionAvoidanceSystem::DebugDraw()
+void CCollisionAvoidanceSystem::DebugDraw()
 {
 	CDebugDrawContext dc;
 
@@ -992,31 +1061,28 @@ void CollisionAvoidanceSystem::DebugDraw()
 	dc->SetDepthWrite(false);
 	dc->SetDepthTest(false);
 
-	Agents::iterator it = m_agents.begin();
-	Agents::iterator end = m_agents.end();
-	uint32 index = 0;
+	for (const SObstacleParams& obstacle : m_obstacles)
+	{
+		dc->DrawRangeCircle(obstacle.currentLocation + Vec3(0, 0, 0.3f), obstacle.radius, 0.1f, ColorF(0.8f, 0.196078f, 0.6f, 0.5f), ColorF(0.8f, 0.196078f, 0.196078f), true);
+	}
 
 	ColorB desiredColor = ColorB(Col_Black, 1.0f);
 	ColorB newColor = ColorB(Col_DarkGreen, 0.5f);
 
-	for (; it != end; ++it, ++index)
+	for (size_t index = 0; index < m_agents.size(); ++index)
 	{
-		Agent& agent = *it;
+		const SAgentParams& agent = m_agents[index];
 
-		if (IAIObject* object = gAIEnv.pAIObjectManager->GetAIObject(m_agentObjectIDs[index]))
-		{
-			if (CAIActor* actor = object->CastToCAIActor())
-			{
-				Vec3 agentLocation = actor->GetPhysicsPos();
-				Vec2 agentAvoidanceVelocity = m_agentAvoidanceVelocities[index];
+		const Vec3 agentLocation = agent.currentLocation;
+		const Vec2 agentAvoidanceVelocity = m_agentAvoidanceVelocities[index];
 
-				//if ((agent.desiredVelocity - agentAvoidanceVelocity).GetLength2() > 0.000001f)
-				dc->DrawArrow(agentLocation, agent.desiredVelocity, 0.135f, desiredColor);
+		dc->DrawArrow(agentLocation, agent.desiredVelocity, 0.135f, desiredColor);
+		dc->DrawArrow(agentLocation, agentAvoidanceVelocity, 0.2f, newColor);
 
-				dc->DrawArrow(agentLocation, agentAvoidanceVelocity, 0.2f, newColor);
-
-				dc->DrawRangeCircle(agentLocation + Vec3(0, 0, 0.3f), agent.radius, 0.1f, ColorF(0.196078f, 0.8f, 0.6f, 0.5f), ColorF(0.196078f, 0.196078f, 0.8f), true);
-			}
-		}
+		dc->DrawRangeCircle(agentLocation + Vec3(0, 0, 0.3f), agent.radius, 0.1f, ColorF(0.196078f, 0.8f, 0.6f, 0.5f), ColorF(0.196078f, 0.196078f, 0.8f), true);
 	}
 }
+
+} // namespace CollisionAvoidance
+} // namespace AI
+} // namespace Cry

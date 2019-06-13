@@ -1,42 +1,70 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-/*************************************************************************
-   -------------------------------------------------------------------------
-   $Id$
-   $DateTime$
-   Description:	This is the interface which the launcher.exe will interact
-                with to start the game framework. For an implementation of
-                this interface refer to CryAction.
-
-   -------------------------------------------------------------------------
-   History:
-   - 20:7:2004   10:34 : Created by Marco Koegler
-   - 3:8:2004		11:29 : Taken-over by Márcio Martins
-
-*************************************************************************/
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <CryEntitySystem/IEntityComponent.h>
-#include <CryGame/IGameStartup.h> // <> required for Interfuscator
 #include <CryGame/IGameFrameworkExtension.h>
 #include <CryMath/Cry_Color.h>
 #include <CrySystem/TimeValue.h>
+#include <CryLobby/CommonICryMatchMaking.h>
+#include <CryNetwork/INetwork.h>
 
-struct pe_explosion;
-struct IPhysicalEntity;
 struct EventPhysRemoveEntityParts;
+struct IActionMapManager;
+struct IActor;
+struct IActorSystem;
+struct IAnimationGraphState;
+struct IAnimationStateNodeFactory;
+struct ICheckpointSystem;
 struct ICombatLog;
-struct IAIActorProxy;
-struct ICooperativeAnimationManager;
-struct IGameSessionHandler;
-struct IRealtimeRemoteUpdate;
-struct IForceFeedbackSystem;
 struct ICommunicationVoiceLibrary;
+struct ICooperativeAnimationManager;
 struct ICustomActionManager;
 struct ICustomEventManager;
-struct ISerializeHelper;
+struct IDebrisMgr;
+struct IDebugHistoryManager;
+struct IEffectSystem;
+struct IFlowSystem;
+struct IForceFeedbackSystem;
+struct IGame;
+struct IGameChannel;
+struct IGameClientNub;
+struct IGameObject;
+struct IGameObjectExtension;
+struct IGameObjectSystem;
+struct IGameplayRecorder;
+struct IGameRules;
+struct IGameRulesSystem;
+struct IGameServerNub;
+struct IGameSessionHandler;
+struct IGameStatistics;
+struct IGameToEditorInterface;
+struct IGameTokenSystem;
 struct IGameVolumes;
+struct IItem;
+struct IItemSystem;
+struct ILanQueryListener;
+struct ILevelSystem;
+struct ILoadGame;
+struct IMannequin;
+struct IMaterialEffects;
+struct INetChannel;
+struct INetNub;
+struct INetworkedClientListener;
+struct IPhysicalEntity;
+struct IPlayerProfileManager;
+struct IRealtimeRemoteUpdate;
+struct ISaveGame;
+struct IScriptTable;
+struct ISerializeHelper;
+struct ISystem;
+struct ITimeDemoRecorder;
+struct IUIDraw;
+struct IVehicle;
+struct IVehicleSystem;
+struct IViewSystem;
+struct IWeapon;
+struct pe_explosion;
 
 //! Define to control the logging of breakability code.
 #define BREAK_LOGGING 0
@@ -90,9 +118,9 @@ struct IGameObjectExtensionCreatorBase
   template<class T>                                                                     \
   struct C ## name ## Creator : public I ## name ## Creator                             \
   {                                                                                     \
-    IGameObjectExtension* Create(IEntity *pEntity) override                           \
+    IGameObjectExtension* Create(IEntity *pEntity) override                             \
     {                                                                                   \
-      return pEntity->CreateComponentClass<T>();                                        \
+      return pEntity->GetOrCreateComponentClass<T>();                                   \
     }                                                                                   \
     void GetGameObjectExtensionRMIData(void** ppRMI, size_t * nCount) override          \
     {                                                                                   \
@@ -106,50 +134,11 @@ struct IGameObjectExtensionCreatorBase
     RegisterFactory(name, &creator, isAI);                                              \
   }
 
-struct ISystem;
-struct IUIDraw;
-struct ILanQueryListener;
-struct IActor;
-struct IActorSystem;
-struct IItem;
-struct IGameRules;
-struct IWeapon;
-struct IItemSystem;
-struct ILevelSystem;
-struct IActionMapManager;
-struct IGameChannel;
-struct IViewSystem;
-struct IVehicle;
-struct IVehicleSystem;
-struct IGameRulesSystem;
-struct IFlowSystem;
-struct IGameTokenSystem;
-struct IEffectSystem;
-struct IGameObject;
-struct IGameObjectExtension;
-struct IGameObjectSystem;
-struct IGameplayRecorder;
-struct IAnimationStateNodeFactory;
-struct ISaveGame;
-struct ILoadGame;
-struct IGameObject;
-struct IMaterialEffects;
-struct INetChannel;
-struct IPlayerProfileManager;
-struct IAnimationGraphState;
-struct INetNub;
-struct ISaveGame;
-struct ILoadGame;
-struct IDebugHistoryManager;
-struct IDebrisMgr;
-struct ISubtitleManager;
-struct IDialogSystem;
-struct IGameStatistics;
-struct ICheckpointSystem;
-struct IGameToEditorInterface;
-struct IMannequin;
-struct IScriptTable;
-struct ITimeDemoRecorder;
+struct SEntitySchedulingProfiles
+{
+	uint32 normal;
+	uint32 owned;
+};
 
 class ISharedParamsManager;
 
@@ -196,7 +185,7 @@ enum ELoadGameResult
 	eLGR_CantQuick_NeedFullLoad
 };
 
-static const EntityId LOCAL_PLAYER_ENTITY_ID = 0x7777u; //!< 30583 between static and dynamic EntityIDs.
+static const EntityId LOCAL_PLAYER_ENTITY_ID = 2;
 
 struct SGameContextParams
 {
@@ -305,6 +294,7 @@ struct IGameWarningsListener
 	// </interfuscator:shuffle>
 };
 
+//! \cond INTERNAL
 //! SRenderNodeCloneLookup is used to associate original IRenderNodes (used in the game) with cloned IRenderNodes, to allow breaks to be played back.
 struct SRenderNodeCloneLookup
 {
@@ -350,6 +340,7 @@ struct IGameStatsConfig
 	virtual const char* GetValueNameByCode(const char* cat, int id) = 0;
 	// </interfuscator:shuffle>
 };
+//! \endcond
 
 struct IBreakReplicator
 {
@@ -359,28 +350,114 @@ struct IBreakReplicator
 	// </interfuscator:shuffle>
 };
 
+//! Persistent debug exposes functionality for drawing debug geometry over a specific period of time, without having to continuously re-render manually each frame.
+//! This can be extremely useful to debug gameplay logic.
 struct IPersistantDebug
 {
 	// <interfuscator:shuffle>
 	virtual ~IPersistantDebug(){}
-	virtual void Begin(const char* name, bool clear) = 0;
+	//! Starts a persistent debug drawing group
+	//! It is mandatory to call this function before invoking any of the Add* functions!
+	//! \param szName The name of the group
+	//! \param clear Whether or not to clear any persistent drawing done to the specified group before
+	virtual void Begin(const char* szName, bool clear) = 0;
+	//! Adds a persistent sphere at the specified location
+	//! \param pos The world coordinates to draw this object at
+	//! \param radius Radius of the sphere
+	//! \param clr Color of the debug geometry
+	//! \param timeout Timeout in seconds after which the item will stop rendering
 	virtual void AddSphere(const Vec3& pos, float radius, ColorF clr, float timeout) = 0;
+	//! Adds a persistent direction indicator at the specified location
+	//! \param pos The world coordinates to draw this object at
+	//! \param radius Radius of the directional indicator
+	//! \param dir Directional vector we want to visualize
+	//! \param clr Color of the debug geometry
+	//! \param timeout Timeout in seconds after which the item will stop rendering
 	virtual void AddDirection(const Vec3& pos, float radius, const Vec3& dir, ColorF clr, float timeout) = 0;
+	//! Adds a persistent line at the specified coordinates
+	//! \param pos1 Origin of the line, in world coordinates
+	//! \param pos2 End point of the line, in world coordinates
+	//! \param clr Color of the debug geometry
+	//! \param timeout Timeout in seconds after which the item will stop rendering
 	virtual void AddLine(const Vec3& pos1, const Vec3& pos2, ColorF clr, float timeout) = 0;
+	//! Adds a planar disc to the specified coordinates
+	//! \param pos The world coordinates to draw this object at
+	//! \param innerRadius The inner radius of the disc
+	//! \param outerRadius The outer radius of the disc
+	//! \param clr Color of the debug geometry
+	//! \param timeout Timeout in seconds after which the item will stop rendering
 	virtual void AddPlanarDisc(const Vec3& pos, float innerRadius, float outerRadius, ColorF clr, float timeout) = 0;
+	//! \param pos The world coordinates to draw this object at
+	//! \param dir The direction in which the cone will point
+	//! \param baseRadius Radius of the cone at its base
+	//! \param height Height of the cone
+	//! \param clr Color of the debug geometry
+	//! \param timeout Timeout in seconds after which the item will stop rendering
 	virtual void AddCone(const Vec3& pos, const Vec3& dir, float baseRadius, float height, ColorF clr, float timeout) = 0;
+	//! Adds a cylinder at the specified coordinates
+	//! \param pos The world coordinates to draw this object at
+	//! \param dir Direction in which the cylinder will point
+	//! \param radius Radius of the cylinder
+	//! \param height Height of the cylinder
+	//! \param clr Color of the debug geometry
+	//! \param timeout Timeout in seconds after which the item will stop rendering
 	virtual void AddCylinder(const Vec3& pos, const Vec3& dir, float radius, float height, ColorF clr, float timeout) = 0;
-	virtual void Add2DText(const char* text, float size, ColorF clr, float timeout) = 0;
+	//! Adds 2D text on screen
+	//! \param szText Text message to draw
+	//! \param size Size of the text
+	//! \param clr Color of the debug geometry
+	//! \param timeout Timeout in seconds after which the item will stop rendering
+	virtual void Add2DText(const char* szText, float size, ColorF clr, float timeout) = 0;
+	//! Adds 2D text to the specified screen coordinates
+	//! \param x X axis coordinate in screen space
+	//! \param y Y axis coordinate in screen space
+	//! \param size Size of the text
+	//! \param clr Color of the debug geometry
+	//! \param timeout Timeout in seconds after which the item will stop rendering
+	//! \param fmt... printf style text message to be drawn on screen
 	virtual void AddText(float x, float y, float size, ColorF clr, float timeout, const char* fmt, ...) = 0;
+	//! Adds 3D text to the specified world coordinates
+	//! \param pos The world coordinates to draw this object at
+	//! \param size Size of the text
+	//! \param clr Color of the debug geometry
+	//! \param timeout Timeout in seconds after which the item will stop rendering
+	//! \param fmt... printf style text message to be drawn on screen
 	virtual void AddText3D(const Vec3& pos, float size, ColorF clr, float timeout, const char* fmt, ...) = 0;
+	//! Adds a 2D line on screen
+	//! \param x1 X axis coordinate in screen space where the line starts
+	//! \param y1 Y axis coordinate in screen space where the line starts
+	//! \param x2 X axis coordinate in screen space where the line ends
+	//! \param y2 Y axis coordinate in screen space where the line ends
+	//! \param clr Color of the debug geometry
+	//! \param timeout Timeout in seconds after which the item will stop rendering
 	virtual void Add2DLine(float x1, float y1, float x2, float y2, ColorF clr, float timeout) = 0;
+	//! Adds a visualized quaternion to the specified coordinates
+	//! \param pos The world coordinates to draw this object at
+	//! \param q The quaternion to visualize
+	//! \param r Radius of the helper
+	//! \param clr Color of the debug geometry
+	//! \param timeout Timeout in seconds after which the item will stop rendering
 	virtual void AddQuat(const Vec3& pos, const Quat& q, float r, ColorF clr, float timeout) = 0;
+	//! Adds an axis-aligned bounding box
+	//! \param min Starting coordinates of the bounding box
+	//! \param min End coordinates of the bounding box
+	//! \param clr Color of the debug geometry
+	//! \param timeout Timeout in seconds after which the item will stop rendering
 	virtual void AddAABB(const Vec3& min, const Vec3& max, ColorF clr, float timeout) = 0;
+	//! Adds a tag above the specified entity, using the specified parameters
+	//! \param params Parameters describing the tag
+	//! \param The context in which we'll add the tag
 	virtual void AddEntityTag(const SEntityTagParams& params, const char* tagContext = "") = 0;
+	//! Clears all entity tags for the specified entity
 	virtual void ClearEntityTags(EntityId entityId) = 0;
+	//! Clears a specific tag for the specified entity
 	virtual void ClearStaticTag(EntityId entityId, const char* staticId) = 0;
+	//! Clears all entity tags by context
 	virtual void ClearTagContext(const char* tagContext) = 0;
+	//! Clears all entity tags by context, for a specific entity instance
 	virtual void ClearTagContext(const char* tagContext, EntityId entityId) = 0;
+	virtual void Update(float frameTime) = 0;
+	virtual void PostUpdate(float frameTime) = 0;
 	virtual void Reset() = 0;
 	// </interfuscator:shuffle>
 };
@@ -389,15 +466,11 @@ struct IPersistantDebug
 enum EEntityEventPriority
 {
 	EEntityEventPriority_GameObject = 0,
-	EEntityEventPriority_StartAnimProc,
-	EEntityEventPriority_AnimatedCharacter,
-	EEntityEventPriority_Vehicle,       //!< Vehicles can potentially create move request too!
-	EEntityEventPriority_Actor,         //!< Actor must always be higher than AnimatedCharacter.
 	EEntityEventPriority_PrepareAnimatedCharacterForUpdate,
-
-	EEntityEventPriority_Last,
-
-	EEntityEventPriority_Client = 100   //!< Special variable for the client to tag onto priorities when needed.
+	EEntityEventPriority_Actor,         //!< Actor must always be higher than AnimatedCharacter.
+	EEntityEventPriority_Vehicle,       //!< Vehicles can potentially create move request too!
+	EEntityEventPriority_AnimatedCharacter,
+	EEntityEventPriority_StartAnimProc
 };
 
 //! When you add stuff here, you must also update in CCryAction::Init.
@@ -440,6 +513,7 @@ enum EActionEvent
 	eAE_resetBegin,
 	eAE_resetEnd,
 	eAE_resetProgress,
+	eAE_resetLoadedLevel,    //!< m_value -> 1 if loading new level, 0 otherwise
 	eAE_preSaveGame,         //!< m_value -> ESaveGameReason.
 	eAE_postSaveGame,        //!< m_value -> ESaveGameReason, m_description: 0 (failed), != 0 (successful).
 	eAE_inGame,
@@ -505,6 +579,20 @@ struct IBreakEventListener
 	virtual void OnSetSubObjHideMask(IEntity* pEntity, int nSlot, hidemask nSubObjHideMask) = 0;
 };
 
+// Interface for the CryAction engine module
+struct IGameFrameworkEngineModule : public Cry::IDefaultModule
+{
+	CRYINTERFACE_DECLARE_GUID(IGameFrameworkEngineModule, "CE1E93CB-2665-4F76-809D-070F11418EB9"_cry_guid);
+};
+
+struct IGameLevelLoadListener
+{
+	virtual ~IGameLevelLoadListener(){}
+	virtual EContextEstablishTaskResult OnLoadingStepClient(EContextViewState currentState) = 0;
+	virtual EContextEstablishTaskResult OnLoadingStepServer(EContextViewState currentState, uint16 channelId) = 0;
+	virtual void OnLoadingFailed(bool server, bool hasEntered) = 0;
+};
+
 //! Interface which exposes the CryAction subsystems.
 struct IGameFramework
 {
@@ -524,27 +612,29 @@ struct IGameFramework
 	// <interfuscator:shuffle>
 	virtual ~IGameFramework(){}
 
-	//! Entry function to the game framework.
-	//! Entry function used to create a new instance of the game framework from outside its own DLL.
-	//! \return New instance of the game framework.
-	typedef IGameFramework*(* TEntryFunction)();
+	//! Called when the engine is shutting down to finalize the game framework
+	virtual void ShutDown() = 0;
 
-	//! Initializes the engine and starts the main engine loop
-	//! Only returns after the engine loop has been terminated!
-	//! The game framework is automatically shut down before returning
-	//! \param startupParams Pointer to SSystemInitParams structure containing system initialization setup!
-	//! \return 0 if something went wrong with initialization, non-zero otherwise.
-	virtual bool StartEngine(SSystemInitParams& startupParams) = 0;
+	//! Called just before calling ISystem::RenderBegin, after the renderer has been notified to prepare for a new frame
+	virtual void PreSystemUpdate() = 0;
 
-	virtual void ShutdownEngine() = 0;
+	//! Updates the main game systems
+	//! Called immediately after ISystem::Update, when core engine systems have been updated
+	//! \return True if the engine should continue running, otherwise false.
+	virtual bool PostSystemUpdate(bool hasFocus, CEnumFlags<ESystemUpdateFlags> updateFlags) = 0;
 
-	//! Manually starts update of the engine, aka starts a new frame
-	//! This is automatically handled in the game loop inside StartEngine
-	//! Currently this is used by the Editor since it manages its own update loop.
-	//! \param[in] haveFocus true if the game has the input focus.
-	//! \param[in] updateFlags - Flags specifying how to update.
-	//! \return 0 if something went wrong with initialization, non-zero otherwise.
-	virtual int ManualFrameUpdate(bool bHaveFocus, unsigned int updateFlags) = 0;
+	//! Called when systems depending on rendering have been updated, and we are about to use the system camera
+	//! This is the final chance to modify the camera before it is passed to the 3D engine for occlusion culling
+	virtual void PreFinalizeCamera(CEnumFlags<ESystemUpdateFlags> updateFlags) = 0;
+
+	//! Called just before ISystem::Render
+	virtual void PreRender() = 0;
+
+	//! Called after ISystem::Render, when the renderer should now have started rendering
+	virtual void PostRender(CEnumFlags<ESystemUpdateFlags> updateFlags) = 0;
+
+	//! Called after ISystem::RenderEnd, when the renderer has been notified that the frame is final
+	virtual void PostRenderSubmit() = 0;
 
 	//! Used to notify the framework that we're switching between single and multi player.
 	virtual void InitGameType(bool multiplayer, bool fromInit) = 0;
@@ -634,17 +724,9 @@ struct IGameFramework
 	//! \return Pointer to IMaterialEffects interface.
 	virtual IMaterialEffects* GetIMaterialEffects() = 0;
 
-	//! Returns a pointer to the IDialogSystem interface
-	//! \return Pointer to IDialogSystem interface.
-	virtual IDialogSystem* GetIDialogSystem() = 0;
-
 	//! Returns a pointer to the IPlayerProfileManager interface.
 	//! \return Pointer to IPlayerProfileManager interface.
 	virtual IPlayerProfileManager* GetIPlayerProfileManager() = 0;
-
-	//! Returns a pointer to the ISubtitleManager interface.
-	//! \return Pointer to ISubtitleManager interface.
-	virtual ISubtitleManager* GetISubtitleManager() = 0;
 
 	//! Returns a pointer to the IRealtimeUpdate Interface.
 	virtual IRealtimeRemoteUpdate* GetIRealTimeRemoteUpdate() = 0;
@@ -674,6 +756,9 @@ struct IGameFramework
 
 	// Get game implementation, if any
 	virtual IGame* GetIGame() = 0;
+
+	// Gets the handle for the Game DLL
+	virtual void* GetGameModuleHandle() const = 0;
 
 	//! Initialises a game context.
 	//! \param pGameStartParams Parameters for configuring the game.
@@ -748,9 +833,6 @@ struct IGameFramework
 	//! Returns the INetChannel associated with the client (or NULL)
 	virtual INetChannel* GetClientChannel() const = 0;
 
-	//! Wrapper for INetContext::DelegateAuthority()
-	virtual void DelegateAuthority(EntityId entityId, uint16 channelId) = 0;
-
 	//! Returns the (synched) time of the server (so use this for timed events, such as MP round times)
 	virtual CTimeValue GetServerTime() = 0;
 
@@ -765,6 +847,12 @@ struct IGameFramework
 	//! Retrieve a pointer to the INetChannel associated with the specified Game Server Channel Id.
 	//! \return Pointer to INetChannel associated with the specified Game Server Channel Id.
 	virtual INetChannel* GetNetChannel(uint16 channelId) = 0;
+
+	// HACK: CNetEntity calls this when binding a player's entity to the network.
+	virtual void SetServerChannelPlayerId(uint16 channelId, EntityId id) = 0;
+
+	// TODO: Move profiles into CNetEntity and get rid of this.
+	virtual const SEntitySchedulingProfiles* GetEntitySchedulerProfiles(IEntity* pEnt) = 0;
 
 	//! Retrieve an IGameObject from an entity id
 	//! \return Pointer to IGameObject of the entity if it exists (or NULL otherwise)
@@ -785,6 +873,10 @@ struct IGameFramework
 	//! Retrieve pointer to the ITimeDemoRecorder (or NULL)
 	virtual ITimeDemoRecorder* GetITimeDemoRecorder() const = 0;
 
+	//! Set different implementation of ITimeDemoRecorder. IGameFramework doesn't assume ownership over the object.
+	//! \return Previous implementation of ITimeDemoRecorder
+	virtual ITimeDemoRecorder* SetITimeDemoRecorder(ITimeDemoRecorder* pRecorder) = 0;
+
 	//! Save the current game to disk
 	virtual bool SaveGame(const char* path, bool quick = false, bool bForceImmediate = true, ESaveGameReason reason = eSGR_QuickSave, bool ignoreDelay = false, const char* checkPoint = NULL) = 0;
 
@@ -792,6 +884,8 @@ struct IGameFramework
 	virtual ELoadGameResult LoadGame(const char* path, bool quick = false, bool ignoreDelay = false) = 0;
 
 	virtual TSaveGameName CreateSaveGameName() = 0;
+
+	virtual void ScheduleEndLevel(const char* nextLevel) = 0;
 
 	//! Schedules the level load for the next level
 	virtual void ScheduleEndLevelNow(const char* nextLevel) = 0;
@@ -838,7 +932,9 @@ struct IGameFramework
 	virtual void                  UnregisterListener(IGameFrameworkListener* pGameFrameworkListener) = 0;
 
 	virtual INetNub*              GetServerNetNub() = 0;
+	virtual IGameServerNub*       GetIGameServerNub() = 0;
 	virtual INetNub*              GetClientNetNub() = 0;
+	virtual IGameClientNub*       GetIGameClientNub() = 0;
 
 	virtual void                  SetGameGUID(const char* gameGUID) = 0;
 	virtual const char*           GetGameGUID() = 0;
@@ -934,21 +1030,30 @@ struct IGameFramework
 		return cryinterface_cast<ExtensionInterface>(QueryExtensionInterfaceById(interfaceId)).get();
 	}
 
+	// sets game level loader
+	virtual void SetGameLevelLoadListener(IGameLevelLoadListener* pTasks) = 0;
+	virtual IGameLevelLoadListener* GetGameLevelLoadListener() const = 0;
+
+
 	virtual void AddNetworkedClientListener(INetworkedClientListener& listener) = 0;
 	virtual void RemoveNetworkedClientListener(INetworkedClientListener& listener) = 0;
 
-protected:
+	virtual void DoInvokeRMI(_smart_ptr<IRMIMessageBody> pBody, unsigned where, int channel, const bool isGameObjectRmi) = 0;
+
+	virtual void OnActionEvent(const SActionEvent& ev) = 0;
+
 	//! Retrieves an extension interface by interface id.
 	//! Internal, client uses 'QueryExtension<ExtensionInterface>()
 	//! \param interfaceID Interface id.
 	virtual ICryUnknownPtr QueryExtensionInterfaceById(const CryInterfaceID& interfaceID) const = 0;
+
+	virtual IScriptTable* GetActionScriptBindTable() = 0;
 
 	// </interfuscator:shuffle>
 };
 
 ILINE bool IsDemoPlayback()
 {
-	ISystem* pSystem = GetISystem();
 	INetContext* pNetContext = gEnv->pGameFramework->GetNetContext();
 	return pNetContext ? pNetContext->IsDemoPlayback() : false;
 }

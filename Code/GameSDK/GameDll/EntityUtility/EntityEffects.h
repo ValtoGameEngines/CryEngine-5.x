@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -17,6 +17,12 @@ History:
 #define _ENTITY_EFFECTS_H_
 
 #include "ItemString.h"
+#include <CryEntitySystem/IEntityBasicTypes.h>
+
+struct IParticleEmitter;
+struct IParticleEffect;
+struct IRenderNode;
+struct ILightSource;
 
 namespace EntityEffects
 {

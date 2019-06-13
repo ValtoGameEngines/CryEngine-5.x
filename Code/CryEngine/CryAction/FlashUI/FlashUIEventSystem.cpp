@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   FlashUIEventSystem.cpp
@@ -34,8 +34,12 @@ uint CFlashUIEventSystem::RegisterEvent(const SUIEventDesc& sEventDesc)
 //------------------------------------------------------------------------------------
 void CFlashUIEventSystem::RegisterListener(IUIEventListener* pListener, const char* name)
 {
+#if defined(USE_CRY_ASSERT)
 	const bool ok = m_listener.Add(pListener, name);
 	CRY_ASSERT_MESSAGE(ok, "Listener already registered!");
+#else
+	m_listener.Add(pListener, name);
+#endif
 }
 
 //------------------------------------------------------------------------------------
@@ -48,7 +52,7 @@ void CFlashUIEventSystem::UnregisterListener(IUIEventListener* pListener)
 //------------------------------------------------------------------------------------
 SUIArgumentsRet CFlashUIEventSystem::SendEvent(const SUIEvent& event)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	SUIArguments ret;
 	if (gEnv->IsEditor())

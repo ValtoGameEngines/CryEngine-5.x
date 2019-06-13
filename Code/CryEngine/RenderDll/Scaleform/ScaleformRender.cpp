@@ -1,43 +1,47 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
-#include "DriverD3D.h"
 #include "ScaleformPlayback.h"
 
 #if RENDERER_SUPPORT_SCALEFORM
 #include "ScaleformRender.h"
-#include "DeviceManager/TempDynBuffer.h"
-
-#define SF_CREATE_VERTEX_DECL(instance, inputElements, pDecl)																\
-	GetDevice().CreateInputLayout(inputElements, CRY_ARRAY_COUNT(inputElements), instance->m_pShaderData, instance->m_nDataSize, & pDecl);
 
 static const D3D11_INPUT_ELEMENT_DESC VertexDeclXY16i[] =
 {
-	{ "POSITION", 0, DXGI_FORMAT_R16G16_SINT,    0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+	{ "POSITION", 0, DXGI_FORMAT_R16G16_SINT,    0,  0, D3D11_INPUT_PER_VERTEX_DATA, 0 }
 };
-static const D3D11_INPUT_ELEMENT_DESC VertexDeclXY32f[] =
-{
-	{ "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT,   0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 }
-};
+
 static const D3D11_INPUT_ELEMENT_DESC VertexDeclXY16iC32[] =
 {
-	{ "POSITION", 0, DXGI_FORMAT_R16G16_SINT,    0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-	{ "COLOR",    0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 4, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+	{ "POSITION", 0, DXGI_FORMAT_R16G16_SINT,    0,  0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+	{ "COLOR",    0, DXGI_FORMAT_R8G8B8A8_UNORM, 0,  4, D3D11_INPUT_PER_VERTEX_DATA, 0 }
 };
+
 static const D3D11_INPUT_ELEMENT_DESC VertexDeclXY16iCF32[] =
 {
-	{ "POSITION", 0, DXGI_FORMAT_R16G16_SINT,    0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-	{ "COLOR",    0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 4, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-	{ "COLOR",    1, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 8, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+	{ "POSITION", 0, DXGI_FORMAT_R16G16_SINT,    0,  0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+	{ "COLOR",    0, DXGI_FORMAT_R8G8B8A8_UNORM, 0,  4, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+	{ "COLOR",    1, DXGI_FORMAT_R8G8B8A8_UNORM, 0,  8, D3D11_INPUT_PER_VERTEX_DATA, 0 }
 };
+
 static const D3D11_INPUT_ELEMENT_DESC VertexDeclGlyph[] =
 {
-	{ "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT,   0, 0,  D3D11_INPUT_PER_VERTEX_DATA, 0 },
-	{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,   0, 8,  D3D11_INPUT_PER_VERTEX_DATA, 0 },
+	{ "POSITION", 0, DXGI_FORMAT_R32G32_FLOAT,   0,  0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+	{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,   0,  8, D3D11_INPUT_PER_VERTEX_DATA, 0 },
 	{ "COLOR",    0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 16, D3D11_INPUT_PER_VERTEX_DATA, 0 }
 };
 
 //////////////////////////////////////////////////////////////////////////
+
+inline uint32 SF_AdjustBlendStateForMeasureOverdraw(uint32 blendModeStates)
+{
+	if (CRenderer::CV_r_measureoverdraw)
+	{
+		blendModeStates = (blendModeStates & ~GS_BLEND_MASK) | (GS_BLSRC_ONE | GS_BLDST_ONE);
+		blendModeStates &= ~GS_ALPHATEST;
+	}
+	return blendModeStates;
+}
 
 CRenderPrimitive* SSF_ResourcesD3D::CRenderPrimitiveHeap::GetUsablePrimitive(int key)
 {
@@ -61,6 +65,12 @@ void SSF_ResourcesD3D::CRenderPrimitiveHeap::FreeUsedPrimitives(int key)
 	}
 
 	m_freeList.splice_after(m_freeList.before_begin(), m_useList[key]);
+}
+
+void SSF_ResourcesD3D::CRenderPrimitiveHeap::Clear()
+{
+	m_useList.clear();
+	m_freeList.clear();
 }
 
 CConstantBuffer* SSF_ResourcesD3D::STransientConstantBufferHeap::GetUsableConstantBuffer()
@@ -138,14 +148,13 @@ SSF_ResourcesD3D::SSF_ResourcesD3D(CD3D9Renderer* pRenderer)
 	, m_shTech_ShadowonlyMulHighlight_Box2("ShadowonlyMulHighlight_Box2")
 
 	, m_pShader(0)
-	, m_pQuery(0)
 {
-	m_vertexDecls[IScaleformPlayback::Vertex_None     ] = eVF_Unknown;
-	m_vertexDecls[IScaleformPlayback::Vertex_XY16i    ] = eVF_Unknown;
-	m_vertexDecls[IScaleformPlayback::Vertex_XY32f    ] = eVF_Unknown;
-	m_vertexDecls[IScaleformPlayback::Vertex_XY16iC32 ] = eVF_Unknown;
-	m_vertexDecls[IScaleformPlayback::Vertex_XY16iCF32] = eVF_Unknown;
-	m_vertexDecls[IScaleformPlayback::Vertex_Glyph    ] = eVF_Unknown;
+	m_vertexDecls[IScaleformPlayback::Vertex_None     ] = InputLayoutHandle::Unspecified;
+	m_vertexDecls[IScaleformPlayback::Vertex_XY16i    ] = InputLayoutHandle::Unspecified;
+	m_vertexDecls[IScaleformPlayback::Vertex_XY32f    ] = InputLayoutHandle::Unspecified;
+	m_vertexDecls[IScaleformPlayback::Vertex_XY16iC32 ] = InputLayoutHandle::Unspecified;
+	m_vertexDecls[IScaleformPlayback::Vertex_XY16iCF32] = InputLayoutHandle::Unspecified;
+	m_vertexDecls[IScaleformPlayback::Vertex_Glyph    ] = InputLayoutHandle::Unspecified;
 	
 	m_pVertexDecls[IScaleformPlayback::Vertex_None     ] = nullptr;
 	m_pVertexDecls[IScaleformPlayback::Vertex_XY16i    ] = nullptr;
@@ -217,7 +226,10 @@ SSF_ResourcesD3D::~SSF_ResourcesD3D()
 	SAFE_RELEASE(m_pVertexDecls[IScaleformPlayback::Vertex_XY16iCF32]);
 	SAFE_RELEASE(m_pVertexDecls[IScaleformPlayback::Vertex_Glyph    ]);
 
-	SAFE_RELEASE(m_pQuery);
+	m_PrimitiveHeap.Clear();
+
+	FreeColorSurfaces();
+	FreeStencilSurfaces();
 }
 
 CShader* SSF_ResourcesD3D::GetShader(CD3D9Renderer* pRenderer)
@@ -225,11 +237,27 @@ CShader* SSF_ResourcesD3D::GetShader(CD3D9Renderer* pRenderer)
 	return pRenderer->m_cEF.s_ShaderScaleForm;
 }
 
+void SSF_ResourcesD3D::FreeColorSurfaces()
+{
+	for (auto& pTexture : m_renderTargets)
+		SAFE_RELEASE(pTexture);
+
+	m_renderTargets.clear();
+}
+
+void SSF_ResourcesD3D::FreeStencilSurfaces()
+{
+	for (auto& pTexture : m_depthTargets)
+		SAFE_RELEASE(pTexture);
+
+	m_depthTargets.clear();
+}
+
 CTexture* SSF_ResourcesD3D::GetColorSurface(CD3D9Renderer* pRenderer, int nWidth, int nHeight, ETEX_Format eFormat, int nMaxWidth, int nMaxHeight)
 {
 	CryCriticalSectionNonRecursive threadSafePool;
 
-	CTexture* pTex = NULL;
+	CTexture* pTex = nullptr;
 	uint32 i;
 	int nBestX = -1;
 	int nBestY = -1;
@@ -260,10 +288,10 @@ CTexture* SSF_ResourcesD3D::GetColorSurface(CD3D9Renderer* pRenderer, int nWidth
 
 	bool allowUsingLargerRT = true;
 
-#if defined(CRY_OPENGL_DO_NOT_ALLOW_LARGER_RT)
+#if defined(OGL_DO_NOT_ALLOW_LARGER_RT)
 	allowUsingLargerRT = false;
-#elif defined(SUPPORT_D3D_DEBUG_RUNTIME)
-	if (pRenderer->CV_d3d11_debugruntime)
+#elif defined(DX11_ALLOW_D3D_DEBUG_RUNTIME)
+	if (pRenderer->CV_r_EnableDebugLayer)
 		allowUsingLargerRT = false;
 #endif
 //	if (bExactMatch)
@@ -291,12 +319,7 @@ CTexture* SSF_ResourcesD3D::GetColorSurface(CD3D9Renderer* pRenderer, int nWidth
 
 	if (i == m_renderTargets.size())
 	{
-		//allocate new RT
-		int texID = pRenderer->CreateRenderTarget(nWidth, nHeight, Clr_Transparent, eFormat);
-		pTex = static_cast<CTexture*>(pRenderer->EF_GetTextureByID(texID));
-
-		//prevent temp buffer stomping on back buffer
-		pTex->SetRenderTargetTile(1);
+		pTex = CRendererResources::CreateRenderTarget(nWidth, nHeight, Clr_Transparent, eFormat);
 
 		m_renderTargets.push_back(pTex);
 	}
@@ -304,11 +327,40 @@ CTexture* SSF_ResourcesD3D::GetColorSurface(CD3D9Renderer* pRenderer, int nWidth
 	return pTex;
 }
 
-SDepthTexture* SSF_ResourcesD3D::GetStencilSurface(CD3D9Renderer* pRenderer, int nWidth, int nHeight, ETEX_Format eFormat)
+CTexture* SSF_ResourcesD3D::GetStencilSurface(CD3D9Renderer* pRenderer, int nWidth, int nHeight, ETEX_Format eFormat)
 {
 	CryCriticalSectionNonRecursive threadSafePool;
 
-	return pRenderer->FX_GetDepthSurface(nWidth, nHeight, false, false);
+	CTexture* pTex = nullptr;
+	uint32 i;
+	int nBestX = -1;
+	int nBestY = -1;
+	for (i = 0; i < m_depthTargets.size(); i++)
+	{
+		pTex = m_depthTargets[i];
+		if ((pTex->GetRefCounter() <= 1))
+		{
+			if (pTex->GetWidth() == nWidth && pTex->GetHeight() == nHeight)
+			{
+				nBestX = i;
+				nBestY = i;
+				break;
+			}
+		}
+	}
+	if (nBestX >= 0)
+		return m_depthTargets[nBestX];
+	if (nBestY >= 0)
+		return m_depthTargets[nBestY];
+
+	if (i == m_depthTargets.size())
+	{
+		pTex = CRendererResources::CreateDepthTarget(nWidth, nHeight, Clr_Transparent, eFormat);
+
+		m_depthTargets.push_back(pTex);
+	}
+
+	return pTex;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -320,7 +372,7 @@ void CD3D9Renderer::SF_CreateResources()
 	}
 }
 
-inline SSF_ResourcesD3D& CD3D9Renderer::SF_GetResources()
+SSF_ResourcesD3D& CD3D9Renderer::SF_GetResources()
 {
 	assert(m_pSFResD3D);
 	return *m_pSFResD3D;
@@ -328,19 +380,10 @@ inline SSF_ResourcesD3D& CD3D9Renderer::SF_GetResources()
 
 void CD3D9Renderer::SF_ResetResources()
 {
-	if (m_pSFResD3D)
-	{
-		SAFE_RELEASE(m_pSFResD3D->m_pQuery);
-	}
 }
 
 void CD3D9Renderer::SF_DestroyResources()
 {
-	for (int i = 0; i < m_pSFResD3D->m_renderTargets.size(); ++i)
-	{
-		SAFE_RELEASE(m_pSFResD3D->m_renderTargets[i]);
-	}
-
 	SAFE_DELETE(m_pSFResD3D);
 }
 
@@ -351,42 +394,25 @@ void CD3D9Renderer::SF_PrecacheShaders()
 	if (!pShader)
 		return;
 
-	SShaderCombination cmb;
-	pShader->mfPrecache(cmb, true, NULL);
+	SDeviceObjectHelpers::THwShaderInfo shaderInfoXY16i;
+	SDeviceObjectHelpers::THwShaderInfo shaderInfoXY16iC32;
+	SDeviceObjectHelpers::THwShaderInfo shaderInfoXY16iCF32;
+	SDeviceObjectHelpers::THwShaderInfo shaderInfoGlyph;
 
-	Res.m_vertexDecls[IScaleformPlayback::Vertex_XY16i    ] = m_RP.AddD3DVertexDeclaration(1, VertexDeclXY16i    );
-	Res.m_vertexDecls[IScaleformPlayback::Vertex_XY32f    ] = m_RP.AddD3DVertexDeclaration(1, VertexDeclXY32f    );
-	Res.m_vertexDecls[IScaleformPlayback::Vertex_XY16iC32 ] = m_RP.AddD3DVertexDeclaration(2, VertexDeclXY16iC32 );
-	Res.m_vertexDecls[IScaleformPlayback::Vertex_XY16iCF32] = m_RP.AddD3DVertexDeclaration(3, VertexDeclXY16iCF32);
-	Res.m_vertexDecls[IScaleformPlayback::Vertex_Glyph    ] = m_RP.AddD3DVertexDeclaration(3, VertexDeclGlyph    );
+	Res.m_vertexDecls[IScaleformPlayback::Vertex_XY16i]     = CDeviceObjectFactory::CreateCustomVertexFormat(1, VertexDeclXY16i);
+	Res.m_vertexDecls[IScaleformPlayback::Vertex_XY16iC32]  = CDeviceObjectFactory::CreateCustomVertexFormat(2, VertexDeclXY16iC32);
+	Res.m_vertexDecls[IScaleformPlayback::Vertex_XY16iCF32] = CDeviceObjectFactory::CreateCustomVertexFormat(3, VertexDeclXY16iCF32);
+	Res.m_vertexDecls[IScaleformPlayback::Vertex_Glyph]     = CDeviceObjectFactory::CreateCustomVertexFormat(3, VertexDeclGlyph);
 
-	auto shaderInfoXY16i     = SDeviceObjectHelpers::GetShaderInstanceInfo(pShader, Res.m_shTech_SolidColor             , 0, 0, 0, nullptr, false);
-	auto shaderInfoXY32f     = SDeviceObjectHelpers::GetShaderInstanceInfo(pShader, Res.m_shTech_SolidColor             , 0, 0, 0, nullptr, false);
-	auto shaderInfoXY16iC32  = SDeviceObjectHelpers::GetShaderInstanceInfo(pShader, Res.m_shTech_CxformGouraudNoAddAlpha, 0, 0, 0, nullptr, false);
-	auto shaderInfoXY16iCF32 = SDeviceObjectHelpers::GetShaderInstanceInfo(pShader, Res.m_shTech_CxformGouraud          , 0, 0, 0, nullptr, false);
-	auto shaderInfoGlyph     = SDeviceObjectHelpers::GetShaderInstanceInfo(pShader, Res.m_shTech_GlyphTexture           , 0, 0, 0, nullptr, false);
-
-	auto* pInstanceXY16i     = reinterpret_cast<CHWShader_D3D::SHWSInstance*>(shaderInfoXY16i    [eHWSC_Vertex].pHwShaderInstance);
-	auto* pInstanceXY32f     = reinterpret_cast<CHWShader_D3D::SHWSInstance*>(shaderInfoXY32f    [eHWSC_Vertex].pHwShaderInstance);
-	auto* pInstanceXY16iC32  = reinterpret_cast<CHWShader_D3D::SHWSInstance*>(shaderInfoXY16iC32 [eHWSC_Vertex].pHwShaderInstance);
-	auto* pInstanceXY16iCF32 = reinterpret_cast<CHWShader_D3D::SHWSInstance*>(shaderInfoXY16iCF32[eHWSC_Vertex].pHwShaderInstance);
-	auto* pInstanceGlyph     = reinterpret_cast<CHWShader_D3D::SHWSInstance*>(shaderInfoGlyph    [eHWSC_Vertex].pHwShaderInstance);
-
-	SF_CREATE_VERTEX_DECL(pInstanceXY16i    , VertexDeclXY16i    , Res.m_pVertexDecls[IScaleformPlayback::Vertex_XY16i    ]);
-	SF_CREATE_VERTEX_DECL(pInstanceXY32f    , VertexDeclXY32f    , Res.m_pVertexDecls[IScaleformPlayback::Vertex_XY32f    ]);
-	SF_CREATE_VERTEX_DECL(pInstanceXY16iC32 , VertexDeclXY16iC32 , Res.m_pVertexDecls[IScaleformPlayback::Vertex_XY16iC32 ]);
-	SF_CREATE_VERTEX_DECL(pInstanceXY16iCF32, VertexDeclXY16iCF32, Res.m_pVertexDecls[IScaleformPlayback::Vertex_XY16iCF32]);
-	SF_CREATE_VERTEX_DECL(pInstanceGlyph    , VertexDeclGlyph    , Res.m_pVertexDecls[IScaleformPlayback::Vertex_Glyph    ]);
-
-	const int texStateID[8] =
+	const SamplerStateHandle texStateID[8] =
 	{
-		CTexture::GetTexState(STexState(FILTER_POINT,     false)), CTexture::GetTexState(STexState(FILTER_POINT,     true)),
-		CTexture::GetTexState(STexState(FILTER_LINEAR,    false)), CTexture::GetTexState(STexState(FILTER_LINEAR,    true)),
-		CTexture::GetTexState(STexState(FILTER_TRILINEAR, false)), CTexture::GetTexState(STexState(FILTER_TRILINEAR, true)),
-		-1,                                                        -1
+		EDefaultSamplerStates::PointWrap    , EDefaultSamplerStates::PointClamp,
+		EDefaultSamplerStates::LinearWrap   , EDefaultSamplerStates::LinearClamp,
+		EDefaultSamplerStates::TrilinearWrap, EDefaultSamplerStates::TrilinearClamp,
+		EDefaultSamplerStates::Unspecified  , EDefaultSamplerStates::Unspecified
 	};
 
-	memcpy(&Res.texStateID, &texStateID, sizeof(texStateID));
+	memcpy(&Res.samplerStateHandles, &texStateID, sizeof(texStateID));
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -411,138 +437,14 @@ void CRenderer::SF_Drain(GRendererCommandBufferReadOnly* pBuffer) const
 void CRenderer::SF_ConfigMask(int st, uint32 ref)
 {
 	// Graphics pipeline == 0
-	FX_SetStencilState(st, ref, 0xFFFFFFFF, 0xFFFFFFFF);
+	//FX_SetStencilState(st, ref, 0xFFFFFFFF, 0xFFFFFFFF);
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CRenderer::SF_GetMeshMaxSize(int& numVertices, int& numIndices) const
 {
-	numVertices = m_RP.m_MaxVerts;
-	numIndices = m_RP.m_MaxTris * 3;
-}
-
-//////////////////////////////////////////////////////////////////////////
-bool CD3D9Renderer::SF_SetVertexDeclaration(IScaleformPlayback::VertexFormat vertexFmt)
-{
-	if (!CHWShader_D3D::s_pCurInstVS || !CHWShader_D3D::s_pCurInstVS->m_pShaderData || CHWShader_D3D::s_pCurInstVS->m_bFallback)
-		return false;
-
-	const SSF_ResourcesD3D& sfRes(SF_GetResources());
-	D3DVertexDeclaration* pVD = sfRes.m_pVertexDecls[vertexFmt];
-
-	assert(pVD);
-	if (!pVD)
-		return false;
-
-	if (m_pLastVDeclaration != pVD)
-	{
-		m_pLastVDeclaration = pVD;
-		m_DevMan.BindVtxDecl(pVD);
-	}
-
-	return true;
-}
-
-//////////////////////////////////////////////////////////////////////////
-CShader* CD3D9Renderer::SF_SetTechnique(const CCryNameTSCRC& techName)
-{
-	FUNCTION_PROFILER_RENDER_FLAT
-		assert(gRenDev->m_pRT->IsRenderThread());
-
-	CShader* pShader(SF_GetResources().GetShader(this));
-	if (!pShader)
-		return 0;
-
-	SShaderTechnique* pTech(0);
-	uint32 i(0);
-	for (; i < pShader->m_HWTechniques.Num(); ++i)
-	{
-		pTech = pShader->m_HWTechniques[i];
-		if (techName == pTech->m_NameCRC)
-			break;
-	}
-
-	if (i == pShader->m_HWTechniques.Num())
-		return 0;
-
-	CRenderer* rd(gRenDev);
-	rd->m_RP.m_pShader = pShader;
-	rd->m_RP.m_nShaderTechnique = i;
-	rd->m_RP.m_pCurTechnique = pShader->m_HWTechniques[i];
-
-	return pShader;
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CD3D9Renderer::SF_SetBlendOp(SSF_GlobalDrawParams::EAlphaBlendOp blendOp, bool reset)
-{
-	if (CV_r_measureoverdraw)
-		return;
-
-	if (!reset)
-	{
-		if (blendOp != SSF_GlobalDrawParams::Add)
-		{
-			switch (blendOp)
-			{
-			case SSF_GlobalDrawParams::Substract:
-			{
-				SStateBlend bl = m_StatesBL[m_nCurStateBL];
-				bl.Desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_SUBTRACT;
-				bl.Desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_SUBTRACT;
-				SetBlendState(&bl);
-			}
-			break;
-			case SSF_GlobalDrawParams::RevSubstract:
-			{
-				SStateBlend bl = m_StatesBL[m_nCurStateBL];
-				bl.Desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_REV_SUBTRACT;
-				bl.Desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_REV_SUBTRACT;
-				SetBlendState(&bl);
-			}
-			break;
-			case SSF_GlobalDrawParams::Min:
-			{
-				SStateBlend bl = m_StatesBL[m_nCurStateBL];
-				bl.Desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_MIN;
-				bl.Desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_MIN;
-				SetBlendState(&bl);
-			}
-			break;
-			case SSF_GlobalDrawParams::Max:
-			{
-				SStateBlend bl = m_StatesBL[m_nCurStateBL];
-				bl.Desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_MAX;
-				bl.Desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_MAX;
-				SetBlendState(&bl);
-			}
-			break;
-			default:
-				assert(0);
-				break;
-			}
-		}
-	}
-	else
-	{
-		if (blendOp != SSF_GlobalDrawParams::Add)
-		{
-			SStateBlend bl = m_StatesBL[m_nCurStateBL];
-			bl.Desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-			bl.Desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-			SetBlendState(&bl);
-		}
-	}
-}
-
-uint32 CD3D9Renderer::SF_AdjustBlendStateForMeasureOverdraw(uint32 blendModeStates)
-{
-	if (CV_r_measureoverdraw)
-	{
-		blendModeStates = (blendModeStates & ~GS_BLEND_MASK) | (GS_BLSRC_ONE | GS_BLDST_ONE);
-		blendModeStates &= ~GS_ALPHATEST;
-	}
-	return blendModeStates;
+	numVertices = 16384;
+	numIndices  = 16384*3;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -560,20 +462,18 @@ void CD3D9Renderer::SF_HandleClear(const SSF_GlobalDrawParams& __restrict params
 			LONG(params.viewport.TopLeftY + params.viewport.Height)
 		};
 
-		// Graphics pipeline >= 1
-		if (CRenderer::CV_r_GraphicsPipeline > 0)
 		{
 			if (rCurOutput.renderPass.GetPrimitiveCount() >= 1)
 			{
 				rCurOutput.renderPass.Execute();
-				rCurOutput.renderPass.ClearPrimitives();
+				rCurOutput.renderPass.BeginAddingPrimitives();
 			}
 		}
 
 		if (rCurOutput.bRenderTargetClear)
-			FX_ClearTarget(rCurOutput.pRenderTarget, Clr_Transparent, 1, &rect, true);
+			rCurOutput.clearPass.Execute(rCurOutput.pRenderTarget, Clr_Transparent, 1, &rect);
 		if (rCurOutput.bStencilTargetClear)
-			FX_ClearTarget(rCurOutput.pStencilTarget, CLEAR_STENCIL, Clr_Unused.r, 0, 1, &rect, true);
+			rCurOutput.clearPass.Execute(rCurOutput.pStencilTarget, CLEAR_STENCIL, Clr_Unused.r, Val_Stencil, 1, &rect);
 	}
 
 	rCurOutput.bRenderTargetClear = false;
@@ -583,15 +483,9 @@ void CD3D9Renderer::SF_HandleClear(const SSF_GlobalDrawParams& __restrict params
 //////////////////////////////////////////////////////////////////////////
 void CD3D9Renderer::SF_DrawIndexedTriList(int baseVertexIndex, int minVertexIndex, int numVertices, int startIndex, int triangleCount, const SSF_GlobalDrawParams& __restrict params)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_SYSTEM);
+	CRY_PROFILE_FUNCTION(PROFILE_SYSTEM);
 
-	if (IsDeviceLost())
-		return;
-
-	SRenderPipeline& RESTRICT_REFERENCE rRP = m_RP;
-	SThreadInfo& RESTRICT_REFERENCE rTI = rRP.m_TI[rRP.m_nProcessThreadID];
-
-	assert(params.vtxData->VertexFormat != IScaleformPlayback::Vertex_Glyph && params.vtxData->VertexFormat != IScaleformPlayback::Vertex_None);
+	CRY_ASSERT(params.vtxData->VertexFormat != IScaleformPlayback::Vertex_Glyph && params.vtxData->VertexFormat != IScaleformPlayback::Vertex_None);
 
 	SSF_ResourcesD3D& sfRes(SF_GetResources());
 
@@ -613,7 +507,7 @@ void CD3D9Renderer::SF_DrawIndexedTriList(int baseVertexIndex, int minVertexInde
 	const CCryNameTSCRC techName = *sfRes.m_FillTechnique[fillType][params.isMultiplyDarkBlendMode];
 
 	SF_HandleClear(params);
-	if (CRenderer::CV_r_GraphicsPipeline > 0)
+
 	{
 		CPrimitiveRenderPass& __restrict primPass = params.pRenderOutput->renderPass;
 
@@ -627,139 +521,27 @@ void CD3D9Renderer::SF_DrawIndexedTriList(int baseVertexIndex, int minVertexInde
 
 		primInit->SetInlineConstantBuffer(eConstantBufferShaderSlot_ScaleformMeshAttributes, params.m_vsBuffer, EShaderStage_Vertex);
 		primInit->SetInlineConstantBuffer(eConstantBufferShaderSlot_ScaleformRenderParameters, params.m_psBuffer, EShaderStage_Pixel);
-		primInit->SetSampler(0, sfRes.texStateID[params.texture[0].texState], EShaderStage_Pixel);
-		primInit->SetSampler(1, sfRes.texStateID[params.texture[1].texState], EShaderStage_Pixel);
-		primInit->SetTexture(0, params.texture[0].pTex, SResourceView::DefaultView, EShaderStage_Pixel);
-		primInit->SetTexture(1, params.texture[1].pTex, SResourceView::DefaultView, EShaderStage_Pixel);
+		primInit->SetSampler(0, sfRes.samplerStateHandles[params.texture[0].texState], EShaderStage_Pixel);
+		primInit->SetSampler(1, sfRes.samplerStateHandles[params.texture[1].texState], EShaderStage_Pixel);
+		primInit->SetTexture(0, params.texture[0].pTex, EDefaultResourceViews::Default, EShaderStage_Pixel);
+		primInit->SetTexture(1, params.texture[1].pTex, EDefaultResourceViews::Default, EShaderStage_Pixel);
 
 		primInit->SetPrimitiveType(CRenderPrimitive::ePrim_Custom);
 		primInit->SetCustomVertexStream(params.vtxData->DeviceDataHandle, params.vtxData->eVertexFormat, params.vtxData->StrideSize);
 		primInit->SetCustomIndexStream(params.idxData->DeviceDataHandle, RenderIndexType::Index16);
 		primInit->SetDrawInfo(eptTriangleList, baseVertexIndex, startIndex, params.idxData->NumElements);
+		primInit->Compile(primPass);
 
 		primPass.AddPrimitive(primInit);
-
-		return;
 	}
-
-	CShader* pSFShader = SF_SetTechnique(techName);
-	if (!pSFShader)
-		return;
-
-	if (params.renderMaskedStates & GS_COLMASK_NONE)
-	{
-		rRP.m_PersFlags2 |= RBPF2_DISABLECOLORWRITES;
-		rRP.m_StateOr |= GS_COLMASK_NONE;
-	}
-
-	{
-		//FRAME_PROFILER("SF_DITL::FxBegin", gEnv->pSystem, PROFILE_SYSTEM);
-
-		uint32 numPasses(0);
-		pSFShader->FXBegin(&numPasses, /*FEF_DONTSETTEXTURES |*/ FEF_DONTSETSTATES);
-		if (!numPasses)
-		{
-			return;
-		}
-
-		if (!pSFShader->FXBeginPass(0))
-		{
-			rRP.m_PersFlags2 &= ~RBPF2_DISABLECOLORWRITES;
-			rRP.m_StateOr &= ~GS_COLMASK_NONE;
-			pSFShader->FXEndPass();
-			pSFShader->FXEnd();
-			return;
-		}
-	}
-	{
-		//FRAME_PROFILER("SF_DITL::SetState", gEnv->pSystem, PROFILE_SYSTEM);
-
-		// Set states
-		FX_SetState(SF_AdjustBlendStateForMeasureOverdraw(params.blendModeStates) | /*GS_NODEPTHTEST | */ params.renderMaskedStates);
-		D3DSetCull(eCULL_None);
-	}
-	{
-		//FRAME_PROFILER("SF_DITL::FX_Commit", gEnv->pSystem, PROFILE_SYSTEM);
-
-		m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_VS, params.m_vsBuffer, 0);
-		m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_PS, params.m_psBuffer, 0);
-
-		CTexture::SetSamplerState(sfRes.texStateID[params.texture[0].texState], 0, eHWSC_Pixel);
-		CTexture::SetSamplerState(sfRes.texStateID[params.texture[1].texState], 1, eHWSC_Pixel);
-
-		params.texture[0].pTex->ApplyTexture(0, eHWSC_Pixel, SResourceView::DefaultView);
-		params.texture[1].pTex->ApplyTexture(1, eHWSC_Pixel, SResourceView::DefaultView);
-
-		// Commit all render changes
-		FX_Commit();
-	}
-	{
-		//FRAME_PROFILER("SF_DITL::SetVertexDecl", gEnv->pSystem, PROFILE_SYSTEM);
-
-		// Set vertex declaration
-		if (!SF_SetVertexDeclaration(params.vtxData->VertexFormat))
-		{
-			rRP.m_PersFlags2 &= ~RBPF2_DISABLECOLORWRITES;
-			rRP.m_StateOr &= ~GS_COLMASK_NONE;
-			pSFShader->FXEndPass();
-			pSFShader->FXEnd();
-			return;
-		}
-	}
-
-	// Copy vertex data...
-	{
-		{
-			size_t bufferOffset = ~0;
-			D3DVertexBuffer* pVB = gRenDev->m_DevBufMan.GetD3DVB(params.vtxData->DeviceDataHandle, &bufferOffset);
-			gcpRendD3D->FX_SetVStream(0, pVB, bufferOffset, params.vtxData->StrideSize);
-		}
-
-		{
-			size_t bufferOffset = ~0;
-			D3DIndexBuffer* pIB = gRenDev->m_DevBufMan.GetD3DIB(params.idxData->DeviceDataHandle, &bufferOffset);
-			gcpRendD3D->FX_SetIStream(pIB, bufferOffset, Index16);
-		}
-	}
-	{
-		//FRAME_PROFILER("SF_DITL::BlendStateAndDraw", gEnv->pSystem, PROFILE_SYSTEM);
-
-		// Override blend op if necessary
-		SF_SetBlendOp(params.blendOp);
-
-		// Submit draw call
-		FX_DrawIndexedPrimitive(eptTriangleList, baseVertexIndex, minVertexIndex, numVertices, startIndex, triangleCount * 3);
-
-		// Reset overridden blend op if necessary
-		SF_SetBlendOp(params.blendOp, true);
-	}
-	{
-		//FRAME_PROFILER("SF_DITL::FXEnd", gEnv->pSystem, PROFILE_SYSTEM);
-
-		// End shader pass
-		pSFShader->FXEndPass();
-		pSFShader->FXEnd();
-	}
-
-	if (params.renderMaskedStates & GS_COLMASK_NONE)
-	{
-		rRP.m_PersFlags2 &= ~RBPF2_DISABLECOLORWRITES;
-		rRP.m_StateOr &= ~GS_COLMASK_NONE;
-	}
-
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CD3D9Renderer::SF_DrawLineStrip(int baseVertexIndex, int lineCount, const SSF_GlobalDrawParams& __restrict params)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_SYSTEM);
+	CRY_PROFILE_FUNCTION(PROFILE_SYSTEM);
 
-	if (IsDeviceLost())
-		return;
-
-	assert(params.vtxData->VertexFormat == IScaleformPlayback::Vertex_XY16i);
-
-	SRenderPipeline& RESTRICT_REFERENCE rRP = m_RP;
+	CRY_ASSERT(params.vtxData->VertexFormat == IScaleformPlayback::Vertex_XY16i);
 
 	SSF_ResourcesD3D& sfRes(SF_GetResources());
 
@@ -777,7 +559,7 @@ void CD3D9Renderer::SF_DrawLineStrip(int baseVertexIndex, int lineCount, const S
 	const CCryNameTSCRC techName = *sfRes.m_FillTechnique[params.fillType][false];
 
 	SF_HandleClear(params);
-	if (CRenderer::CV_r_GraphicsPipeline > 0)
+
 	{
 		CPrimitiveRenderPass& __restrict primPass = params.pRenderOutput->renderPass;
 
@@ -791,109 +573,18 @@ void CD3D9Renderer::SF_DrawLineStrip(int baseVertexIndex, int lineCount, const S
 
 		primInit->SetInlineConstantBuffer(eConstantBufferShaderSlot_ScaleformMeshAttributes, params.m_vsBuffer, EShaderStage_Vertex);
 		primInit->SetInlineConstantBuffer(eConstantBufferShaderSlot_ScaleformRenderParameters, params.m_psBuffer, EShaderStage_Pixel);
-		primInit->SetSampler(0, sfRes.texStateID[params.texture[0].texState], EShaderStage_Pixel);
-		primInit->SetSampler(1, sfRes.texStateID[params.texture[1].texState], EShaderStage_Pixel);
-		primInit->SetTexture(0, params.texture[0].pTex, SResourceView::DefaultView, EShaderStage_Pixel);
-		primInit->SetTexture(1, params.texture[1].pTex, SResourceView::DefaultView, EShaderStage_Pixel);
+		primInit->SetSampler(0, sfRes.samplerStateHandles[params.texture[0].texState], EShaderStage_Pixel);
+		primInit->SetSampler(1, sfRes.samplerStateHandles[params.texture[1].texState], EShaderStage_Pixel);
+		primInit->SetTexture(0, params.texture[0].pTex, EDefaultResourceViews::Default, EShaderStage_Pixel);
+		primInit->SetTexture(1, params.texture[1].pTex, EDefaultResourceViews::Default, EShaderStage_Pixel);
 
 		primInit->SetPrimitiveType(CRenderPrimitive::ePrim_Custom);
 		primInit->SetCustomVertexStream(params.vtxData->DeviceDataHandle, params.vtxData->eVertexFormat, params.vtxData->StrideSize);
 		primInit->SetCustomIndexStream(~0u, RenderIndexType(0));
 		primInit->SetDrawInfo(eptLineStrip, 0, baseVertexIndex, params.vtxData->NumElements);
+		primInit->Compile(primPass);
 
 		primPass.AddPrimitive(primInit);
-
-		return;
-	}
-
-	CShader* pSFShader = SF_SetTechnique(techName);
-	if (!pSFShader)
-		return;
-
-	{
-		//FRAME_PROFILER("SF_DLS::FxBegin", gEnv->pSystem, PROFILE_SYSTEM);
-
-		if (params.renderMaskedStates & GS_COLMASK_NONE)
-		{
-			rRP.m_PersFlags2 |= RBPF2_DISABLECOLORWRITES;
-			rRP.m_StateOr |= GS_COLMASK_NONE;
-		}
-		uint32 numPasses(0);
-		pSFShader->FXBegin(&numPasses, /*FEF_DONTSETTEXTURES |*/ FEF_DONTSETSTATES);
-		if (!numPasses)
-		{
-			return;
-		}
-		pSFShader->FXBeginPass(0);
-	}
-	{
-		//FRAME_PROFILER("SF_DLS::SetState", gEnv->pSystem, PROFILE_SYSTEM);
-
-		// Set states
-		FX_SetState(SF_AdjustBlendStateForMeasureOverdraw(params.blendModeStates) | /*GS_NODEPTHTEST | */ params.renderMaskedStates);
-		D3DSetCull(eCULL_None);
-	}
-	{
-		//FRAME_PROFILER("SF_DLS::FX_Commit", gEnv->pSystem, PROFILE_SYSTEM);
-		
-		m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_VS, params.m_vsBuffer, 0);
-		m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_PS, params.m_psBuffer, 0);
-
-		CTexture::SetSamplerState(sfRes.texStateID[params.texture[0].texState], 0, eHWSC_Pixel);
-		CTexture::SetSamplerState(sfRes.texStateID[params.texture[1].texState], 1, eHWSC_Pixel);
-
-		params.texture[0].pTex->ApplyTexture(0, eHWSC_Pixel, SResourceView::DefaultView);
-		params.texture[1].pTex->ApplyTexture(1, eHWSC_Pixel, SResourceView::DefaultView);
-
-		// Commit all render changes
-		FX_Commit();
-	}
-	{
-		//FRAME_PROFILER("SF_DLS::SetVertexDecl", gEnv->pSystem, PROFILE_SYSTEM);
-
-		// Set vertex declaration
-		if (!SF_SetVertexDeclaration(params.vtxData->VertexFormat))
-		{
-			rRP.m_PersFlags2 &= ~RBPF2_DISABLECOLORWRITES;
-			rRP.m_StateOr &= ~GS_COLMASK_NONE;
-			pSFShader->FXEndPass();
-			pSFShader->FXEnd();
-			return;
-		}
-	}
-
-	// Copy vertex data...
-	{
-		{
-			size_t bufferOffset = ~0;
-			D3DVertexBuffer* pVB = gRenDev->m_DevBufMan.GetD3DVB(params.vtxData->DeviceDataHandle, &bufferOffset);
-			gcpRendD3D->FX_SetVStream(0, pVB, bufferOffset, params.vtxData->StrideSize);
-		}
-	}
-	{
-		//FRAME_PROFILER("SF_DLS::BlendStateAndDraw", gEnv->pSystem, PROFILE_SYSTEM);
-
-		// Override blend op if necessary
-		SF_SetBlendOp(params.blendOp);
-
-		// Submit draw call
-		FX_DrawPrimitive(eptLineStrip, baseVertexIndex, params.vtxData->NumElements);
-
-		// Reset overridden blend op if necessary
-		SF_SetBlendOp(params.blendOp, true);
-	}
-	{
-		//FRAME_PROFILER("SF_DLS::FXEnd", gEnv->pSystem, PROFILE_SYSTEM);
-
-		// End shader pass
-		pSFShader->FXEndPass();
-		pSFShader->FXEnd();
-	}
-
-	if (params.renderMaskedStates & GS_COLMASK_NONE)
-	{
-		rRP.m_PersFlags2 &= ~RBPF2_DISABLECOLORWRITES;
-		rRP.m_StateOr &= ~GS_COLMASK_NONE;
 	}
 }
 
@@ -902,13 +593,7 @@ void CD3D9Renderer::SF_DrawGlyphClear(const IScaleformPlayback::DeviceData* vtxD
 {
 	FUNCTION_PROFILER_RENDER_FLAT
 
-	if (IsDeviceLost())
-		return;
-
-	SRenderPipeline& RESTRICT_REFERENCE rRP = m_RP;
-	SThreadInfo& RESTRICT_REFERENCE rTI = rRP.m_TI[rRP.m_nProcessThreadID];
-
-	assert(vtxData->VertexFormat == IScaleformPlayback::Vertex_Glyph || vtxData->VertexFormat == IScaleformPlayback::Vertex_XY16i);
+	CRY_ASSERT(vtxData->VertexFormat == IScaleformPlayback::Vertex_Glyph || vtxData->VertexFormat == IScaleformPlayback::Vertex_XY16i);
 
 	SSF_ResourcesD3D& sfRes(SF_GetResources());
 
@@ -926,7 +611,7 @@ void CD3D9Renderer::SF_DrawGlyphClear(const IScaleformPlayback::DeviceData* vtxD
 	const CCryNameTSCRC techName = *sfRes.m_FillTechnique[params.fillType][params.isMultiplyDarkBlendMode];
 
 	SF_HandleClear(params);
-	if (CRenderer::CV_r_GraphicsPipeline > 0)
+
 	{
 		CPrimitiveRenderPass& __restrict primPass = params.pRenderOutput->renderPass;
 
@@ -940,15 +625,15 @@ void CD3D9Renderer::SF_DrawGlyphClear(const IScaleformPlayback::DeviceData* vtxD
 
 		primInit->SetInlineConstantBuffer(eConstantBufferShaderSlot_ScaleformMeshAttributes, params.m_vsBuffer, EShaderStage_Vertex);
 		primInit->SetInlineConstantBuffer(eConstantBufferShaderSlot_ScaleformRenderParameters, params.m_psBuffer, EShaderStage_Pixel);
-		primInit->SetSampler(0, sfRes.texStateID[params.texture[0].texState], EShaderStage_Pixel);
-		primInit->SetTexture(0, params.texture[0].pTex, SResourceView::DefaultView, EShaderStage_Pixel);
+		primInit->SetSampler(0, sfRes.samplerStateHandles[params.texture[0].texState], EShaderStage_Pixel);
+		primInit->SetTexture(0, params.texture[0].pTex, EDefaultResourceViews::Default, EShaderStage_Pixel);
 		if (params.fillType >= SSF_GlobalDrawParams::GlyphTextureYUV)
 		{
-			primInit->SetTexture(1, params.texture[1].pTex, SResourceView::DefaultView, EShaderStage_Pixel);
-			primInit->SetTexture(2, params.texture[2].pTex, SResourceView::DefaultView, EShaderStage_Pixel);
+			primInit->SetTexture(1, params.texture[1].pTex, EDefaultResourceViews::Default, EShaderStage_Pixel);
+			primInit->SetTexture(2, params.texture[2].pTex, EDefaultResourceViews::Default, EShaderStage_Pixel);
 			if (params.fillType >= SSF_GlobalDrawParams::GlyphTextureYUVA)
 			{
-				primInit->SetTexture(3, params.texture[3].pTex, SResourceView::DefaultView, EShaderStage_Pixel);
+				primInit->SetTexture(3, params.texture[3].pTex, EDefaultResourceViews::Default, EShaderStage_Pixel);
 			}
 		}
 
@@ -956,123 +641,16 @@ void CD3D9Renderer::SF_DrawGlyphClear(const IScaleformPlayback::DeviceData* vtxD
 		primInit->SetCustomVertexStream(vtxData->DeviceDataHandle, vtxData->eVertexFormat, vtxData->StrideSize);
 		primInit->SetCustomIndexStream(~0u, RenderIndexType(0));
 		primInit->SetDrawInfo(eptTriangleStrip, 0, baseVertexIndex, vtxData->NumElements);
+		primInit->Compile(primPass);
 
 		primPass.AddPrimitive(primInit);
-
-		return;
-	}
-
-	CShader* pSFShader = SF_SetTechnique(techName);
-	if (!pSFShader)
-		return;
-
-	{
-		//FRAME_PROFILER("SF_DG::FxBegin", gEnv->pSystem, PROFILE_SYSTEM);
-
-		if (params.renderMaskedStates & GS_COLMASK_NONE)
-		{
-			rRP.m_PersFlags2 |= RBPF2_DISABLECOLORWRITES;
-			rRP.m_StateOr |= GS_COLMASK_NONE;
-		}
-
-		uint32 numPasses(0);
-		pSFShader->FXBegin(&numPasses, /*FEF_DONTSETTEXTURES |*/ FEF_DONTSETSTATES);
-		if (!numPasses)
-		{
-			return;
-		}
-
-		if (!pSFShader->FXBeginPass(0))
-		{
-			rRP.m_PersFlags2 &= ~RBPF2_DISABLECOLORWRITES;
-			rRP.m_StateOr &= ~GS_COLMASK_NONE;
-			pSFShader->FXEndPass();
-			pSFShader->FXEnd();
-			return;
-		}
-	}
-	{
-		//FRAME_PROFILER("SF_DG::SetState", gEnv->pSystem, PROFILE_SYSTEM);
-
-		// Set states
-		FX_SetState(SF_AdjustBlendStateForMeasureOverdraw(params.blendModeStates) | /*GS_NODEPTHTEST | */ params.renderMaskedStates);
-		D3DSetCull(eCULL_None);
-	}
-	{
-		//FRAME_PROFILER("SF_DG::FX_Commit", gEnv->pSystem, PROFILE_SYSTEM);
-		
-		m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_VS, params.m_vsBuffer, 0);
-		m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_PS, params.m_psBuffer, 0);
-
-		CTexture::SetSamplerState(sfRes.texStateID[params.texture[0].texState], 0, eHWSC_Pixel);
-
-		params.texture[0].pTex->ApplyTexture(0, eHWSC_Pixel, SResourceView::DefaultView);
-		if (params.fillType >= SSF_GlobalDrawParams::GlyphTextureYUV)
-		{
-			params.texture[1].pTex->ApplyTexture(1, eHWSC_Pixel, SResourceView::DefaultView);
-			params.texture[2].pTex->ApplyTexture(2, eHWSC_Pixel, SResourceView::DefaultView);
-			if (params.fillType >= SSF_GlobalDrawParams::GlyphTextureYUVA)
-			{
-				params.texture[3].pTex->ApplyTexture(3, eHWSC_Pixel, SResourceView::DefaultView);
-			}
-		}
-
-		// Commit all render changes
-		FX_Commit();
-	}
-	{
-		//FRAME_PROFILER("SF_DG::SetVertexDecl", gEnv->pSystem, PROFILE_SYSTEM);
-
-		// Set vertex declaration
-		if (!SF_SetVertexDeclaration(vtxData->VertexFormat))
-		{
-			rRP.m_PersFlags2 &= ~RBPF2_DISABLECOLORWRITES;
-			rRP.m_StateOr &= ~GS_COLMASK_NONE;
-			pSFShader->FXEndPass();
-			pSFShader->FXEnd();
-			return;
-		}
-	}
-
-	// Copy vertex data...
-	{
-		{
-			size_t bufferOffset = ~0;
-			D3DVertexBuffer* pVB = gRenDev->m_DevBufMan.GetD3DVB(vtxData->DeviceDataHandle, &bufferOffset);
-			gcpRendD3D->FX_SetVStream(0, pVB, bufferOffset, vtxData->StrideSize);
-		}
-	}
-	{
-		//FRAME_PROFILER("SF_DG::BlendStateAndDraw", gEnv->pSystem, PROFILE_SYSTEM);
-
-		// Override blend op if necessary
-		SF_SetBlendOp(params.blendOp);
-
-		// Submit draw call
-		FX_DrawPrimitive(eptTriangleStrip, baseVertexIndex, vtxData->NumElements);
-
-		// Reset overridden blend op if necessary
-		SF_SetBlendOp(params.blendOp, true);
-	}
-	{
-		//FRAME_PROFILER("SF_DG::FXEnd", gEnv->pSystem, PROFILE_SYSTEM);
-
-		// End shader pass
-		pSFShader->FXEndPass();
-		pSFShader->FXEnd();
-	}
-
-	if (params.renderMaskedStates & GS_COLMASK_NONE)
-	{
-		rRP.m_PersFlags2 &= ~RBPF2_DISABLECOLORWRITES;
-		rRP.m_StateOr &= ~GS_COLMASK_NONE;
 	}
 }
 
 void CD3D9Renderer::SF_DrawBlurRect(const IScaleformPlayback::DeviceData* vtxData, const SSF_GlobalDrawParams& __restrict params)
 {
 	//TODO figure out how many blur shaders we need
-	assert((params.blurType > SSF_GlobalDrawParams::BlurNone) && (params.blurType < SSF_GlobalDrawParams::BlurCount));
+	CRY_ASSERT((params.blurType > SSF_GlobalDrawParams::BlurNone) && (params.blurType < SSF_GlobalDrawParams::BlurCount));
 
 	SSF_ResourcesD3D& sfRes(SF_GetResources());
 
@@ -1090,7 +668,7 @@ void CD3D9Renderer::SF_DrawBlurRect(const IScaleformPlayback::DeviceData* vtxDat
 	const CCryNameTSCRC techName = *sfRes.m_FilterTechnique[params.blurType];
 
 	SF_HandleClear(params);
-	if (CRenderer::CV_r_GraphicsPipeline > 0)
+
 	{
 		CPrimitiveRenderPass& __restrict primPass = params.pRenderOutput->renderPass;
 
@@ -1104,198 +682,105 @@ void CD3D9Renderer::SF_DrawBlurRect(const IScaleformPlayback::DeviceData* vtxDat
 
 		primInit->SetInlineConstantBuffer(eConstantBufferShaderSlot_ScaleformMeshAttributes, params.m_vsBuffer, EShaderStage_Vertex);
 		primInit->SetInlineConstantBuffer(eConstantBufferShaderSlot_ScaleformRenderParameters, params.m_psBuffer, EShaderStage_Pixel);
-		primInit->SetSampler(0, sfRes.texStateID[params.texture[0].texState], EShaderStage_Pixel);
-		primInit->SetSampler(1, sfRes.texStateID[params.texture[1].texState], EShaderStage_Pixel);
-		primInit->SetTexture(0, params.texture[0].pTex, SResourceView::DefaultView, EShaderStage_Pixel);
-		primInit->SetTexture(1, params.texture[1].pTex, SResourceView::DefaultView, EShaderStage_Pixel);
+		primInit->SetSampler(0, sfRes.samplerStateHandles[params.texture[0].texState], EShaderStage_Pixel);
+		primInit->SetSampler(1, sfRes.samplerStateHandles[params.texture[1].texState], EShaderStage_Pixel);
+		primInit->SetTexture(0, params.texture[0].pTex, EDefaultResourceViews::Default, EShaderStage_Pixel);
+		primInit->SetTexture(1, params.texture[1].pTex, EDefaultResourceViews::Default, EShaderStage_Pixel);
 
 		primInit->SetPrimitiveType(CRenderPrimitive::ePrim_Custom);
 		primInit->SetCustomVertexStream(vtxData->DeviceDataHandle, vtxData->eVertexFormat, vtxData->StrideSize);
 		primInit->SetCustomIndexStream(~0u, RenderIndexType(0));
 		primInit->SetDrawInfo(eptTriangleStrip, 0, 0, vtxData->NumElements);
+		primInit->Compile(primPass);
 
 		primPass.AddPrimitive(primInit);
-
-		return;
-	}
-
-	CShader* pSFShader = SF_SetTechnique(techName);
-	if (!pSFShader)
-		return;
-
-	{
-		SRenderPipeline& RESTRICT_REFERENCE rRP = m_RP;
-
-		if (params.renderMaskedStates & GS_COLMASK_NONE)
-		{
-			rRP.m_PersFlags2 |= RBPF2_DISABLECOLORWRITES;
-			rRP.m_StateOr |= GS_COLMASK_NONE;
-		}
-
-		uint32 numPasses(0);
-		pSFShader->FXBegin(&numPasses, /*FEF_DONTSETTEXTURES |*/ FEF_DONTSETSTATES);
-		if (!numPasses)
-		{
-			return;
-		}
-		pSFShader->FXBeginPass(0);
-
-		FX_SetState(SF_AdjustBlendStateForMeasureOverdraw(params.blendModeStates) | /*GS_NODEPTHTEST | */ params.renderMaskedStates);
-		D3DSetCull(eCULL_None);
-
-		{
-			m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_VS, params.m_vsBuffer, 0);
-			m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_PS, params.m_psBuffer, 0);
-
-			CTexture::SetSamplerState(sfRes.texStateID[params.texture[0].texState], 0, eHWSC_Pixel);
-			CTexture::SetSamplerState(sfRes.texStateID[params.texture[1].texState], 1, eHWSC_Pixel);
-
-			params.texture[0].pTex->ApplyTexture(0, eHWSC_Pixel, SResourceView::DefaultView);
-			params.texture[1].pTex->ApplyTexture(1, eHWSC_Pixel, SResourceView::DefaultView);
-
-			// Commit all render changes
-			FX_Commit();
-		}
-
-		// Set vertex declaration
-		if (!SF_SetVertexDeclaration(vtxData->VertexFormat))
-		{
-			rRP.m_PersFlags2 &= ~RBPF2_DISABLECOLORWRITES;
-			rRP.m_StateOr &= ~GS_COLMASK_NONE;
-			pSFShader->FXEndPass();
-			pSFShader->FXEnd();
-			return;
-		}
-
-		// Copy vertex data...
-		{
-			{
-				size_t bufferOffset = ~0;
-				D3DVertexBuffer* pVB = gRenDev->m_DevBufMan.GetD3DVB(vtxData->DeviceDataHandle, &bufferOffset);
-				gcpRendD3D->FX_SetVStream(0, pVB, bufferOffset, vtxData->StrideSize);
-			}
-		}
-
-		//draw
-		{
-			// Override blend op if necessary
-			SF_SetBlendOp(params.blendOp);
-
-			// Submit draw call
-			FX_DrawPrimitive(eptTriangleStrip, 0, vtxData->NumElements);
-
-			// Reset overridden blend op if necessary
-			SF_SetBlendOp(params.blendOp, true);
-		}
-
-		// End shader pass
-		pSFShader->FXEndPass();
-		pSFShader->FXEnd();
 	}
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CD3D9Renderer::SF_Flush()
-{
-	if (IsDeviceLost())
-		return;
-
-	HRESULT hr(S_OK);
-
-	SSF_ResourcesD3D& sfRes(SF_GetResources());
-	if (!sfRes.m_pQuery)
-	{
-		D3D11_QUERY_DESC desc;
-		desc.Query = D3D11_QUERY_EVENT;
-		desc.MiscFlags = 0;
-		hr = GetDevice().CreateQuery(&desc, &sfRes.m_pQuery);
-	}
-
-	if (sfRes.m_pQuery)
-	{
-		BOOL data(FALSE);
-		GetDeviceContext().End(sfRes.m_pQuery);
-		while (S_FALSE == (hr = GetDeviceContext().GetData(sfRes.m_pQuery, &data, sizeof(data), 0)))
-			;
-	}
-}
-
-//////////////////////////////////////////////////////////////////////////
-int CRenderer::SF_CreateTexture(int width, int height, int numMips, const unsigned char* pData, ETEX_Format eTF, int flags)
+int CRenderer::SF_CreateTexture(int width, int height, int numMips, const unsigned char* pData, ETEX_Format eSrcFormat, int flags)
 {
 	char name[128];
 	cry_sprintf(name, "$SF_%d", m_TexGenID++);
 
 	flags |= !numMips ? FT_FORCE_MIPS : 0;
 
-	CTexture* pTexture(CTexture::Create2DTexture(name, width, height, numMips, flags, (byte*)pData, eTF, eTF));
+	CTexture* pTexture(CTexture::GetOrCreate2DTexture(name, width, height, numMips, flags, (byte*)pData, eSrcFormat));
 
 	int texId = (pTexture != 0) ? pTexture->GetID() : -1;
 	return texId;
 }
 
 //////////////////////////////////////////////////////////////////////////
-bool CD3D9Renderer::SF_UpdateTexture(int texId, int mipLevel, int numRects, const SUpdateRect* pRects, const unsigned char* pData, size_t pitch, size_t size, ETEX_Format eTF)
+bool CD3D9Renderer::SF_UpdateTexture(int texId, int mipLevel, int numRects, const SUpdateRect* pRects, const unsigned char* pSrcData, size_t rowPitch, size_t size, ETEX_Format eSrcFormat)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_SYSTEM);
+	CRY_PROFILE_FUNCTION(PROFILE_SYSTEM);
 
-	assert(texId > 0 && numRects > 0 && pRects != 0 && pData != 0 && pitch > 0);
+	assert(texId > 0 && numRects > 0 && pRects != 0 && pSrcData != 0 && rowPitch > 0);
 
 	CTexture* pTexture(CTexture::GetByID(texId));
-	assert(pTexture);
+	CRY_ASSERT(pTexture && pTexture->GetTextureType() == eTT_2D && pTexture->GetDstFormat() == eSrcFormat);
 
-	if (pTexture->GetTextureType() != eTT_2D || pTexture->GetDstFormat() != eTF)
-	{
-		assert(0);
-		return false;
-	}
-
-	CDeviceTexture* pTex = pTexture->GetDevTexture();
-	if (!pTex)
+	CDeviceTexture* pDevTex = pTexture->GetDevTexture();
+	if (!pDevTex)
 		return false;
 
-	for (int i(0); i < numRects; ++i)
+	GPUPIN_DEVICE_TEXTURE(GetPerformanceDeviceContext(), pDevTex);
+	for (int i = 0; i < numRects; ++i)
 	{
-		int sizePixel(CTexture::BytesPerPixel(eTF));
-		const unsigned char* pSrc(&pData[pRects[i].srcY * pitch + sizePixel * pRects[i].srcX]);
+		int sizePixel(CTexture::BytesPerPixel(eSrcFormat));
+		const unsigned char* pSrc(&pSrcData[pRects[i].srcY * rowPitch + sizePixel * pRects[i].srcX]);
 
-		D3D11_BOX box = { pRects[i].dstX, pRects[i].dstY, 0U, pRects[i].dstX + pRects[i].width, pRects[i].dstY + pRects[i].height, 1U };
-		GetDeviceContext().UpdateSubresource(pTex->Get2DTexture(), mipLevel, &box, pSrc, (unsigned int)pitch, (unsigned int)size);
+		// TODO: batch upload (instead of loop)
+		const size_t planePitch = rowPitch * pRects[i].height;
+		const SResourceMemoryMapping mapping =
+		{
+			{ static_cast<UINT>(sizePixel), static_cast<UINT>(rowPitch), static_cast<UINT>(planePitch), static_cast<UINT>(planePitch) }, // src alignment
+			{ pRects[i].dstX, pRects[i].dstY, 0, 0 },        // dst position
+			{ pRects[i].width, pRects[i].height, 1, 1 }      // dst size
+		};
+
+		GetDeviceObjectFactory().GetCoreCommandList().GetCopyInterface()->Copy(pSrc, pDevTex, mapping);
 	}
+
 	return true;
 }
 
 bool CD3D9Renderer::SF_ClearTexture(int texId, int mipLevel, int numRects, const SUpdateRect* pRects, const unsigned char* pData)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_SYSTEM);
-	__debugbreak();
+	CRY_PROFILE_FUNCTION(PROFILE_SYSTEM);
 
-	assert(texId > 0 && numRects > 0 && pRects != 0 && pData != 0);
+	assert(texId > 0 && pData != 0);
 
 	CTexture* pTexture(CTexture::GetByID(texId));
-	assert(pTexture);
+	CRY_ASSERT(pTexture && pTexture->GetTextureType() == eTT_2D);
 
-	if (pTexture->GetTextureType() != eTT_2D)
-	{
-		assert(0);
+	CDeviceTexture* pDevTex = pTexture->GetDevTexture();
+	if (!pDevTex)
 		return false;
+
+	D3DSurface* pSurface = pTexture->GetSurface(0, mipLevel);
+	if (!pSurface)
+		return false;
+
+	GPUPIN_DEVICE_TEXTURE(GetPerformanceDeviceContext(), pDevTex);
+	const ColorF clearValue(pData[0], pData[1], pData[2], pData[3]);
+	if (!numRects || !pRects)
+	{
+		CDeviceCommandListRef commandList = GetDeviceObjectFactory().GetCoreCommandList();
+		commandList.GetGraphicsInterface()->ClearSurface(pSurface, clearValue);
 	}
-
-	CDeviceTexture* pTex = pTexture->GetDevTexture();
-	if (!pTex)
-		return false;
-
-	// TODO: batch rect clears
-	FLOAT clearValue[4] = { pData[0], pData[1], pData[2], pData[3] };
-	for (int i(0); i < numRects; ++i)
+	else
 	{
-		if (!pRects)
-			GetDeviceContext().ClearRectsRenderTargetView(pTexture->GetSurface(0, mipLevel), clearValue, 0, nullptr);
-		else
+		for (int i(0); i < numRects; ++i)
 		{
-			D3D11_RECT box = { pRects[i].dstX, pRects[i].dstY, pRects[i].dstX + pRects[i].width, pRects[i].dstY + pRects[i].height };
-
-			GetDeviceContext().ClearRectsRenderTargetView(pTexture->GetSurface(0, mipLevel), clearValue, 1, &box);
+			// TODO: batch rect clears
+			D3D11_RECT box = { static_cast<LONG>(pRects[i].dstX),
+							   static_cast<LONG>(pRects[i].dstY),
+							   static_cast<LONG>(pRects[i].dstX + pRects[i].width),
+							   static_cast<LONG>(pRects[i].dstY + pRects[i].height) };
+			CDeviceCommandListRef commandList = GetDeviceObjectFactory().GetCoreCommandList();
+			commandList.GetGraphicsInterface()->ClearSurface(pSurface, clearValue, 1, &box);
 		}
 	}
 	return true;

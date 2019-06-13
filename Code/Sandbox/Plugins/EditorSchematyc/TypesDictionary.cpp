@@ -1,18 +1,18 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "TypesDictionary.h"
 
 #include "ScriptBrowserUtils.h"
 
-#include <Schematyc/Reflection/Reflection.h>
+#include <CrySchematyc/Reflection/TypeDesc.h>
 
-#include <Schematyc/Script/IScriptView.h>
-#include <Schematyc/Script/IScriptRegistry.h>
+#include <CrySchematyc/Script/IScriptView.h>
+#include <CrySchematyc/Script/IScriptRegistry.h>
 
-#include <Schematyc/Env/IEnvRegistry.h>
-#include <Schematyc/Env/IEnvElement.h>
-#include <Schematyc/Env/Elements/IEnvDataType.h>
+#include <CrySchematyc/Env/IEnvRegistry.h>
+#include <CrySchematyc/Env/IEnvElement.h>
+#include <CrySchematyc/Env/Elements/IEnvDataType.h>
 
 namespace CrySchematycEditor {
 
@@ -40,6 +40,7 @@ QVariant CTypeDictionaryEntry::GetColumnValue(int32 columnIndex) const
 }
 
 CTypesDictionary::CTypesDictionary(const Schematyc::IScriptElement* pScriptScope)
+	: m_pScriptScope(nullptr)
 {
 	Load(pScriptScope);
 }
@@ -47,6 +48,56 @@ CTypesDictionary::CTypesDictionary(const Schematyc::IScriptElement* pScriptScope
 CTypesDictionary::~CTypesDictionary()
 {
 
+}
+
+void CTypesDictionary::ResetEntries()
+{
+	if (m_pScriptScope)
+	{
+		m_types.reserve(50);
+
+		Schematyc::IScriptViewPtr pScriptView = gEnv->pSchematyc->CreateScriptView(m_pScriptScope->GetGUID());
+
+		auto visitEnvType = [this, &pScriptView](const Schematyc::IEnvDataType& envType) -> Schematyc::EVisitStatus
+		{
+			Schematyc::CStackString name;
+			pScriptView->QualifyName(envType, name);
+
+			CTypeDictionaryEntry entry;
+			entry.m_name = name.c_str();
+			entry.m_elementId = Schematyc::SElementId(Schematyc::EDomain::Env, envType.GetGUID());
+			m_types.push_back(entry);
+
+			return Schematyc::EVisitStatus::Continue;
+		};
+		pScriptView->VisitEnvDataTypes(visitEnvType);
+
+		auto visitScriptEnum = [this, &pScriptView](const Schematyc::IScriptEnum& scriptEnum)
+		{
+			Schematyc::CStackString name;
+			pScriptView->QualifyName(scriptEnum, Schematyc::EDomainQualifier::Global, name);
+
+			CTypeDictionaryEntry entry;
+			entry.m_name = name.c_str();
+			entry.m_elementId = Schematyc::SElementId(Schematyc::EDomain::Script, scriptEnum.GetGUID());
+			m_types.push_back(entry);
+		};
+		pScriptView->VisitAccesibleEnums(visitScriptEnum);
+
+		auto visitScriptStruct = [this, &pScriptView](const Schematyc::IScriptStruct& scriptStruct)
+		{
+			Schematyc::CStackString name;
+			pScriptView->QualifyName(scriptStruct, Schematyc::EDomainQualifier::Global, name);
+
+			CTypeDictionaryEntry entry;
+			entry.m_name = name.c_str();
+			entry.m_elementId = Schematyc::SElementId(Schematyc::EDomain::Script, scriptStruct.GetGUID());
+			m_types.push_back(entry);
+
+			return Schematyc::EVisitStatus::Continue;
+		};
+		//pScriptView->VisitScriptStructs(visitScriptStruct, EDomainScope::Local);
+	}
 }
 
 const CAbstractDictionaryEntry* CTypesDictionary::GetEntry(int32 index) const
@@ -74,52 +125,9 @@ QString CTypesDictionary::GetColumnName(int32 index) const
 
 void CTypesDictionary::Load(const Schematyc::IScriptElement* pScriptScope)
 {
-	if (pScriptScope)
-	{
-		m_types.reserve(50);
-
-		Schematyc::IScriptViewPtr pScriptView = gEnv->pSchematyc->CreateScriptView(pScriptScope->GetGUID());
-
-		auto visitEnvType = [this, &pScriptView](const Schematyc::IEnvDataType& envType) -> Schematyc::EVisitStatus
-		{
-			Schematyc::CStackString name;
-			pScriptView->QualifyName(envType, name);
-
-			CTypeDictionaryEntry entry;
-			entry.m_name = name.c_str();
-			entry.m_elementId = Schematyc::SElementId(Schematyc::EDomain::Env, envType.GetGUID());
-			m_types.push_back(entry);
-
-			return Schematyc::EVisitStatus::Continue;
-		};
-		pScriptView->VisitEnvDataTypes(Schematyc::EnvDataTypeConstVisitor::FromLambda(visitEnvType));
-
-		auto visitScriptEnum = [this, &pScriptView](const Schematyc::IScriptEnum& scriptEnum)
-		{
-			Schematyc::CStackString name;
-			pScriptView->QualifyName(scriptEnum, Schematyc::EDomainQualifier::Global, name);
-
-			CTypeDictionaryEntry entry;
-			entry.m_name = name.c_str();
-			entry.m_elementId = Schematyc::SElementId(Schematyc::EDomain::Script, scriptEnum.GetGUID());
-			m_types.push_back(entry);
-		};
-		pScriptView->VisitAccesibleEnums(Schematyc::ScriptEnumConstVisitor::FromLambda(visitScriptEnum));
-
-		auto visitScriptStruct = [this, &pScriptView](const Schematyc::IScriptStruct& scriptStruct)
-		{
-			Schematyc::CStackString name;
-			pScriptView->QualifyName(scriptStruct, Schematyc::EDomainQualifier::Global, name);
-
-			CTypeDictionaryEntry entry;
-			entry.m_name = name.c_str();
-			entry.m_elementId = Schematyc::SElementId(Schematyc::EDomain::Script, scriptStruct.GetGUID());
-			m_types.push_back(entry);
-
-			return Schematyc::EVisitStatus::Continue;
-		};
-		//pScriptView->VisitScriptStructs(ScriptEnumConstVisitor::FromLambda(visitScriptStruct), EDomainScope::Local);
-	}
+	m_pScriptScope = pScriptScope;
+	Reset();
+	m_pScriptScope = nullptr;
 }
 
 }

@@ -1,7 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __RECORDINGBUFFER_H__
 #define __RECORDINGBUFFER_H__
+
+#include <CryMemory/MemoryAccess.h>
+#include <CryMemory/CrySizer.h>
 
 class CBufferUtil;
 
@@ -48,7 +51,7 @@ public:
 	public:
 		iterator(CRecordingBuffer* pBuffer, size_t offset) : m_pRecordingBuffer(pBuffer), m_offset(offset)
 		{
-			size_t prefetchOffset = MIN(m_offset + 128, pBuffer->size());
+			size_t prefetchOffset = std::min(m_offset + 128, pBuffer->size());
 			PrefetchLine(pBuffer, prefetchOffset);
 		}
 
@@ -58,7 +61,7 @@ public:
 		{
 			m_offset += ((SRecording_Packet*)m_pRecordingBuffer->at(m_offset))->size;
 
-			size_t prefetchOffset = MIN(m_offset + 256, m_pRecordingBuffer->size());
+			size_t prefetchOffset = std::min(m_offset + 256, m_pRecordingBuffer->size());
 			PrefetchLine(m_pRecordingBuffer, prefetchOffset);
 			return *this;
 		}

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 *************************************************************************/
@@ -69,10 +69,11 @@ public:
 
 		m_pPlatformOSSaveWriter->Close();
 
+#if !defined(EXCLUDE_NORMAL_LOG)
 		float finalTime = gEnv->pTimer->GetAsyncTime().GetMilliSeconds();
-
 		CryLog("[SAVE GAME] Binary saveload: After writing, result: %s   filesize/uncompressed: %u/%u (%u kb / %u kb)   generation time: %d ms ",
 		       (m_pCompressor->m_errorWritingIntoFile) ? "FAIL" : "SUCCESS", m_bytesWrittenIntoFile, m_bytesWrittenIntoFileUncompressed, m_bytesWrittenIntoFile / 1024, m_bytesWrittenIntoFileUncompressed / 1024, int(finalTime - m_startingTime));
+#endif
 	}
 
 	bool Write(void* pSrc, uint32 numBytes)
@@ -110,10 +111,10 @@ private:
 	SMD5Context m_MD5Context;
 	IZLibCompressor* m_pICompressor;
 #endif
-	CZLibCompressor * m_pCompressor;
-	CryEvent&                                m_event;
-	IPlatformOS::ISaveWriterPtr              m_pPlatformOSSaveWriter;
-	CryMT::CLocklessPointerQueue<SZLibBlock> m_blocks;
+	CZLibCompressor *           m_pCompressor;
+	CryEvent&                   m_event;
+	IPlatformOS::ISaveWriterPtr m_pPlatformOSSaveWriter;
+	CryMT::queue<SZLibBlock*>    m_blocks;
 	uint32 m_bytesWrittenIntoFile;                                    // used for statistics only
 	uint32 m_bytesWrittenIntoFileUncompressed;                        // used for statistics only
 	float  m_startingTime;
@@ -144,9 +145,8 @@ public:
 
 			uint8* pZLibCompressedBuffer = AllocateBlock();
 
-			while (!m_files.empty())
+			for (CFile* pFile: m_files.pop_all())
 			{
-				CFile* pFile = m_files.pop();
 				assert(pFile);
 				PREFAST_ASSUME(pFile);
 
@@ -157,9 +157,8 @@ public:
 						CrySleep(1); // yield to give other threads a chance to do some work
 					}
 
-					while (!pFile->m_blocks.empty())
+					for (SZLibBlock* block : pFile->m_blocks.pop_all())
 					{
-						SZLibBlock* block = pFile->m_blocks.pop();
 						assert(block);
 						PREFAST_ASSUME(block);
 
@@ -252,13 +251,13 @@ public:
 
 private:
 
-	CryMT::CLocklessPointerQueue<CFile> m_files;
-	CryEvent                            m_event;
-	CryConditionVariable                m_bufferAvailableCond;
-	CryMutex                            m_bufferAvailableLock;
-	const int                           m_nMaxQueuedBlocks;
-	int m_nBlockCount;
-	bool                                m_bCancelled;
+	CryMT::queue<CFile*> m_files;
+	CryEvent             m_event;
+	CryConditionVariable m_bufferAvailableCond;
+	CryMutex             m_bufferAvailableLock;
+	const int            m_nMaxQueuedBlocks;
+	int                  m_nBlockCount;
+	bool                 m_bCancelled;
 };
 
 static CCompressorThread* s_pCompressorThread;

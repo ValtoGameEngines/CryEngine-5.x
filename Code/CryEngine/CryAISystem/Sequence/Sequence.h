@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -27,7 +27,6 @@ public:
 
 	bool       TraverseAndValidateSequence();
 	void       Start();
-	void       PrepareAgentSequenceBehavior();
 	void       SequenceBehaviorReady();
 	void       SequenceInterruptibleBehaviorLeft();
 	void       Stop();

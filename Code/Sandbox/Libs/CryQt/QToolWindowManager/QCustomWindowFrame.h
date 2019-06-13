@@ -1,56 +1,47 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 #include "QToolWindowManagerCommon.h"
 #include <QFrame>
 
-#if (defined(_WIN32) || defined(_WIN64))
-#include <windows.h>
-#include <dwmapi.h>
-#endif
-
+class QBoxLayout;
+class QCustomWindowFrame;
+class QLabel;
 class QPushButton;
 class QToolButton;
-class QGridLayout;
-class QLabel;
-
-class QCustomWindowFrame;
 
 class QTOOLWINDOWMANAGER_EXPORT QCustomTitleBar : public QFrame
 {
 	Q_OBJECT;
 public:
 	QCustomTitleBar(QWidget* parent);
-	virtual ~QCustomTitleBar();
 
 public:
 	virtual void updateWindowStateButtons();
-	void setActive(bool active);
-	
+	void         setActive(bool active);
+
 protected slots:
 	virtual void toggleMaximizedParent();
-	void showSystemMenu(QPoint p);
-	void onIconChange();
-	void onFrameContentsChanged(QWidget* newContents);
+	void         showSystemMenu(QPoint p);
+	void         onIconChange();
+	void         onFrameContentsChanged(QWidget* newContents);
 public slots:
-	void onBeginDrag();
+	void         onBeginDrag();
 
 protected:
-	virtual void mousePressEvent(QMouseEvent*) Q_DECL_OVERRIDE;
-	virtual void mouseReleaseEvent(QMouseEvent*) Q_DECL_OVERRIDE;
-	virtual bool eventFilter(QObject *, QEvent *) Q_DECL_OVERRIDE;
+	virtual void mousePressEvent(QMouseEvent*) override;
+	virtual void mouseReleaseEvent(QMouseEvent*) override;
+	virtual bool eventFilter(QObject*, QEvent*) override;
+	virtual bool nativeEvent(const QByteArray& eventType, void* message, long* result) override;
 
-#if QT_VERSION >= 0x050000
-	virtual bool nativeEvent(const QByteArray &eventType, void *message, long *result) Q_DECL_OVERRIDE;
-#endif
 #if (defined(_WIN32) || defined(_WIN64))
-	bool winEvent(MSG *msg, long *result);
+	bool winEvent(MSG* msg, long* result);
 #endif
 
 protected:
-	bool m_dragging;
+	bool         m_dragging;
 
-	QLabel* m_caption;
+	QLabel*      m_caption;
 	QToolButton* m_sysMenuButton;
 	QToolButton* m_minimizeButton;
 	QToolButton* m_maximizeButton;
@@ -61,49 +52,55 @@ protected:
 
 class QTOOLWINDOWMANAGER_EXPORT QCustomWindowFrame : public QFrame
 {
+	Q_OBJECT
+	Q_PROPERTY(int resizeMargin READ GetResizeMargin WRITE SetResizeMargin DESIGNABLE true)
+
 public:
 	static QCustomWindowFrame* wrapWidget(QWidget* w);
 
-	Q_OBJECT;
 public:
 	QCustomWindowFrame();
 	virtual ~QCustomWindowFrame();
-	virtual void setContents(QWidget* widget, bool useContentsGeometry = true);
 
 	virtual void ensureTitleBar();
 
 protected:
-#if QT_VERSION >= 0x050000
-	virtual bool nativeEvent(const QByteArray &eventType, void *message, long *result) Q_DECL_OVERRIDE;
-#endif
+	virtual void internalSetContents(QWidget* widget, bool useContentsGeometry = true);
+	virtual bool nativeEvent(const QByteArray& eventType, void* message, long* result) override;
+
 #if (defined(_WIN32) || defined(_WIN64))
-	bool winEvent(MSG *msg, long *result);
+	bool         winEvent(MSG* msg, long* result);
 #endif
-	virtual bool event(QEvent*) Q_DECL_OVERRIDE;
-	virtual void closeEvent(QCloseEvent *) Q_DECL_OVERRIDE;
-	virtual void changeEvent(QEvent *) Q_DECL_OVERRIDE;
-	virtual bool eventFilter(QObject *, QEvent *) Q_DECL_OVERRIDE;
-	virtual void mouseReleaseEvent(QMouseEvent*) Q_DECL_OVERRIDE;
+	virtual bool event(QEvent*) override;
+	virtual void closeEvent(QCloseEvent*) override;
+	virtual void changeEvent(QEvent*) override;
+	virtual bool eventFilter(QObject*, QEvent*) override;
+	virtual void mouseReleaseEvent(QMouseEvent*) override;
 
 signals:
 	void contentsChanged(QWidget* newContents);
 
 protected slots:
-	void nudgeWindow();
+	void                    nudgeWindow();
 	virtual Qt::WindowFlags calcFrameWindowFlags();
-	void updateWindowFlags();
-	void onIconChange();
+	void                    updateWindowFlags();
+	void                    onIconChange();
+
+private:
+	int GetResizeMargin() const { return m_resizeMargin; }
+	void SetResizeMargin(int resizeMargin) { m_resizeMargin = resizeMargin; }
 
 protected:
-	QWidget* m_contents;
+
+	QWidget*         m_contents;
 	QCustomTitleBar* m_titleBar;
-	QGridLayout* m_grid;
+	QBoxLayout*      m_layout;
+	int              m_resizeMargin;
 
 #if (defined(_WIN32) || defined(_WIN64))
 	// DWM library
-	HMODULE m_dwm;
+	/*HMODULE*/ void* m_dwm;
 	// Pointers to DWM functions
-	typedef HRESULT(WINAPI *dwmExtendFrameIntoClientArea_t)(HWND hwnd, const MARGINS* pMarInset);
-	dwmExtendFrameIntoClientArea_t dwmExtendFrameIntoClientArea;
+	void*             dwmExtendFrameIntoClientArea;
 #endif
 };

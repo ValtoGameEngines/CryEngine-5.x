@@ -1,15 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   EntityObject.cpp
-//  Version:     v1.00
-//  Created:     18/5/2004 by Timur.
-//  Compilers:   Visual Studio.NET 2003
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "EntitySlot.h"
@@ -19,6 +8,8 @@
 #include <Cry3DEngine/I3DEngine.h>
 #include <CryAnimation/ICryAnimation.h>
 #include <Cry3DEngine/IGeomCache.h>
+#include <CryPhysics/physinterface.h>
+#include <CryParticleSystem/IParticles.h>
 
 #define MAX_CHARACTER_LOD 10
 
@@ -35,6 +26,7 @@ CEntitySlot::CEntitySlot(CEntity* pEntity)
 	m_worldTM.SetIdentity();
 	m_nSubObjHideMask = 0;
 	m_cameraSpacePos.Set(0, 0, 0);
+	m_bCameraSpacePos = false;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -51,12 +43,16 @@ void CEntitySlot::Clear()
 	m_pMaterial = nullptr;
 	SetFlags(0);
 	m_nSubObjHideMask = 0;
-	m_internalFlags = 0;
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CEntitySlot::ReleaseObjects()
 {
+	if (m_pRenderNode)
+	{
+		m_pRenderNode->SetOwnerEntity(nullptr);
+	}
+
 	if (m_pStatObj)
 	{
 		m_pStatObj->Release();
@@ -68,26 +64,23 @@ void CEntitySlot::ReleaseObjects()
 			pSkeletonAnim->SetEventCallback(0, 0);
 
 		if (ISkeletonPose* pSkeletonPose = GetCharacter()->GetISkeletonPose())
-			pSkeletonPose->DestroyCharacterPhysics(0);
+			pSkeletonPose->DestroyCharacterPhysics(pSkeletonPose->GetCharacterPhysics() == m_pEntity->GetPhysics() ? IPhysicalWorld::DM_KEEP_IF_REFERENCED : IPhysicalWorld::DM_NORMAL);
 
 		m_pCharacter->Release();
 		m_pCharacter = nullptr;
 	}
-	else if (IParticleEmitter* pEmitter = GetParticleEmitter())
+
+	if (IParticleEmitter* pEmitter = GetParticleEmitter())
 	{
+		pEmitter->SetEntity(nullptr, 0);
 		pEmitter->Activate(false);
-		pEmitter->SetEntity(NULL, 0);
 		pEmitter->Release();
-		m_pRenderNode = 0;
+		m_pRenderNode = nullptr;
 	}
-
-	if (m_pRenderNode)
+	else if (m_pRenderNode)
 	{
-		if (m_bRegisteredRenderNode)
-			gEnv->p3DEngine->UnRegisterEntityDirect(m_pRenderNode);
+		gEnv->p3DEngine->DeleteRenderNode(m_pRenderNode);
 		m_bRegisteredRenderNode = false;
-
-		m_pRenderNode->ReleaseNode();
 		m_pRenderNode = nullptr;
 	}
 	m_renderNodeType = eERType_NotRenderNode;
@@ -113,26 +106,27 @@ void CEntitySlot::UpdateRenderNode(bool bForceRecreateNode)
 	ComputeWorldTransform();
 
 	bool bSlotShouldRender =
-	  (GetFlags() & ENTITY_SLOT_RENDER) &&
-	  (!m_pEntity->IsHidden()) &&
-	  (!m_pEntity->IsInvisible());
+		(GetFlags() & ENTITY_SLOT_RENDER) &&
+		(!m_pEntity->IsHidden()) &&
+		(!m_pEntity->IsInvisible());
 
 	if (bForceRecreateNode || !bSlotShouldRender)
 	{
 		if (m_pRenderNode)
 		{
-			if (m_bRegisteredRenderNode)
-			{
-				gEnv->p3DEngine->UnRegisterEntityDirect(m_pRenderNode);
-				m_bRegisteredRenderNode = false;
-			}
 			if (bForceRecreateNode)
 			{
 				// Only release node if we force node recreation.
 				// Not should not be released if we only switching it to not rendered slot
-				m_pRenderNode->ReleaseNode();
+				gEnv->p3DEngine->DeleteRenderNode(m_pRenderNode);
+				m_bRegisteredRenderNode = false;
 				m_pRenderNode = 0;
 				m_renderNodeType = eERType_NotRenderNode;
+			}
+			else if (m_bRegisteredRenderNode)
+			{
+				gEnv->p3DEngine->UnRegisterEntityDirect(m_pRenderNode);
+				m_bRegisteredRenderNode = false;
 			}
 		}
 	}
@@ -142,13 +136,13 @@ void CEntitySlot::UpdateRenderNode(bool bForceRecreateNode)
 		// Recreate proper render node in 3d engine if not exist yet.
 		if (GetStatObj())
 		{
-			m_renderNodeType = eERType_Brush;
-			IBrush* pBrushRenderNode = static_cast<IBrush*>(gEnv->p3DEngine->CreateRenderNode(eERType_Brush));
+			m_renderNodeType = eERType_MovableBrush;
+			IBrush* pBrushRenderNode = static_cast<IBrush*>(gEnv->p3DEngine->CreateRenderNode(eERType_MovableBrush));
 			m_pRenderNode = pBrushRenderNode;
 			m_pRenderNode->SetOwnerEntity(m_pEntity);
 			pBrushRenderNode->DisablePhysicalization(true); // We physicalize render node with PhysicalProxy instead.
 			Matrix34A tm = m_worldTM;
-			m_pRenderNode->SetEntityStatObj(0, GetStatObj(), &tm);
+			m_pRenderNode->SetEntityStatObj(GetStatObj(), &tm);
 		}
 		if (GetCharacter())
 		{
@@ -156,8 +150,7 @@ void CEntitySlot::UpdateRenderNode(bool bForceRecreateNode)
 			ICharacterRenderNode* pCharacterRenderNode = static_cast<ICharacterRenderNode*>(gEnv->p3DEngine->CreateRenderNode(eERType_Character));
 			pCharacterRenderNode->SetOwnerEntity(m_pEntity);
 			pCharacterRenderNode->SetCharacter(GetCharacter());
-			pCharacterRenderNode->SetCharacterRenderOffset(QuatTS(m_localTM));
-			pCharacterRenderNode->SetMatrix(m_pEntity->m_worldTM);
+			pCharacterRenderNode->SetMatrix(m_worldTM);
 			m_pRenderNode = pCharacterRenderNode;
 		}
 	}
@@ -176,22 +169,24 @@ void CEntitySlot::UpdateRenderNode(bool bForceRecreateNode)
 
 		{
 			uint32 entityFlags = m_pEntity->GetFlags();
-			SetRenderNodeFlags(renderNodeFlags, ERF_DYNAMIC_DISTANCESHADOWS, 0 != (m_pEntity->m_flagsExtended & ENTITY_FLAG_EXTENDED_DYNAMIC_DISTANCE_SHADOWS));
+			SetRenderNodeFlags(renderNodeFlags, ERF_DYNAMIC_DISTANCESHADOWS, 0 != (m_pEntity->m_flags & ENTITY_FLAG_DYNAMIC_DISTANCE_SHADOWS));
 
-			SetRenderNodeFlags(renderNodeFlags, ERF_CASTSHADOWMAPS, 0 != (entityFlags & ENTITY_FLAG_CASTSHADOW));
+			SetRenderNodeFlags(renderNodeFlags, ERF_CASTSHADOWMAPS, (0 != (entityFlags & ENTITY_FLAG_CASTSHADOW)) || (0 != (GetFlags() & ENTITY_SLOT_CAST_SHADOW)));
 			SetRenderNodeFlags(renderNodeFlags, ERF_GOOD_OCCLUDER, 0 != (entityFlags & ENTITY_FLAG_GOOD_OCCLUDER));
-			SetRenderNodeFlags(renderNodeFlags, ERF_OUTDOORONLY, 0 != (entityFlags & ENTITY_FLAG_OUTDOORONLY));
+			SetRenderNodeFlags(renderNodeFlags, ERF_OUTDOORONLY, (0 != (entityFlags & ENTITY_FLAG_OUTDOORONLY)) || (0 != (GetFlags() & ENTITY_SLOT_IGNORE_VISAREAS)));
 			SetRenderNodeFlags(renderNodeFlags, ERF_RECVWIND, 0 != (entityFlags & ENTITY_FLAG_RECVWIND));
 			SetRenderNodeFlags(renderNodeFlags, ERF_NO_DECALNODE_DECALS, 0 != (entityFlags & ENTITY_FLAG_NO_DECALNODE_DECALS));
 			SetRenderNodeFlags(renderNodeFlags, ERF_ENABLE_ENTITY_RENDER_CALLBACK, 0 != (entityFlags & ENTITY_FLAG_SEND_RENDER_EVENT));
 			SetRenderNodeFlags(renderNodeFlags, ERF_CUSTOM_VIEW_DIST_RATIO, 0 != (entityFlags & ENTITY_FLAG_CUSTOM_VIEWDIST_RATIO));
 
+			SetRenderNodeFlags(renderNodeFlags, ERF_FOB_ALLOW_TERRAIN_LAYER_BLEND, 0 != (GetFlags() & ENTITY_SLOT_ALLOW_TERRAIN_LAYER_BLEND));
+			SetRenderNodeFlags(renderNodeFlags, ERF_FOB_ALLOW_DECAL_BLEND, 0 != (GetFlags() & ENTITY_SLOT_ALLOW_DECAL_BLEND));
 			SetRenderNodeFlags(renderNodeFlags, ERF_FOB_RENDER_AFTER_POSTPROCESSING, 0 != (GetFlags() & ENTITY_SLOT_RENDER_AFTER_POSTPROCESSING));
 			SetRenderNodeFlags(renderNodeFlags, ERF_FOB_NEAREST, 0 != (GetFlags() & ENTITY_SLOT_RENDER_NEAREST));
 
-			SetRenderNodeFlags(renderNodeFlags, ERF_GI_MODE_BIT0, 0 != (m_pEntity->m_flagsExtended & ENTITY_FLAG_EXTENDED_GI_MODE_BIT0));
-			SetRenderNodeFlags(renderNodeFlags, ERF_GI_MODE_BIT1, 0 != (m_pEntity->m_flagsExtended & ENTITY_FLAG_EXTENDED_GI_MODE_BIT1));
-			SetRenderNodeFlags(renderNodeFlags, ERF_GI_MODE_BIT2, 0 != (m_pEntity->m_flagsExtended & ENTITY_FLAG_EXTENDED_GI_MODE_BIT2));
+			SetRenderNodeFlags(renderNodeFlags, ERF_GI_MODE_BIT0, (0 != (m_pEntity->m_flagsExtended & ENTITY_FLAG_EXTENDED_GI_MODE_BIT0)) || (0 != (GetFlags() & ENTITY_SLOT_GI_MODE_BIT0)));
+			SetRenderNodeFlags(renderNodeFlags, ERF_GI_MODE_BIT1, (0 != (m_pEntity->m_flagsExtended & ENTITY_FLAG_EXTENDED_GI_MODE_BIT1)) || (0 != (GetFlags() & ENTITY_SLOT_GI_MODE_BIT1)));
+			SetRenderNodeFlags(renderNodeFlags, ERF_GI_MODE_BIT2, (0 != (m_pEntity->m_flagsExtended & ENTITY_FLAG_EXTENDED_GI_MODE_BIT2)) || (0 != (GetFlags() & ENTITY_SLOT_GI_MODE_BIT2)));
 
 			if (renderNodeFlags & ERF_CASTSHADOWMAPS)
 				renderNodeFlags |= ERF_HAS_CASTSHADOWMAPS;
@@ -206,25 +201,19 @@ void CEntitySlot::UpdateRenderNode(bool bForceRecreateNode)
 			SetRenderNodeFlags(renderNodeFlags, ERF_MOVES_EVERY_FRAME, !bPhysicsIsStatic);
 		}
 		renderNodeFlags |= renderNodeParams.additionalRenderNodeFlags;
+
 		m_pRenderNode->SetRndFlags(renderNodeFlags);
 
+		m_pRenderNode->SetRndFlags(ERF_HIDDEN, !bSlotShouldRender);
+
 		// Update render node location
-		if (!GetCharacter())
-		{
-			m_pRenderNode->SetMatrix(m_worldTM);
-		}
-		else
-		{
-			// For characters local matrix is not used
-			m_pRenderNode->SetMatrix(m_pEntity->m_worldTM);
-		}
+		m_pRenderNode->SetMatrix(m_worldTM);
 
 		if (!m_bRegisteredRenderNode)
 		{
-			m_bRegisteredRenderNode = true;
-			//////////////////////////////////////////////////////////////////////////
 			if (renderNodeType != eERType_ParticleEmitter)
 			{
+				m_bRegisteredRenderNode = true;
 				gEnv->p3DEngine->RegisterEntity(m_pRenderNode);
 			}
 		}
@@ -240,53 +229,52 @@ void CEntitySlot::UpdateRenderNode(bool bForceRecreateNode)
 			m_pRenderNode->SetRndFlags(ERF_RAYCAST_PROXY, (pMaterial->GetFlags() & MTL_FLAG_RAYCAST_PROXY) != 0);
 		}
 
-		if (renderNodeType == eERType_Brush)
+		if (renderNodeType == eERType_MovableBrush || renderNodeType == eERType_Brush)
 		{
 			static_cast<IBrush*>(m_pRenderNode)->SetSubObjectHideMask(m_nSubObjHideMask);
 		}
 
 		if (m_bCameraSpacePos)
 		{
-			m_pRenderNode->SetCameraSpacePos(&m_cameraSpacePos);
+			m_pRenderNode->SetCameraSpaceParams(SCameraSpaceParams{ m_cameraSpacePos, Vec3{ZERO} });
 		}
 		else
 		{
-			m_pRenderNode->SetCameraSpacePos(nullptr);
+			m_pRenderNode->SetCameraSpaceParams(stl::nullopt);
 		}
 
-		m_pRenderNode->Hide(!bSlotShouldRender);
+		UpdateViewDistRatio(renderNodeParams);
 
-		if (GetFlags() & ENTITY_SLOT_RENDER_NEAREST)
-			m_pRenderNode->SetLodRatio(0); // Use LOD 0 on nearest objects
-		else
-			m_pRenderNode->SetLodRatio(renderNodeParams.lodRatio);
-		m_pRenderNode->SetViewDistRatio(renderNodeParams.viewDistRatio);
 		m_pRenderNode->SetMinSpec(renderNodeParams.minSpec);
 	}
 }
 
+void CEntitySlot::UpdateViewDistRatio(const IEntity::SRenderNodeParams& renderNodeParams)
+{
+	if ((m_pEntity->GetFlags() & ENTITY_FLAG_CUSTOM_VIEWDIST_RATIO) == 0)
+	{
+		const uint32 slotFlags = GetFlags();
+
+		if (slotFlags & ENTITY_SLOT_RENDER_NEAREST)
+			m_pRenderNode->SetLodRatio(0); // Use LOD 0 on nearest objects.
+		else
+			m_pRenderNode->SetLodRatio(renderNodeParams.lodRatio);
+
+		if ((slotFlags & ENTITY_SLOT_CUSTOM_VIEWDIST_RATIO) == 0)
+		{
+			m_pRenderNode->SetViewDistRatio(renderNodeParams.viewDistRatio);
+		}
+	}
+}
+
 //////////////////////////////////////////////////////////////////////////
-void CEntitySlot::OnXForm(int nWhyFlags)
+void CEntitySlot::OnXForm(EntityTransformationFlagsMask transformReasons)
 {
 	ComputeWorldTransform();
 
 	if (m_pRenderNode)
 	{
-		if (!GetCharacter())
-		{
-			m_pRenderNode->SetMatrix(m_worldTM);
-		}
-		else
-		{
-			// For characters local matrix is not used
-			m_pRenderNode->SetMatrix(m_pEntity->m_worldTM);
-		}
-
-		if (nWhyFlags & ENTITY_XFORM_EDITOR)
-		{
-			// When entity moved in editor,Force shadow cache re-compute
-			gEnv->p3DEngine->OnObjectModified(m_pRenderNode, m_pRenderNode->GetRndFlags());
-		}
+		m_pRenderNode->SetMatrix(m_worldTM);
 	}
 }
 
@@ -305,13 +293,6 @@ bool CEntitySlot::GetLocalBounds(AABB& bounds)
 	}
 	else if (m_pRenderNode)
 	{
-		if (m_renderNodeType == eERType_Light)
-		{
-			// Special case for Lights preserver old behavior of using very small bounding box around light source
-			bounds.Add(Vec3Constants<float>::fVec3_Zero, 0.1f);
-			return true;
-		}
-
 		m_pRenderNode->GetLocalBounds(bounds);
 		return true;
 	}
@@ -362,13 +343,21 @@ bool CEntitySlot::IsRendered() const
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntitySlot::PreviewRender(IEntity::SPreviewRenderParams& params)
+void CEntitySlot::PreviewRender(SEntityPreviewContext& context)
 {
 	if (m_pRenderNode)
 	{
-		assert(params.pRenderParams);
-		assert(params.pPassInfo);
-		m_pRenderNode->Render(*params.pRenderParams, *params.pPassInfo);
+		if (!context.bNoRenderNodes)
+		{
+			assert(context.pRenderParams);
+			assert(context.pPassInfo);
+			m_pRenderNode->Render(*context.pRenderParams, *context.pPassInfo);
+		}
+
+		if (context.debugDrawInfo.bDrawInFront)
+		{
+			DebugDraw(context.debugDrawInfo);
+		}
 	}
 }
 
@@ -409,12 +398,12 @@ void CEntitySlot::SetLocalTM(const Matrix34& localTM)
 	m_localTM = localTM;
 	ComputeWorldTransform();
 
-	if (GetCharacter() && m_pRenderNode)
+	OnXForm(EntityTransformationFlagsMask());
+
+	if (m_pCharacter)
 	{
-		ICharacterRenderNode* pCharacterRenderNode = static_cast<ICharacterRenderNode*>(m_pRenderNode);
-		pCharacterRenderNode->SetCharacterRenderOffset(QuatTS(m_localTM));
+		m_pCharacter->SetCharacterOffset(QuatTS(Quat(IDENTITY), Vec3(ZERO), m_pEntity->GetScale().x) * QuatTS(m_localTM));
 	}
-	OnXForm(0);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -448,10 +437,6 @@ void CEntitySlot::GetCameraSpacePos(Vec3& cameraSpacePos)
      rParams.dwFObjFlags |= FOB_RENDER_AFTER_POSTPROCESSING;
      }
 
-   #ifdef SEG_WORLD
-     rParams.nCustomFlags |= (1 << (COB_SW_SHIFT + m_pEntity->GetSwObjDebugFlag()));
-   #endif // SEG_WORLD
-
    return CLodValue(wantedLod);
    }
 
@@ -471,10 +456,6 @@ void CEntitySlot::GetCameraSpacePos(Vec3& cameraSpacePos)
      {
      rParams.dwFObjFlags |= FOB_RENDER_AFTER_POSTPROCESSING;
      }
-
-   #ifdef SEG_WORLD
-     rParams.nCustomFlags |= (1 << (COB_SW_SHIFT + m_pEntity->GetSwObjDebugFlag()));
-   #endif // SEG_WORLD
 
      //////////////////////////////////////////////////////////////////////////
 
@@ -698,14 +679,14 @@ void CEntitySlot::GetSlotInfo(SEntitySlotInfo& slotInfo) const
 	slotInfo.pParticleEmitter = GetParticleEmitter();
 #if defined(USE_GEOM_CACHES)
 	slotInfo.pGeomCacheRenderNode =
-	  (m_pRenderNode && m_pRenderNode->GetRenderNodeType() == eERType_GeomCache)
-	  ? static_cast<IGeomCacheRenderNode*>(m_pRenderNode) : NULL;
+		(m_pRenderNode && m_pRenderNode->GetRenderNodeType() == eERType_GeomCache)
+		? static_cast<IGeomCacheRenderNode*>(m_pRenderNode) : NULL;
 #endif
 	slotInfo.nSubObjHideMask = m_nSubObjHideMask;
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntitySlot::SetAsLight(const CDLight& lightData, uint16 layerId)
+void CEntitySlot::SetAsLight(const SRenderLight& lightData, uint16 layerId)
 {
 	if (m_pRenderNode && m_pRenderNode->GetRenderNodeType() != eERType_Light)
 	{
@@ -721,9 +702,13 @@ void CEntitySlot::SetAsLight(const CDLight& lightData, uint16 layerId)
 	pLightNode->SetLayerId(layerId);
 	pLightNode->SetLightProperties(lightData);
 
-	CDLight& newLightData = pLightNode->GetLightProperties();
+	SRenderLight& newLightData = pLightNode->GetLightProperties();
 	newLightData.m_sName = m_pEntity->GetName(); // For debugging only.
 	newLightData.m_nEntityId = m_pEntity->GetId();
+
+	auto lightNodeMatrix = pLightNode->GetMatrix();
+	newLightData.SetPosition(lightNodeMatrix.GetTranslation());
+	newLightData.SetMatrix(lightNodeMatrix);
 
 	m_flags |= ENTITY_SLOT_RENDER;
 
@@ -741,6 +726,8 @@ void CEntitySlot::SetRenderNode(IRenderNode* pRenderNode)
 
 	if (m_pRenderNode)
 	{
+		m_flags |= ENTITY_SLOT_RENDER;
+
 		m_renderNodeType = m_pRenderNode->GetRenderNodeType();
 
 		m_pRenderNode->SetOwnerEntity(m_pEntity);

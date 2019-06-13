@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -14,6 +14,8 @@
 
 #ifndef _IGAME_RULES_REVIVED_LISTENER_H_
 #define _IGAME_RULES_REVIVED_LISTENER_H_
+
+#include <CryEntitySystem/IEntityBasicTypes.h>
 
 #if _MSC_VER > 1000
 # pragma once

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ObjectsTree.h"
@@ -10,6 +10,7 @@
 #include "DecalManager.h"
 #include "VisAreas.h"
 #include <CryAnimation/ICryAnimation.h>
+#include <CryAnimation/IAttachment.h>
 #include "LightEntity.h"
 #include "WaterVolumeRenderNode.h"
 #include "DistanceCloudRenderNode.h"
@@ -26,10 +27,8 @@ FILE* COctreeNode::m_pFileForSyncRead = 0;
 int COctreeNode::m_nNodesCounterAll = 0;
 int COctreeNode::m_nNodesCounterStreamable = 0;
 int COctreeNode::m_nInstCounterLoaded = 0;
-void* COctreeNode::m_pRenderContentJobQueue = NULL;
 
 DECLARE_JOB("OctreeNodeRender", TRenderContentJob, COctreeNode::RenderContentJobEntry);
-typedef PROD_CONS_QUEUE_TYPE(TRenderContentJob, 1024) TRenderContentJobQueue;
 
 #define CHECK_OBJECTS_BOX_WARNING_SIZE (1.0e+10f)
 
@@ -75,23 +74,12 @@ void COctreeNode::CheckManageVegetationSprites(float fNodeDistance, int nMaxFram
 	if ((uint32)m_nManageVegetationsFrameId >= iMainFrameId - nMaxFrames && !passInfo.IsZoomInProgress())
 		return;
 
-	C3DEngine* p3DEngine = Get3DEngine();
-
 	m_fNodeDistance = fNodeDistance;
 	m_nManageVegetationsFrameId = iMainFrameId;
 
 	FUNCTION_PROFILER_3DENGINE;
 
-	Vec3 sunDirReady((m_fpSunDirX - 63.5f) / 63.5f, 0.0f, (m_fpSunDirZ - 63.5f) / 63.5f);
-	sunDirReady.y = sqrt(clamp_tpl(1.0f - sunDirReady.x * sunDirReady.x - sunDirReady.z * sunDirReady.z, 0.0f, 1.0f));
-	if (m_fpSunDirYs)
-		sunDirReady.y *= -1.0f;
-
-	if (sunDirReady.Dot(p3DEngine->GetSunDirNormalized()) < 0.99f)
-		SetCompiled(false);
-
 	const Vec3 vCamPos = passInfo.GetCamera().GetPosition();
-	AABB objBox;
 
 	SSectorTextureSet* pTerrainTexInfo = NULL;
 	if (GetCVars()->e_VegetationUseTerrainColor)
@@ -106,12 +94,10 @@ void COctreeNode::CheckManageVegetationSprites(float fNodeDistance, int nMaxFram
 	// check if we need to add some objects to sprites array
 	for (CVegetation* pObj = (CVegetation*)m_arrObjects[eRNListType_Vegetation].m_pFirstNode, * pNext; pObj; pObj = pNext)
 	{
-		pNext = (CVegetation*)pObj->m_pNext;
+		if (pNext = (CVegetation*)pObj->m_pNext)
+			cryPrefetchT0SSE(pNext);
 
-		if (pObj->m_pNext)
-			cryPrefetchT0SSE(pObj->m_pNext);
-
-		pObj->FillBBox_NonVirtual(objBox);
+		const AABB objBox = pObj->GetBBox();
 
 		const float fEntDistanceSqr = Distance::Point_AABBSq(vCamPos, objBox) * passInfo.GetZoomFactor() * passInfo.GetZoomFactor();
 
@@ -123,21 +109,22 @@ void COctreeNode::CheckManageVegetationSprites(float fNodeDistance, int nMaxFram
 		float fSwitchRange = min(fSpriteSwitchDist * GetCVars()->e_LodTransitionSpriteDistRatio, GetCVars()->e_LodTransitionSpriteMinDist);
 		float fLodTransitionDistband = 1.f;
 
+		const auto pTempData = pObj->m_pTempData;
 		if (pObj->m_pSpriteInfo)
 		{
 			CStatObj* pStatObj = vegetGroup.GetStatObj();
 
-			if (fEntDistance2D < (fSpriteSwitchDist - fSwitchRange) && pObj && pObj->m_pTempData)
+			if (fEntDistance2D < (fSpriteSwitchDist - fSwitchRange) && pTempData)
 			{
 				int nLodA;
 
-				nLodA = CLAMP(pObj->m_pTempData->userData.nWantedLod, (uint32)pStatObj->GetMinUsableLod(), (uint32)pStatObj->m_nMaxUsableLod);
-				nLodA = pStatObj->FindNearesLoadedLOD(nLodA);
+				nLodA = CLAMP(pTempData->userData.nWantedLod, (uint32)pStatObj->GetMinUsableLod(), (uint32)pStatObj->m_nMaxUsableLod);
+				nLodA = pStatObj->FindNearestLoadedLOD(nLodA);
 
 				// TODO: start dissolve transition to 3d lod
 			}
 
-			if (pObj->m_pTempData)
+			if (pTempData)
 			{
 				// TODO: update dissolve transition to 3d lod, detect finish oif transition
 			}
@@ -146,10 +133,11 @@ void COctreeNode::CheckManageVegetationSprites(float fNodeDistance, int nMaxFram
 			{
 				SAFE_DELETE(pObj->m_pSpriteInfo);
 
+				//We know that only eERType_Vegetation can get into the vegetation list, see GetRenderNodeListId()
 				UnlinkObject(pObj);
-				LinkObject(pObj, eERType_Vegetation); //We know that only eERType_Vegetation can get into the vegetation list, see GetRenderNodeListId()
+				LinkObject(pObj, eERType_Vegetation, !pObj->IsHidden());
 
-				SetCompiled(false);
+				SetCompiled(eRNListType_Vegetation, false);
 
 				continue;
 			}
@@ -163,14 +151,15 @@ void COctreeNode::CheckManageVegetationSprites(float fNodeDistance, int nMaxFram
 		{
 			if (fEntDistance2D > (fSpriteSwitchDist - fSwitchRange) && fEntDistance2D + fLodTransitionDistband < pObj->m_fWSMaxViewDist)
 			{
+				//We know that only eERType_Vegetation can get into the vegetation list, see GetRenderNodeListId()
 				UnlinkObject(pObj);
-				LinkObject(pObj, eERType_Vegetation, false); //We know that only eERType_Vegetation can get into the vegetation list, see GetRenderNodeListId()
+				LinkObject(pObj, eERType_Vegetation, !pObj->IsHidden());
 
 				assert(pObj->m_pSpriteInfo == NULL);
 				pObj->m_pSpriteInfo = new SVegetationSpriteInfo;
 				SVegetationSpriteInfo& si = *pObj->m_pSpriteInfo;
 
-				if (pObj->m_pTempData)
+				if (pTempData)
 				{
 					// TODO: start lod transition into sprite
 				}
@@ -178,46 +167,41 @@ void COctreeNode::CheckManageVegetationSprites(float fNodeDistance, int nMaxFram
 				pObj->UpdateSpriteInfo(si, 0.0f, pTerrainTexInfo, passInfo);
 				pObj->m_pSpriteInfo->ucShow3DModel = (fEntDistance2D < fSpriteSwitchDist);
 
-				SetCompiled(false);
+				SetCompiled(eRNListType_Vegetation, false);
 			}
 		}
 	}
 }
 
-void COctreeNode::Render_Object_Nodes(bool bNodeCompletelyInFrustum, int nRenderMask, const Vec3& vAmbColor, const SRenderingPassInfo& passInfo)
+void COctreeNode::Render_Object_Nodes(bool bNodeCompletelyInFrustum, int nRenderMask, const Vec3& vAmbColor, uint32 passCullMask, const SRenderingPassInfo& passInfo)
 {
+	FUNCTION_PROFILER_3DENGINE;
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "COctreeNode::Render_Object_Nodes");
+
 	assert(nRenderMask & OCTREENODE_RENDER_FLAG_OBJECTS);
 
-	const CCamera& rCam = passInfo.GetCamera();
+	const Vec3& vCamPos = passInfo.GetCamera().GetPosition();
 
-	if (m_nOccludedFrameId == passInfo.GetFrameID())
+	float nodeDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, m_objectsBox) * sqr(passInfo.GetZoomFactor()));
+
+	const bool bPushIntoOcclusionCuller = Get3DEngine()->IsStatObjBufferRenderTasksAllowed() && passInfo.IsGeneralPass();
+
+	// check culling of all passes
+	passCullMask = UpdateCullMask(m_onePassTraversalFrameId, ~0, m_renderFlags, passInfo, m_objectsBox, nodeDistance, m_fObjectsMaxViewDist, !bPushIntoOcclusionCuller, bNodeCompletelyInFrustum, &m_occlusionTestClient, passCullMask);
+
+	// stop if no any passes see this node
+	if (!passCullMask)
 		return;
-
-	if (!bNodeCompletelyInFrustum && !rCam.IsAABBVisible_EH(m_objectsBox, &bNodeCompletelyInFrustum))
-		return;
-
-	const Vec3& vCamPos = rCam.GetPosition();
-
-	float fNodeDistanceSq = Distance::Point_AABBSq(vCamPos, m_objectsBox) * sqr(passInfo.GetZoomFactor());
-
-	if (fNodeDistanceSq > sqr(m_fObjectsMaxViewDist))
-		return;
-
-	float fNodeDistance = sqrt_tpl(fNodeDistanceSq);
-
-	if (m_nLastVisFrameId != passInfo.GetFrameID() && m_pParent)
-	{
-		if (GetObjManager()->IsBoxOccluded(m_objectsBox, fNodeDistance, &m_occlusionTestClient, m_pVisArea != NULL, eoot_OCCELL, passInfo))
-		{
-			m_nOccludedFrameId = passInfo.GetFrameID();
-			return;
-		}
-	}
 
 	m_nLastVisFrameId = passInfo.GetFrameID();
 
-	if (!IsCompiled())
-		CompileObjects();
+	for (int l = 0; l < eRNListType_ListsNum; l++)
+	{
+		if (!IsCompiled((ERNListType)l))
+		{
+			CompileObjects((ERNListType)l);
+		}
+	}
 
 	CheckUpdateStaticInstancing();
 
@@ -232,57 +216,57 @@ void COctreeNode::Render_Object_Nodes(bool bNodeCompletelyInFrustum, int nRender
 			DrawBBox(m_objectsBox, Col_Red);
 	}
 
-	m_fNodeDistance = fNodeDistance;
+	m_fNodeDistance = nodeDistance;
 	m_bNodeCompletelyInFrustum = bNodeCompletelyInFrustum;
 
 	if (GetCVars()->e_VegetationSpritesBatching && GetCVars()->e_VegetationSprites)
-		CheckManageVegetationSprites(fNodeDistance, (int)(fNodeDistance * 0.2f), passInfo);
+		CheckManageVegetationSprites(nodeDistance, (int)(nodeDistance * 0.2f), passInfo);
 
-	if (HasAnyRenderableCandidates(passInfo))
+	if (m_linkedTypes && HasAnyRenderableCandidates(passInfo))
 	{
 		// when using the occlusion culler, push the work to the jobs doing the occlusion checks, else just compute in main thread
-		if (GetCVars()->e_StatObjBufferRenderTasks == 1 && passInfo.IsGeneralPass() && JobManager::InvokeAsJob("CheckOcclusion"))
+		if (bPushIntoOcclusionCuller)
 		{
 			// make sure the affected lights array is init before starting parallel execution
 			CheckInitAffectingLights(passInfo);
-			GetObjManager()->PushIntoCullQueue(SCheckOcclusionJobData::CreateOctreeJobData(this, nRenderMask, vAmbColor, passInfo));
+			GetObjManager()->PushIntoCullQueue(SCheckOcclusionJobData::CreateOctreeJobData(this, nRenderMask, vAmbColor, passCullMask, passInfo));
 		}
 		else
 		{
-			RenderContentJobEntry(nRenderMask, vAmbColor, passInfo);
+			RenderContentJobEntry(nRenderMask, vAmbColor, passCullMask, passInfo);
 		}
 
 		passInfo.GetRendItemSorter().IncreaseOctreeCounter();
 	}
 
 	int nFirst =
-	  ((vCamPos.x > m_vNodeCenter.x) ? 4 : 0) |
-	  ((vCamPos.y > m_vNodeCenter.y) ? 2 : 0) |
-	  ((vCamPos.z > m_vNodeCenter.z) ? 1 : 0);
+		((vCamPos.x > m_vNodeCenter.x) ? 4 : 0) |
+		((vCamPos.y > m_vNodeCenter.y) ? 2 : 0) |
+		((vCamPos.z > m_vNodeCenter.z) ? 1 : 0);
 
 	if (m_arrChilds[nFirst])
-		m_arrChilds[nFirst]->Render_Object_Nodes(bNodeCompletelyInFrustum, nRenderMask, vAmbColor, passInfo);
+		m_arrChilds[nFirst]->Render_Object_Nodes(bNodeCompletelyInFrustum, nRenderMask, vAmbColor, passCullMask, passInfo);
 
 	if (m_arrChilds[nFirst ^ 1])
-		m_arrChilds[nFirst ^ 1]->Render_Object_Nodes(bNodeCompletelyInFrustum, nRenderMask, vAmbColor, passInfo);
+		m_arrChilds[nFirst ^ 1]->Render_Object_Nodes(bNodeCompletelyInFrustum, nRenderMask, vAmbColor, passCullMask, passInfo);
 
 	if (m_arrChilds[nFirst ^ 2])
-		m_arrChilds[nFirst ^ 2]->Render_Object_Nodes(bNodeCompletelyInFrustum, nRenderMask, vAmbColor, passInfo);
+		m_arrChilds[nFirst ^ 2]->Render_Object_Nodes(bNodeCompletelyInFrustum, nRenderMask, vAmbColor, passCullMask, passInfo);
 
 	if (m_arrChilds[nFirst ^ 4])
-		m_arrChilds[nFirst ^ 4]->Render_Object_Nodes(bNodeCompletelyInFrustum, nRenderMask, vAmbColor, passInfo);
+		m_arrChilds[nFirst ^ 4]->Render_Object_Nodes(bNodeCompletelyInFrustum, nRenderMask, vAmbColor, passCullMask, passInfo);
 
 	if (m_arrChilds[nFirst ^ 3])
-		m_arrChilds[nFirst ^ 3]->Render_Object_Nodes(bNodeCompletelyInFrustum, nRenderMask, vAmbColor, passInfo);
+		m_arrChilds[nFirst ^ 3]->Render_Object_Nodes(bNodeCompletelyInFrustum, nRenderMask, vAmbColor, passCullMask, passInfo);
 
 	if (m_arrChilds[nFirst ^ 5])
-		m_arrChilds[nFirst ^ 5]->Render_Object_Nodes(bNodeCompletelyInFrustum, nRenderMask, vAmbColor, passInfo);
+		m_arrChilds[nFirst ^ 5]->Render_Object_Nodes(bNodeCompletelyInFrustum, nRenderMask, vAmbColor, passCullMask, passInfo);
 
 	if (m_arrChilds[nFirst ^ 6])
-		m_arrChilds[nFirst ^ 6]->Render_Object_Nodes(bNodeCompletelyInFrustum, nRenderMask, vAmbColor, passInfo);
+		m_arrChilds[nFirst ^ 6]->Render_Object_Nodes(bNodeCompletelyInFrustum, nRenderMask, vAmbColor, passCullMask, passInfo);
 
 	if (m_arrChilds[nFirst ^ 7])
-		m_arrChilds[nFirst ^ 7]->Render_Object_Nodes(bNodeCompletelyInFrustum, nRenderMask, vAmbColor, passInfo);
+		m_arrChilds[nFirst ^ 7]->Render_Object_Nodes(bNodeCompletelyInFrustum, nRenderMask, vAmbColor, passCullMask, passInfo);
 }
 
 void COctreeNode::RenderDebug()
@@ -317,55 +301,26 @@ void COctreeNode::GetStreamedInNodesNum(int& nAllStreamable, int& nReady)
 			m_arrChilds[i]->GetStreamedInNodesNum(nAllStreamable, nReady);
 }
 
-void COctreeNode::CompileObjects()
+void COctreeNode::CompileObjects(ERNListType eListType)
 {
 	FUNCTION_PROFILER_3DENGINE;
 
-	m_lstCasters.Clear();
-
-	m_bStaticInstancingIsDirty = true;
-
-	CheckUpdateStaticInstancing();
-
-	float fObjMaxViewDistance = 0;
-
-	size_t numCasters = 0;
-	const unsigned int nSkipShadowCastersRndFlags = ERF_HIDDEN | ERF_COLLISION_PROXY | ERF_RAYCAST_PROXY | ERF_STATIC_INSTANCING; // shadow casters with these render flags are ignored
-
-	for (int l = 0; l < eRNListType_ListsNum; l++)
+	if (eListType == eRNListType_Vegetation)
 	{
-		for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode; pObj; pObj = pObj->m_pNext)
-		{
-			auto nFlags = pObj->GetRndFlags();
+		m_bStaticInstancingIsDirty = true;
 
-			IF (nFlags & nSkipShadowCastersRndFlags, 0)
-				continue;
-
-			IF (GetCVars()->e_ShadowsPerObject && gEnv->p3DEngine->GetPerObjectShadow(pObj), 0)
-				continue;
-
-			EERType eRType = pObj->GetRenderNodeType();
-			float WSMaxViewDist = pObj->GetMaxViewDist();
-
-			if (nFlags & ERF_CASTSHADOWMAPS && WSMaxViewDist > fMinShadowCasterViewDist && eRType != eERType_Light)
-			{
-				++numCasters;
-			}
-		}
+		CheckUpdateStaticInstancing();
 	}
 
-	m_lstCasters.reserve(numCasters);
+	float fObjMaxViewDistance = 0;
+	auto renderFlagsAllObjects = m_renderFlags;
 
-	CObjManager* pObjManager = GetObjManager();
-
-	// update node
-	for (int l = 0; l < eRNListType_ListsNum; l++)
-		for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode, * pNext; pObj; pObj = pNext)
+	if (eListType != eRNListType_DecalsAndRoads)
+	{
+		for (IRenderNode* pObj = m_arrObjects[eListType].m_pFirstNode, * pNext; pObj && pObj->IsRenderable(); pObj = pNext)
 		{
-			pNext = pObj->m_pNext;
-
-			IF (pObj->m_dwRndFlags & ERF_HIDDEN, 0)
-				continue;
+			if (pNext = pObj->m_pNext)
+				cryPrefetchT0SSE(pNext);
 
 			// update vegetation instances data
 			EERType eRType = pObj->GetRenderNodeType();
@@ -384,7 +339,6 @@ void COctreeNode::CompileObjects()
 			{
 				pObj->m_nInternalFlags &= ~(IRenderNode::REQUIRES_FORWARD_RENDERING | IRenderNode::REQUIRES_NEAREST_CUBEMAP);
 				if (eRType != eERType_Light &&
-				    eRType != eERType_Cloud &&
 				    eRType != eERType_FogVolume &&
 				    eRType != eERType_Decal &&
 				    eRType != eERType_Road &&
@@ -403,56 +357,59 @@ void COctreeNode::CompileObjects()
 							pObj->m_nInternalFlags |= IRenderNode::REQUIRES_NEAREST_CUBEMAP;
 					}
 
-					if (eRType == eERType_RenderProxy)
+					if (eRType == eERType_MovableBrush)
 					{
-						int nSlotCount = pObj->GetSlotCount();
-
-						for (int s = 0; s < nSlotCount; s++)
+						if (IStatObj* pStatObj = pObj->GetEntityStatObj())
 						{
-							if (CMatInfo* pMat = (CMatInfo*)pObj->GetEntitySlotMaterial(s))
+							if (CMatInfo* pMat = (CMatInfo*)pStatObj->GetMaterial())
 							{
 								if (pMat->IsForwardRenderingRequired())
 									pObj->m_nInternalFlags |= IRenderNode::REQUIRES_FORWARD_RENDERING;
 								if (pMat->IsNearestCubemapRequired())
 									pObj->m_nInternalFlags |= IRenderNode::REQUIRES_NEAREST_CUBEMAP;
 							}
-
-							if (IStatObj* pStatObj = pObj->GetEntityStatObj(s))
-								if (CMatInfo* pMat = (CMatInfo*)pStatObj->GetMaterial())
-								{
-									if (pMat->IsForwardRenderingRequired())
-										pObj->m_nInternalFlags |= IRenderNode::REQUIRES_FORWARD_RENDERING;
-									if (pMat->IsNearestCubemapRequired())
-										pObj->m_nInternalFlags |= IRenderNode::REQUIRES_NEAREST_CUBEMAP;
-								}
 						}
 					}
 
 					if (!(pObj->m_nInternalFlags & (IRenderNode::REQUIRES_FORWARD_RENDERING | IRenderNode::REQUIRES_NEAREST_CUBEMAP)))
-						CompileCharacter(pObj->GetEntityCharacter(0), pObj->m_nInternalFlags);
+					{
+						CompileCharacter(pObj->GetEntityCharacter(), pObj->m_nInternalFlags);
+					}
 				}
 			}
 
 			auto nFlags = pObj->GetRndFlags();
 
-			// fill shadow casters list
-			const bool bHasPerObjectShadow = GetCVars()->e_ShadowsPerObject && gEnv->p3DEngine->GetPerObjectShadow(pObj);
-			if (!(nFlags & nSkipShadowCastersRndFlags) && nFlags & ERF_CASTSHADOWMAPS && fNewMaxViewDist > fMinShadowCasterViewDist &&
-			    eRType != eERType_Light && !bHasPerObjectShadow)
-			{
-				COctreeNode* pNode = this;
-				while (pNode && !(pNode->m_renderFlags & ERF_CASTSHADOWMAPS))
-				{
-					pNode->m_renderFlags |= ERF_CASTSHADOWMAPS | ERF_HAS_CASTSHADOWMAPS;
-					pNode = pNode->m_pParent;
-				}
-
-				float fMaxCastDist = fNewMaxViewDist * GetCVars()->e_ShadowsCastViewDistRatio;
-				m_lstCasters.Add(SCasterInfo(pObj, fMaxCastDist, eRType));
-			}
+			renderFlagsAllObjects |= nFlags;
 
 			fObjMaxViewDistance = max(fObjMaxViewDistance, fNewMaxViewDist);
 		}
+	}
+	else
+	{
+		for (IRenderNode* pObj = m_arrObjects[eListType].m_pFirstNode, * pNext; pObj && pObj->IsRenderable(); pObj = pNext)
+		{
+			if (pNext = pObj->m_pNext)
+				cryPrefetchT0SSE(pNext);
+
+			// update max view distances
+			const float fNewMaxViewDist = pObj->GetMaxViewDist();
+			pObj->m_fWSMaxViewDist = fNewMaxViewDist;
+
+			fObjMaxViewDistance = max(fObjMaxViewDistance, fNewMaxViewDist);
+		}
+	}
+
+	// propagate newly enabled flags to the parent nodes
+	if (renderFlagsAllObjects != m_renderFlags)
+	{
+		COctreeNode* pNode = this;
+		while (pNode && ((pNode->m_renderFlags & renderFlagsAllObjects) != renderFlagsAllObjects))
+		{
+			pNode->m_renderFlags |= renderFlagsAllObjects;
+			pNode = pNode->m_pParent;
+		}
+	}
 
 	if (fObjMaxViewDistance > m_fObjectsMaxViewDist)
 	{
@@ -464,57 +421,60 @@ void COctreeNode::CompileObjects()
 		}
 	}
 
-	SetCompiled(true);
-
-	const Vec3& sunDir = Get3DEngine()->GetSunDirNormalized();
-	m_fpSunDirX = (uint32) (sunDir.x * 63.5f + 63.5f);
-	m_fpSunDirZ = (uint32) (sunDir.z * 63.5f + 63.5f);
-	m_fpSunDirYs = sunDir.y < 0.0f ? 1 : 0;
+	SetCompiled(eListType, true);
 }
 
 void COctreeNode::UpdateStaticInstancing()
 {
 	FUNCTION_PROFILER_3DENGINE;
 
-	// clear
-	if (m_pStaticInstancingInfo)
+	// Kill all instances
+	if (m_bStaticInstancingApplied)
 	{
+		for (CVegetation* pObj = (CVegetation*)m_arrObjects[eRNListType_Vegetation].m_pFirstNode, *pNext; pObj; pObj = pNext)
+		{
+			if (pNext = (CVegetation*)pObj->m_pNext)
+				cryPrefetchT0SSE(pNext);
+
+			// Remove instancing
+			pObj->Instance(false);
+		}
+
+		// Clear
 		for (auto it = m_pStaticInstancingInfo->begin(); it != m_pStaticInstancingInfo->end(); ++it)
 		{
 			PodArray<SNodeInstancingInfo>*& pInfo = it->second;
 
 			pInfo->Clear();
 		}
+
+		m_bStaticInstancingApplied = false;
+	}
+
+	// Check if we need to re-creating instances
+	if (CVegetation* pObj = (CVegetation*)m_arrObjects[eRNListType_Vegetation].m_pFirstNode)
+	{
+		const StatInstGroup& vegetGroup = pObj->GetStatObjGroup();
+		if (!vegetGroup.bInstancing)
+			return;
 	}
 
 	// group objects by CStatObj *
-	for (IRenderNode* pObj = m_arrObjects[eRNListType_Vegetation].m_pFirstNode, * pNext; pObj; pObj = pNext)
+	int numInstances = 0;
+	for (CVegetation* pObj = (CVegetation*)m_arrObjects[eRNListType_Vegetation].m_pFirstNode, *pNext; pObj && pObj->IsRenderable(); pObj = pNext)
 	{
-		pNext = pObj->m_pNext;
-
-		CVegetation* pInst = (CVegetation*)pObj;
-
-		pObj->m_dwRndFlags &= ~ERF_STATIC_INSTANCING;
-
-		if (pInst->m_pInstancingInfo)
-		{
-			SAFE_DELETE(pInst->m_pInstancingInfo)
-
-			pInst->InvalidatePermanentRenderObject();
-		}
-
-		IF (pObj->m_dwRndFlags & ERF_HIDDEN, 0)
-			continue;
+		if (pNext = (CVegetation*)pObj->m_pNext)
+			cryPrefetchT0SSE(pNext);
 
 		Matrix34A objMatrix;
-		CStatObj* pStatObj = (CStatObj*)pInst->GetEntityStatObj(0, 0, &objMatrix);
+		CStatObj* pStatObj = (CStatObj*)pObj->GetEntityStatObj(0, &objMatrix);
 		/*
 		   int nLodA = -1;
 		   {
 		   const Vec3 vCamPos = GetSystem()->GetViewCamera().GetPosition();
 
-		   const float fEntDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, pInst->GetBBox()));
-		   int wantedLod = CObjManager::GetObjectLOD(pInst, fEntDistance);
+		   const float fEntDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, pObj->GetBBox()));
+		   int wantedLod = CObjManager::GetObjectLOD(pObj, fEntDistance);
 
 		   int minUsableLod = pStatObj->GetMinUsableLod();
 		   int maxUsableLod = (int)pStatObj->m_nMaxUsableLod;
@@ -531,7 +491,7 @@ void COctreeNode::UpdateStaticInstancing()
 		if (!m_pStaticInstancingInfo)
 			m_pStaticInstancingInfo = new std::map<std::pair<IStatObj*, IMaterial*>, PodArray<SNodeInstancingInfo>*>;
 
-		std::pair<IStatObj*, IMaterial*> pairKey(pStatObj, pInst->GetMaterial());
+		std::pair<IStatObj*, IMaterial*> pairKey(pStatObj, pObj->GetMaterial());
 
 		PodArray<SNodeInstancingInfo>*& pInfo = (*m_pStaticInstancingInfo)[pairKey];
 
@@ -539,14 +499,18 @@ void COctreeNode::UpdateStaticInstancing()
 			pInfo = new PodArray<SNodeInstancingInfo>;
 
 		SNodeInstancingInfo ii;
-		ii.pRNode = pInst;
+		ii.pRNode = pObj;
 		ii.nodeMatrix = objMatrix;
 
 		pInfo->Add(ii);
+
+		// Measure peak-number of potential instances
+		numInstances = std::max(numInstances, pInfo->Count());
 	}
 
-	// mark
-	if (m_pStaticInstancingInfo)
+	// Mark the OctreeNode to have nodes with static instancing
+	// NOTE: instancing is only enabled for "additional" objects, not the first one
+	if ((m_bStaticInstancingApplied = (numInstances > GetCVars()->e_StaticInstancingMinInstNum)))
 	{
 		for (auto it = m_pStaticInstancingInfo->begin(); it != m_pStaticInstancingInfo->end(); ++it)
 		{
@@ -567,26 +531,8 @@ void COctreeNode::UpdateStaticInstancing()
 				{
 					SNodeInstancingInfo& ii = pInfo->GetAt(i);
 
-					if (i)
-					{
-						ii.pRNode->SetRndFlags(ERF_STATIC_INSTANCING, true);
-
-						// keep inactive objects in the end of the list
-						UnlinkObject(ii.pRNode);
-						LinkObject(ii.pRNode, eERType_Vegetation, false);
-
-						for (int s = 0; s < m_lstCasters.Count(); s++)
-						{
-							if (m_lstCasters[s].pNode == ii.pRNode)
-							{
-								m_lstCasters.Delete(s);
-								break;
-							}
-						}
-					}
-
-					CStatObj* pStatObj = ii.pRNode->GetStatObj();
-					const StatInstGroup& vegetGroup = ii.pRNode->GetStatObjGroup();
+					if (i > 0)
+						ii.pRNode->Instance(true);
 
 					(*pInsts)[i].m_Matrix = ii.nodeMatrix;
 
@@ -603,7 +549,7 @@ void COctreeNode::UpdateStaticInstancing()
 	m_bStaticInstancingIsDirty = false;
 }
 
-void COctreeNode::AddLightSource(CDLight* pSource, const SRenderingPassInfo& passInfo)
+void COctreeNode::AddLightSource(SRenderLight* pSource, const SRenderingPassInfo& passInfo)
 {
 	bool bIsVisible = false;
 	if (pSource->m_Flags & DLF_DEFERRED_CUBEMAPS)
@@ -611,7 +557,7 @@ void COctreeNode::AddLightSource(CDLight* pSource, const SRenderingPassInfo& pas
 		OBB obb(OBB::CreateOBBfromAABB(Matrix33(pSource->m_ObjMatrix), AABB(-pSource->m_ProbeExtents, pSource->m_ProbeExtents)));
 		bIsVisible = passInfo.GetCamera().IsOBBVisible_F(pSource->m_Origin, obb);
 	}
-	else if (pSource->m_Flags & DLF_AREA_LIGHT)
+	else if (pSource->m_Flags & DLF_AREA)
 	{
 		// OBB test for area lights.
 		Vec3 vBoxMax(pSource->m_fRadius, pSource->m_fRadius + pSource->m_fAreaWidth, pSource->m_fRadius + pSource->m_fAreaHeight);
@@ -641,187 +587,253 @@ void COctreeNode::AddLightSource(CDLight* pSource, const SRenderingPassInfo& pas
 bool IsAABBInsideHull(const SPlaneObject* pHullPlanes, int nPlanesNum, const AABB& aabbBox);
 bool IsSphereInsideHull(const SPlaneObject* pHullPlanes, int nPlanesNum, const Sphere& objSphere);
 
-void COctreeNode::FillShadowCastersList(bool bNodeCompletellyInFrustum, CDLight* pLight, ShadowMapFrustum* pFr, PodArray<SPlaneObject>* pShadowHull, uint32 nRenderNodeFlags, const SRenderingPassInfo& passInfo)
+// single function for all possible culling types, used for octree nodes and for objects
+uint32 COctreeNode::UpdateCullMask(uint32 onePassTraversalFrameId, uint32 onePassTraversalShadowCascades, const IRenderNode::RenderFlagsType renderFlags, const SRenderingPassInfo& passInfo, const AABB& nodeBox, const float nodeDistance, const float nodeMaxViewDistance, const bool bTestCoverageBuffer,
+                                   bool& bCompletelyInMainFrustum, OcclusionTestClient* occlusionTestClient, uint32 passCullMask)
 {
-	if (GetCVars()->e_Objects)
+	FUNCTION_PROFILER_3DENGINE;
+	CRY_ASSERT(passCullMask != 0);
+
+	assert(nodeDistance >= 0 && _finite(nodeDistance));
+
+	// cull node completely if it is too far away from main camera
+	if (nodeDistance > nodeMaxViewDistance)
 	{
-		if (m_renderFlags & ERF_CASTSHADOWMAPS)
-		{
-			FRAME_PROFILER("COctreeNode::FillShadowMapCastersList", GetSystem(), PROFILE_3DENGINE);
-
-			CRY_ALIGN(64) ShadowMapFrustumParams params;
-			params.pLight = pLight;
-			params.pFr = pFr;
-			params.pShadowHull = pShadowHull;
-			params.passInfo = &passInfo;
-			params.vCamPos = passInfo.GetCamera().GetPosition();
-			params.bSun = (pLight->m_Flags & DLF_SUN) != 0;
-			params.nRenderNodeFlags = nRenderNodeFlags;
-
-			FillShadowMapCastersList(params, bNodeCompletellyInFrustum);
-		}
-	}
-}
-
-void COctreeNode::FillShadowMapCastersList(const ShadowMapFrustumParams& params, bool bNodeCompletellyInFrustum)
-{
-	if (!bNodeCompletellyInFrustum && !params.pFr->IntersectAABB(m_objectsBox, &bNodeCompletellyInFrustum))
-		return;
-
-	const int frameID = params.passInfo->GetFrameID();
-	if (params.bSun && bNodeCompletellyInFrustum)
-		nFillShadowCastersSkipFrameId = frameID;
-
-	if (params.pShadowHull && !IsAABBInsideHull(params.pShadowHull->GetElements(), params.pShadowHull->Count(), m_objectsBox))
-	{
-		nFillShadowCastersSkipFrameId = frameID;
-		return;
+		return 0;
 	}
 
-	if (!IsCompiled())
+	if (passCullMask & kPassCullMainMask)
 	{
-		CompileObjects();
-	}
-
-	PrefetchLine(&m_lstCasters, 0);
-
-	const float fShadowsCastViewDistRatio = GetCVars()->e_ShadowsCastViewDistRatio;
-	if (fShadowsCastViewDistRatio != 0.0f)
-	{
-		float fNodeDistanceSqr = Distance::Point_AABBSq(params.vCamPos, m_objectsBox);
-		if (fNodeDistanceSqr > sqr(m_fObjectsMaxViewDist * fShadowsCastViewDistRatio))
+		// check frustum culling of main view
+		if (!bCompletelyInMainFrustum && !passInfo.GetCamera().IsAABBVisible_EH(nodeBox, &bCompletelyInMainFrustum))
 		{
-			nFillShadowCastersSkipFrameId = frameID;
-			return;
-		}
-	}
-
-	PrefetchLine(m_lstCasters.begin(), 0);
-	PrefetchLine(m_lstCasters.begin(), 128);
-
-	IRenderNode* pNotCaster = ((CLightEntity*)params.pLight->m_pOwner)->m_pNotCaster;
-	bool bParticleShadows = params.bSun && params.pFr->nShadowMapLod < GetCVars()->e_ParticleShadowsNumGSMs;
-
-	if (m_arrChilds[0])
-	{
-		PrefetchLine(&m_arrChilds[0]->m_nLightMaskFrameId, 0);
-	}
-
-	SCasterInfo* pCastersEnd = m_lstCasters.end();
-	for (SCasterInfo* pCaster = m_lstCasters.begin(); pCaster < pCastersEnd; pCaster++)
-	{
-#ifdef FEATURE_SVO_GI
-		if (!GetCVars()->e_svoTI_Apply || !GetCVars()->e_svoTI_InjectionMultiplier || (params.pFr->nShadowMapLod != GetCVars()->e_svoTI_GsmCascadeLod))
-#endif
-		if (params.bSun && pCaster->nGSMFrameId == frameID && params.pShadowHull)
-			continue;
-		if (!IsRenderNodeTypeEnabled(pCaster->nRType))
-			continue;
-		if (pCaster->pNode == NULL || pCaster->pNode == pNotCaster)
-			continue;
-		if (!bParticleShadows && (pCaster->nRType == eERType_ParticleEmitter))
-			continue;
-		if ((pCaster->nRenderNodeFlags & params.nRenderNodeFlags) == 0)
-			continue;
-
-		float fDistanceSq = Distance::Point_PointSq(params.vCamPos, pCaster->objSphere.center);
-		if (fDistanceSq > sqr(pCaster->fMaxCastingDist + pCaster->objSphere.radius))
-		{
-			pCaster->nGSMFrameId = frameID;
-			continue;
-		}
-
-		bool bObjCompletellyInFrustum = bNodeCompletellyInFrustum;
-		if (!bObjCompletellyInFrustum && !params.pFr->IntersectAABB(pCaster->objBox, &bObjCompletellyInFrustum))
-			continue;
-		if (params.bSun && bObjCompletellyInFrustum)
-			pCaster->nGSMFrameId = frameID;
-
-		if (params.bSun && bObjCompletellyInFrustum)
-			pCaster->nGSMFrameId = frameID;
-		if (params.pShadowHull && !IsSphereInsideHull(params.pShadowHull->GetElements(), params.pShadowHull->Count(), pCaster->objSphere))
-		{
-			pCaster->nGSMFrameId = frameID;
-			continue;
-		}
-
-		if (pCaster->bCanExecuteAsRenderJob)
-		{
-			params.pFr->jobExecutedCastersList.Add(pCaster->pNode);
+			passCullMask &= ~kPassCullMainMask;
 		}
 		else
-			params.pFr->castersList.Add(pCaster->pNode);
-
-		// This code does not exist yet!
-		//if(pCaster->nRType == eERType_ParticleEmitter)
-		//((CParticleEmitter*)pCaster->pNode)->AddUpdateParticlesJob();
+		{
+			// check against occlusion volumes in main view
+			if (occlusionTestClient && GetObjManager()->IsBoxOccluded(nodeBox, nodeDistance, occlusionTestClient, false, eoot_OCCELL, passInfo))
+			{
+				passCullMask &= ~kPassCullMainMask;
+			}
+			// check against coverage buffer in main view
+			else if (bTestCoverageBuffer && !GetObjManager()->CheckOcclusion_TestAABB(nodeBox, nodeDistance))
+			{
+				passCullMask &= ~kPassCullMainMask;
+			}
+		}
 	}
 
-	enum { maxNodeNum = 7 };
-	for (int i = 0; i <= maxNodeNum; i++)
-	{
-		const bool bPrefetch = i < maxNodeNum && !!m_arrChilds[i + 1];
-		if (bPrefetch)
-		{
-			PrefetchLine(&m_arrChilds[i + 1]->m_nLightMaskFrameId, 0);
-		}
+	const std::vector<SRenderingPassInfo>* shadowPasses = passInfo.GetShadowPasses();
+	CRY_ASSERT(!shadowPasses || shadowPasses->size() <= kMaxShadowPassesNum);
 
-		if (m_arrChilds[i] && (m_arrChilds[i]->m_renderFlags & ERF_CASTSHADOWMAPS))
+	// cull all shadows completely if node is too far away form the camera
+	if (!shadowPasses || nodeDistance > nodeMaxViewDistance * GetCVars()->e_ShadowsCastViewDistRatio)
+	{
+		passCullMask &= kPassCullMainMask;
+	}
+
+	if (passCullMask & ~kPassCullMainMask)
+	{
+		// test sun shadows hull. for cached shadows also nodes outside hull need to be rendered
+		if (onePassTraversalFrameId != passInfo.GetMainFrameID() && !IsAABBInsideHull(CLightEntity::GetCastersHull().GetElements(), CLightEntity::GetCastersHull().Count(), nodeBox))
 		{
-			bool bContinue = m_arrChilds[i]->nFillShadowCastersSkipFrameId != frameID;
+			passCullMask &= kPassCullMainMask;   // cull all except main view
+		}
+		else
+		{
+			// test shadow frustums
+			for (uint32 n = 0, passId = n + 1; n < (uint32)shadowPasses->size(); n++, passId++)
+			{
+				if (!(passCullMask & BIT(passId)))
+				{
+					// skip if already marked as not visible
+					continue;
+				}
+
+				const SRenderingPassInfo& shadowPass = shadowPasses->at(n);
+				const ShadowMapFrustum* pFr = shadowPass.GetIRenderView()->GetShadowFrustumOwner();
+
+				if (pFr->IsCached() || pFr->m_eFrustumType == ShadowMapFrustum::e_PerObject)
+				{
+					// cull casters not marked for shadow cache sliced update
+					if (onePassTraversalFrameId != passInfo.GetMainFrameID() || (onePassTraversalShadowCascades & BIT(pFr->nShadowMapLod)) == 0)
+					{
+						passCullMask &= ~BIT(passId);
+					}
+
+					continue;
+				}
+
+				// skip non dynamic casters for dynamic shadow frustums
+				bool bSkipCaster = (pFr->m_eFrustumType == ShadowMapFrustum::e_GsmDynamicDistance) && ((renderFlags & ERF_DYNAMIC_DISTANCESHADOWS) == 0);
+
+				// test shadow frustum
+				bool bCompletellyInShadowFrustum = false;
+				if (!bSkipCaster && pFr->IntersectAABB(nodeBox, &bCompletellyInShadowFrustum, shadowPass.ShadowFrustumSide()))
+				{
+					// if completely in frustum - cull all bigger dynamic cascades
+					if (bCompletellyInShadowFrustum && pFr->IsDynamicGsmCascade())
+					{
+						while ((n + 1) < (uint32)shadowPasses->size())
+						{
+							pFr = shadowPasses->at(n + 1).GetIRenderView()->GetShadowFrustumOwner();
+
+							if (!pFr->IsDynamicGsmCascade() && !pFr->IsCached())
+							{
+								break; // next frustum is not GSM cascade
+							}
+
+							n++, passId++;
 
 #ifdef FEATURE_SVO_GI
-			if (GetCVars()->e_svoTI_Apply && GetCVars()->e_svoTI_InjectionMultiplier && (params.pFr->nShadowMapLod == GetCVars()->e_svoTI_GsmCascadeLod))
-				bContinue = true;
+							// do not cull render into RSM cascade
+							if (!GetCVars()->e_svoTI_Apply || !GetCVars()->e_svoTI_InjectionMultiplier || (pFr->nShadowMapLod != GetCVars()->e_svoTI_GsmCascadeLod))
 #endif
-
-			if (!params.bSun || !params.pShadowHull || bContinue)
-				m_arrChilds[i]->FillShadowMapCastersList(params, bNodeCompletellyInFrustum);
-		}
-	}
-}
-
-void COctreeNode::MarkAsUncompiled(const IRenderNode* pRenderNode)
-{
-	if (pRenderNode)
-	{
-		for (int l = 0; l < eRNListType_ListsNum; l++)
-		{
-			for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode; pObj; pObj = pObj->m_pNext)
-			{
-				if (pObj == pRenderNode)
+							{
+								passCullMask &= ~BIT(passId);
+							}
+						}
+					}
+				}
+				else
 				{
-					SetCompiled(false);
-					break;
+					// mark as not visible
+					passCullMask &= ~BIT(passId);
 				}
 			}
 		}
 	}
-	else
-		SetCompiled(false);
+
+	return passCullMask;
+}
+
+void COctreeNode::Render_LightSources(bool bNodeCompletelyInFrustum, uint32 passCullMask, const SRenderingPassInfo& passInfo)
+{
+	FUNCTION_PROFILER_3DENGINE;
+
+	if (!GetCVars()->e_DynamicLights)
+		return;
+
+	const Vec3& vCamPos = passInfo.GetCamera().GetPosition();
+
+	float nodeDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, m_objectsBox) * sqr(passInfo.GetZoomFactor()));
+
+	// check culling of all passes
+	passCullMask = UpdateCullMask(m_onePassTraversalFrameId, ~0, m_renderFlags, passInfo, m_objectsBox, nodeDistance, m_fObjectsMaxViewDist, false, bNodeCompletelyInFrustum, &m_occlusionTestClient, passCullMask);
+
+	// stop if no any passes see this node
+	if (!passCullMask)
+		return;
+
+	if (bNodeCompletelyInFrustum || passInfo.GetCamera().IsAABBVisible_EH(m_objectsBox, &bNodeCompletelyInFrustum))
+	{
+		for (CLightEntity* pObj = (CLightEntity*)m_arrObjects[eRNListType_Light].m_pFirstNode, *pNext; pObj && pObj->IsRenderable(); pObj = pNext)
+		{
+			if (pNext = (CLightEntity*)pObj->m_pNext)
+				cryPrefetchT0SSE(pNext);
+
+			const AABB objBox = pObj->GetBBox();
+
+			float entDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, objBox)) * passInfo.GetZoomFactor();
+
+			bool bObjectCompletelyInFrustum = bNodeCompletelyInFrustum;
+			uint32 objCullMask = UpdateCullMask(pObj->m_onePassTraversalFrameId, pObj->m_onePassTraversalShadowCascades, pObj->m_dwRndFlags, passInfo, objBox, entDistance, pObj->m_fWSMaxViewDist, true, bObjectCompletelyInFrustum, nullptr, passCullMask);
+
+			if (objCullMask)
+			{
+				GetObjManager()->RenderObject(pObj, nullptr, Vec3(0), objBox, entDistance, eERType_Light, passInfo, objCullMask);
+			}
+		}
+
+		if (m_linkedTypes & (1 << eERType_Light))
+		{
+			for (int n = 0; n < 8; n++)
+			{
+				if (m_arrChilds[n] && (m_arrChilds[n]->m_linkedTypes & (1 << eERType_Light)))
+				{
+					m_arrChilds[n]->Render_LightSources(bNodeCompletelyInFrustum, passCullMask, passInfo);
+				}
+			}
+		}
+	}
+}
+
+void COctreeNode::InvalidateCachedShadowData()
+{
+	for (int l = 0; l < eRNListType_ListsNum; l++)
+	{
+		if (!IsCompiled((ERNListType)l))
+		{
+			CompileObjects((ERNListType)l);
+		}
+
+		for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode, * pNext; pObj; pObj = pNext)
+		{
+			if (pNext = pObj->m_pNext)
+				cryPrefetchT0SSE(pNext);
+
+			ZeroArray(pObj->m_shadowCacheLastRendered);
+			ZeroArray(pObj->m_shadowCacheLod);
+		}
+	}
 
 	for (int i = 0; i < 8; i++)
+	{
 		if (m_arrChilds[i])
-			m_arrChilds[i]->MarkAsUncompiled(pRenderNode);
+		{
+			m_arrChilds[i]->InvalidateCachedShadowData();
+		}
+	}
+}
+
+void COctreeNode::MarkAsUncompiled()
+{
+	m_compiledFlag = 0;
+
+	for (int i = 0; i < 8; i++)
+	{
+		if (m_arrChilds[i])
+		{
+			m_arrChilds[i]->MarkAsUncompiled();
+		}
+	}
 }
 
 AABB COctreeNode::GetShadowCastersBox(const AABB* pBBox, const Matrix34* pShadowSpaceTransform)
 {
-	if (!IsCompiled())
-		CompileObjects();
-
 	AABB result(AABB::RESET);
+
+	for (int l = 0; l < eRNListType_ListsNum; l++)
+	{
+		if (!IsCompiled((ERNListType)l))
+		{
+			CompileObjects((ERNListType)l);
+		}
+	}
+
 	if (!pBBox || Overlap::AABB_AABB(*pBBox, GetObjectsBBox()))
 	{
-		for (size_t i = 0; i < m_lstCasters.size(); ++i)
+		for (int l = 0; l < eRNListType_ListsNum; l++)
 		{
-			AABB casterBox = m_lstCasters[i].objBox;
-			if (!pBBox || Overlap::AABB_AABB(*pBBox, casterBox))
+			for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode, * pNext; pObj; pObj = pNext)
 			{
-				if (pShadowSpaceTransform)
-					casterBox = AABB::CreateTransformedAABB(*pShadowSpaceTransform, casterBox);
+				if (pNext = pObj->m_pNext)
+					cryPrefetchT0SSE(pNext);
 
-				result.Add(casterBox);
+				// NOTE: dynamic render-flag, can't be precalculated
+				if (IsShadowCaster(pObj))
+				{
+					AABB casterBox = pObj->GetBBox();
+
+					if (!pBBox || Overlap::AABB_AABB(*pBBox, casterBox))
+					{
+						if (pShadowSpaceTransform)
+							casterBox = AABB::CreateTransformedAABB(*pShadowSpaceTransform, casterBox);
+
+						result.Add(casterBox);
+					}
+				}
 			}
 		}
 
@@ -863,7 +875,8 @@ void COctreeNode::MoveObjectsIntoList(PodArray<SRNInfo>* plstResultEntities, con
 	for (int l = 0; l < eRNListType_ListsNum; l++)
 		for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode, * pNext; pObj; pObj = pNext)
 		{
-			pNext = pObj->m_pNext;
+			if (pNext = pObj->m_pNext)
+				cryPrefetchT0SSE(pNext);
 
 			if (eRNType < eERType_TypesNum && pObj->GetRenderNodeType() != eRNType)
 				continue;
@@ -894,7 +907,7 @@ void COctreeNode::MoveObjectsIntoList(PodArray<SRNInfo>* plstResultEntities, con
 			{
 				UnlinkObject(pObj);
 
-				SetCompiled(false);
+				SetCompiled((ERNListType)l, false);
 			}
 
 			plstResultEntities->Add(pObj);
@@ -915,7 +928,8 @@ void COctreeNode::DeleteObjectsByFlag(int nRndFlag)
 	for (int l = 0; l < eRNListType_ListsNum; l++)
 		for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode, * pNext; pObj; pObj = pNext)
 		{
-			pNext = pObj->m_pNext;
+			if (pNext = pObj->m_pNext)
+				cryPrefetchT0SSE(pNext);
 
 			if (pObj->GetRndFlags() & nRndFlag)
 				DeleteObject(pObj);
@@ -944,7 +958,8 @@ void COctreeNode::UnregisterEngineObjectsInArea(const SHotUpdateInfo* pExportInf
 	{
 		for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode, * pNext; pObj; pObj = pNext)
 		{
-			pNext = pObj->m_pNext;
+			if (pNext = pObj->m_pNext)
+				cryPrefetchT0SSE(pNext);
 
 			EERType eType = pObj->GetRenderNodeType();
 
@@ -963,14 +978,14 @@ void COctreeNode::UnregisterEngineObjectsInArea(const SHotUpdateInfo* pExportInf
 				{
 					Get3DEngine()->UnRegisterEntityAsJob(pObj);
 					arrUnregisteredObjects.Add(pObj);
-					SetCompiled(false);
+					SetCompiled((ERNListType)l, false);
 				}
 			}
 			else
 			{
 				Get3DEngine()->UnRegisterEntityAsJob(pObj);
 				arrUnregisteredObjects.Add(pObj);
-				SetCompiled(false);
+				SetCompiled((ERNListType)l, false);
 			}
 		}
 	}
@@ -1007,13 +1022,13 @@ int COctreeNode::PhysicalizeInBox(const AABB& bbox)
 	int nCount = 0;
 	_Op physicalize;
 	if (GetCVars()->e_OnDemandPhysics & 0x1)
-		for (IRenderNode* pObj = m_arrObjects[eRNListType_Vegetation].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+		for (CVegetation* pObj = (CVegetation*)m_arrObjects[eRNListType_Vegetation].m_pFirstNode; pObj; pObj = (CVegetation*)pObj->m_pNext)
 		{
 			assert(pObj->GetRenderNodeType() == eERType_Vegetation);
 			physicalize(pObj, bbox, false, nCount);
 		}
 	if (GetCVars()->e_OnDemandPhysics & 0x2)
-		for (IRenderNode* pObj = m_arrObjects[eRNListType_Brush].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+		for (CBrush* pObj = (CBrush*)m_arrObjects[eRNListType_Brush].m_pFirstNode; pObj; pObj = (CBrush*)pObj->m_pNext)
 		{
 			assert(pObj->GetRenderNodeType() == eERType_Brush);
 			physicalize(pObj, bbox, true, nCount);
@@ -1046,13 +1061,13 @@ int COctreeNode::DephysicalizeInBox(const AABB& bbox)
 	int nCount = 0;
 	_Op dephysicalize;
 	if (GetCVars()->e_OnDemandPhysics & 0x1)
-		for (IRenderNode* pObj = m_arrObjects[eRNListType_Vegetation].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+		for (CVegetation* pObj = (CVegetation*)m_arrObjects[eRNListType_Vegetation].m_pFirstNode; pObj; pObj = (CVegetation*)pObj->m_pNext)
 		{
 			assert(pObj->GetRenderNodeType() == eERType_Vegetation);
 			dephysicalize(pObj, bbox);
 		}
 	if (GetCVars()->e_OnDemandPhysics & 0x2)
-		for (IRenderNode* pObj = m_arrObjects[eRNListType_Brush].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+		for (CBrush* pObj = (CBrush*)m_arrObjects[eRNListType_Brush].m_pFirstNode; pObj; pObj = (CBrush*)pObj->m_pNext)
 		{
 			assert(pObj->GetRenderNodeType() == eERType_Brush);
 			dephysicalize(pObj, bbox);
@@ -1069,7 +1084,9 @@ int COctreeNode::PhysicalizeOfType(ERNListType listType, bool bInstant)
 {
 	for (IRenderNode* pObj = m_arrObjects[listType].m_pFirstNode, * pNext; pObj; pObj = pNext)
 	{
-		pNext = pObj->m_pNext;
+		if (pNext = pObj->m_pNext)
+			cryPrefetchT0SSE(pNext);
+
 		pObj->Physicalize(bInstant);
 	}
 
@@ -1086,7 +1103,9 @@ int COctreeNode::DePhysicalizeOfType(ERNListType listType, bool bInstant)
 {
 	for (IRenderNode* pObj = m_arrObjects[listType].m_pFirstNode, * pNext; pObj; pObj = pNext)
 	{
-		pNext = pObj->m_pNext;
+		if (pNext = pObj->m_pNext)
+			cryPrefetchT0SSE(pNext);
+
 		pObj->Dephysicalize(bInstant);
 	}
 
@@ -1117,7 +1136,7 @@ int COctreeNode::GetObjectsCount(EOcTeeNodeListType eListType)
 					nCount++;
 		break;
 	case eSprites:
-		for (IRenderNode* pObj = m_arrObjects[eRNListType_Vegetation].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+		for (CVegetation* pObj = (CVegetation*)m_arrObjects[eRNListType_Vegetation].m_pFirstNode; pObj; pObj = (CVegetation*)pObj->m_pNext)
 			if (static_cast<CVegetation*>(pObj)->m_pSpriteInfo)
 				++nCount;
 		break;
@@ -1137,8 +1156,11 @@ void COctreeNode::GetMemoryUsage(ICrySizer* pSizer) const
 {
 	for (int l = 0; l < eRNListType_ListsNum; l++)
 	{
-		for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+		for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode, *pNext; pObj; pObj = pNext)
 		{
+			if (pNext = pObj->m_pNext)
+				cryPrefetchT0SSE(pNext);
+
 			EERType eType = pObj->GetRenderNodeType();
 			if (!(eType == eERType_Vegetation && pObj->GetRndFlags() & ERF_PROCEDURAL))
 				pObj->GetMemoryUsage(pSizer);
@@ -1148,7 +1170,6 @@ void COctreeNode::GetMemoryUsage(ICrySizer* pSizer) const
 	{
 		SIZER_COMPONENT_NAME(pSizer, "ObjLists");
 
-		pSizer->AddObject(m_lstCasters);
 		pSizer->AddObject(m_lstAffectingLights);
 	}
 
@@ -1164,8 +1185,8 @@ void COctreeNode::UpdateTerrainNodes(CTerrainNode* pParentNode)
 {
 	if (pParentNode != 0)
 		SetTerrainNode(pParentNode->FindMinNodeContainingBox(GetNodeBox()));
-	else if (m_nSID >= 0 && GetTerrain() != 0)
-		SetTerrainNode(GetTerrain()->FindMinNodeContainingBox(GetNodeBox(), m_nSID));
+	else if (GetTerrain() != 0)
+		SetTerrainNode(GetTerrain()->FindMinNodeContainingBox(GetNodeBox()));
 	else
 		SetTerrainNode(NULL);
 
@@ -1176,41 +1197,48 @@ void COctreeNode::UpdateTerrainNodes(CTerrainNode* pParentNode)
 
 void C3DEngine::GetObjectsByTypeGlobal(PodArray<IRenderNode*>& lstObjects, EERType objType, const AABB* pBBox, bool* pInstStreamReady, uint64 dwFlags)
 {
-	for (int nSID = 0; nSID < Get3DEngine()->m_pObjectsTree.Count(); nSID++)
-		if (Get3DEngine()->IsSegmentSafeToUse(nSID))
-			Get3DEngine()->m_pObjectsTree[nSID]->GetObjectsByType(lstObjects, objType, pBBox, pInstStreamReady, dwFlags);
+	if(Get3DEngine()->m_pObjectsTree)
+	  Get3DEngine()->m_pObjectsTree->GetObjectsByType(lstObjects, objType, pBBox, pInstStreamReady, dwFlags);
 }
 
 void C3DEngine::MoveObjectsIntoListGlobal(PodArray<SRNInfo>* plstResultEntities, const AABB* pAreaBox,
                                           bool bRemoveObjects, bool bSkipDecals, bool bSkip_ERF_NO_DECALNODE_DECALS, bool bSkipDynamicObjects,
                                           EERType eRNType)
 {
-	for (int nSID = 0; nSID < Get3DEngine()->m_pObjectsTree.Count(); nSID++)
-		if (Get3DEngine()->IsSegmentSafeToUse(nSID))
-			Get3DEngine()->m_pObjectsTree[nSID]->MoveObjectsIntoList(plstResultEntities, pAreaBox, bRemoveObjects, bSkipDecals, bSkip_ERF_NO_DECALNODE_DECALS, bSkipDynamicObjects, eRNType);
+	if (Get3DEngine()->m_pObjectsTree)
+	  Get3DEngine()->m_pObjectsTree->MoveObjectsIntoList(plstResultEntities, pAreaBox, bRemoveObjects, bSkipDecals, bSkip_ERF_NO_DECALNODE_DECALS, bSkipDynamicObjects, eRNType);
 }
 
 void COctreeNode::ActivateObjectsLayer(uint16 nLayerId, bool bActivate, bool bPhys, IGeneralMemoryHeap* pHeap, const AABB& layerBox)
 {
+	const bool bAllowActivationWithPhys = GetCVars()->e_ObjectLayersActivationPhysics == 1;
+	const bool bActivateWithPhys = bActivate && bPhys;
+
 	if (nLayerId && nLayerId < 0xFFFF && !Overlap::AABB_AABB(layerBox, GetObjectsBBox()))
 		return;
 
-	for (IRenderNode* pObj = m_arrObjects[eRNListType_Brush].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+	for (CBrush* pObj = (CBrush*)m_arrObjects[eRNListType_Brush].m_pFirstNode, *pNext; pObj; pObj = pNext)
 	{
-		if (pObj->GetRenderNodeType() == eERType_Brush)
+		if (pNext = (CBrush*)pObj->m_pNext)
+			cryPrefetchT0SSE(pNext);
+
+		if (pObj->GetLayerId() == nLayerId || nLayerId == uint16(~0))
 		{
-			CBrush* pBrush = (CBrush*)pObj;
-			if (pBrush->m_nLayerId == nLayerId || nLayerId == uint16(~0))
+			EERType eType = pObj->GetRenderNodeType();
+
+			if (bActivate == pObj->IsHidden())
+				SetCompiled(IRenderNode::GetRenderNodeListId(eType), false);
+
+			pObj->SetRndFlags(ERF_ACTIVE_LAYER, bActivate);
+			pObj->Hide(!bActivate);
+
+			// if (eType == eERType_Brush)
 			{
-				if ((bActivate && pBrush->m_dwRndFlags & ERF_HIDDEN) || (!bActivate && !(pBrush->m_dwRndFlags & ERF_HIDDEN)))
-					SetCompiled(false);
+				CBrush* pBrush = (CBrush*)pObj;
 
-				pBrush->SetRndFlags(ERF_HIDDEN, !bActivate);
-				pBrush->SetRndFlags(ERF_ACTIVE_LAYER, bActivate);
-
-				if (GetCVars()->e_ObjectLayersActivationPhysics == 1)
+				if (bAllowActivationWithPhys)
 				{
-					if (bActivate && bPhys)
+					if (bActivateWithPhys)
 						pBrush->PhysicalizeOnHeap(pHeap, false);
 					else
 						pBrush->Dephysicalize();
@@ -1223,16 +1251,19 @@ void COctreeNode::ActivateObjectsLayer(uint16 nLayerId, bool bActivate, bool bPh
 		}
 	}
 
-	for (IRenderNode* pObj = m_arrObjects[eRNListType_DecalsAndRoads].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+	for (IRenderNode* pObj = m_arrObjects[eRNListType_DecalsAndRoads].m_pFirstNode, *pNext; pObj; pObj = pNext)
 	{
-		EERType eType = pObj->GetRenderNodeType();
+		if (pNext = pObj->m_pNext)
+			cryPrefetchT0SSE(pNext);
 
-		if (eType == eERType_Decal)
+		if (pObj->GetLayerId() == nLayerId || nLayerId == uint16(~0))
 		{
-			CDecalRenderNode* pDecal = (CDecalRenderNode*)pObj;
-			if (pDecal->GetLayerId() == nLayerId || nLayerId == uint16(~0))
+			EERType eType = pObj->GetRenderNodeType();
+			pObj->Hide(!bActivate);
+
+			if (eType == eERType_Decal)
 			{
-				pDecal->SetRndFlags(ERF_HIDDEN, !bActivate);
+				CDecalRenderNode* pDecal = (CDecalRenderNode*)pObj;
 
 				if (bActivate)
 					pDecal->RequestUpdate();
@@ -1240,29 +1271,36 @@ void COctreeNode::ActivateObjectsLayer(uint16 nLayerId, bool bActivate, bool bPh
 					pDecal->DeleteDecals();
 			}
 		}
+	}
 
-		if (eType == eERType_Road)
+	for (CLightEntity* pObj = (CLightEntity*)m_arrObjects[eRNListType_Light].m_pFirstNode, *pNext; pObj; pObj = pNext)
+	{
+		if (pNext = (CLightEntity*)pObj->m_pNext)
+			cryPrefetchT0SSE(pNext);
+
+		if (pObj->GetLayerId() == nLayerId || nLayerId == uint16(~0))
 		{
-			CRoadRenderNode* pDecal = (CRoadRenderNode*)pObj;
-			if (pDecal->GetLayerId() == nLayerId || nLayerId == uint16(~0))
-			{
-				pDecal->SetRndFlags(ERF_HIDDEN, !bActivate);
-			}
+			pObj->Hide(!bActivate);
 		}
 	}
 
-	for (IRenderNode* pObj = m_arrObjects[eRNListType_Unknown].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+	for (IRenderNode* pObj = m_arrObjects[eRNListType_Unknown].m_pFirstNode, *pNext; pObj; pObj = pNext)
 	{
-		if (pObj->GetRenderNodeType() == eERType_WaterVolume)
-		{
-			CWaterVolumeRenderNode* pWatVol = (CWaterVolumeRenderNode*)pObj;
-			if (pWatVol->GetLayerId() == nLayerId || nLayerId == uint16(~0))
-			{
-				pWatVol->SetRndFlags(ERF_HIDDEN, !bActivate);
+		if (pNext = pObj->m_pNext)
+			cryPrefetchT0SSE(pNext);
 
-				if (GetCVars()->e_ObjectLayersActivationPhysics)
+		if (pObj->GetLayerId() == nLayerId || nLayerId == uint16(~0))
+		{
+			EERType eType = pObj->GetRenderNodeType();
+			pObj->Hide(!bActivate);
+
+			if (eType == eERType_WaterVolume)
+			{
+				CWaterVolumeRenderNode* pWatVol = (CWaterVolumeRenderNode*)pObj;
+
+				if (bAllowActivationWithPhys)
 				{
-					if (bActivate && bPhys)
+					if (bActivateWithPhys)
 						pWatVol->Physicalize();
 					else
 						pWatVol->Dephysicalize();
@@ -1271,15 +1309,6 @@ void COctreeNode::ActivateObjectsLayer(uint16 nLayerId, bool bActivate, bool bPh
 				{
 					pWatVol->Dephysicalize();
 				}
-			}
-		}
-
-		if (pObj->GetRenderNodeType() == eERType_DistanceCloud)
-		{
-			CDistanceCloudRenderNode* pCloud = (CDistanceCloudRenderNode*)pObj;
-			if (pCloud->GetLayerId() == nLayerId || nLayerId == uint16(~0))
-			{
-				pCloud->SetRndFlags(ERF_HIDDEN, !bActivate);
 			}
 		}
 	}
@@ -1291,44 +1320,29 @@ void COctreeNode::ActivateObjectsLayer(uint16 nLayerId, bool bActivate, bool bPh
 
 void COctreeNode::GetLayerMemoryUsage(uint16 nLayerId, ICrySizer* pSizer, int* pNumBrushes, int* pNumDecals)
 {
-	for (IRenderNode* pObj = m_arrObjects[eRNListType_Brush].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+	for (CBrush* pObj = (CBrush*)m_arrObjects[eRNListType_Brush].m_pFirstNode, *pNext; pObj; pObj = pNext)
 	{
-		if (pObj->GetRenderNodeType() == eERType_Brush)
+		if (pNext = (CBrush*)pObj->m_pNext)
+			cryPrefetchT0SSE(pNext);
+
+		if (pObj->GetLayerId() == nLayerId || nLayerId == uint16(~0))
 		{
-			CBrush* pBrush = (CBrush*)pObj;
-			if (pBrush->m_nLayerId == nLayerId || nLayerId == uint16(~0))
-			{
-				pBrush->GetMemoryUsage(pSizer);
-				if (pNumBrushes)
-					(*pNumBrushes)++;
-			}
+			pObj->GetMemoryUsage(pSizer);
+			if (pNumBrushes)
+				(*pNumBrushes)++;
 		}
 	}
 
-	for (IRenderNode* pObj = m_arrObjects[eRNListType_DecalsAndRoads].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+	for (IRenderNode* pObj = m_arrObjects[eRNListType_DecalsAndRoads].m_pFirstNode, *pNext; pObj; pObj = pNext)
 	{
-		EERType eType = pObj->GetRenderNodeType();
+		if (pNext = pObj->m_pNext)
+			cryPrefetchT0SSE(pNext);
 
-		if (eType == eERType_Decal)
+		if (pObj->GetLayerId() == nLayerId || nLayerId == uint16(~0))
 		{
-			CDecalRenderNode* pDecal = (CDecalRenderNode*)pObj;
-			if (pDecal->GetLayerId() == nLayerId || nLayerId == uint16(~0))
-			{
-				pDecal->GetMemoryUsage(pSizer);
-				if (pNumDecals)
-					(*pNumDecals)++;
-			}
-		}
-
-		if (eType == eERType_Road)
-		{
-			CRoadRenderNode* pDecal = (CRoadRenderNode*)pObj;
-			if (pDecal->GetLayerId() == nLayerId || nLayerId == uint16(~0))
-			{
-				pDecal->GetMemoryUsage(pSizer);
-				if (pNumDecals)
-					(*pNumDecals)++;
-			}
+			pObj->GetMemoryUsage(pSizer);
+			if (pNumDecals)
+				(*pNumDecals)++;
 		}
 	}
 
@@ -1345,8 +1359,11 @@ void COctreeNode::GetObjects(PodArray<IRenderNode*>& lstObjects, const AABB* pBB
 	unsigned int nCurrentObject(eRNListType_First);
 	for (nCurrentObject = eRNListType_First; nCurrentObject < eRNListType_ListsNum; ++nCurrentObject)
 	{
-		for (IRenderNode* pObj = m_arrObjects[nCurrentObject].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+		for (IRenderNode* pObj = m_arrObjects[nCurrentObject].m_pFirstNode, *pNext; pObj; pObj = pNext)
 		{
+			if (pNext = pObj->m_pNext)
+				cryPrefetchT0SSE(pNext);
+
 			if (!pBBox || Overlap::AABB_AABB(*pBBox, pObj->GetBBox()))
 			{
 				lstObjects.Add(pObj);
@@ -1372,66 +1389,62 @@ bool COctreeNode::GetShadowCastersTimeSliced(IRenderNode* pIgnoreNode, ShadowMap
 		{
 			if (pFrustum->aabbCasters.IsReset() || Overlap::AABB_AABB(pFrustum->aabbCasters, GetObjectsBBox()))
 			{
+				const IRenderNode::RenderFlagsType requiredFlags = pFrustum->m_eFrustumType != ShadowMapFrustum::e_HeightMapAO ? ERF_CASTSHADOWMAPS : 0; // Ignore ERF_CASTSHADOWMAPS for ambient occlusion casters
+				const IRenderNode::RenderFlagsType excludeFlags  = ERF_COLLISION_PROXY | ERF_RAYCAST_PROXY | renderNodeExcludeFlags;
+				const float shadowViewDistRatio = GetCVars()->e_ShadowsCastViewDistRatio;
+				const bool  includeCharacters   = GetCVars()->e_ShadowsCacheRenderCharacters != 0;
+
 				for (int l = 0; l < eRNListType_ListsNum; l++)
 				{
-					for (IRenderNode* pNode = m_arrObjects[l].m_pFirstNode; pNode; pNode = pNode->m_pNext)
+					if (!IsRenderNodeTypeEnabled(EERType(l)))
+						continue;
+
+					for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode, *pNext; pObj && pObj->IsRenderable(); pObj = pNext)
 					{
-						if (!IsRenderNodeTypeEnabled(pNode->GetRenderNodeType()))
+						if (pNext = pObj->m_pNext)
+							cryPrefetchT0SSE(pNext);
+
+						if (pObj == pIgnoreNode)
 							continue;
 
-						if (pNode == pIgnoreNode)
+						if ((pObj->GetRndFlags() & (excludeFlags | requiredFlags)) != requiredFlags)
 							continue;
 
-						auto nFlags = pNode->GetRndFlags();
-						if (nFlags & (ERF_HIDDEN | ERF_COLLISION_PROXY | ERF_RAYCAST_PROXY | renderNodeExcludeFlags))
+						if (!pFrustum->NodeRequiresShadowCacheUpdate(pObj))
 							continue;
 
-						// Ignore ERF_CASTSHADOWMAPS for ambient occlusion casters
-						if (pFrustum->m_eFrustumType != ShadowMapFrustum::e_HeightMapAO && (pNode->GetRndFlags() & ERF_CASTSHADOWMAPS) == 0)
-							continue;
-
-						if (pFrustum->pShadowCacheData->mProcessedCasters.find(pNode) != pFrustum->pShadowCacheData->mProcessedCasters.end())
-							continue;
-
-						AABB objBox = pNode->GetBBox();
-						const float fDistanceSq = Distance::Point_PointSq(passInfo.GetCamera().GetPosition(), objBox.GetCenter());
-						const float fMaxDist = pNode->GetMaxViewDist() * GetCVars()->e_ShadowsCastViewDistRatio + objBox.GetRadius();
+						const float fDistanceSq = Distance::Point_AABBSq(passInfo.GetCamera().GetPosition(), pObj->GetBBox());
+						const float fMaxDist    = pObj->GetMaxViewDist() * shadowViewDistRatio;
 
 						if (fDistanceSq > sqr(fMaxDist))
 							continue;
 
 						// find closest loaded lod
-						for (int nSlot = 0; nSlot < pNode->GetSlotCount(); ++nSlot)
+
+						bool bCanRender = false;
+
+						if (IStatObj* pStatObj = pObj->GetEntityStatObj())
 						{
-							bool bCanRender = false;
-
-							if (IStatObj* pStatObj = pNode->GetEntityStatObj(nSlot))
+							for (int i = 0; i < MAX_STATOBJ_LODS_NUM; ++i)
 							{
-								for (int i = 0; i < MAX_STATOBJ_LODS_NUM; ++i)
-								{
-									IStatObj* pLod = pStatObj->GetLodObject(i);
+								IStatObj* pLod = pStatObj->GetLodObject(i);
 
-									if (pLod && pLod->m_eStreamingStatus == ecss_Ready)
-									{
-										bCanRender = true;
-										break;
-									}
+								if (pLod && pLod->m_eStreamingStatus == ecss_Ready)
+								{
+									bCanRender = true;
+									break;
 								}
 							}
-							else if (ICharacterInstance* pCharacter = pNode->GetEntityCharacter(nSlot))
-							{
-								bCanRender = GetCVars()->e_ShadowsCacheRenderCharacters != 0;
-							}
+						}
+						else if (includeCharacters)
+						{
+							bCanRender = pObj->GetEntityCharacter() != nullptr;
+						}
 
-							if (bCanRender)
-							{
-								if (pNode->CanExecuteRenderAsJob())
-								{
-									pFrustum->jobExecutedCastersList.Add(pNode);
-								}
-								else
-									pFrustum->castersList.Add(pNode);
-							}
+						if (bCanRender)
+						{
+							// mark the object to be rendered into shadow map
+							COctreeNode::SetTraversalFrameId(pObj, passInfo.GetMainFrameID(), pFrustum->nShadowMapLod);
 						}
 					}
 				}
@@ -1442,7 +1455,7 @@ bool COctreeNode::GetShadowCastersTimeSliced(IRenderNode* pIgnoreNode, ShadowMap
 		--totalRemainingNodes;
 	}
 
-	for (int i = pFrustum->pShadowCacheData->mOctreePath[nCurLevel]; i < 8; ++i)
+	for (int i = pFrustum->pShadowCacheData->mOctreePath[nCurLevel]; i < 8; ++i, ++pFrustum->pShadowCacheData->mOctreePath[nCurLevel])
 	{
 		if (m_arrChilds[i] && (m_arrChilds[i]->m_renderFlags & ERF_CASTSHADOWMAPS))
 		{
@@ -1452,8 +1465,6 @@ bool COctreeNode::GetShadowCastersTimeSliced(IRenderNode* pIgnoreNode, ShadowMap
 				return false;
 
 		}
-
-		pFrustum->pShadowCacheData->mOctreePath[nCurLevel] = i;
 	}
 
 	// this subtree is fully processed: reset traversal state
@@ -1464,16 +1475,19 @@ bool COctreeNode::GetShadowCastersTimeSliced(IRenderNode* pIgnoreNode, ShadowMap
 
 bool COctreeNode::IsObjectTypeInTheBox(EERType objType, const AABB& WSBBox)
 {
-	if (!Overlap::AABB_AABB(WSBBox, GetObjectsBBox()))
+	if (!(m_linkedTypes & (1 << objType)))
 		return false;
 
-	if (objType == eERType_Road && !m_bHasRoads)
+	if (!Overlap::AABB_AABB(WSBBox, GetObjectsBBox()))
 		return false;
 
 	ERNListType eListType = IRenderNode::GetRenderNodeListId(objType);
 
-	for (IRenderNode* pObj = m_arrObjects[eListType].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+	for (IRenderNode* pObj = m_arrObjects[eListType].m_pFirstNode, *pNext; pObj; pObj = pNext)
 	{
+		if (pNext = pObj->m_pNext)
+			cryPrefetchT0SSE(pNext);
+
 		if (pObj->GetRenderNodeType() == objType)
 		{
 			if (Overlap::AABB_AABB(WSBBox, pObj->GetBBox()))
@@ -1500,8 +1514,11 @@ void COctreeNode::GenerateStatObjAndMatTables(std::vector<IStatObj*>* pStatObjTa
 	uint32 nObjTypeMask = pExportInfo ? pExportInfo->nObjTypeMask : (uint32) ~0;
 
 	for (int l = 0; l < eRNListType_ListsNum; l++)
-		for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+		for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode, *pNext; pObj; pObj = pNext)
 		{
+			if (pNext = pObj->m_pNext)
+				cryPrefetchT0SSE(pNext);
+
 			EERType eType = pObj->GetRenderNodeType();
 
 			if (!(nObjTypeMask & (1 << eType)))
@@ -1531,6 +1548,7 @@ void COctreeNode::GenerateStatObjAndMatTables(std::vector<IStatObj*>* pStatObjTa
 				IStatInstGroup& pStatInstGroup = pVegetation->GetStatObjGroup();
 				stl::push_back_unique(*pStatInstGroupTable, &pStatInstGroup);
 			}
+
 			if (eType == eERType_MergedMesh)
 			{
 				CMergedMeshRenderNode* pRN = (CMergedMeshRenderNode*)pObj;
@@ -1541,16 +1559,17 @@ void COctreeNode::GenerateStatObjAndMatTables(std::vector<IStatObj*>* pStatObjTa
 					stl::push_back_unique(*pStatInstGroupTable, &pStatInstGroup);
 				}
 			}
+
 			if (eType == eERType_Character)
 			{
-				ICharacterInstance* pCharacter = pObj->GetEntityCharacter(0,nullptr,false);
+				ICharacterInstance* pCharacter = pObj->GetEntityCharacter();
 				if (pCharacter)
 					pMatTable->push_back(pCharacter->GetMaterial());
 			}
 		}
 
 	for (int i = 0; i < 8; i++)
-		if (m_arrChilds[i])
+		if (m_arrChilds[i] && m_arrChilds[i]->m_linkedTypes)
 			m_arrChilds[i]->GenerateStatObjAndMatTables(pStatObjTable, pMatTable, pStatInstGroupTable, pExportInfo);
 }
 
@@ -1576,7 +1595,7 @@ COctreeNode* COctreeNode::FindChildFor(IRenderNode* pObj, const AABB& objBox, co
 
 	if (!m_arrChilds[nChildId])
 	{
-		m_arrChilds[nChildId] = COctreeNode::Create(m_nSID, GetChildBBox(nChildId), m_pVisArea, this);
+		m_arrChilds[nChildId] = COctreeNode::Create(GetChildBBox(nChildId), m_pVisArea, this);
 	}
 
 	return m_arrChilds[nChildId];
@@ -1655,8 +1674,6 @@ void COctreeNode::StreamingCheckUnload(const SRenderingPassInfo& passInfo, PodAr
 
 	static int nCurNodeId = -1;
 
-	const float fMaxViewDistance = Get3DEngine()->GetMaxViewDistance();
-
 	for (int t = 0; t < nMaxTestsPerFrame && m_arrStreamedInNodes.Count(); t++)
 	{
 		nCurNodeId++;
@@ -1722,8 +1739,13 @@ bool COctreeNode::UpdateStreamingPriority(PodArray<COctreeNode*>& arrRecursion, 
 	if (fNodeDistance > min(m_fObjectsMaxViewDist, fMaxDist) + GetFloatCVar(e_StreamPredictionDistanceFar)) // add || m_objectsBox.IsReset()
 		return true;
 
-	if (!IsCompiled())
-		CompileObjects();
+	for (int l = 0; l < eRNListType_ListsNum; l++)
+	{
+		if (!IsCompiled((ERNListType)l))
+		{
+			CompileObjects((ERNListType)l);
+		}
+	}
 
 	const float fPredictionDistanceFar = GetFloatCVar(e_StreamPredictionDistanceFar);
 
@@ -1732,8 +1754,6 @@ bool COctreeNode::UpdateStreamingPriority(PodArray<COctreeNode*>& arrRecursion, 
 
 	if (GetCVars()->e_VegetationSpritesBatching && GetCVars()->e_VegetationSprites)
 		CheckManageVegetationSprites(fNodeDistance, 64, passInfo);
-
-	AABB objBox;
 
 	const bool bEnablePerNodeDistance = GetCVars()->e_StreamCgfUpdatePerNodeDistance > 0;
 	CVisArea* pRoot0 = GetVisAreaManager() ? GetVisAreaManager()->GetCurVisArea() : NULL;
@@ -1769,25 +1789,12 @@ bool COctreeNode::UpdateStreamingPriority(PodArray<COctreeNode*>& arrRecursion, 
 
 	for (int l = 0; l < eRNListType_ListsNum; l++)
 	{
-		for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+		for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode, *pNext; pObj && pObj->IsRenderable(); pObj = pNext)
 		{
-			if (pObj->m_pNext)
-				cryPrefetchT0SSE(pObj->m_pNext);
+			if (pNext = pObj->m_pNext)
+				cryPrefetchT0SSE(pNext);
 
-			IF (pObj->m_dwRndFlags & ERF_HIDDEN, 0)
-				continue;
-
-#ifdef _DEBUG
-			const char* szName = pObj->GetName();
-			const char* szClassName = pObj->GetEntityClassName();
-
-			if (pObj->GetRndFlags() & ERF_SELECTED)
-			{
-				int selected = 1;
-			}
-#endif // _DEBUG
-
-			pObj->FillBBox(objBox);
+			const AABB objBox = pObj->GetBBox();
 
 			// stream more in zoom mode if in frustum
 			float fZoomFactorSq = (passInfo.IsZoomActive() && passInfo.GetCamera().IsAABBVisible_E(objBox))
@@ -1872,32 +1879,35 @@ bool COctreeNode::UpdateStreamingPriority(PodArray<COctreeNode*>& arrRecursion, 
 	return true;
 }
 
-int COctreeNode::Load(FILE*& f, int& nDataSize, std::vector<IStatObj*>* pStatObjTable, std::vector<IMaterial*>* pMatTable, EEndian eEndian, AABB* pBox, const SLayerVisibility* pLayerVisibilityMask, const Vec3& segmentOffset)
+int COctreeNode::Load(FILE*& f, int& nDataSize, std::vector<IStatObj*>* pStatObjTable, std::vector<IMaterial*>* pMatTable, EEndian eEndian, AABB* pBox, const SLayerVisibility* pLayerVisibilityMask)
 {
-	return Load_T(f, nDataSize, pStatObjTable, pMatTable, eEndian, pBox, pLayerVisibilityMask, segmentOffset);
+	return Load_T(f, nDataSize, pStatObjTable, pMatTable, eEndian, pBox, pLayerVisibilityMask);
 }
-int COctreeNode::Load(uint8*& f, int& nDataSize, std::vector<IStatObj*>* pStatObjTable, std::vector<IMaterial*>* pMatTable, EEndian eEndian, AABB* pBox, const SLayerVisibility* pLayerVisibilityMask, const Vec3& segmentOffset)
+int COctreeNode::Load(uint8*& f, int& nDataSize, std::vector<IStatObj*>* pStatObjTable, std::vector<IMaterial*>* pMatTable, EEndian eEndian, AABB* pBox, const SLayerVisibility* pLayerVisibilityMask)
 {
-	return Load_T(f, nDataSize, pStatObjTable, pMatTable, eEndian, pBox, pLayerVisibilityMask, segmentOffset);
+	return Load_T(f, nDataSize, pStatObjTable, pMatTable, eEndian, pBox, pLayerVisibilityMask);
 }
 
 int FTell(FILE*& f)  { return Cry3DEngineBase::GetPak()->FTell(f); }
 int FTell(uint8*& f) { return 0; }
 
 template<class T>
-int COctreeNode::Load_T(T*& f, int& nDataSize, std::vector<IStatObj*>* pStatObjTable, std::vector<IMaterial*>* pMatTable, EEndian eEndian, AABB* pBox, const SLayerVisibility* pLayerVisibilityMask, const Vec3& segmentOffset)
+int COctreeNode::Load_T(T*& f, int& nDataSize, std::vector<IStatObj*>* pStatObjTable, std::vector<IMaterial*>* pMatTable, EEndian eEndian, AABB* pBox, const SLayerVisibility* pLayerVisibilityMask)
 {
 	if (pBox && !Overlap::AABB_AABB(GetNodeBox(), *pBox))
 		return 0;
 
-	// remember file offset for streaming
-	m_nFileDataOffset = FTell(f);
+	if (GetCVars()->e_StreamInstances)
+	{
+		// remember file offset for streaming
+		m_nFileDataOffset = FTell(f);
+	}
 
 	SOcTreeNodeChunk chunk;
 
 	ELoadObjectsMode eLoadObjectsMode = (GetCVars()->e_StreamInstances && !gEnv->IsEditor()) ? LOM_LOAD_ONLY_NON_STREAMABLE : LOM_LOAD_ALL;
 
-	if (!ReadObjects(f, nDataSize, eEndian, pStatObjTable, pMatTable, pLayerVisibilityMask, segmentOffset, chunk, eLoadObjectsMode))
+	if (!ReadObjects(f, nDataSize, eEndian, pStatObjTable, pMatTable, pLayerVisibilityMask, chunk, eLoadObjectsMode))
 		return 0;
 
 	if (chunk.nObjectsBlockSize)
@@ -1918,10 +1928,10 @@ int COctreeNode::Load_T(T*& f, int& nDataSize, std::vector<IStatObj*>* pStatObjT
 		{
 			if (!m_arrChilds[nChildId])
 			{
-				m_arrChilds[nChildId] = COctreeNode::Create(m_nSID, GetChildBBox(nChildId), m_pVisArea, this);
+				m_arrChilds[nChildId] = COctreeNode::Create(GetChildBBox(nChildId), m_pVisArea, this);
 			}
 
-			int nNewNodesNum = m_arrChilds[nChildId]->Load_T(f, nDataSize, pStatObjTable, pMatTable, eEndian, pBox, pLayerVisibilityMask, segmentOffset);
+			int nNewNodesNum = m_arrChilds[nChildId]->Load_T(f, nDataSize, pStatObjTable, pMatTable, eEndian, pBox, pLayerVisibilityMask);
 
 			if (!nNewNodesNum && !pBox)
 				return 0; // data error
@@ -1955,8 +1965,8 @@ void COctreeNode::BuildLoadingDatas(PodArray<SOctreeLoadObjectsData>* pQueue, by
 		{
 			if (!m_arrChilds[nChildId])
 			{
-				MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Terrain, EMemStatContextFlags::MSF_Instance, "Octree node");
-				m_arrChilds[nChildId] = new COctreeNode(m_nSID, GetChildBBox(nChildId), m_pVisArea, this);
+				MEMSTAT_CONTEXT(EMemStatContextType::Terrain, "Octree node");
+				m_arrChilds[nChildId] = new COctreeNode(GetChildBBox(nChildId), m_pVisArea, this);
 			}
 
 			m_arrChilds[nChildId]->BuildLoadingDatas(pQueue, pOrigData, pData, nDataSize, eEndian);
@@ -1966,7 +1976,6 @@ void COctreeNode::BuildLoadingDatas(PodArray<SOctreeLoadObjectsData>* pQueue, by
 
 bool COctreeNode::StreamLoad(uint8* pData, int nDataSize, std::vector<IStatObj*>* pStatObjTable, std::vector<IMaterial*>* pMatTable, EEndian eEndian, AABB* pBox)
 {
-	int64 ticks = CryGetTicks();
 	if (m_streamComplete)
 		return false;
 
@@ -1998,15 +2007,8 @@ bool COctreeNode::StreamLoad(uint8* pData, int nDataSize, std::vector<IStatObj*>
 		}
 		else
 		{
-			// if we are not in segmented world mode then the offset is 0
-			Vec3 segmentOffset(0, 0, 0);
-			if (Get3DEngine()->m_pSegmentsManager)
-			{
-				segmentOffset = GetTerrain()->GetSegmentOrigin(m_nSID);
-			}
-
 			IRenderNode* pRN = 0;
-			data.pNode->LoadSingleObject(data.pObjPtr, pStatObjTable, pMatTable, eEndian, OCTREENODE_CHUNK_VERSION, NULL, m_nSID, segmentOffset, LOM_LOAD_ALL, pRN);
+			data.pNode->LoadSingleObject(data.pObjPtr, pStatObjTable, pMatTable, eEndian, OCTREENODE_CHUNK_VERSION, NULL, LOM_LOAD_ALL, pRN);
 			if (data.pObjPtr >= data.pEndObjPtr)
 				m_loadingDatas.Delete(0);
 		}
@@ -2016,7 +2018,7 @@ bool COctreeNode::StreamLoad(uint8* pData, int nDataSize, std::vector<IStatObj*>
 }
 
 #if ENGINE_ENABLE_COMPILATION
-int COctreeNode::GetData(byte*& pData, int& nDataSize, std::vector<IStatObj*>* pStatObjTable, std::vector<IMaterial*>* pMatTable, std::vector<IStatInstGroup*>* pStatInstGroupTable, EEndian eEndian, SHotUpdateInfo* pExportInfo, const Vec3& segmentOffset)
+int COctreeNode::GetData(byte*& pData, int& nDataSize, std::vector<IStatObj*>* pStatObjTable, std::vector<IMaterial*>* pMatTable, std::vector<IStatInstGroup*>* pStatInstGroupTable, EEndian eEndian, SHotUpdateInfo* pExportInfo)
 {
 	AABB* pBox = (pExportInfo && !pExportInfo->areaBox.IsReset()) ? &pExportInfo->areaBox : NULL;
 
@@ -2038,7 +2040,7 @@ int COctreeNode::GetData(byte*& pData, int& nDataSize, std::vector<IStatObj*>* p
 				chunk.ucChildsMask |= (1 << i);
 
 		CMemoryBlock memblock;
-		SaveObjects(&memblock, pStatObjTable, pMatTable, pStatInstGroupTable, eEndian, pExportInfo, segmentOffset);
+		SaveObjects(&memblock, pStatObjTable, pMatTable, pStatInstGroupTable, eEndian, pExportInfo);
 
 		chunk.nObjectsBlockSize = memblock.GetSize();
 
@@ -2049,7 +2051,7 @@ int COctreeNode::GetData(byte*& pData, int& nDataSize, std::vector<IStatObj*>* p
 	else // just count size
 	{
 		nDataSize += sizeof(SOcTreeNodeChunk);
-		nDataSize += SaveObjects(NULL, NULL, NULL, NULL, eEndian, pExportInfo, segmentOffset);
+		nDataSize += SaveObjects(NULL, NULL, NULL, NULL, eEndian, pExportInfo);
 	}
 
 	// count number of nodes loaded
@@ -2058,7 +2060,7 @@ int COctreeNode::GetData(byte*& pData, int& nDataSize, std::vector<IStatObj*>* p
 	// process childs
 	for (int i = 0; i < 8; i++)
 		if (m_arrChilds[i])
-			nNodesNum += m_arrChilds[i]->GetData(pData, nDataSize, pStatObjTable, pMatTable, pStatInstGroupTable, eEndian, pExportInfo, segmentOffset);
+			nNodesNum += m_arrChilds[i]->GetData(pData, nDataSize, pStatObjTable, pMatTable, pStatInstGroupTable, eEndian, pExportInfo);
 
 	return nNodesNum;
 }
@@ -2067,8 +2069,9 @@ int COctreeNode::GetData(byte*& pData, int& nDataSize, std::vector<IStatObj*>* p
 bool COctreeNode::CleanUpTree()
 {
 	//  FreeAreaBrushes();
-
+	uint32 linkedTypes = 0;
 	bool bChildObjectsFound = false;
+
 	for (int i = 0; i < 8; i++)
 	{
 		if (m_arrChilds[i])
@@ -2079,7 +2082,10 @@ bool COctreeNode::CleanUpTree()
 				m_arrChilds[i] = NULL;
 			}
 			else
+			{
+				linkedTypes |= m_arrChilds[i]->m_linkedTypes;
 				bChildObjectsFound = true;
+			}
 		}
 	}
 
@@ -2089,22 +2095,36 @@ bool COctreeNode::CleanUpTree()
 	m_objectsBox = GetNodeBox();
 
 	for (int l = 0; l < eRNListType_ListsNum; l++)
-		for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+	{
+		for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode, *pNext; pObj; pObj = pNext)
 		{
+			if (pNext = pObj->m_pNext)
+				cryPrefetchT0SSE(pNext);
+
+			EERType eType = pObj->GetRenderNodeType();
+			if (eType != eERType_NotRenderNode)
+				linkedTypes |= 1 << pObj->GetRenderNodeType();
+
 			pObj->m_fWSMaxViewDist = pObj->GetMaxViewDist();
 			m_fObjectsMaxViewDist = max(m_fObjectsMaxViewDist, pObj->m_fWSMaxViewDist);
 			m_objectsBox.Add(pObj->GetBBox());
+			assert(!m_pParent || m_objectsBox.GetRadius() < GetNodeBox().GetRadius() * 2.f);
 		}
+	}
 
 	for (int i = 0; i < 8; i++)
 	{
 		if (m_arrChilds[i])
 		{
+			linkedTypes |= m_arrChilds[i]->m_linkedTypes;
+
 			m_fObjectsMaxViewDist = max(m_fObjectsMaxViewDist, m_arrChilds[i]->m_fObjectsMaxViewDist);
 			m_objectsBox.Add(m_arrChilds[i]->m_objectsBox);
+			assert(!m_pParent || m_objectsBox.GetRadius() < GetNodeBox().GetRadius() * 2.f);
 		}
 	}
 
+	m_linkedTypes = linkedTypes;
 	return (bChildObjectsFound || HasObjects());
 }
 
@@ -2121,20 +2141,29 @@ bool COctreeNode::CheckRenderFlagsMinSpec(uint32 dwRndFlags)
 
 void COctreeNode::OffsetObjects(const Vec3& offset)
 {
-	SetCompiled(false);
 	m_objectsBox.Move(offset);
 	m_vNodeCenter += offset;
 
 	for (int l = 0; l < eRNListType_ListsNum; l++)
 	{
-		for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+		SetCompiled((ERNListType)l, false);
+
+		for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode, *pNext; pObj; pObj = pNext)
 		{
+			if (pNext = pObj->m_pNext)
+				cryPrefetchT0SSE(pNext);
+
 			pObj->OffsetPosition(offset);
 		}
 	}
+
 	for (int i = 0; i < 8; ++i)
+	{
 		if (m_arrChilds[i])
+		{
 			m_arrChilds[i]->OffsetObjects(offset);
+		}
+	}
 }
 
 bool COctreeNode::HasAnyRenderableCandidates(const SRenderingPassInfo& passInfo) const
@@ -2142,6 +2171,8 @@ bool COctreeNode::HasAnyRenderableCandidates(const SRenderingPassInfo& passInfo)
 	// This checks if anything will be rendered, assuming we pass occlusion checks
 	// This is based on COctreeNode::RenderContentJobEntry's implementation,
 	// if that would do nothing, we can skip the running of occlusion and rendering jobs for this node
+	//
+	// Must match conditions in COctreeNode::RenderContentJobEntry
 	const bool bVegetation = passInfo.RenderVegetation() && m_arrObjects[eRNListType_Vegetation].m_pFirstNode != NULL;
 	const bool bBrushes = passInfo.RenderBrushes() && m_arrObjects[eRNListType_Brush].m_pFirstNode != NULL;
 	const bool bDecalsAndRoads = (passInfo.RenderDecals() || passInfo.RenderRoads()) && m_arrObjects[eRNListType_DecalsAndRoads].m_pFirstNode != NULL;
@@ -2150,7 +2181,7 @@ bool COctreeNode::HasAnyRenderableCandidates(const SRenderingPassInfo& passInfo)
 }
 
 template<class T>
-int COctreeNode::ReadObjects(T*& f, int& nDataSize, EEndian eEndian, std::vector<IStatObj*>* pStatObjTable, std::vector<IMaterial*>* pMatTable, const SLayerVisibility* pLayerVisibilityMask, const Vec3& segmentOffset, SOcTreeNodeChunk& chunk, ELoadObjectsMode eLoadMode)
+int COctreeNode::ReadObjects(T*& f, int& nDataSize, EEndian eEndian, std::vector<IStatObj*>* pStatObjTable, std::vector<IMaterial*>* pMatTable, const SLayerVisibility* pLayerVisibilityMask, SOcTreeNodeChunk& chunk, ELoadObjectsMode eLoadMode)
 {
 	if (!CTerrain::LoadDataFromFile(&chunk, 1, f, nDataSize, eEndian))
 		return 0;
@@ -2171,8 +2202,8 @@ int COctreeNode::ReadObjects(T*& f, int& nDataSize, EEndian eEndian, std::vector
 			if (!CTerrain::LoadDataFromFile(pPtr, chunk.nObjectsBlockSize, f, nDataSize, eEndian))
 				return 0;
 
-			if (!m_bEditor || Get3DEngine()->IsSegmentOperationInProgress())
-				LoadObjects(pPtr, pPtr + chunk.nObjectsBlockSize, pStatObjTable, pMatTable, eEndian, chunk.nChunkVersion, pLayerVisibilityMask, segmentOffset, eLoadMode);
+			if (!m_bEditor)
+				LoadObjects(pPtr, pPtr + chunk.nObjectsBlockSize, pStatObjTable, pMatTable, eEndian, chunk.nChunkVersion, pLayerVisibilityMask, eLoadMode);
 		}
 
 		if (eLoadMode != LOM_LOAD_ALL)
@@ -2262,14 +2293,17 @@ void COctreeNode::StreamOnCompleteReadObjects(T* f, int nDataSize)
 
 	C3DEngine* pEng = Get3DEngine();
 
-	if (!ReadObjects(f, nDataSize, pEng->m_bLevelFilesEndian, pEng->m_pLevelStatObjTable, pEng->m_pLevelMaterialsTable, NULL, Vec3(0, 0, 0), chunk, LOM_LOAD_ONLY_STREAMABLE))
+	if (!ReadObjects(f, nDataSize, pEng->m_bLevelFilesEndian, pEng->m_pLevelStatObjTable, pEng->m_pLevelMaterialsTable, NULL, chunk, LOM_LOAD_ONLY_STREAMABLE))
 	{
 		PrintMessage("%s: Instances read error", __FUNCTION__);
 	}
 
 	//PrintMessage("Loaded %d KB for node size %.f", chunk.nObjectsBlockSize/1024, m_vNodeAxisRadius.x);
 
-	SetCompiled(false);
+	for (int l = 0; l < eRNListType_ListsNum; l++)
+	{
+		SetCompiled((ERNListType)l, false);
+	}
 
 	m_eStreamingStatus = ecss_Ready;
 
@@ -2332,16 +2366,20 @@ void COctreeNode::ReleaseStreamableContent()
 
 	m_eStreamingStatus = ecss_NotLoaded;
 
-	SetCompiled(false);
+	for (int l = 0; l < eRNListType_ListsNum; l++)
+	{
+		SetCompiled((ERNListType)l, false);
+	}
 }
 
 void COctreeNode::ReleaseObjects(bool bReleaseOnlyStreamable)
 {
 	for (int l = 0; l < eRNListType_ListsNum; l++)
 	{
-		for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode, * pNext; pObj; pObj = pNext)
+		for (IRenderNode* pObj = m_arrObjects[l].m_pFirstNode, *pNext; pObj; pObj = pNext)
 		{
-			pNext = pObj->m_pNext;
+			if (pNext = pObj->m_pNext)
+				cryPrefetchT0SSE(pNext);
 
 			if (pObj->IsAllocatedOutsideOf3DEngineDLL())
 			{
@@ -2355,7 +2393,10 @@ void COctreeNode::ReleaseObjects(bool bReleaseOnlyStreamable)
 					if (IsObjectStreamable(pObj->GetRenderNodeType(), pObj->m_dwRndFlags))
 						m_nInstCounterLoaded--;
 
-					pObj->ReleaseNode(true);
+					if (pObj->GetRndFlags() & ERF_PROCEDURAL && pObj->GetRenderNodeType() == eERType_Vegetation)
+						Get3DEngine()->UnRegisterEntityDirect(pObj); // procedural vegetation uses custom pooled allocator
+					else
+						pObj->ReleaseNode(true);
 				}
 			}
 		}
@@ -2363,28 +2404,24 @@ void COctreeNode::ReleaseObjects(bool bReleaseOnlyStreamable)
 		assert(!m_arrObjects[l].m_pFirstNode || bReleaseOnlyStreamable);
 	}
 }
+
 void COctreeNode::ResetStaticInstancing()
 {
 	FUNCTION_PROFILER_3DENGINE;
 
-	for (IRenderNode* pObj = m_arrObjects[eRNListType_Vegetation].m_pFirstNode, * pNext; pObj; pObj = pNext)
+	// Kill all instances
+	if (m_bStaticInstancingApplied)
 	{
-		pNext = pObj->m_pNext;
-
-		CVegetation* pInst = (CVegetation*)pObj;
-
-		pObj->m_dwRndFlags &= ~ERF_STATIC_INSTANCING;
-
-		if (pInst->m_pInstancingInfo)
+		// Reset flag
+		for (CVegetation* pObj = (CVegetation*)m_arrObjects[eRNListType_Vegetation].m_pFirstNode, *pNext; pObj; pObj = pNext)
 		{
-			SAFE_DELETE(pInst->m_pInstancingInfo)
+			if (pNext = (CVegetation*)pObj->m_pNext)
+				cryPrefetchT0SSE(pNext);
 
-			pInst->InvalidatePermanentRenderObject();
+			pObj->Instance(false);
 		}
-	}
 
-	if (m_pStaticInstancingInfo)
-	{
+		// Delete allocations
 		for (auto it = m_pStaticInstancingInfo->begin(); it != m_pStaticInstancingInfo->end(); )
 		{
 			PodArray<SNodeInstancingInfo>*& pInfo = it->second;
@@ -2395,6 +2432,8 @@ void COctreeNode::ResetStaticInstancing()
 		}
 
 		SAFE_DELETE(m_pStaticInstancingInfo);
+
+		m_bStaticInstancingApplied = false;
 	}
 
 	m_bStaticInstancingIsDirty = true;
@@ -2415,12 +2454,13 @@ void COctreeNode::CheckUpdateStaticInstancing()
 	}
 }
 
-COctreeNode::COctreeNode(int nSID, const AABB& box, CVisArea* pVisArea, COctreeNode* pParent)
+COctreeNode::COctreeNode(const AABB& box, CVisArea* pVisArea, COctreeNode* pParent)
 {
+	m_nNodesCounterAll++;
+
 	m_fPrevTerrainTexScale = 0;
 	m_updateStaticInstancingLock = 0;
 
-	m_nOccludedFrameId = 0;
 	m_renderFlags = 0;
 	m_errTypesBitField = 0;
 	m_fObjectsMaxViewDist = 0;
@@ -2429,12 +2469,11 @@ COctreeNode::COctreeNode(int nSID, const AABB& box, CVisArea* pVisArea, COctreeN
 	ZeroStruct(m_arrChilds);
 	ZeroStruct(m_arrObjects);
 	m_nLightMaskFrameId = 0;
-	nFillShadowCastersSkipFrameId = 0;
 	m_fNodeDistance = 0;
 	m_nManageVegetationsFrameId = 0;
 
-	m_bHasLights = 0;
-	m_bHasRoads = 0;
+	m_linkedTypes = 0;
+	m_compiledFlag = 0;
 	m_bNodeCompletelyInFrustum = 0;
 
 	m_nFileDataOffset = 0;
@@ -2443,41 +2482,34 @@ COctreeNode::COctreeNode(int nSID, const AABB& box, CVisArea* pVisArea, COctreeN
 	m_pReadStream = 0;
 	m_nUpdateStreamingPrioriryRoundId = -1;
 
-	m_nSID = nSID;
 	m_vNodeCenter = box.GetCenter();
 	m_vNodeAxisRadius = box.GetSize() * 0.5f;
-	m_objectsBox.min = box.max;
-	m_objectsBox.max = box.min;
+	m_objectsBox = box;
 
 #if !defined(_RELEASE)
 	// Check if bounding box is crazy
-#define CHECK_OBJECTS_BOX_WARNING_SIZE (1.0e+10f)
+	#define CHECK_OBJECTS_BOX_WARNING_SIZE (1.0e+10f)
 	if (GetCVars()->e_CheckOctreeObjectsBoxSize != 0) // pParent is checked as silly sized things are added to the root (e.g. the sun)
 		if (pParent && (m_objectsBox.min.len() > CHECK_OBJECTS_BOX_WARNING_SIZE || m_objectsBox.max.len() > CHECK_OBJECTS_BOX_WARNING_SIZE))
 			CryWarning(VALIDATOR_MODULE_3DENGINE, VALIDATOR_ERROR_DBGBRK, "COctreeNode being created with a huge m_objectsBox: [%f %f %f] -> [%f %f %f]\n", m_objectsBox.min.x, m_objectsBox.min.y, m_objectsBox.min.z, m_objectsBox.max.x, m_objectsBox.max.y, m_objectsBox.max.z);
 #endif
 
-	SetTerrainNode(m_nSID >= 0 && GetTerrain() ? GetTerrain()->FindMinNodeContainingBox(box, m_nSID) : NULL);
+	SetTerrainNode(GetTerrain() ? GetTerrain()->FindMinNodeContainingBox(box) : NULL);
 	m_pVisArea = pVisArea;
 	m_pParent = pParent;
 	m_streamComplete = false;
 
-	//	for(int n=0; n<2 && m_pTerrainNode && m_pTerrainNode->m_pParent; n++)
-	//	m_pTerrainNode = m_pTerrainNode->m_pParent;
-	m_fpSunDirX = 63;
-	m_fpSunDirZ = 0;
-	m_fpSunDirYs = 0;
-
-	m_pStaticInstancingInfo = 0;
-	m_bStaticInstancingIsDirty = 0;
+	m_pStaticInstancingInfo    = nullptr;
+	m_bStaticInstancingApplied = false;
+	m_bStaticInstancingIsDirty = false;
 }
 
 //////////////////////////////////////////////////////////////////////////
-COctreeNode* COctreeNode::Create(int nSID, const AABB& box, struct CVisArea* pVisArea, COctreeNode* pParent)
+COctreeNode* COctreeNode::Create(const AABB& box, struct CVisArea* pVisArea, COctreeNode* pParent)
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Terrain, EMemStatContextFlags::MSF_Instance, "Octree node");
-	m_nNodesCounterAll++;
-	return new COctreeNode(nSID, box, pVisArea, pParent);
+	MEMSTAT_CONTEXT(EMemStatContextType::Terrain, "Octree node");
+
+	return new COctreeNode(box, pVisArea, pParent);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -2494,122 +2526,110 @@ bool COctreeNode::HasObjects()
 }
 
 //////////////////////////////////////////////////////////////////////////
-void COctreeNode::RenderContent(int nRenderMask, const Vec3& vAmbColor, const SRenderingPassInfo& passInfo)
+void COctreeNode::RenderContent(int nRenderMask, const Vec3& vAmbColor, uint32 passCullMask, const SRenderingPassInfo& passInfo)
 {
-	if (GetCVars()->e_StatObjBufferRenderTasks == 1 && passInfo.IsGeneralPass() && JobManager::InvokeAsJob("CheckOcclusion"))
-		GetObjManager()->AddCullJobProducer();
-	IF(m_pRenderContentJobQueue == NULL, 0)
-	{
-		m_pRenderContentJobQueue = CryAlignedNew<TRenderContentJobQueue>();
-	}
-	TRenderContentJob::packet packet(nRenderMask, vAmbColor, passInfo);
-	packet.SetClassInstance(this);
-	static_cast<TRenderContentJobQueue*>(m_pRenderContentJobQueue)->AddPacket(packet, JobManager::eHighPriority);
+	TRenderContentJob renderContentJob(nRenderMask, vAmbColor, passCullMask, passInfo);
+	renderContentJob.SetClassInstance(this);
+	renderContentJob.SetPriorityLevel(JobManager::eHighPriority);
+	renderContentJob.RegisterJobState(&GetObjManager()->GetRenderContentJobState());
+	renderContentJob.Run();
 }
 
 //////////////////////////////////////////////////////////////////////////
-void COctreeNode::DeallocateRenderContentQueue()
+void COctreeNode::RenderContentJobEntry(int nRenderMask, Vec3 vAmbColor, uint32 passCullMask, SRenderingPassInfo passInfo)
 {
-	if (m_pRenderContentJobQueue != NULL)
+#if !defined(_RELEASE)
+	if (GetCVars()->e_ObjectsTreeLevelsDebug && m_vNodeAxisRadius.z != GetCVars()->e_ObjectsTreeLevelsDebug)
 	{
-		CryAlignedDelete(static_cast<TRenderContentJobQueue*>(m_pRenderContentJobQueue));
-		m_pRenderContentJobQueue = NULL;
+		passCullMask = 0;
 	}
-}
+#endif
 
-//////////////////////////////////////////////////////////////////////////
-void COctreeNode::RenderContentJobEntry(int nRenderMask, Vec3 vAmbColor, SRenderingPassInfo passInfo)
-{
-	PodArray<CDLight*>* pAffectingLights = GetAffectingLights(passInfo);
-	bool bSunOnly = pAffectingLights && (pAffectingLights->Count() == 1) && (pAffectingLights->GetAt(0)->m_Flags & DLF_SUN) && !m_pVisArea;
+	{
+		// NOTE: There's an extremely low chance of contention on this lock:
+		// Due to one-pass-traversal we have a strong guarantee that each octree
+		// node can only be processed by one thread at a time for a given traversal.
+		// Currently only vis area octree traversal can overlap with general 
+		// octree traversal. 
+		CRY_PROFILE_FUNCTION_WAITING(PROFILE_3DENGINE);
+		m_renderLock.Lock();
+	}
+
+	PodArray<SRenderLight*>* pAffectingLights = GetAffectingLights(passInfo);
 
 	SSectorTextureSet* pTerrainTexInfo = NULL;
 
-	if (GetCVars()->e_VegetationUseTerrainColor)
-		GetObjManager()->FillTerrainTexInfo(this, m_fNodeDistance, pTerrainTexInfo, m_objectsBox);
-
-	// Detect if terrain texturing is changed
-	if (m_fPrevTerrainTexScale != (pTerrainTexInfo ? pTerrainTexInfo->fTexScale : 0))
+	if (passCullMask & kPassCullMainMask) // if visible for main pass
 	{
-		m_fPrevTerrainTexScale = (pTerrainTexInfo ? pTerrainTexInfo->fTexScale : 0);
+		if (GetCVars()->e_VegetationUseTerrainColor)
+			GetObjManager()->FillTerrainTexInfo(this, m_fNodeDistance, pTerrainTexInfo, m_objectsBox);
 
-		for (unsigned int nListId = eRNListType_First; nListId < eRNListType_ListsNum; ++nListId)
+		// Detect if terrain texturing is changed
+		if (m_fPrevTerrainTexScale != (pTerrainTexInfo ? pTerrainTexInfo->fTexScale : 0))
 		{
-			for (IRenderNode* pObj = m_arrObjects[nListId].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+			m_fPrevTerrainTexScale = (pTerrainTexInfo ? pTerrainTexInfo->fTexScale : 0);
+
+			for (unsigned int nListId = eRNListType_First; nListId < eRNListType_ListsNum; ++nListId)
 			{
-				// Invalidate objects where terrain texture is used
-				if (pObj->m_pTempData && pObj->m_pTempData->userData.bTerrainColorWasUsed)
+				for (IRenderNode* pObj = m_arrObjects[nListId].m_pFirstNode, *pNext; pObj; pObj = pNext)
 				{
-					pObj->InvalidatePermanentRenderObject();
+					if (pNext = pObj->m_pNext)
+						cryPrefetchT0SSE(pNext);
+
+					if (auto pTempData = pObj->m_pTempData)
+					{
+						// Invalidate objects where terrain texture is used
+						if (pTempData->userData.bTerrainColorWasUsed)
+						{
+							pObj->InvalidatePermanentRenderObject();
+						}
+					}
 				}
 			}
 		}
 	}
 
-	if (m_arrObjects[eRNListType_Vegetation].m_pFirstNode && passInfo.RenderVegetation())
+	if (m_arrObjects[eRNListType_Vegetation].m_pFirstNode && m_arrObjects[eRNListType_Vegetation].m_pFirstNode->IsRenderable() && passInfo.RenderVegetation())
+		this->RenderVegetations(&m_arrObjects[eRNListType_Vegetation], passCullMask, nRenderMask, m_bNodeCompletelyInFrustum != 0, pAffectingLights, pTerrainTexInfo, passInfo);
+
+	if (m_arrObjects[eRNListType_Brush].m_pFirstNode && m_arrObjects[eRNListType_Brush].m_pFirstNode->IsRenderable() && passInfo.RenderBrushes())
+			this->RenderBrushes(&m_arrObjects[eRNListType_Brush], passCullMask, m_bNodeCompletelyInFrustum != 0, pAffectingLights, pTerrainTexInfo, passInfo);
+
+	if (passCullMask & kPassCullMainMask) // if visible for main pass
 	{
-		/*if (m_lstVegetationsForRendering.size() > 100)
-		{
-		auto lambda = [=]
-		{
-		RenderVegetations(&m_arrObjects[eRNListType_Vegetation], nRenderMask, m_bNodeCompletelyInFrustum != 0, pAffectingLights, bSunOnly, pTerrainTexInfo, passInfo);
-		};
-		gEnv->pJobManager->AddLambdaJob("Job_RenderVegetations", lambda,JobManager::eRegularPriority,(CryJobState*)passInfo.WriteMutex() );
-		}
-		else*/
-		this->RenderVegetations(&m_arrObjects[eRNListType_Vegetation], nRenderMask, m_bNodeCompletelyInFrustum != 0, pAffectingLights, bSunOnly, pTerrainTexInfo, passInfo);
+		if (m_arrObjects[eRNListType_DecalsAndRoads].m_pFirstNode && m_arrObjects[eRNListType_DecalsAndRoads].m_pFirstNode->IsRenderable() && (passInfo.RenderDecals() || passInfo.RenderRoads()))
+			this->RenderDecalsAndRoads(&m_arrObjects[eRNListType_DecalsAndRoads], passCullMask, nRenderMask, vAmbColor, m_bNodeCompletelyInFrustum != 0, pAffectingLights, passInfo);
 	}
 
-	if (/*GetCVars()->e_SceneMerging!=3 && */ m_arrObjects[eRNListType_Brush].m_pFirstNode && passInfo.RenderBrushes())
-		this->RenderBrushes(&m_arrObjects[eRNListType_Brush], m_bNodeCompletelyInFrustum != 0, pAffectingLights, bSunOnly, pTerrainTexInfo, passInfo);
+	if (m_arrObjects[eRNListType_Unknown].m_pFirstNode && m_arrObjects[eRNListType_Unknown].m_pFirstNode->IsRenderable() && passInfo.RenderEntities())
+		this->RenderCommonObjects(&m_arrObjects[eRNListType_Unknown], passCullMask, nRenderMask, vAmbColor, m_bNodeCompletelyInFrustum != 0, pAffectingLights, pTerrainTexInfo, passInfo);
 
-	if (m_arrObjects[eRNListType_DecalsAndRoads].m_pFirstNode && (passInfo.RenderDecals() || passInfo.RenderRoads()))
-		this->RenderDecalsAndRoads(&m_arrObjects[eRNListType_DecalsAndRoads], nRenderMask, vAmbColor, m_bNodeCompletelyInFrustum != 0, pAffectingLights, bSunOnly, passInfo);
-
-	if (m_arrObjects[eRNListType_Unknown].m_pFirstNode)
-		this->RenderCommonObjects(&m_arrObjects[eRNListType_Unknown], nRenderMask, vAmbColor, m_bNodeCompletelyInFrustum != 0, pAffectingLights, bSunOnly, pTerrainTexInfo, passInfo);
-
-	if (GetCVars()->e_StatObjBufferRenderTasks == 1 && passInfo.IsGeneralPass() && JobManager::InvokeAsJob("CheckOcclusion"))
-	{
-		GetObjManager()->RemoveCullJobProducer();
-	}
+	m_renderLock.Unlock();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-void AddSpriteInfo(CThreadSafeRendererContainer<SVegetationSpriteInfo>& arrSpriteInfo, SVegetationSpriteInfo& rSpriteInfo)
-{
-	arrSpriteInfo.push_back(rSpriteInfo);
-}
-
-///////////////////////////////////////////////////////////////////////////////
-void COctreeNode::RenderVegetations(TDoublyLinkedList<IRenderNode>* lstObjects, int nRenderMask, bool bNodeCompletelyInFrustum, PodArray<CDLight*>* pAffectingLights, bool bSunOnly, SSectorTextureSet* pTerrainTexInfo, const SRenderingPassInfo& passInfo)
+void COctreeNode::RenderVegetations(TDoublyLinkedList<IRenderNode>* lstObjects, const uint32 passCullMask, int nRenderMask, const bool bOcNodeCompletelyInFrustum,
+                                    PodArray<SRenderLight*>* pAffectingLights, SSectorTextureSet* pTerrainTexInfo, const SRenderingPassInfo& passInfo)
 {
 	FUNCTION_PROFILER_3DENGINE;
 
 	CVars* pCVars = GetCVars();
 
-	AABB objBox;
 	const Vec3 vCamPos = passInfo.GetCamera().GetPosition();
 
 	bool bCheckPerObjectOcclusion = m_vNodeAxisRadius.len2() > pCVars->e_CoverageBufferCullIndividualBrushesMaxNodeSize * pCVars->e_CoverageBufferCullIndividualBrushesMaxNodeSize;
 
 	const bool bRenderSprites = pCVars->e_VegetationSpritesBatching && !(nRenderMask & OCTREENODE_RENDER_FLAG_OBJECTS_ONLY_ENTITIES) && pCVars->e_VegetationSprites;
-	CThreadSafeRendererContainer<SVegetationSpriteInfo>& arrSpriteInfo = GetObjManager()->m_arrVegetationSprites[passInfo.GetRecursiveLevel()][passInfo.ThreadID()];
+	CryMT::CThreadSafePushContainer<SVegetationSpriteInfo>& arrSpriteInfo = GetObjManager()->m_arrVegetationSprites[passInfo.GetRecursiveLevel()][passInfo.ThreadID()];
 
-	for (CVegetation* pObj = (CVegetation*)m_arrObjects[eRNListType_Vegetation].m_pFirstNode, *pNext; pObj; pObj = pNext)
+	const bool bOcclusionCullerInUse = Get3DEngine()->IsStatObjBufferRenderTasksAllowed() && passInfo.IsGeneralPass();
+
+	for (CVegetation* pObj = (CVegetation*)lstObjects->m_pFirstNode, * pNext; pObj && pObj->IsRenderable(); pObj = pNext)
 	{
-		pNext = (CVegetation*)pObj->m_pNext;
-
 		passInfo.GetRendItemSorter().IncreaseObjectCounter();
 
-		if (pNext)
+		if (pNext = (CVegetation*)pObj->m_pNext)
 			cryPrefetchT0SSE(pNext);
-
-		IF(pObj->m_dwRndFlags & ERF_HIDDEN, 0)
-			continue;
-
-		if (pObj->m_dwRndFlags & ERF_STATIC_INSTANCING)
-			break;
 
 #if !defined(_RELEASE)
 		if (GetCVars()->e_StaticInstancing == 2 && !pObj->m_pInstancingInfo)
@@ -2620,37 +2640,46 @@ void COctreeNode::RenderVegetations(TDoublyLinkedList<IRenderNode>* lstObjects, 
 			continue;
 #endif
 
+		AABB objBox;
 		if (pObj->m_pInstancingInfo)
 			objBox = pObj->m_pInstancingInfo->m_aabbBox;
 		else
-			pObj->FillBBox_NonVirtual(objBox);
+			objBox = pObj->GetBBox();
 
-		if (bNodeCompletelyInFrustum || passInfo.GetCamera().IsAABBVisible_FM(objBox))
+		float fEntDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, objBox) * sqr(passInfo.GetZoomFactor()));
+
+		// check culling of all passes
+		bool bObjectCompletelyInFrustum = bOcNodeCompletelyInFrustum;
+		const uint32 objCullMask = UpdateCullMask(pObj->m_onePassTraversalFrameId, pObj->m_onePassTraversalShadowCascades, pObj->m_dwRndFlags, passInfo, objBox, fEntDistance, pObj->m_fWSMaxViewDist, bCheckPerObjectOcclusion, bObjectCompletelyInFrustum, nullptr, passCullMask);
+
+		if (objCullMask)
 		{
-			float fEntDistanceSq = Distance::Point_AABBSq(vCamPos, objBox) * sqr(passInfo.GetZoomFactor());
-
-			if (fEntDistanceSq < sqr(pObj->m_fWSMaxViewDist))
+			if (objCullMask & kPassCullMainMask)
 			{
 				if (bRenderSprites && pObj->m_pSpriteInfo && !pObj->m_pSpriteInfo->ucShow3DModel && !pObj->m_pInstancingInfo)
 				{
 					pObj->m_pSpriteInfo->ucAlphaTestRef = 0;
 					pObj->m_pSpriteInfo->ucDissolveOut = 255;
 
-					AddSpriteInfo(arrSpriteInfo, *pObj->m_pSpriteInfo);
+					arrSpriteInfo.push_back(*pObj->m_pSpriteInfo);
 					continue;
 				}
+			}
 
-				float fEntDistance = sqrt_tpl(fEntDistanceSq);
-
-				if (!bCheckPerObjectOcclusion || GetObjManager()->CheckOcclusion_TestAABB(objBox, fEntDistance))
-					GetObjManager()->RenderVegetation(pObj, pAffectingLights, objBox, fEntDistance, bSunOnly, pTerrainTexInfo, bCheckPerObjectOcclusion, passInfo);
+			if (pObj->CanExecuteRenderAsJob() || !bOcclusionCullerInUse)
+			{
+				GetObjManager()->RenderVegetation(pObj, pAffectingLights, objBox, fEntDistance, pTerrainTexInfo, bCheckPerObjectOcclusion, passInfo, objCullMask);
+			}
+			else
+			{
+				GetObjManager()->PushIntoCullOutputQueue(SCheckOcclusionOutput::CreateCommonObjectOutput(pObj, pAffectingLights, Vec3(0), objBox, fEntDistance, pTerrainTexInfo, objCullMask, passInfo));
 			}
 		}
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-void COctreeNode::RenderBrushes(TDoublyLinkedList<IRenderNode>* lstObjects, bool bNodeCompletelyInFrustum, PodArray<CDLight*>* pAffectingLights, bool bSunOnly, SSectorTextureSet* pTerrainTexInfo, const SRenderingPassInfo& passInfo)
+void COctreeNode::RenderBrushes(TDoublyLinkedList<IRenderNode>* lstObjects, const uint32 passCullMask, const bool bOcNodeCompletelyInFrustum, PodArray<SRenderLight*>* pAffectingLights, SSectorTextureSet* pTerrainTexInfo, const SRenderingPassInfo& passInfo)
 {
 	FUNCTION_PROFILER_3DENGINE;
 
@@ -2660,193 +2689,250 @@ void COctreeNode::RenderBrushes(TDoublyLinkedList<IRenderNode>* lstObjects, bool
 	float cullMaxNodeSize = static_cast<float>(pCVars->e_CoverageBufferCullIndividualBrushesMaxNodeSize);
 	bool bCheckPerObjectOcclusion = GetNodeRadius2() > cullMaxNodeSize * cullMaxNodeSize;
 
-	for (CBrush* pObj = (CBrush*)lstObjects->m_pFirstNode, *pNext; pObj; pObj = pNext)
+	const bool bOcclusionCullerInUse = Get3DEngine()->IsStatObjBufferRenderTasksAllowed() && passInfo.IsGeneralPass();
+
+	for (CBrush* pObj = (CBrush*)lstObjects->m_pFirstNode, * pNext; pObj && pObj->IsRenderable(); pObj = pNext)
 	{
 		passInfo.GetRendItemSorter().IncreaseObjectCounter();
-		pNext = (CBrush*)pObj->m_pNext;
 
-		if (pObj->m_pNext)
-			cryPrefetchT0SSE(pObj->m_pNext);
+		if (pNext = (CBrush*)pObj->m_pNext)
+			cryPrefetchT0SSE(pNext);
 
-		IF(pObj->m_dwRndFlags & ERF_HIDDEN, 0)
-			continue;
-		AABB objBox;
-		memcpy(&objBox, &pObj->m_WSBBox, sizeof(AABB));
+		const AABB objBox = pObj->GetBBox();
 
-		//		if(bNodeCompletelyInFrustum || passInfo.GetCamera().IsAABBVisible_FM( objBox ))
-		if (bNodeCompletelyInFrustum || passInfo.GetCamera().IsAABBVisible_F(objBox))  // TODO: we must use multi-camera check here, but it is broken by dx12 development
+		float fEntDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, objBox)) * passInfo.GetZoomFactor();
+
+		// check culling of all passes
+		bool bObjectCompletelyInFrustum = bOcNodeCompletelyInFrustum;
+		uint32 objCullMask = UpdateCullMask(pObj->m_onePassTraversalFrameId, pObj->m_onePassTraversalShadowCascades, pObj->m_dwRndFlags, passInfo, objBox, fEntDistance, pObj->m_fWSMaxViewDist, bCheckPerObjectOcclusion, bObjectCompletelyInFrustum, nullptr, passCullMask);
+
+		if (objCullMask)
 		{
-			float fEntDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, objBox)) * passInfo.GetZoomFactor();
-			assert(fEntDistance >= 0 && _finite(fEntDistance));
-			if (fEntDistance < pObj->m_fWSMaxViewDist)
+			if (pObj->CanExecuteRenderAsJob() || !bOcclusionCullerInUse)
 			{
-				if (pCVars->e_StatObjBufferRenderTasks == 1 && passInfo.IsGeneralPass() && JobManager::InvokeAsJob("CheckOcclusion"))
-				{
-					// if object is visible, start CBrush::Render Job
-					if (!bCheckPerObjectOcclusion || GetObjManager()->CheckOcclusion_TestAABB(objBox, fEntDistance))
-					{
-						GetObjManager()->RenderBrush((CBrush*)pObj, pAffectingLights, pTerrainTexInfo, objBox, fEntDistance, bSunOnly, m_pVisArea, bCheckPerObjectOcclusion, passInfo);
-					}
-				}
-				else
-				{
-					GetObjManager()->RenderBrush(pObj, pAffectingLights, pTerrainTexInfo, pObj->m_WSBBox, fEntDistance, bSunOnly, m_pVisArea, bCheckPerObjectOcclusion, passInfo);
-				}
-
+				GetObjManager()->RenderBrush(pObj, pAffectingLights, pTerrainTexInfo, objBox, fEntDistance, bCheckPerObjectOcclusion, passInfo, objCullMask);
+			}
+			else
+			{
+				GetObjManager()->PushIntoCullOutputQueue(SCheckOcclusionOutput::CreateCommonObjectOutput(pObj, pAffectingLights, Vec3(0), objBox, fEntDistance, pTerrainTexInfo, objCullMask, passInfo));
 			}
 		}
 	}
 }
 
+void COctreeNode::RenderObjectIntoShadowViews(const SRenderingPassInfo& passInfoGeneral, float fEntDistance, IRenderNode* pObj, const AABB& objBox, const uint32 passCullMask)
+{
+	CRY_ASSERT_MESSAGE(!passInfoGeneral.IsShadowPass(), "RenderObjectIntoShadowViews expects to get a general pass as input.");
+
+	if (IsShadowCaster(pObj) &&
+	    passCullMask & ~kPassCullMainMask &&
+	    pObj->m_fWSMaxViewDist > fMinShadowCasterViewDist &&
+	    fEntDistance < pObj->m_fWSMaxViewDist * GetCVars()->e_ShadowsCastViewDistRatio)
+	{
+		assert(passInfoGeneral.GetShadowPasses());
+
+		int passId = 1;
+		for (SRenderingPassInfo& passInfoShadow : * passInfoGeneral.GetShadowPasses())
+		{
+			if (!(passCullMask & BIT(passId)))
+			{
+				passId++;
+				continue;
+			}
+
+			const ShadowMapFrustum* pFr = passInfoShadow.GetIRenderView()->GetShadowFrustumOwner();
+			bool bMarkedForTraversal = (pObj->m_onePassTraversalFrameId == passInfoGeneral.GetMainFrameID());
+
+			if (bMarkedForTraversal)
+			{
+				bool bHasPerObjectShadow = GetCVars()->e_ShadowsPerObject && gEnv->p3DEngine->GetPerObjectShadow(pObj);
+				bool bMarkedForPerObjectShadow = bHasPerObjectShadow;
+				bool bMarkedForCachedShadow = !bHasPerObjectShadow;
+
+				if (bMarkedForPerObjectShadow && (pFr->m_eFrustumType != ShadowMapFrustum::e_PerObject) && (pFr->m_Flags & DLF_SUN))
+				{
+					// exclude from all non per-object sun cascades
+					passId++;
+					continue;
+				}
+
+				if (!bMarkedForCachedShadow && pFr->IsCached())
+				{
+					// exclude from cached cascade if not marked for it
+					passId++;
+					continue;
+				}
+			}
+
+			passInfoShadow.GetRendItemSorter().IncreaseObjectCounter();
+
+			if (pObj->GetRenderNodeType() == eERType_ParticleEmitter)
+			{
+				bool bParticleShadows = (pFr->m_Flags & DLF_SUN) && (pFr->nShadowMapLod < GetCVars()->e_ParticleShadowsNumGSMs);
+				if (!bParticleShadows)
+					continue;
+			}
+
+			Get3DEngine()->RenderRenderNode_ShadowPass(pObj, passInfoShadow);
+			pFr->GetOnePassCastersCount()++;
+
+			passId++;
+		}
+	}
+}
+
 ///////////////////////////////////////////////////////////////////////////////
-void COctreeNode::RenderDecalsAndRoads(TDoublyLinkedList<IRenderNode>* lstObjects, int nRenderMask, const Vec3& vAmbColor, bool bNodeCompletelyInFrustum, PodArray<CDLight*>* pAffectingLights, bool bSunOnly, const SRenderingPassInfo& passInfo)
+bool COctreeNode::IsShadowCaster(IRenderNode* pObj)
+{
+	auto skipShadowCastersRndFlags = ERF_HIDDEN | ERF_COLLISION_PROXY | ERF_RAYCAST_PROXY | ERF_STATIC_INSTANCING; // shadow casters with these render flags are ignored
+
+	auto renderFlags = pObj->GetRndFlags();
+
+	return (renderFlags & ERF_CASTSHADOWMAPS) && (pObj->GetRenderNodeType() != eERType_Light) && !(renderFlags & skipShadowCastersRndFlags);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+void COctreeNode::RenderDecalsAndRoads(TDoublyLinkedList<IRenderNode>* lstObjects, const uint32 passCullMask, int nRenderMask, const Vec3& vAmbColor, const bool bOcNodeCompletelyInFrustum, PodArray<SRenderLight*>* pAffectingLights, const SRenderingPassInfo& passInfo)
 {
 	FUNCTION_PROFILER_3DENGINE;
 
+	// Decals and Roads only ever apply to main-passes
+	CRY_ASSERT(passCullMask & kPassCullMainMask);
+
 	CVars* pCVars = GetCVars();
-	AABB objBox;
 	const Vec3 vCamPos = passInfo.GetCamera().GetPosition();
 
 	bool bCheckPerObjectOcclusion = m_vNodeAxisRadius.len2() > pCVars->e_CoverageBufferCullIndividualBrushesMaxNodeSize * pCVars->e_CoverageBufferCullIndividualBrushesMaxNodeSize;
 
-	for (IRenderNode* pObj = lstObjects->m_pFirstNode, *pNext; pObj; pObj = pNext)
+	const bool bOcclusionCullerInUse = Get3DEngine()->IsStatObjBufferRenderTasksAllowed() && passInfo.IsGeneralPass();
+
+	for (IRenderNode* pObj = lstObjects->m_pFirstNode, * pNext; pObj && pObj->IsRenderable(); pObj = pNext)
 	{
 		passInfo.GetRendItemSorter().IncreaseObjectCounter();
-		pNext = pObj->m_pNext;
 
-		if (pObj->m_pNext)
-			cryPrefetchT0SSE(pObj->m_pNext);
+		if (pNext = pObj->m_pNext)
+			cryPrefetchT0SSE(pNext);
 
-		IF(pObj->m_dwRndFlags & ERF_HIDDEN, 0)
-			continue;
+		const AABB objBox = pObj->GetBBox();
 
-		pObj->FillBBox(objBox);
+		float fEntDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, objBox)) * passInfo.GetZoomFactor();
 
-		if (bNodeCompletelyInFrustum || passInfo.GetCamera().IsAABBVisible_FM(objBox))
+		// check culling of all passes
+		bool bObjectCompletelyInFrustum = bOcNodeCompletelyInFrustum;
+		uint32 objCullMask = UpdateCullMask(pObj->m_onePassTraversalFrameId, pObj->m_onePassTraversalShadowCascades, pObj->m_dwRndFlags, passInfo, objBox, fEntDistance, pObj->m_fWSMaxViewDist, true, bObjectCompletelyInFrustum, nullptr, passCullMask & kPassCullMainMask);
+
+		if (objCullMask)
 		{
-			float fEntDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, objBox)) * passInfo.GetZoomFactor();
-			assert(fEntDistance >= 0 && _finite(fEntDistance));
-			if (fEntDistance < pObj->m_fWSMaxViewDist)
-			{
-
 #if !defined(_RELEASE)
-				EERType rnType = pObj->GetRenderNodeType();
-				if (!passInfo.RenderDecals() && rnType == eERType_Decal)
-					continue;
-				if (!passInfo.RenderRoads() && rnType == eERType_Road)
-					continue;
+			EERType rnType = pObj->GetRenderNodeType();
+			if (!passInfo.RenderDecals() && rnType == eERType_Decal)
+				continue;
+			if (!passInfo.RenderRoads() && rnType == eERType_Road)
+				continue;
 #endif  // _RELEASE
 
-				if (pCVars->e_StatObjBufferRenderTasks == 1 && passInfo.IsGeneralPass() && JobManager::InvokeAsJob("CheckOcclusion"))
-				{
-					// if object is visible, write to output queue for main thread processing
-					if (GetObjManager()->CheckOcclusion_TestAABB(objBox, fEntDistance))
-					{
-						GetObjManager()->PushIntoCullOutputQueue(SCheckOcclusionOutput::CreateDecalsAndRoadsOutput(pObj, pAffectingLights, vAmbColor, objBox, fEntDistance, bSunOnly, bCheckPerObjectOcclusion, passInfo));
-					}
-				}
-				else
-				{
-					GetObjManager()->RenderDecalAndRoad(pObj, pAffectingLights, vAmbColor, objBox, fEntDistance, bSunOnly, bCheckPerObjectOcclusion, passInfo);
-				}
+			if (pObj->CanExecuteRenderAsJob() || !bOcclusionCullerInUse)
+			{
+				GetObjManager()->RenderDecalAndRoad(pObj, pAffectingLights, vAmbColor, objBox, fEntDistance, bCheckPerObjectOcclusion, passInfo);
+			}
+			else
+			{
+				GetObjManager()->PushIntoCullOutputQueue(SCheckOcclusionOutput::CreateDecalsAndRoadsOutput(pObj, pAffectingLights, vAmbColor, objBox, fEntDistance, bCheckPerObjectOcclusion, passInfo));
 			}
 		}
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-void COctreeNode::RenderCommonObjects(TDoublyLinkedList<IRenderNode>* lstObjects, int nRenderMask, const Vec3& vAmbColor, bool bNodeCompletelyInFrustum, PodArray<CDLight*>* pAffectingLights, bool bSunOnly, SSectorTextureSet* pTerrainTexInfo, const SRenderingPassInfo& passInfo)
+void COctreeNode::RenderLights(TDoublyLinkedList<IRenderNode>* lstObjects, const uint32 passCullMask, int nRenderMask, const Vec3& vAmbColor, const bool bOcNodeCompletelyInFrustum, PodArray<SRenderLight*>* pAffectingLights, SSectorTextureSet* pTerrainTexInfo, const SRenderingPassInfo& passInfo)
 {
 	FUNCTION_PROFILER_3DENGINE;
 
-	CVars* pCVars = GetCVars();
-	AABB objBox;
 	const Vec3 vCamPos = passInfo.GetCamera().GetPosition();
 
-	for (IRenderNode* pObj = lstObjects->m_pFirstNode, *pNext; pObj; pObj = pNext)
+	const bool bOcclusionCullerInUse = Get3DEngine()->IsStatObjBufferRenderTasksAllowed() && passInfo.IsGeneralPass() && JobManager::InvokeAsJob("CheckOcclusion");
+
+	for (IRenderNode* pObj = lstObjects->m_pFirstNode, *pNext; pObj && pObj->IsRenderable(); pObj = pNext)
 	{
 		passInfo.GetRendItemSorter().IncreaseObjectCounter();
-		pNext = pObj->m_pNext;
 
-		if (pObj->m_pNext)
-			cryPrefetchT0SSE(pObj->m_pNext);
+		if (pNext = pObj->m_pNext)
+			cryPrefetchT0SSE(pNext);
 
-		IF(pObj->m_dwRndFlags & ERF_HIDDEN, 0)
-			continue;
+		const AABB objBox = pObj->GetBBox();
 
-		pObj->FillBBox(objBox);
-		EERType rnType = pObj->GetRenderNodeType();
+		float fEntDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, objBox)) * passInfo.GetZoomFactor();
 
-		if (bNodeCompletelyInFrustum || passInfo.GetCamera().IsAABBVisible_FM(objBox))
+		// check culling of all passes
+		bool bObjectCompletelyInFrustum = bOcNodeCompletelyInFrustum;
+		uint32 objCullMask = UpdateCullMask(pObj->m_onePassTraversalFrameId, pObj->m_onePassTraversalShadowCascades, pObj->m_dwRndFlags, passInfo, objBox, fEntDistance, pObj->m_fWSMaxViewDist, true, bObjectCompletelyInFrustum, nullptr, passCullMask);
+
+		if (objCullMask)
 		{
-			float fEntDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, objBox)) * passInfo.GetZoomFactor();
-			assert(fEntDistance >= 0 && _finite(fEntDistance));
-			if (fEntDistance < pObj->m_fWSMaxViewDist)
+			if (pObj->CanExecuteRenderAsJob() || !bOcclusionCullerInUse)
 			{
+				GetObjManager()->RenderObject(pObj, pAffectingLights, vAmbColor, objBox, fEntDistance, eERType_Light, passInfo, objCullMask);
+			}
+			else
+			{
+				GetObjManager()->PushIntoCullOutputQueue(SCheckOcclusionOutput::CreateCommonObjectOutput(pObj, pAffectingLights, vAmbColor, objBox, fEntDistance, pTerrainTexInfo, objCullMask, passInfo));
+			}
+		}
+	}
+}
 
+///////////////////////////////////////////////////////////////////////////////
+void COctreeNode::RenderCommonObjects(TDoublyLinkedList<IRenderNode>* lstObjects, const uint32 passCullMask, int nRenderMask, const Vec3& vAmbColor, const bool bOcNodeCompletelyInFrustum, PodArray<SRenderLight*>* pAffectingLights, SSectorTextureSet* pTerrainTexInfo, const SRenderingPassInfo& passInfo)
+{
+	FUNCTION_PROFILER_3DENGINE;
+
+	const Vec3 vCamPos = passInfo.GetCamera().GetPosition();
+
+	const bool bOcclusionCullerInUse = Get3DEngine()->IsStatObjBufferRenderTasksAllowed() && passInfo.IsGeneralPass();
+
+	for (IRenderNode* pObj = lstObjects->m_pFirstNode, * pNext; pObj && pObj->IsRenderable(); pObj = pNext)
+	{
+		passInfo.GetRendItemSorter().IncreaseObjectCounter();
+
+		if (pNext = pObj->m_pNext)
+			cryPrefetchT0SSE(pNext);
+
+		const AABB objBox = pObj->GetBBox();
+
+		float fEntDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, objBox)) * passInfo.GetZoomFactor();
+
+		// check culling of all passes
+		bool bObjectCompletelyInFrustum = bOcNodeCompletelyInFrustum;
+		uint32 objCullMask = UpdateCullMask(pObj->m_onePassTraversalFrameId, pObj->m_onePassTraversalShadowCascades, pObj->m_dwRndFlags, passInfo, objBox, fEntDistance, pObj->m_fWSMaxViewDist, true, bObjectCompletelyInFrustum, nullptr, passCullMask);
+
+		if (objCullMask)
+		{
+			if (objCullMask & kPassCullMainMask)
+			{
 				if (nRenderMask & OCTREENODE_RENDER_FLAG_OBJECTS_ONLY_ENTITIES)
 				{
-					if (rnType == eERType_Light)
-					{
-						CLightEntity* pEnt = (CLightEntity*)pObj;
-						if (!pEnt->GetEntityVisArea() && pEnt->GetEntityTerrainNode() && !(pEnt->m_light.m_Flags & DLF_THIS_AREA_ONLY))
-						{
-							// not "this area only" outdoor light affects everything
-						}
-						else
-							continue;
-					}
-					else if (!pObj->GetOwnerEntity())
+					if (!pObj->GetOwnerEntity())
 					{
 						continue;
 					}
 				}
+			}
 
-				if (rnType == eERType_Light)
+			if (pObj->CanExecuteRenderAsJob() || !bOcclusionCullerInUse)
+			{
+				EERType rnType = pObj->GetRenderNodeType();
+				if (rnType == eERType_MovableBrush)
 				{
-					bool bLightVisible = true;
-					CLightEntity* pLightEnt = (CLightEntity*)pObj;
-
-					// first check against camera view frustum
-					CDLight* pLight = &pLightEnt->m_light;
-					if (pLight->m_Flags & DLF_DEFERRED_CUBEMAPS)
-					{
-						OBB obb(OBB::CreateOBBfromAABB(Matrix33(pLight->m_ObjMatrix), AABB(-pLight->m_ProbeExtents, pLight->m_ProbeExtents)));
-						bLightVisible = passInfo.GetCamera().IsOBBVisible_F(pLight->m_Origin, obb);
-					}
-					else if (pLightEnt->m_light.m_Flags & DLF_AREA_LIGHT)
-					{
-						// OBB test for area lights.
-						Vec3 vBoxMax(pLight->m_fBaseRadius, pLight->m_fBaseRadius + pLight->m_fAreaWidth, pLight->m_fBaseRadius + pLight->m_fAreaHeight);
-						Vec3 vBoxMin(-0.1f, -(pLight->m_fBaseRadius + pLight->m_fAreaWidth), -(pLight->m_fBaseRadius + pLight->m_fAreaHeight));
-
-						OBB obb(OBB::CreateOBBfromAABB(Matrix33(pLight->m_ObjMatrix), AABB(vBoxMin, vBoxMax)));
-						bLightVisible = passInfo.GetCamera().IsOBBVisible_F(pLight->m_Origin, obb);
-					}
-					else
-						bLightVisible = passInfo.GetCamera().IsSphereVisible_F(Sphere(pLight->m_BaseOrigin, pLight->m_fBaseRadius));
-
-					if (!bLightVisible)
-						continue;
-				}
-
-				if (pCVars->e_StatObjBufferRenderTasks == 1 && passInfo.IsGeneralPass() && JobManager::InvokeAsJob("CheckOcclusion"))
-				{
-					// if object is visible, write to output queue for main thread processing
-					if (rnType == eERType_DistanceCloud || GetObjManager()->CheckOcclusion_TestAABB(objBox, fEntDistance))
-					{
-						if (pObj->CanExecuteRenderAsJob())
-							GetObjManager()->RenderObject(pObj, pAffectingLights, vAmbColor, objBox, fEntDistance, bSunOnly, eERType_RenderProxy, passInfo);
-						else
-						{
-							GetObjManager()->PushIntoCullOutputQueue(SCheckOcclusionOutput::CreateCommonObjectOutput(pObj, pAffectingLights, vAmbColor, objBox, fEntDistance, bSunOnly, pTerrainTexInfo, passInfo));
-						}
-					}
+					GetObjManager()->RenderBrush((CBrush*)pObj, pAffectingLights, nullptr, objBox, fEntDistance, true, passInfo, objCullMask);
 				}
 				else
 				{
-					GetObjManager()->RenderObject(pObj, pAffectingLights, vAmbColor, objBox, fEntDistance, bSunOnly, rnType, passInfo);
-				}
+					GetObjManager()->RenderObject(pObj, pAffectingLights, vAmbColor, objBox, fEntDistance, rnType, passInfo, objCullMask);
+				}			
+			}
+			else
+			{
+				GetObjManager()->PushIntoCullOutputQueue(SCheckOcclusionOutput::CreateCommonObjectOutput(pObj, pAffectingLights, vAmbColor, objBox, fEntDistance, pTerrainTexInfo, objCullMask, passInfo));
 			}
 		}
 	}
@@ -2890,16 +2976,6 @@ bool COctreeNode::DeleteObject(IRenderNode* pObj)
 		return ((COctreeNode*)(pObj->m_pOcNode))->DeleteObject(pObj);
 
 	UnlinkObject(pObj);
-	//	m_lstMergedObjects.Delete(pObj);
-
-	for (int i = 0; i < m_lstCasters.Count(); i++)
-	{
-		if (m_lstCasters[i].pNode == pObj)
-		{
-			m_lstCasters.Delete(i);
-			break;
-		}
-	}
 
 	if (pObj->GetRenderNodeType() == eERType_Vegetation)
 	{
@@ -2907,14 +2983,11 @@ bool COctreeNode::DeleteObject(IRenderNode* pObj)
 			m_bStaticInstancingIsDirty = true;
 	}
 
-	bool bSafeToUse = Get3DEngine()->IsSegmentSafeToUse(pObj->m_nSID);
-
 	pObj->m_pOcNode = NULL;
-	pObj->m_nSID = -1;
 
 	if (!gEnv->IsEditor()) // in the editor in huge levels the usage of m_arrEmptyNodes optimization causes very long level loading time and very slow other whole world operations
 	{
-		if (bSafeToUse && IsEmpty() && m_arrEmptyNodes.Find(this) < 0)
+		if (IsEmpty() && m_arrEmptyNodes.Find(this) < 0)
 			m_arrEmptyNodes.Add(this);
 	}
 
@@ -2929,14 +3002,10 @@ void COctreeNode::InsertObject(IRenderNode* pObj, const AABB& objBox, const floa
 	COctreeNode* pCurrentNode = this;
 
 	EERType eType = pObj->GetRenderNodeType();
-	const uint32 renderFlags = (pObj->GetRndFlags() & (ERF_GOOD_OCCLUDER | ERF_CASTSHADOWMAPS | ERF_HAS_CASTSHADOWMAPS));
+	const uint64 renderFlags = (pObj->GetRndFlags() & (ERF_GOOD_OCCLUDER | ERF_CASTSHADOWMAPS | ERF_HAS_CASTSHADOWMAPS));
 
-	const bool bTypeLight = (eType == eERType_Light);
 	const float fViewDistRatioVegetation = GetCVars()->e_ViewDistRatioVegetation;
 	const float fWSMaxViewDist = pObj->m_fWSMaxViewDist;
-	const bool bTypeRoad = (eType == eERType_Road);
-
-	Vec3 vObjectCentre = vObjCenter;
 
 	while (true)
 	{
@@ -2952,13 +3021,14 @@ void COctreeNode::InsertObject(IRenderNode* pObj, const AABB& objBox, const floa
 
 		// parent bbox includes all children
 		pCurrentNode->m_objectsBox.Add(objBox);
+		assert(!pCurrentNode->m_pParent || pCurrentNode->m_objectsBox.GetRadius() < pCurrentNode->GetNodeBox().GetRadius() * 2.f);
 
 		pCurrentNode->m_fObjectsMaxViewDist = max(pCurrentNode->m_fObjectsMaxViewDist, fWSMaxViewDist);
 
 		pCurrentNode->m_renderFlags |= renderFlags;
 
-		pCurrentNode->m_bHasLights |= (bTypeLight);
-		pCurrentNode->m_bHasRoads |= (bTypeRoad);
+		if (eType != eERType_NotRenderNode)
+			pCurrentNode->m_linkedTypes |= 1 << eType;
 
 		if (pCurrentNode->m_vNodeAxisRadius.x * 2.0f > GetCVars()->e_ObjectsTreeNodeMinSize) // store voxels and roads in root
 		{
@@ -2966,16 +3036,16 @@ void COctreeNode::InsertObject(IRenderNode* pObj, const AABB& objBox, const floa
 
 			if (fObjRadiusSqr < sqr(nodeRadius * GetCVars()->e_ObjectsTreeNodeSizeRatio))
 			{
-				if (fWSMaxViewDist < nodeRadius * fViewDistRatioVegetation)
+				if (fWSMaxViewDist < nodeRadius * fViewDistRatioVegetation && pCurrentNode->GetNodeBox().IsContainPoint(vObjCenter))
 				{
 					int nChildId =
-						((vObjCenter.x > pCurrentNode->m_vNodeCenter.x) ? 4 : 0) |
-						((vObjCenter.y > pCurrentNode->m_vNodeCenter.y) ? 2 : 0) |
-						((vObjCenter.z > pCurrentNode->m_vNodeCenter.z) ? 1 : 0);
+					  ((vObjCenter.x > pCurrentNode->m_vNodeCenter.x) ? 4 : 0) |
+					  ((vObjCenter.y > pCurrentNode->m_vNodeCenter.y) ? 2 : 0) |
+					  ((vObjCenter.z > pCurrentNode->m_vNodeCenter.z) ? 1 : 0);
 
 					if (!pCurrentNode->m_arrChilds[nChildId])
 					{
-						pCurrentNode->m_arrChilds[nChildId] = COctreeNode::Create(pCurrentNode->m_nSID, pCurrentNode->GetChildBBox(nChildId), pCurrentNode->m_pVisArea, pCurrentNode);
+						pCurrentNode->m_arrChilds[nChildId] = COctreeNode::Create(pCurrentNode->GetChildBBox(nChildId), pCurrentNode->GetVisArea(), pCurrentNode);
 					}
 
 					pCurrentNode = pCurrentNode->m_arrChilds[nChildId];
@@ -2991,20 +3061,19 @@ void COctreeNode::InsertObject(IRenderNode* pObj, const AABB& objBox, const floa
 	//disable as it leads to some corruption on 360
 	//	PrefetchLine(&pObj->m_pOcNode, 0);	//Writing to m_pOcNode was a common L2 cache miss
 
-	pCurrentNode->LinkObject(pObj, eType);
+	pCurrentNode->LinkObject(pObj, eType, pObj->IsRenderable());
 
 	pObj->m_pOcNode = pCurrentNode;
-#ifndef SEG_WORLD
-	pObj->m_nSID = pCurrentNode->m_nSID;
-#else
-	pObj->m_nSID = pCurrentNode->m_nSID >= 0 ? pCurrentNode->m_nSID : GetTerrain()->WorldToSegment(vObjectCentre, GetDefSID());
-#endif
 
 	// only mark octree nodes as not compiled during loading and in the editor
 	// otherwise update node (and parent node) flags on per added object basis
 	if (m_bLevelLoadingInProgress || gEnv->IsEditor())
-		pCurrentNode->SetCompiled(pCurrentNode->IsCompiled() & (eType == eERType_Light));
-	else
+	{
+		ERNListType l = pObj->GetRenderNodeListId(pObj->GetRenderNodeType());
+
+		pCurrentNode->SetCompiled(l, pCurrentNode->IsCompiled(l) & (eType == eERType_Light));
+	}
+	else if (!pObj->IsHidden())
 		pCurrentNode->UpdateObjects(pObj);
 
 	pCurrentNode->m_nManageVegetationsFrameId = 0;
@@ -3089,29 +3158,23 @@ void COctreeNode::LinkObject(IRenderNode* pObj, EERType eERType, bool bPushFront
 	assert(pObj != pObj->m_pPrev && pObj != pObj->m_pNext);
 }
 
+void COctreeNode::ReorderObject(IRenderNode* pObj, bool bPushFront)
+{
+	UnlinkObject(pObj);
+	LinkObject(pObj, pObj->GetRenderNodeType(), bPushFront);
+}
+
 //////////////////////////////////////////////////////////////////////////
 void COctreeNode::UpdateObjects(IRenderNode* pObj)
 {
 	FUNCTION_PROFILER_3DENGINE;
 
 	float fObjMaxViewDistance = 0;
-	size_t numCasters = 0;
-	CObjManager* pObjManager = GetObjManager();
-
-	auto nFlags = pObj->GetRndFlags();
-	EERType eRType = pObj->GetRenderNodeType();
-	float WSMaxViewDist = pObj->GetMaxViewDist();
-
-	IF(nFlags & ERF_HIDDEN, 0)
-		return;
-
-	const Vec3& sunDir = Get3DEngine()->GetSunDirNormalized();
-	uint32 sunDirX = (uint32)(sunDir.x * 63.5f + 63.5f);
-	uint32 sunDirZ = (uint32)(sunDir.z * 63.5f + 63.5f);
-	uint32 sunDirYs = (uint32)(sunDir.y < 0.0f ? 1 : 0);
+	auto nRndFlags = pObj->GetRndFlags();
 
 	pObj->m_nInternalFlags &= ~(IRenderNode::REQUIRES_FORWARD_RENDERING | IRenderNode::REQUIRES_NEAREST_CUBEMAP);
 
+	EERType eRType = pObj->GetRenderNodeType();
 	if (eRType == eERType_Vegetation)
 	{
 		CVegetation* pInst = (CVegetation*)pObj;
@@ -3122,7 +3185,7 @@ void COctreeNode::UpdateObjects(IRenderNode* pObj)
 	const float fNewMaxViewDist = pObj->GetMaxViewDist();
 	pObj->m_fWSMaxViewDist = fNewMaxViewDist;
 
-	if (eRType != eERType_Light && eRType != eERType_Cloud && eRType != eERType_FogVolume && eRType != eERType_Decal && eRType != eERType_Road && eRType != eERType_DistanceCloud && eRType != eERType_CloudBlocker)
+	if (eRType != eERType_Light && eRType != eERType_FogVolume && eRType != eERType_Decal && eRType != eERType_Road && eRType != eERType_DistanceCloud && eRType != eERType_CloudBlocker)
 	{
 		if (eRType == eERType_ParticleEmitter)
 		{
@@ -3140,56 +3203,34 @@ void COctreeNode::UpdateObjects(IRenderNode* pObj)
 					pObj->m_nInternalFlags |= IRenderNode::REQUIRES_NEAREST_CUBEMAP;
 			}
 
-			if (eRType == eERType_RenderProxy)
+			if (eRType == eERType_MovableBrush)
 			{
-				int nSlotCount = pObj->GetSlotCount();
-
-				for (int s = 0; s < nSlotCount; s++)
+				if (IStatObj* pStatObj = pObj->GetEntityStatObj())
 				{
-					if (CMatInfo* pMat = (CMatInfo*)pObj->GetEntitySlotMaterial(s))
+					if (CMatInfo* pMat = (CMatInfo*)pStatObj->GetMaterial())
 					{
 						if (pMat->IsForwardRenderingRequired())
 							pObj->m_nInternalFlags |= IRenderNode::REQUIRES_FORWARD_RENDERING;
 						if (pMat->IsNearestCubemapRequired())
 							pObj->m_nInternalFlags |= IRenderNode::REQUIRES_NEAREST_CUBEMAP;
 					}
-
-					if (IStatObj* pStatObj = pObj->GetEntityStatObj(s))
-					{
-						if (CMatInfo* pMat = (CMatInfo*)pStatObj->GetMaterial())
-						{
-							if (pMat->IsForwardRenderingRequired())
-								pObj->m_nInternalFlags |= IRenderNode::REQUIRES_FORWARD_RENDERING;
-							if (pMat->IsNearestCubemapRequired())
-								pObj->m_nInternalFlags |= IRenderNode::REQUIRES_NEAREST_CUBEMAP;
-						}
-					}
 				}
 
 				if (!(pObj->m_nInternalFlags & (IRenderNode::REQUIRES_FORWARD_RENDERING | IRenderNode::REQUIRES_NEAREST_CUBEMAP)))
-					CompileCharacter(pObj->GetEntityCharacter(0), pObj->m_nInternalFlags);
+				{
+					CompileCharacter(pObj->GetEntityCharacter(), pObj->m_nInternalFlags);
+				}
 			}
 		}
 	}
 
 	bool bUpdateParentShadowFlags = false;
-	bool bUpdateParentOcclusionFlags = false;
 
 	// fill shadow casters list
 	const bool bHasPerObjectShadow = GetCVars()->e_ShadowsPerObject && Get3DEngine()->GetPerObjectShadow(pObj);
-	if (nFlags & ERF_CASTSHADOWMAPS && fNewMaxViewDist > fMinShadowCasterViewDist && eRType != eERType_Light && !bHasPerObjectShadow)
+	if (nRndFlags & ERF_CASTSHADOWMAPS && fNewMaxViewDist > fMinShadowCasterViewDist && eRType != eERType_Light && !bHasPerObjectShadow)
 	{
 		bUpdateParentShadowFlags = true;
-
-		float fMaxCastDist = fNewMaxViewDist * GetCVars()->e_ShadowsCastViewDistRatio;
-		m_lstCasters.Add(SCasterInfo(pObj, fMaxCastDist, eRType));
-
-		if (pObj->GetRenderNodeType() == eERType_Vegetation && ((CVegetation*)pObj)->m_pInstancingInfo)
-		{
-			AABB objBox = ((CVegetation*)pObj)->m_pInstancingInfo->m_aabbBox;
-			m_lstCasters.Last().objSphere.center = objBox.GetCenter();
-			m_lstCasters.Last().objSphere.radius = objBox.GetRadius();
-		}
 	}
 
 	fObjMaxViewDistance = max(fObjMaxViewDistance, fNewMaxViewDist);
@@ -3214,15 +3255,12 @@ void COctreeNode::UpdateObjects(IRenderNode* pObj)
 		}
 
 		pNode = pNode->m_pParent;
-	} while (pNode != NULL && bContinue);
-
-	m_fpSunDirX = sunDirX;
-	m_fpSunDirZ = sunDirZ;
-	m_fpSunDirYs = sunDirYs;
+	}
+	while (pNode != NULL && bContinue);
 }
 
 //////////////////////////////////////////////////////////////////////////
-void COctreeNode::CompileCharacter(ICharacterInstance* pChar, uint32& nInternalFlags)
+void COctreeNode::CompileCharacter(ICharacterInstance* pChar, uint8& nInternalFlags)
 {
 	const uint32 nCompileMask = IRenderNode::REQUIRES_FORWARD_RENDERING | IRenderNode::REQUIRES_NEAREST_CUBEMAP;
 	if (pChar)
@@ -3231,7 +3269,7 @@ void COctreeNode::CompileCharacter(ICharacterInstance* pChar, uint32& nInternalF
 
 		if (pCharMaterial)
 		{
-			uint32 nInternalFlagsNew = pCharMaterial->IsForwardRenderingRequired() ? IRenderNode::REQUIRES_FORWARD_RENDERING : 0;
+			uint8 nInternalFlagsNew = pCharMaterial->IsForwardRenderingRequired() ? IRenderNode::REQUIRES_FORWARD_RENDERING : 0;
 			nInternalFlagsNew |= pCharMaterial->IsNearestCubemapRequired() ? IRenderNode::REQUIRES_NEAREST_CUBEMAP : 0;
 			nInternalFlags |= nInternalFlagsNew;
 
@@ -3264,7 +3302,7 @@ void COctreeNode::CompileCharacter(ICharacterInstance* pChar, uint32& nInternalF
 
 							if (pMat)
 							{
-								uint32 nInternalFlagsNew = pMat->IsForwardRenderingRequired() ? IRenderNode::REQUIRES_FORWARD_RENDERING : 0;
+								uint8 nInternalFlagsNew = pMat->IsForwardRenderingRequired() ? IRenderNode::REQUIRES_FORWARD_RENDERING : 0;
 								nInternalFlagsNew |= pMat->IsNearestCubemapRequired() ? IRenderNode::REQUIRES_NEAREST_CUBEMAP : 0;
 								nInternalFlags |= nInternalFlagsNew;
 
@@ -3284,7 +3322,7 @@ void COctreeNode::CompileCharacter(ICharacterInstance* pChar, uint32& nInternalF
 
 								if (pMat)
 								{
-									uint32 nInternalFlagsNew = pMat->IsForwardRenderingRequired() ? IRenderNode::REQUIRES_FORWARD_RENDERING : 0;
+									uint8 nInternalFlagsNew = pMat->IsForwardRenderingRequired() ? IRenderNode::REQUIRES_FORWARD_RENDERING : 0;
 									nInternalFlagsNew |= pMat->IsNearestCubemapRequired() ? IRenderNode::REQUIRES_NEAREST_CUBEMAP : 0;
 									nInternalFlags |= nInternalFlagsNew;
 
@@ -3300,7 +3338,7 @@ void COctreeNode::CompileCharacter(ICharacterInstance* pChar, uint32& nInternalF
 }
 
 //////////////////////////////////////////////////////////////////////////
-int16 CObjManager::GetNearestCubeProbe(PodArray<CDLight*>* pAffectingLights, IVisArea* pVisArea, const AABB& objBox, bool bSpecular, Vec4* pEnvProbeMults)
+int16 CObjManager::GetNearestCubeProbe(PodArray<SRenderLight*>* pAffectingLights, IVisArea* pVisArea, const AABB& objBox, bool bSpecular, Vec4* pEnvProbeMults)
 {
 	// Only used for alpha blended geometry - but still should be optimized further
 	float fMinDistance = FLT_MAX;
@@ -3310,22 +3348,21 @@ int16 CObjManager::GetNearestCubeProbe(PodArray<CDLight*>* pAffectingLights, IVi
 
 	if (!pVisArea)
 	{
-		int nObjTreeCount = Get3DEngine()->m_pObjectsTree.Count();
-		for (int nCurrTree = 0; nCurrTree < nObjTreeCount; ++nCurrTree)
-			if (Get3DEngine()->IsSegmentSafeToUse(nCurrTree))
-				Get3DEngine()->m_pObjectsTree[nCurrTree]->GetNearestCubeProbe(fMinDistance, nMaxPriority, pNearestLight, &objBox);
+		Get3DEngine()->m_pObjectsTree->GetNearestCubeProbe(fMinDistance, nMaxPriority, pNearestLight, &objBox);
 	}
 	else
+	{
 		Get3DEngine()->GetVisAreaManager()->GetNearestCubeProbe(fMinDistance, nMaxPriority, pNearestLight, &objBox);
+	}
 
 	if (pNearestLight)
 	{
-		ITexture* pTexCM = bSpecular ? pNearestLight->m_light.GetSpecularCubemap() : pNearestLight->m_light.GetDiffuseCubemap();
+		ITexture* pTexCM = bSpecular ? pNearestLight->GetLightProperties().GetSpecularCubemap() : pNearestLight->GetLightProperties().GetDiffuseCubemap();
 		// Return cubemap ID or -1 if invalid
 		if (pEnvProbeMults)
 		{
-			const ColorF diffuse = pNearestLight->m_light.m_Color;
-			*pEnvProbeMults = Vec4(diffuse.r, diffuse.g, diffuse.b, pNearestLight->m_light.m_SpecMult);
+			const ColorF diffuse = pNearestLight->GetLightProperties().m_Color;
+			*pEnvProbeMults = Vec4(diffuse.r, diffuse.g, diffuse.b, pNearestLight->GetLightProperties().m_SpecMult);
 		}
 		return (pTexCM && pTexCM->GetTextureType() >= eTT_Cube) ? pTexCM->GetTextureID() : nDefaultId;
 	}
@@ -3357,7 +3394,7 @@ void CObjManager::RenderObjectDebugInfo(IRenderNode* pEnt, float fEntDistance, c
 //////////////////////////////////////////////////////////////////////////
 void CObjManager::FillTerrainTexInfo(IOctreeNode* pOcNode, float fEntDistance, struct SSectorTextureSet*& pTerrainTexInfo, const AABB& objBox)
 {
-	IVisArea* pVisArea = pOcNode->m_pVisArea;
+	IVisArea* pVisArea = pOcNode->GetVisArea();
 	CTerrainNode* pTerrainNode = pOcNode->GetTerrainNode();
 
 	if ((!pVisArea || pVisArea->IsAffectedByOutLights()) && pTerrainNode)
@@ -3369,8 +3406,8 @@ void CObjManager::FillTerrainTexInfo(IOctreeNode* pOcNode, float fEntDistance, s
 			if (pTerNode = pTerNode->FindMinNodeContainingBox(boxCenter))
 			{
 				while ((!pTerNode->m_nNodeTexSet.nTex0 ||
-					fEntDistance * 2.f * 8.f > (pTerNode->m_boxHeigtmapLocal.max.x - pTerNode->m_boxHeigtmapLocal.min.x))
-					&& pTerNode->m_pParent)
+				        fEntDistance * 2.f * 8.f > (pTerNode->m_boxHeigtmapLocal.max.x - pTerNode->m_boxHeigtmapLocal.min.x))
+				       && pTerNode->m_pParent)
 					pTerNode = pTerNode->m_pParent;
 
 				pTerrainTexInfo = &(pTerNode->m_nNodeTexSet);
@@ -3379,82 +3416,67 @@ void CObjManager::FillTerrainTexInfo(IOctreeNode* pOcNode, float fEntDistance, s
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CObjManager::RenderBrush(CBrush* pEnt, PodArray<CDLight*>* pAffectingLights,
-	SSectorTextureSet* pTerrainTexInfo,
-	const AABB& objBox,
-	float fEntDistance,
-	bool bSunOnly, CVisArea* pVisArea, bool nCheckOcclusion,
-	const SRenderingPassInfo& passInfo)
+void CObjManager::RenderBrush(CBrush* pEnt, PodArray<SRenderLight*>* pAffectingLights,
+                              SSectorTextureSet* pTerrainTexInfo,
+                              const AABB& objBox,
+                              float fEntDistance,
+                              bool nCheckOcclusion,
+                              const SRenderingPassInfo& passInfo,
+                              uint32 passCullMask)
 {
 
 	//	FUNCTION_PROFILER_3DENGINE;
-	const CVars* pCVars = GetCVars();
-
-#ifdef _DEBUG
-	const char* szName = pEnt->GetName();
-	const char* szClassName = pEnt->GetEntityClassName();
-#endif // _DEBUG
 
 #if !defined(_RELEASE)
 	if (GetCVars()->e_CoverageBufferShowOccluder)
 	{
-		if (GetCVars()->e_CoverageBufferShowOccluder == 1 && (ERF_GOOD_OCCLUDER & ~pEnt->m_dwRndFlags))
+		if (GetCVars()->e_CoverageBufferShowOccluder == 1 && (ERF_GOOD_OCCLUDER & ~pEnt->GetRndFlags()))
 			return;
-		if (GetCVars()->e_CoverageBufferShowOccluder == 2 && (ERF_GOOD_OCCLUDER & pEnt->m_dwRndFlags))
+		if (GetCVars()->e_CoverageBufferShowOccluder == 2 && (ERF_GOOD_OCCLUDER &  pEnt->GetRndFlags()))
 			return;
 	}
 #endif
-	if (pEnt->m_dwRndFlags & ERF_HIDDEN)
-		return;
 
 	// check cvars
-	assert(passInfo.RenderBrushes());
+	assert(passInfo.RenderBrushes() || pEnt->GetRenderNodeType() == eERType_MovableBrush);
 
 	// check-allocate RNTmpData for visible objects
-	if (!Get3DEngine()->CheckAndCreateRenderNodeTempData(&pEnt->m_pTempData, pEnt, passInfo))
-	{
+	SRenderNodeTempData* pTempData = Get3DEngine()->CheckAndCreateRenderNodeTempData(pEnt, passInfo);
+	if (!pTempData)
 		return;
-	}
 
-	if (nCheckOcclusion && pEnt->m_pOcNode)
+	if (nCheckOcclusion)
 	{
-		if (GetObjManager()->IsBoxOccluded(objBox, fEntDistance * passInfo.GetInverseZoomFactor(), &pEnt->m_pTempData->userData.m_OcclState,
-			pEnt->m_pOcNode->m_pVisArea != NULL, eoot_OBJECT, passInfo))
-			return;
+		if (GetObjManager()->IsBoxOccluded(objBox, fEntDistance * passInfo.GetInverseZoomFactor(), &pTempData->userData.m_OcclState,
+		                                   pEnt->GetEntityVisArea() != nullptr, eoot_OBJECT, passInfo))
+			passCullMask &= ~kPassCullMainMask;
 	}
-	assert(pEnt && pEnt->m_pTempData);
-	if (!pEnt || !pEnt->m_pTempData)
-		return;
 
 	//////////////////////////////////////////////////////////////////////////
-	const CLodValue lodValue = pEnt->ComputeLod(pEnt->m_pTempData->userData.nWantedLod, passInfo);
+	const CLodValue lodValue = pEnt->ComputeLod(pTempData->userData.nWantedLod, passInfo);
 
-	if (GetCVars()->e_LodTransitionTime && passInfo.IsGeneralPass())
+	if (passCullMask & kPassCullMainMask)
 	{
-		// Render current lod and (if needed) previous lod and perform time based lod transition using dissolve
+		if (GetCVars()->e_LodTransitionTime && passInfo.IsGeneralPass())
+		{
+			// Render current lod and (if needed) previous lod and perform time based lod transition using dissolve
 
-		CLodValue arrlodVals[2];
-		int nLodsNum = ComputeDissolve(lodValue, pEnt, fEntDistance, &arrlodVals[0]);
+			CLodValue arrlodVals[2];
+			int nLodsNum = ComputeDissolve(lodValue, pTempData, pEnt, fEntDistance, &arrlodVals[0]);
 
-		for (int i = 0; i < nLodsNum; i++)
-			pEnt->Render(arrlodVals[i], passInfo, pTerrainTexInfo, pAffectingLights);
+			for (int i = 0; i < nLodsNum; i++)
+				pEnt->Render(arrlodVals[i], passInfo, pTerrainTexInfo, pAffectingLights);
+		}
+		else
+		{
+			pEnt->Render(lodValue, passInfo, pTerrainTexInfo, pAffectingLights);
+		}
 	}
-	else
+
+	if (passCullMask & ~kPassCullMainMask)
 	{
-		pEnt->Render(lodValue, passInfo, pTerrainTexInfo, pAffectingLights);
+		COctreeNode::RenderObjectIntoShadowViews(passInfo, fEntDistance, pEnt, objBox, passCullMask);
 	}
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CObjManager::RemoveCullJobProducer()
-{
-	m_CheckOcclusionOutputQueue.RemoveProducer();
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CObjManager::AddCullJobProducer()
-{
-	m_CheckOcclusionOutputQueue.AddProducer();
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -3486,33 +3508,21 @@ bool CObjManager::LoadOcclusionMesh(const char* pFileName)
 //////////////////////////////////////////////////////////////////////////
 void CObjManager::PushIntoCullQueue(const SCheckOcclusionJobData& rCheckOcclusionData)
 {
-#if !defined(_RELEASE)
-	IF(!m_CullThread.IsActive(), 0)
-	{
-		__debugbreak();
-	}
-	IF(rCheckOcclusionData.type == SCheckOcclusionJobData::QUIT, 0)
-		m_CullThread.SetActive(false);
-#endif
-	m_CheckOcclusionQueue.Push(rCheckOcclusionData);
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CObjManager::PopFromCullQueue(SCheckOcclusionJobData* pCheckOcclusionData)
-{
-	m_CheckOcclusionQueue.Pop(pCheckOcclusionData);
+	m_CullThread.CreateOcclusionJob(rCheckOcclusionData);
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CObjManager::PushIntoCullOutputQueue(const SCheckOcclusionOutput& rCheckOcclusionOutput)
 {
-	m_CheckOcclusionOutputQueue.Push(rCheckOcclusionOutput);
+	m_CheckOcclusionOutputQueue.enqueue(rCheckOcclusionOutput);
 }
 
 //////////////////////////////////////////////////////////////////////////
-bool CObjManager::PopFromCullOutputQueue(SCheckOcclusionOutput* pCheckOcclusionOutput)
+bool CObjManager::PopFromCullOutputQueue(SCheckOcclusionOutput& pCheckOcclusionOutput)
 {
-	return m_CheckOcclusionOutputQueue.Pop(pCheckOcclusionOutput);
+	CRY_PROFILE_SECTION(PROFILE_3DENGINE, "3DEngine: WaitCullOutputQueue");
+
+	return m_CheckOcclusionOutputQueue.dequeue(pCheckOcclusionOutput);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -3562,7 +3572,7 @@ void COctreeNode::CheckInitAffectingLights(const SRenderingPassInfo& passInfo)
 
 		if (!m_pVisArea || m_pVisArea->IsAffectedByOutLights())
 		{
-			PodArray<CDLight*>* pSceneLights = Get3DEngine()->GetDynamicLightSources();
+			PodArray<SRenderLight*>* pSceneLights = Get3DEngine()->GetDynamicLightSources();
 			if (pSceneLights->Count() && (pSceneLights->GetAt(0)->m_Flags & DLF_SUN))
 				m_lstAffectingLights.Add(pSceneLights->GetAt(0));
 		}
@@ -3572,7 +3582,7 @@ void COctreeNode::CheckInitAffectingLights(const SRenderingPassInfo& passInfo)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-PodArray<CDLight*>* COctreeNode::GetAffectingLights(const SRenderingPassInfo& passInfo)
+PodArray<SRenderLight*>* COctreeNode::GetAffectingLights(const SRenderingPassInfo& passInfo)
 {
 	CheckInitAffectingLights(passInfo);
 
@@ -3586,8 +3596,11 @@ void COctreeNode::GetObjectsByFlags(uint dwFlags, PodArray<IRenderNode*>& lstObj
 	unsigned int nCurrentObject(eRNListType_First);
 	for (nCurrentObject = eRNListType_First; nCurrentObject < eRNListType_ListsNum; ++nCurrentObject)
 	{
-		for (IRenderNode* pObj = m_arrObjects[nCurrentObject].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+		for (IRenderNode* pObj = m_arrObjects[nCurrentObject].m_pFirstNode, *pNext; pObj; pObj = pNext)
 		{
+			if (pNext = pObj->m_pNext)
+				cryPrefetchT0SSE(pNext);
+
 			if ((pObj->GetRndFlags() & dwFlags) == dwFlags)
 				lstObjects.Add(pObj);
 		}
@@ -3599,9 +3612,9 @@ void COctreeNode::GetObjectsByFlags(uint dwFlags, PodArray<IRenderNode*>& lstObj
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-void COctreeNode::GetObjectsByType(PodArray<IRenderNode*>& lstObjects, EERType objType, const AABB* pBBox, bool* pInstStreamCheckReady, uint64 dwFlags)
+void COctreeNode::GetObjectsByType(PodArray<IRenderNode*>& lstObjects, EERType objType, const AABB* pBBox, bool* pInstStreamCheckReady, uint64 dwFlags, bool bRecursive)
 {
-	if (objType == eERType_Light && !m_bHasLights)
+	if (!(m_linkedTypes & (1 << objType)))
 		return;
 
 	AABB objectsBox = m_objectsBox;
@@ -3611,8 +3624,6 @@ void COctreeNode::GetObjectsByType(PodArray<IRenderNode*>& lstObjects, EERType o
 
 	if (pBBox && !Overlap::AABB_AABB(*pBBox, objectsBox))
 		return;
-
-	ERNListType eListType = IRenderNode::GetRenderNodeListId(objType);
 
 	if (pInstStreamCheckReady)
 	{
@@ -3629,28 +3640,37 @@ void COctreeNode::GetObjectsByType(PodArray<IRenderNode*>& lstObjects, EERType o
 		}
 	}
 
-	for (IRenderNode* pObj = m_arrObjects[eListType].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+	ERNListType eListType = IRenderNode::GetRenderNodeListId(objType);
+
+	for (IRenderNode* pObj = m_arrObjects[eListType].m_pFirstNode, *pNext; pObj; pObj = pNext)
 	{
+		if (pNext = pObj->m_pNext)
+			cryPrefetchT0SSE(pNext);
+
 		if ((pObj->GetRenderNodeType() == objType) && (pObj->GetRndFlags() & dwFlags))
 		{
-			AABB box;
-			pObj->FillBBox(box);
-			if (!pBBox || Overlap::AABB_AABB(*pBBox, box))
+			const AABB objBox = pObj->GetBBox();
+			if (!pBBox || Overlap::AABB_AABB(*pBBox, objBox))
 			{
 				lstObjects.Add(pObj);
 			}
 		}
 	}
 
-	for (int i = 0; i < 8; i++)
-		if (m_arrChilds[i])
-			m_arrChilds[i]->GetObjectsByType(lstObjects, objType, pBBox, pInstStreamCheckReady, dwFlags);
+	if (bRecursive)
+	{
+		for (int i = 0; i < 8; i++)
+			if (m_arrChilds[i] && (m_arrChilds[i]->m_linkedTypes & (1 << objType)))
+				m_arrChilds[i]->GetObjectsByType(lstObjects, objType, pBBox, pInstStreamCheckReady, dwFlags);
+	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 void COctreeNode::GetNearestCubeProbe(float& fMinDistance, int& nMaxPriority, CLightEntity*& pNearestLight, const AABB* pBBox)
 {
-	if (!m_bHasLights)
+	if (!(m_linkedTypes & (1 << eERType_Light)))
+		return;
+	if (!GetCVars()->e_DynamicLights)
 		return;
 
 	if (!pBBox || pBBox && !Overlap::AABB_AABB(*pBBox, GetObjectsBBox()))
@@ -3658,59 +3678,52 @@ void COctreeNode::GetNearestCubeProbe(float& fMinDistance, int& nMaxPriority, CL
 
 	Vec3 vCenter = pBBox->GetCenter();
 
-	ERNListType eListType = IRenderNode::GetRenderNodeListId(eERType_Light);
-
-	for (IRenderNode* pObj = m_arrObjects[eListType].m_pFirstNode; pObj; pObj = pObj->m_pNext)
+	for (CLightEntity* pObj = (CLightEntity*)m_arrObjects[eRNListType_Light].m_pFirstNode, *pNext; pObj && pObj->IsRenderable(); pObj = pNext)
 	{
-		if (pObj->GetRenderNodeType() == eERType_Light)
+		if (pNext = (CLightEntity*)pObj->m_pNext)
+			cryPrefetchT0SSE(pNext);
+
+		SRenderLight* pLight = &pObj->GetLightProperties();
+		CRY_ASSERT(!(pLight->m_Flags & DLF_DISABLED));
+
+		if (!(pLight->m_Flags & DLF_DEFERRED_CUBEMAPS))
+			continue;
+
+		const AABB objBox = pObj->GetBBox();
+		if (Overlap::AABB_AABB(*pBBox, objBox))
 		{
-			CLightEntity* pLightEnt = (CLightEntity*)pObj;
-			CDLight* pLight = &pLightEnt->m_light;
+			Vec3 vCenterRel = vCenter - pLight->GetPosition();
+			Vec3 vCenterOBBSpace;
+			vCenterOBBSpace.x = pObj->GetMatrix().GetColumn0().GetNormalized().dot(vCenterRel);
+			vCenterOBBSpace.y = pObj->GetMatrix().GetColumn1().GetNormalized().dot(vCenterRel);
+			vCenterOBBSpace.z = pObj->GetMatrix().GetColumn2().GetNormalized().dot(vCenterRel);
 
-			if (pLightEnt->GetLayerId() != uint16(~0) && (pObj->m_dwRndFlags & ERF_HIDDEN))
-				continue;
-			if ((pLight->m_Flags & DLF_DISABLED) || (!GetCVars()->e_DynamicLights))
-				continue;
-			if (!(pLight->m_Flags & DLF_DEFERRED_CUBEMAPS))
-				continue;
-
-			AABB box;
-			pObj->FillBBox(box);
-			if (Overlap::AABB_AABB(*pBBox, box))
+			// Check if object center is within probe OBB
+			Vec3 vProbeExtents = pLight->m_ProbeExtents;
+			if (fabs(vCenterOBBSpace.x) < vProbeExtents.x && fabs(vCenterOBBSpace.y) < vProbeExtents.y && fabs(vCenterOBBSpace.z) < vProbeExtents.z)
 			{
-				Vec3 vCenterRel = vCenter - pLight->GetPosition();
-				Vec3 vCenterOBBSpace;
-				vCenterOBBSpace.x = pLightEnt->m_Matrix.GetColumn0().GetNormalized().dot(vCenterRel);
-				vCenterOBBSpace.y = pLightEnt->m_Matrix.GetColumn1().GetNormalized().dot(vCenterRel);
-				vCenterOBBSpace.z = pLightEnt->m_Matrix.GetColumn2().GetNormalized().dot(vCenterRel);
-
-				// Check if object center is within probe OBB
-				Vec3 vProbeExtents = pLight->m_ProbeExtents;
-				if (fabs(vCenterOBBSpace.x) < vProbeExtents.x && fabs(vCenterOBBSpace.y) < vProbeExtents.y && fabs(vCenterOBBSpace.z) < vProbeExtents.z)
+				if (pLight->m_nSortPriority > nMaxPriority)
 				{
-					if (pLight->m_nSortPriority > nMaxPriority)
-					{
-						pNearestLight = (CLightEntity*)pObj;
-						nMaxPriority = pLight->m_nSortPriority;
-						fMinDistance = 0;
-					}
+					pNearestLight = (CLightEntity*)pObj;
+					nMaxPriority = pLight->m_nSortPriority;
+					fMinDistance = 0;
 				}
 			}
 		}
 	}
 
 	for (int i = 0; i < 8; i++)
-		if (m_arrChilds[i])
+		if (m_arrChilds[i] && (m_arrChilds[i]->m_linkedTypes & (1 << eERType_Light)))
 			m_arrChilds[i]->GetNearestCubeProbe(fMinDistance, nMaxPriority, pNearestLight, pBBox);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 bool CObjManager::IsBoxOccluded(const AABB& objBox,
-	float fDistance,
-	OcclusionTestClient* const __restrict pOcclTestVars,
-	bool /* bIndoorOccludersOnly*/,
-	EOcclusionObjectType eOcclusionObjectType,
-	const SRenderingPassInfo& passInfo)
+                                float fDistance,
+                                OcclusionTestClient* const __restrict pOcclTestVars,
+                                bool /* bIndoorOccludersOnly*/,
+                                EOcclusionObjectType eOcclusionObjectType,
+                                const SRenderingPassInfo& passInfo)
 {
 	// if object was visible during last frames
 	const uint32 mainFrameID = passInfo.GetMainFrameID();
@@ -3746,8 +3759,16 @@ bool CObjManager::IsBoxOccluded(const AABB& objBox,
 	return false;
 }
 
-///////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////
-#include "VolumeObjectRenderNode.h"
-#include "CloudRenderNode.h"
+void COctreeNode::SetTraversalFrameId(IRenderNode* pObj, uint32 onePassTraversalFrameId, int shadowFrustumLod)
+{
+	pObj->SetOnePassTraversalFrameId(onePassTraversalFrameId, shadowFrustumLod);
 
+	// mark also the path to this object, m_onePassTraversalFrameId will be used to guide the tree traversal
+	COctreeNode* pOcNode = static_cast<COctreeNode*>(pObj->m_pOcNode);
+
+	while (pOcNode && 
+		   CryInterlockedExchange(reinterpret_cast<volatile LONG*>(&pOcNode->m_onePassTraversalFrameId), onePassTraversalFrameId) != onePassTraversalFrameId)
+	{
+		pOcNode = pOcNode->m_pParent;
+	}
+}

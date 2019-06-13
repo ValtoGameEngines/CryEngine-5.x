@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "System.h"
@@ -20,6 +20,7 @@
 #include <CryCore/Platform/IPlatformOS.h>
 #include <CryString/StringUtils.h>
 #include <CrySystem/Scaleform/IScaleformHelper.h>
+#include <CryFont/IFont.h>
 
 #if CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID || CRY_PLATFORM_APPLE
 	#include <unistd.h>
@@ -29,7 +30,6 @@
 	#include <float.h>
 	#include <CryCore/Platform/CryWindows.h>
 	#include <shellapi.h> // Needed for ShellExecute.
-	#include <Psapi.h>
 	#include <Aclapi.h>
 	#include <tlhelp32.h>
 
@@ -58,8 +58,6 @@
 #include "XML/XmlUtils.h"
 #include "AutoDetectSpec.h"
 #include "CryPak.h"
-
-#pragma warning(disable: 4244)
 
 #if CRY_PLATFORM_WINDOWS
 LINK_SYSTEM_LIBRARY("wininet.lib")
@@ -99,37 +97,9 @@ const char* g_szModuleGroups[][2] = {
 	{ "CryRenderD3D12.dll",  g_szGroupCore },
 	{ "CryRenderOpenGL.dll", g_szGroupCore },
 	{ "CryRenderVulkan.dll", g_szGroupCore },
-	{ "CryRenderNULL.dll",   g_szGroupCore }
+	{ "CryRenderNULL.dll",   g_szGroupCore },
+	{ "CryFlowGraph.dll",    g_szGroupCore }
 };
-
-//////////////////////////////////////////////////////////////////////////
-void CSystem::SetAffinity()
-{
-	// the following code is only for Windows
-#if CRY_PLATFORM_WINDOWS
-	// set the process affinity
-	ICVar* pcvAffinityMask = GetIConsole()->GetCVar("sys_affinity");
-	if (!pcvAffinityMask)
-		pcvAffinityMask = REGISTER_INT("sys_affinity", 0, VF_NULL, "");
-
-	if (pcvAffinityMask)
-	{
-		unsigned nAffinity = pcvAffinityMask->GetIVal();
-		if (nAffinity)
-		{
-			typedef BOOL (WINAPI * FnSetProcessAffinityMask)(IN HANDLE hProcess, IN DWORD_PTR dwProcessAffinityMask);
-			HMODULE hKernel = CryLoadLibrary("kernel32.dll");
-			if (hKernel)
-			{
-				FnSetProcessAffinityMask SetProcessAffinityMask = (FnSetProcessAffinityMask)GetProcAddress(hKernel, "SetProcessAffinityMask");
-				if (SetProcessAffinityMask && !SetProcessAffinityMask(GetCurrentProcess(), nAffinity))
-					GetILog()->LogError("Error: Cannot set affinity mask %d, error code %d", nAffinity, GetLastError());
-				FreeLibrary(hKernel);
-			}
-		}
-	}
-#endif
-}
 
 //! dumps the memory usage statistics to the log
 //////////////////////////////////////////////////////////////////////////
@@ -143,7 +113,7 @@ void CSystem::DumpMemoryUsageStatistics(bool bUseKB)
 	CrySizerStatsRenderer StatsRenderer(this, m_pMemStats, 10, 0);
 	StatsRenderer.dump(bUseKB);
 
-	int iSizeInM = m_env.p3DEngine->GetTerrainSize();
+	//int iSizeInM = m_env.p3DEngine->GetTerrainSize();
 
 	//	ResourceCollector.ComputeDependencyCnt();
 
@@ -191,7 +161,7 @@ void CSystem::CollectMemInfo(SCryEngineStatsGlobalMemInfo& m_stats)
 	m_stats.totalAllocatedInModules = 0;
 	m_stats.totalNumAllocsInModules = 0;
 
-	const std::vector<const char*>& szModules = GetModuleNames();
+	const std::vector<string>& szModules = GetModuleNames();
 	const int numModules = szModules.size();
 
 	//////////////////////////////////////////////////////////////////////////
@@ -224,7 +194,7 @@ void CSystem::CollectMemStats(ICrySizer* pSizer, MemStatsPurposeEnum nPurpose, s
 	std::vector<SmallModuleInfo> stats;
 #if CRY_PLATFORM_WINDOWS
 	//////////////////////////////////////////////////////////////////////////
-	const std::vector<const char*>& szModules = GetModuleNames();
+	const std::vector<string>& szModules = GetModuleNames();
 	const int numModules = szModules.size();
 
 	for (int i = 0; i < numModules; i++)
@@ -258,9 +228,9 @@ void CSystem::CollectMemStats(ICrySizer* pSizer, MemStatsPurposeEnum nPurpose, s
 
 		if (nMSP_ForCrashLog == nPurpose)
 		{
-			int usedInModule = moduleInfo.memInfo.allocated - moduleInfo.memInfo.freed;
+			int64 usedInModule = static_cast<int64>(moduleInfo.memInfo.allocated - moduleInfo.memInfo.freed);
 			int numAllocations = moduleInfo.memInfo.num_allocations;
-			CryLogAlways("%s Used in module:%d Allocations:%d", szModule, usedInModule, numAllocations);
+			CryLogAlways("%s Used in module:%" PRId64 " Allocations:%d", szModule, usedInModule, numAllocations);
 		}
 		else
 		{
@@ -299,7 +269,7 @@ void CSystem::CollectMemStats(ICrySizer* pSizer, MemStatsPurposeEnum nPurpose, s
 				CryModuleMemoryInfo meminfo;
 				ZeroStruct(meminfo);
 				CryGetMemoryInfoForModule(&meminfo);
-				pSizer->AddObject((this + 2), meminfo.STL_wasted);
+				pSizer->AddObject((this + 2), static_cast<size_t>(meminfo.STL_wasted));
 			}
 #endif
 
@@ -359,7 +329,7 @@ void CSystem::CollectMemStats(ICrySizer* pSizer, MemStatsPurposeEnum nPurpose, s
 				SIZER_COMPONENT_NAME(pSizer, "$Allocations waste");
 				const SmallModuleInfo* info = FindModuleInfo(stats, "CryAnimation.dll");
 				if (info)
-					pSizer->AddObject(info, info->memInfo.allocated - info->memInfo.requested);
+					pSizer->AddObject(info, static_cast<size_t>(info->memInfo.allocated - info->memInfo.requested));
 			}
 
 			m_env.pCharacterManager->GetMemoryUsage(pSizer);
@@ -375,7 +345,7 @@ void CSystem::CollectMemStats(ICrySizer* pSizer, MemStatsPurposeEnum nPurpose, s
 				SIZER_COMPONENT_NAME(pSizer, "$Allocations waste");
 				const SmallModuleInfo* info = FindModuleInfo(stats, "CryPhysics.dll");
 				if (info)
-					pSizer->AddObject(info, info->memInfo.allocated - info->memInfo.requested);
+					pSizer->AddObject(info, static_cast<size_t>(info->memInfo.allocated - info->memInfo.requested));
 			}
 			m_env.pPhysicalWorld->GetMemoryStatistics(pSizer);
 		}
@@ -392,7 +362,7 @@ void CSystem::CollectMemStats(ICrySizer* pSizer, MemStatsPurposeEnum nPurpose, s
 				SIZER_COMPONENT_NAME(pSizer, "$Allocations waste");
 				const SmallModuleInfo* info = FindModuleInfo(stats, "Cry3DEngine.dll");
 				if (info)
-					pSizer->AddObject(info, info->memInfo.allocated - info->memInfo.requested);
+					pSizer->AddObject(info, static_cast<size_t>(info->memInfo.allocated - info->memInfo.requested));
 			}
 
 		}
@@ -407,13 +377,13 @@ void CSystem::CollectMemStats(ICrySizer* pSizer, MemStatsPurposeEnum nPurpose, s
 				SIZER_COMPONENT_NAME(pSizer, "$Allocations waste D3D9");
 				const SmallModuleInfo* info = FindModuleInfo(stats, "CryRenderD3D9.dll");
 				if (info)
-					pSizer->AddObject(info, info->memInfo.allocated - info->memInfo.requested);
+					pSizer->AddObject(info, static_cast<size_t>(info->memInfo.allocated - info->memInfo.requested));
 			}
 			{
 				SIZER_COMPONENT_NAME(pSizer, "$Allocations waste D3D10");
 				const SmallModuleInfo* info = FindModuleInfo(stats, "CryRenderD3D10.dll");
 				if (info)
-					pSizer->AddObject(info, info->memInfo.allocated - info->memInfo.requested);
+					pSizer->AddObject(info, static_cast<size_t>(info->memInfo.allocated - info->memInfo.requested));
 			}
 
 			m_env.pRenderer->GetMemoryUsage(pSizer);
@@ -429,7 +399,7 @@ void CSystem::CollectMemStats(ICrySizer* pSizer, MemStatsPurposeEnum nPurpose, s
 				SIZER_COMPONENT_NAME(pSizer, "$Allocations waste");
 				const SmallModuleInfo* info = FindModuleInfo(stats, "CryFont.dll");
 				if (info)
-					pSizer->AddObject(info, info->memInfo.allocated - info->memInfo.requested);
+					pSizer->AddObject(info, static_cast<size_t>(info->memInfo.allocated - info->memInfo.requested));
 			}
 
 			m_env.pCryFont->GetMemoryUsage(pSizer);
@@ -446,7 +416,7 @@ void CSystem::CollectMemStats(ICrySizer* pSizer, MemStatsPurposeEnum nPurpose, s
 				SIZER_COMPONENT_NAME(pSizer, "$Allocations waste");
 				const SmallModuleInfo* info = FindModuleInfo(stats, "CryAudioSystem.dll");
 				if (info)
-					pSizer->AddObject(info, info->memInfo.allocated - info->memInfo.requested);
+					pSizer->AddObject(info, static_cast<size_t>(info->memInfo.allocated - info->memInfo.requested));
 			}
 		}
 	}
@@ -459,7 +429,7 @@ void CSystem::CollectMemStats(ICrySizer* pSizer, MemStatsPurposeEnum nPurpose, s
 				SIZER_COMPONENT_NAME(pSizer, "$Allocations waste");
 				const SmallModuleInfo* info = FindModuleInfo(stats, "CryScriptSystem.dll");
 				if (info)
-					pSizer->AddObject(info, info->memInfo.allocated - info->memInfo.requested);
+					pSizer->AddObject(info, static_cast<size_t>(info->memInfo.allocated - info->memInfo.requested));
 			}
 			m_env.pScriptSystem->GetMemoryStatistics(pSizer);
 		}
@@ -474,7 +444,7 @@ void CSystem::CollectMemStats(ICrySizer* pSizer, MemStatsPurposeEnum nPurpose, s
 				SIZER_COMPONENT_NAME(pSizer, "$Allocations waste");
 				const SmallModuleInfo* info = FindModuleInfo(stats, "CryAISystem.dll");
 				if (info)
-					pSizer->AddObject(info, info->memInfo.allocated - info->memInfo.requested);
+					pSizer->AddObject(info, static_cast<size_t>(info->memInfo.allocated - info->memInfo.requested));
 			}
 			m_env.pAISystem->GetMemoryStatistics(pSizer);
 		}
@@ -489,7 +459,7 @@ void CSystem::CollectMemStats(ICrySizer* pSizer, MemStatsPurposeEnum nPurpose, s
 				SIZER_COMPONENT_NAME(pSizer, "$Allocations waste");
 				const SmallModuleInfo* info = FindModuleInfo(stats, "CryAction.dll");
 				if (info)
-					pSizer->AddObject(info, info->memInfo.allocated - info->memInfo.requested);
+					pSizer->AddObject(info, static_cast<size_t>(info->memInfo.allocated - info->memInfo.requested));
 			}
 
 			m_env.pGameFramework->GetMemoryUsage(pSizer);
@@ -503,7 +473,7 @@ void CSystem::CollectMemStats(ICrySizer* pSizer, MemStatsPurposeEnum nPurpose, s
 			SIZER_COMPONENT_NAME(pSizer, "$Allocations waste");
 			const SmallModuleInfo* info = FindModuleInfo(stats, "CryNetwork.dll");
 			if (info)
-				pSizer->AddObject(info, info->memInfo.allocated - info->memInfo.requested);
+				pSizer->AddObject(info, static_cast<size_t>(info->memInfo.allocated - info->memInfo.requested));
 		}
 
 		m_env.pNetwork->GetMemoryStatistics(pSizer);
@@ -516,7 +486,7 @@ void CSystem::CollectMemStats(ICrySizer* pSizer, MemStatsPurposeEnum nPurpose, s
 			SIZER_COMPONENT_NAME(pSizer, "$Allocations waste");
 			const SmallModuleInfo* info = FindModuleInfo(stats, "CryEntitySystem.dll");
 			if (info)
-				pSizer->AddObject(info, info->memInfo.allocated - info->memInfo.requested);
+				pSizer->AddObject(info, static_cast<size_t>(info->memInfo.allocated - info->memInfo.requested));
 		}
 
 		m_env.pEntitySystem->GetMemoryStatistics(pSizer);
@@ -587,7 +557,7 @@ int CSystem::GetApplicationInstance()
 		{
 			suffix.Format("(%d)", instance);
 
-			HANDLE instanceMutex = CreateMutex(NULL, TRUE, "CrytekApplication" + suffix);
+			CreateMutex(NULL, TRUE, "CrytekApplication" + suffix);
 			// search for duplicates
 			if (GetLastError() != ERROR_ALREADY_EXISTS)
 			{
@@ -595,6 +565,47 @@ int CSystem::GetApplicationInstance()
 				break;
 			}
 		}
+	}
+
+	return m_iApplicationInstance;
+#elif CRY_PLATFORM_LINUX
+	if (m_iApplicationInstance == -1)
+	{
+		string path;
+		for (int i = 0; i < std::numeric_limits<int>::max(); ++i)
+		{
+			path.Format("/tmp/CrytekApplication%d.lock", i);
+
+			int fd = open(path.c_str(), O_CREAT | O_RDWR, 0666);
+			CRY_ASSERT_MESSAGE(fd >= 0, "Failed to create mutex file, errno %d", errno);
+			if (fd >= 0)
+			{
+				flock lock;
+				memset(&lock, 0, sizeof(lock));
+				lock.l_type = F_WRLCK;
+				lock.l_whence = SEEK_SET;
+				lock.l_start = 0;
+				lock.l_len = 0; // Lock entire file
+				if (fcntl(fd, F_SETLK, &lock) != -1)
+				{
+					// We're not calling close in case of success as
+					// that would release the lock on the file
+					m_iApplicationInstance = i;
+					break;
+				}
+				else
+				{
+					close(fd);
+				}
+			}
+		}
+	}
+
+	// Set a valid value in case something went wrong
+	if (m_iApplicationInstance == -1)
+	{
+		m_iApplicationInstance = 0;
+		CryWarning(VALIDATOR_MODULE_SYSTEM, VALIDATOR_ERROR, "Unable to tetermine application ID");
 	}
 
 	return m_iApplicationInstance;
@@ -709,13 +720,12 @@ void CSystem::DebugStats(bool checkpoint, bool leaks)
 	}
 	//////////////////////////////////////////////////////////////////////////
 
-	ILog* log = GetILog();
-	int totalal = 0, totalbl = 0, nolib = 0;
-
 	#ifdef _DEBUG
-	int extrastats[10];
+	ILog* log = GetILog();
+	int extrastats[10], totalal = 0, totalbl = 0;
 	#endif
 
+	int nolib = 0;
 	int totalUsedInModules = 0;
 	int countedMemoryModules = 0;
 	for (int i = 0; i < (int)(dbgmodules.size()); i++)
@@ -820,7 +830,9 @@ void CSystem::DebugStats(bool checkpoint, bool leaks)
 		phe.lpData = NULL;
 		int nCommitted = 0, nUncommitted = 0, nOverhead = 0;
 		int nCommittedPieces = 0, nUncommittedPieces = 0;
+#if defined(USE_CRY_ASSERT)
 		int nPrevRegionIndex = -1;
+#endif
 		while (HeapWalk(hHeap, &phe))
 		{
 			if (phe.wFlags & PROCESS_HEAP_REGION)
@@ -854,8 +866,7 @@ void CSystem::DebugStats(bool checkpoint, bool leaks)
 			nOverhead += phe.cbOverhead;
 		}
 		;
-		int nCommittedMin = min(nCommitted, nCommittedPieces);
-		int nCommittedMax = max(nCommitted, nCommittedPieces);
+
 		CryLogAlways("* heap %8x: %6d (or ~%6d) K in use, %6d..%6d K uncommitted, %6d K overhead (%s)\n",
 		             handles[i], nCommittedPieces / 1024, nCommitted / 1024, nUncommittedPieces / 1024, nUncommitted / 1024, nOverhead / 1024, hinfo);
 
@@ -888,6 +899,9 @@ struct DumpHeap32Stats
 	DWORD dwFixed;
 	DWORD dwUnknown;
 };
+
+#pragma warning(push)
+#pragma warning(disable: 4244) //conversion' conversion from 'type1' to 'type2', possible loss of data
 static void DumpHeap32(const HEAPLIST32& hl, DumpHeap32Stats& stats)
 {
 	HEAPENTRY32 he;
@@ -918,6 +932,7 @@ static void DumpHeap32(const HEAPLIST32& hl, DumpHeap32Stats& stats)
 	else
 		CryLogAlways("%08X  empty or invalid");
 }
+#pragma warning(pop)
 
 //////////////////////////////////////////////////////////////////////////
 class CStringOrder
@@ -965,7 +980,7 @@ void CSystem::GetExeSizes(ICrySizer* pSizer, MemStatsPurposeEnum nPurpose)
 	{
 		// the sizes of each module group
 		StringToSizeMap mapGroupSize;
-		DWORD dwTotalModuleSize = 0;
+
 		do
 		{
 			dwProcessID = me.th32ProcessID;
@@ -974,10 +989,10 @@ void CSystem::GetExeSizes(ICrySizer* pSizer, MemStatsPurposeEnum nPurpose)
 			if (nPurpose == nMSP_ForDump)
 			{
 				SIZER_COMPONENT_NAME(pSizer, me.szModule);
-				pSizer->AddObject(me.modBaseAddr, me.modBaseSize);
+				pSizer->AddObject(me.modBaseAddr, static_cast<size_t>(me.modBaseSize));
 			}
 			else
-				pSizer->AddObject(me.modBaseAddr, me.modBaseSize);
+				pSizer->AddObject(me.modBaseAddr, static_cast<size_t>(me.modBaseSize));
 		}
 		while (Module32Next(hSnapshot, &me));
 	}
@@ -1073,53 +1088,6 @@ void CSystem::DumpWinHeaps()
 #endif
 }
 
-// Make system error message string
-//////////////////////////////////////////////////////////////////////////
-//! \return pointer to the null terminated error string or 0
-static const char* GetLastSystemErrorMessage()
-{
-#if CRY_PLATFORM_WINDOWS
-	DWORD dwError = GetLastError();
-
-	static char szBuffer[512]; // function will return pointer to this buffer
-
-	if (dwError)
-	{
-		LPVOID lpMsgBuf = 0;
-
-		if (FormatMessage(
-		      FORMAT_MESSAGE_ALLOCATE_BUFFER |
-		      FORMAT_MESSAGE_FROM_SYSTEM |
-		      FORMAT_MESSAGE_IGNORE_INSERTS,
-		      NULL,
-		      GetLastError(),
-		      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), // Default language
-		      (LPTSTR) &lpMsgBuf,
-		      0,
-		      NULL))
-		{
-			cry_strcpy(szBuffer, (char*)lpMsgBuf);
-			LocalFree(lpMsgBuf);
-		}
-		else return 0;
-
-		//#else
-
-		//cry_sprintf(szBuffer, "Win32 ERROR: %i", dwError);
-		//OutputDebugString(szBuffer);
-
-		//#endif
-
-		return szBuffer;
-	}
-#else
-	return 0;
-
-#endif // CRY_PLATFORM_WINDOWS
-
-	return 0;
-}
-
 //////////////////////////////////////////////////////////////////////////
 void CSystem::FatalError(const char* format, ...)
 {
@@ -1133,7 +1101,7 @@ void CSystem::FatalError(const char* format, ...)
 	va_end(ArgList);
 
 	// get system error message before any attempt to write into log
-	const char* szSysErrorMessage = GetLastSystemErrorMessage();
+	const char* szSysErrorMessage = CryGetLastSystemErrorMessage();
 
 	CryLogAlways("=============================================================================");
 	CryLogAlways("*ERROR");
@@ -1143,10 +1111,6 @@ void CSystem::FatalError(const char* format, ...)
 
 	if (szSysErrorMessage)
 		CryLogAlways("<CrySystem> Last System Error: %s", szSysErrorMessage);
-
-	if (const char* pLoadingProfilerCallstack = GetLoadingProfilerCallstack())
-		if (pLoadingProfilerCallstack[0])
-			CryLogAlways("<CrySystem> LoadingProfilerCallstack: %s", pLoadingProfilerCallstack);
 
 	assert(szBuffer[0] >= ' ');
 	//	strcpy(szBuffer,szBuffer+1);	// remove verbosity tag since it is not supported by ::MessageBox
@@ -1158,6 +1122,12 @@ void CSystem::FatalError(const char* format, ...)
 	OutputDebugString(szBuffer);
 #if CRY_PLATFORM_WINDOWS
 	OnFatalError(szBuffer);
+
+	if (!g_cvars.sys_no_crash_dialog)
+	{
+		CryMessageBox(szBuffer,"CRYENGINE FATAL ERROR", eMB_Error);
+	}
+
 	//Triggers a fatal error, so the DebugCallstack can create the error.log and terminate the application
 	IDebugCallStack::instance()->FatalError(szBuffer);
 #endif
@@ -1165,14 +1135,7 @@ void CSystem::FatalError(const char* format, ...)
 	CryDebugBreak();
 
 	// app can not continue
-#ifdef _DEBUG
-
-	#if CRY_PLATFORM_WINDOWS && CRY_PLATFORM_32BIT
-	__debugbreak();
-	#endif
-
-#else
-
+#if !defined(_DEBUG)
 	#if CRY_PLATFORM_WINDOWS
 	_flushall();
 	#endif
@@ -1309,7 +1272,6 @@ void CSystem::LogSystemInfo()
 	char szProfileBuffer[128];
 	char szLanguageBuffer[64];
 	//char szCPUModel[64];
-	char* pChar = 0;
 
 	MEMORYSTATUSEX MemoryStatus;
 	MemoryStatus.dwLength = sizeof(MemoryStatus);
@@ -1319,7 +1281,7 @@ void CSystem::LogSystemInfo()
 	OSVerInfo.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
 
 	// log Windows type
-	Win32SysInspect::GetOS(m_env.pi.winVer, m_env.pi.win64Bit, szBuffer, sizeof(szBuffer));
+	Win32SysInspect::GetOS(m_env.pi.winInfo, szBuffer, sizeof(szBuffer));
 	CryLogAlways(szBuffer);
 
 	// log user name
@@ -1537,7 +1499,7 @@ void CSystem::ChangeUserPath(const char* sUserPath)
 
 		// Make the userFolder path absolute
 		char cwdBuffer[MAX_PATH];
-		_getcwd(cwdBuffer, MAX_PATH);
+		CryGetCurrentDirectory(MAX_PATH, cwdBuffer);
 		string tempBuffer;
 		tempBuffer.Format("%s\\%s", cwdBuffer, userFolder.c_str());
 		tempBuffer = PathUtil::RemoveSlash(tempBuffer);

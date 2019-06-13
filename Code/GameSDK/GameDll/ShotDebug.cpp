@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -21,6 +21,8 @@ History:
 #include "Projectile.h"
 #include "Utility/CryWatch.h"
 #include <CryMath/Cry_Geo.h>
+#include <CryPhysics/IPhysics.h>
+#include <CryRenderer/IRenderAuxGeom.h>
 
 //------------------------------------------------------------------------
 

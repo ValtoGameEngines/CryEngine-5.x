@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __animtime_h__
 #define __animtime_h__
@@ -154,7 +154,7 @@ struct SAnimTime
 				m_ticks = ticks;
 			}
 		}
-		else if (m_ticks > 0)
+		else
 		{
 			keyNode->setAttr(pName, m_ticks);
 		}

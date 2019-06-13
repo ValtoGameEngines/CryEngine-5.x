@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    -------------------------------------------------------------------------
@@ -18,50 +18,45 @@
 #ifdef CRYAISYSTEM_DEBUG
 
 // AI includes
-	#include "CAISystem.h"
-	#include "DebugDrawContext.h"
-	#include "AILog.h"
+#include "CAISystem.h"
+#include "DebugDrawContext.h"
+#include "AILog.h"
 
-	#include "Graph.h"
-	#include "Puppet.h"
-	#include "AIVehicle.h"
-	#include "GoalPipe.h"
-	#include "GoalOp.h"
-	#include "AIPlayer.h"
-	#include "PipeUser.h"
-	#include "Leader.h"
-	#include "NavRegion.h"
-	#include "SmartObjects.h"
-	#include "PathFollower.h"
-	#include "Shape.h"
-	#include "CodeCoverageGUI.h"
-	#include "StatsManager.h"
-	#include "PerceptionManager.h"
-	#include "FireCommand.h"
+#include "Puppet.h"
+#include "AIVehicle.h"
+#include "GoalPipe.h"
+#include "GoalOp.h"
+#include "AIPlayer.h"
+#include "PipeUser.h"
+#include "Leader.h"
+#include "SmartObjects.h"
+#include "PathFollower.h"
+#include "Shape.h"
+#include "StatsManager.h"
+#include "FireCommand.h"
 
 // (MATT) TODO Get a lightweight DebugDraw interface rather than pulling in this header file {2008/12/04}
-	#include "TacticalPointSystem/TacticalPointSystem.h"
-	#include "TargetSelection/TargetTrackManager.h"
-	#include "Communication/CommunicationManager.h"
-	#include "Cover/CoverSystem.h"
-	#include "Navigation/NavigationSystem/NavigationSystem.h"
-	#include "SelectionTree/SelectionTree.h"
-	#include "CollisionAvoidance/CollisionAvoidanceSystem.h"
-	#include "Group/GroupManager.h"
-	#include "CentralInterestManager.h"
-	#include "PersonalInterestManager.h"
-	#include "BehaviorTree/BehaviorTreeManager.h"
+#include "TacticalPointSystem/TacticalPointSystem.h"
+#include "TargetSelection/TargetTrackManager.h"
+#include "Communication/CommunicationManager.h"
+#include "Cover/CoverSystem.h"
+#include "Navigation/NavigationSystem/NavigationSystem.h"
+#include "CollisionAvoidance/CollisionAvoidanceSystem.h"
+#include "Group/GroupManager.h"
+#include "CentralInterestManager.h"
+#include "PersonalInterestManager.h"
+#include "BehaviorTree/BehaviorTreeManager.h"
+#include "Formation/FormationManager.h"
 
-	#include <CryAISystem/IAIBubblesSystem.h>
+#include <CryAISystem/IAIBubblesSystem.h>
+#include <CryAISystem/IAISystemComponent.h>
 
-	#pragma warning(disable: 4244)
-
-	#define whiteTrans ColorB(255, 255, 255, 179)
-	#define redTrans   ColorB(255, 0, 0, 179)
+#define whiteTrans ColorB(255, 255, 255, 179)
+#define redTrans   ColorB(255, 0, 0, 179)
 
 void CAISystem::DebugDrawRecorderRange() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	const float fRecorderDrawStart = m_recorderDebugContext.fStartPos;
 	const float fRecorderDrawEnd = m_recorderDebugContext.fEndPos;
@@ -191,8 +186,6 @@ void CAISystem::DebugDrawRecorderRange() const
 			pDir = (Vec3*)(pDirStream->GetCurrent(fCurrDirTime));
 			if (pPos)
 			{
-				const Vec3& vDir = (pDir ? *pDir : Vec3Constants<float>::fVec3_OneZ);
-
 				// Create label text that depicts everything that happened at this moment from all streams
 				string sCursorText;
 				sCursorText.Format("%s CURRENT\n%.1fs", pAIObject->GetName(), fCurrPosTime);
@@ -257,7 +250,7 @@ void CAISystem::DebugDrawRecorderRange() const
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawDamageControlGraph() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CDebugDrawContext dc;
 	Vec3 camPos = dc->GetCameraPos();
@@ -302,7 +295,7 @@ void CAISystem::DebugDrawDamageControlGraph() const
 
 	static std::vector<Vec3> values;
 
-	if (gAIEnv.CVars.DebugDrawDamageControl > 2)
+	if (gAIEnv.CVars.legacyDebugDraw.DebugDrawDamageControl > 2)
 	{
 		// Combined graph
 		static std::vector<CAIActor*> targets;
@@ -536,7 +529,7 @@ void CAISystem::DebugDrawDamageControlGraph() const
 			}
 	#endif
 
-			char* szZone = "";
+			const char* szZone = "";
 			switch (pPuppet->m_targetZone)
 			{
 			case AIZONE_OUT:
@@ -583,7 +576,7 @@ void CAISystem::DebugDrawDamageControlGraph() const
 
 void CAISystem::DrawDebugShape(const SDebugSphere& sphere)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CDebugDrawContext dc;
 	dc->DrawSphere(sphere.pos, sphere.radius, sphere.color);
@@ -591,7 +584,7 @@ void CAISystem::DrawDebugShape(const SDebugSphere& sphere)
 
 void CAISystem::DrawDebugShape(const SDebugBox& box)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CDebugDrawContext dc;
 	dc->DrawOBB(box.obb, box.pos, true, box.color, eBBD_Faceted);
@@ -599,7 +592,7 @@ void CAISystem::DrawDebugShape(const SDebugBox& box)
 
 void CAISystem::DrawDebugShape(const SDebugLine& line)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CDebugDrawContext dc;
 	dc->DrawLine(line.start, line.color, line.end, line.color, line.thickness);
@@ -607,7 +600,7 @@ void CAISystem::DrawDebugShape(const SDebugLine& line)
 
 void CAISystem::DrawDebugShape(const SDebugCylinder& cylinder)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CDebugDrawContext dc;
 	dc->DrawCylinder(cylinder.pos, cylinder.dir, cylinder.radius, cylinder.height, cylinder.color);
@@ -615,7 +608,7 @@ void CAISystem::DrawDebugShape(const SDebugCylinder& cylinder)
 
 void CAISystem::DrawDebugShape(const SDebugCone& cone)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CDebugDrawContext dc;
 	dc->DrawCone(cone.pos, cone.dir, cone.radius, cone.height, cone.color);
@@ -624,7 +617,7 @@ void CAISystem::DrawDebugShape(const SDebugCone& cone)
 template<typename ShapeContainer>
 void CAISystem::DrawDebugShapes(ShapeContainer& shapes, float dt)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	for (unsigned int i = 0; i < shapes.size(); )
 	{
@@ -645,50 +638,11 @@ void CAISystem::DrawDebugShapes(ShapeContainer& shapes, float dt)
 	}
 }
 
-void CAISystem::DebugDrawFakeTracers() const
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	CDebugDrawContext dc;
-	dc->SetAlphaBlended(true);
-
-	for (size_t i = 0; i < m_DEBUG_fakeTracers.size(); ++i)
-	{
-		Vec3 p0 = m_DEBUG_fakeTracers[i].p0;
-		Vec3 p1 = m_DEBUG_fakeTracers[i].p1;
-		Vec3 dir = p1 - p0;
-		float u = 1 - m_DEBUG_fakeTracers[i].t / m_DEBUG_fakeTracers[i].tmax;
-		p0 += dir * u * 0.5f;
-		p1 = p0 + dir * 0.5f;
-
-		float a = (m_DEBUG_fakeTracers[i].a * m_DEBUG_fakeTracers[i].t / m_DEBUG_fakeTracers[i].tmax) * 0.75f + 0.25f;
-		Vec3 mid((p0 + p1) / 2);
-		dc->DrawLine(p0, ColorB(128, 128, 128, 0), mid, ColorB(255, 255, 255, (uint8)(255 * a)), 6.0f);
-		dc->DrawLine(p1, ColorB(128, 128, 128, 0), mid, ColorB(255, 255, 255, (uint8)(255 * a)), 6.0f);
-	}
-}
-
-void CAISystem::DebugDrawFakeHitEffects() const
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	CDebugDrawContext dc;
-	dc->SetAlphaBlended(true);
-
-	for (size_t i = 0; i < m_DEBUG_fakeHitEffect.size(); ++i)
-	{
-		float a = m_DEBUG_fakeHitEffect[i].t / m_DEBUG_fakeHitEffect[i].tmax;
-		Vec3 pos = m_DEBUG_fakeHitEffect[i].p + m_DEBUG_fakeHitEffect[i].n * (1 - sqr(a));
-		float r = m_DEBUG_fakeHitEffect[i].r * (0.5f + (1 - a) * 0.5f);
-		dc->DrawSphere(pos, r, ColorB(m_DEBUG_fakeHitEffect[i].c.r, m_DEBUG_fakeHitEffect[i].c.g, m_DEBUG_fakeHitEffect[i].c.b, (uint8)(m_DEBUG_fakeHitEffect[i].c.a * a)));
-	}
-}
-
 void CAISystem::DebugDrawFakeDamageInd() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
-	int mode = gAIEnv.CVars.DrawFakeDamageInd;
+	int mode = gAIEnv.CVars.legacyDebugDraw.DrawFakeDamageInd;
 
 	CAIObject* pPlayer = GetPlayer();
 	if (pPlayer)
@@ -816,7 +770,7 @@ void CAISystem::DebugDrawFakeDamageInd() const
 		}
 
 		// Draw ambient fire indicators
-		if (gAIEnv.CVars.DebugDrawDamageControl > 1)
+		if (gAIEnv.CVars.legacyDebugDraw.DebugDrawDamageControl > 1)
 		{
 			const Vec3& playerPos = pPlayer->GetPos();
 			AIObjectOwners::const_iterator aio = gAIEnv.pAIObjectManager->m_Objects.find(AIOBJECT_ACTOR);
@@ -855,7 +809,7 @@ void CAISystem::DebugDrawFakeDamageInd() const
 // Draw rings around player to assist in gauging target distance
 void CAISystem::DebugDrawPlayerRanges() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CDebugDrawContext dc;
 	dc->SetAlphaBlended(true);
@@ -868,7 +822,7 @@ void CAISystem::DebugDrawPlayerRanges() const
 // Draw Perception Indicators
 void CAISystem::DebugDrawPerceptionIndicators()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	static CTimeValue lastTime(-1.0f);
 	if (lastTime.GetSeconds() < 0.0f)
@@ -897,7 +851,7 @@ void CAISystem::DebugDrawPerceptionIndicators()
 // Draw Perception Modifiers
 void CAISystem::DebugDrawPerceptionModifiers()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CDebugDrawContext dc;
 	dc->SetAlphaBlended(true);
@@ -941,9 +895,9 @@ void CAISystem::DebugDrawPerceptionModifiers()
 
 void CAISystem::DebugDrawTargetTracks() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	gAIEnv.pTargetTrackManager->DebugDraw();
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
+	if (gAIEnv.pTargetTrackManager)
+		gAIEnv.pTargetTrackManager->DebugDraw();
 }
 
 void CAISystem::DebugDrawDebugAgent()
@@ -958,56 +912,23 @@ void CAISystem::DebugDrawDebugAgent()
 	}
 }
 
-void CAISystem::DebugDrawCodeCoverage() const
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	gAIEnv.pCodeCoverageGUI->DebugDraw(gAIEnv.CVars.CodeCoverage);
-}
-
-void CAISystem::DebugDrawPerceptionManager()
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	gAIEnv.pPerceptionManager->DebugDraw(gAIEnv.CVars.DebugPerceptionManager);
-	gAIEnv.pPerceptionManager->DebugDrawPerformance(gAIEnv.CVars.DebugPerceptionManager);
-}
-
 void CAISystem::DebugDrawNavigation() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	m_pNavigation->DebugDraw();
-}
-
-void CAISystem::DebugDrawGraph(int debugDrawValue) const
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	CDebugDrawContext dc;
-
-	if (debugDrawValue == 72)
-		DebugDrawGraphErrors(m_pGraph);
-	else if (debugDrawValue == 74)
-		DebugDrawGraph(m_pGraph);
-	else if (debugDrawValue == 79 || debugDrawValue == 179 || debugDrawValue == 279)
-	{
-		std::vector<Vec3> pos;
-		pos.push_back(dc->GetCameraPos());
-		DebugDrawGraph(m_pGraph, &pos, 15);
-	}
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
+	if(m_pNavigation)
+		m_pNavigation->DebugDraw();
 }
 
 void CAISystem::DebugDrawLightManager()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	m_lightManager.DebugDraw();
 }
 
 void CAISystem::DebugDrawP0AndP1() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CDebugDrawContext dc;
 
@@ -1034,7 +955,7 @@ void CAISystem::DebugDrawP0AndP1() const
 
 void CAISystem::DebugDrawPuppetPaths()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CAIObject* pAI = gAIEnv.pAIObjectManager->GetAIObjectByName("DebugRequestPathInDirection");
 	if (!pAI)
@@ -1056,8 +977,6 @@ void CAISystem::DebugDrawPuppetPaths()
 	{
 		lastTime = thisTime;
 		pPipeUser->m_Path.Clear("DebugRequestPathInDirection");
-		Vec3 vStartPos = pPipeUser->GetPhysicsPos();
-		const float maxDist = 15.0f;
 	}
 
 	DebugDrawPathSingle(pPipeUser);
@@ -1065,7 +984,7 @@ void CAISystem::DebugDrawPuppetPaths()
 
 void CAISystem::DebugDrawCheckCapsules() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	IEntity* ent = gEnv->pEntitySystem->FindEntityByName("CheckCapsule");
 	if (ent)
@@ -1090,7 +1009,7 @@ void CAISystem::DebugDrawCheckCapsules() const
 
 void CAISystem::DebugDrawCheckRay() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	IEntity* entFrom = gEnv->pEntitySystem->FindEntityByName("CheckRayFrom");
 	IEntity* entTo = gEnv->pEntitySystem->FindEntityByName("CheckRayTo");
@@ -1111,89 +1030,9 @@ void CAISystem::DebugDrawCheckRay() const
 	}
 }
 
-void CAISystem::DebugDrawCheckWalkability()
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	IEntity* entFrom = gEnv->pEntitySystem->FindEntityByName("CheckWalkabilityFrom");
-	IEntity* entTo = gEnv->pEntitySystem->FindEntityByName("CheckWalkabilityTo");
-	if (entFrom && entTo)
-	{
-		CDebugDrawContext dc;
-
-		{
-			static CTimeValue lastTime = gEnv->pTimer->GetAsyncTime();
-			CTimeValue thisTime = gEnv->pTimer->GetAsyncTime();
-			float deltaT = (thisTime - lastTime).GetSeconds();
-			static float testsPerSec = 0.0f;
-			if (deltaT > 2.0f)
-			{
-				lastTime = thisTime;
-				testsPerSec = g_CheckWalkabilityCalls / deltaT;
-				g_CheckWalkabilityCalls = 0;
-			}
-			const int column = 5;
-			const int row = 50;
-			char buff[256];
-			cry_sprintf(buff, "%5.2f walkability calls per sec", testsPerSec);
-			dc->Draw2dLabel(column, row, buff, ColorB(255, 0, 255));
-		}
-
-		const Vec3& posFrom = entFrom->GetPos();
-		const Vec3& posTo = entTo->GetPos();
-		int nBuildingID;
-		m_pNavigation->CheckNavigationType(posFrom, nBuildingID, IAISystem::NAV_WAYPOINT_HUMAN);
-		const SpecialArea* sa = m_pNavigation->GetSpecialArea(nBuildingID);
-		const float radius = 0.3f;
-		bool result = CheckWalkability(posFrom, posTo, 0.35f, sa ? sa->GetPolygon() : ListPositions());
-		ColorB color;
-		if (result)
-			color.set(0, 255, 0, 255);
-		else
-			color.set(255, 0, 0, 255);
-		dc->DrawSphere(posFrom, radius, color);
-		dc->DrawSphere(posTo, radius, color);
-	}
-}
-
-void CAISystem::DebugDrawCheckWalkabilityTime() const
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	IEntity* entFrom = gEnv->pEntitySystem->FindEntityByName("CheckWalkabilityTimeFrom");
-	IEntity* entTo = gEnv->pEntitySystem->FindEntityByName("CheckWalkabilityTimeTo");
-	if (entFrom && entTo)
-	{
-		const Vec3& posFrom = entFrom->GetPos();
-		const Vec3& posTo = entTo->GetPos();
-		const float radius = 0.3f;
-		bool result;
-		const int num = 100;
-		CTimeValue startTime = gEnv->pTimer->GetAsyncTime();
-		for (int i = 0; i < num; ++i)
-			result = CheckWalkability(posFrom, posTo, 0.35f, ListPositions());
-		CTimeValue endTime = gEnv->pTimer->GetAsyncTime();
-		ColorB color;
-		if (result)
-			color.set(0, 255, 0, 255);
-		else
-			color.set(255, 0, 0, 255);
-		CDebugDrawContext dc;
-		dc->DrawSphere(posFrom, radius, color);
-		dc->DrawSphere(posTo, radius, color);
-		float time = (endTime - startTime).GetSeconds();
-
-		const int column = 5;
-		const int row = 50;
-		char buff[256];
-		cry_sprintf(buff, "%d walkability calls in %5.2f sec", num, time);
-		dc->Draw2dLabel(column, row, buff, ColorB(255, 0, 255));
-	}
-}
-
 void CAISystem::DebugDrawCheckFloorPos() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	IEntity* ent = gEnv->pEntitySystem->FindEntityByName("CheckFloorPos");
 	if (ent)
@@ -1217,7 +1056,7 @@ void CAISystem::DebugDrawCheckFloorPos() const
 
 void CAISystem::DebugDrawCheckGravity() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	IEntity* ent = gEnv->pEntitySystem->FindEntityByName("CheckGravity");
 	if (ent)
@@ -1233,36 +1072,11 @@ void CAISystem::DebugDrawCheckGravity() const
 	}
 }
 
-void CAISystem::DebugDrawGetTeleportPos() const
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	IEntity* ent = gEnv->pEntitySystem->FindEntityByName("GetTeleportPos");
-	if (ent)
-	{
-		const Vec3& pos = ent->GetPos();
-		Vec3 teleportPos = pos;
-
-		IAISystem::tNavCapMask navCapMask = IAISystem::NAV_TRIANGULAR | IAISystem::NAV_WAYPOINT_HUMAN;
-
-		int nBuildingID;
-		IAISystem::ENavigationType currentNavType = m_pNavigation->CheckNavigationType(pos, nBuildingID, navCapMask);
-
-		bool canTeleport = gAIEnv.pNavigation->GetNavRegion(currentNavType, gAIEnv.pGraph)->GetTeleportPosition(pos, teleportPos, "GetTeleportPos");
-
-		CDebugDrawContext dc;
-		if (canTeleport)
-			dc->DrawSphere(teleportPos, 0.5f, ColorB(0, 255, 0));
-		else
-			dc->DrawSphere(pos, 0.5f, ColorB(255, 0, 0));
-	}
-}
-
 // Draw debug shapes
 // These shapes come from outside the AI system (such as some debug code in script bind in CryAction) but related to AI.
 void CAISystem::DebugDrawDebugShapes()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	const float dt = GetFrameDeltaTime();
 	DrawDebugShapes(m_vecDebugLines, dt);
@@ -1274,7 +1088,7 @@ void CAISystem::DebugDrawDebugShapes()
 
 void CAISystem::DebugDrawGroupTactic()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	for (AIGroupMap::iterator it = m_mapAIGroups.begin(); it != m_mapAIGroups.end(); ++it)
 		it->second->DebugDraw();
@@ -1282,7 +1096,7 @@ void CAISystem::DebugDrawGroupTactic()
 
 void CAISystem::DebugDrawDamageParts() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CAIPlayer* pPlayer = CastToCAIPlayerSafe(GetPlayer());
 	CDebugDrawContext dc;
@@ -1300,7 +1114,7 @@ void CAISystem::DebugDrawDamageParts() const
 // Draw the approximate stance size for the player.
 void CAISystem::DebugDrawStanceSize() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CAIObject* playerObject = GetPlayer();
 	if (playerObject)
@@ -1320,52 +1134,52 @@ void CAISystem::DebugDrawStanceSize() const
 
 void CAISystem::DebugDrawForceAGSignal() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	ColorB colorRed(255, 0, 0);
-	const char* szInput = gAIEnv.CVars.ForceAGSignal;
+	const char* szInput = gAIEnv.CVars.legacyPuppet.ForceAGSignal;
 
 	CDebugDrawContext dc;
-	dc->Draw2dLabel(10, dc->GetHeight() - 90, 2.0f, colorRed, false, "Forced AG Signal Input: %s", szInput);
+	dc->Draw2dLabel(10.f, dc->GetHeight() - 90.f, 2.0f, colorRed, false, "Forced AG Signal Input: %s", szInput);
 }
 
 void CAISystem::DebugDrawForceAGAction() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	ColorB colorRed(255, 0, 0);
-	const char* szInput = gAIEnv.CVars.ForceAGAction;
+	const char* szInput = gAIEnv.CVars.legacyPuppet.ForceAGAction;
 
 	CDebugDrawContext dc;
-	dc->Draw2dLabel(10, dc->GetHeight() - 60, 2.0f, colorRed, false, "Forced AG Action Input: %s", szInput);
+	dc->Draw2dLabel(10.f, dc->GetHeight() - 60.f, 2.0f, colorRed, false, "Forced AG Action Input: %s", szInput);
 }
 
 void CAISystem::DebugDrawForceStance() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	ColorB colorRed(255, 0, 0);
-	const char* szStance = GetStanceName(gAIEnv.CVars.ForceStance);
+	const char* szStance = GetStanceName(gAIEnv.CVars.legacyPuppet.ForceStance);
 
 	CDebugDrawContext dc;
-	dc->Draw2dLabel(10, dc->GetHeight() - 30, 2.0f, colorRed, false, "Forced Stance: %s", szStance);
+	dc->Draw2dLabel(10.f, dc->GetHeight() - 30.f, 2.0f, colorRed, false, "Forced Stance: %s", szStance);
 }
 
 void CAISystem::DebugDrawForcePosture() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	ColorB colorRed(255, 0, 0);
-	const char* szPosture = gAIEnv.CVars.ForcePosture;
+	const char* szPosture = gAIEnv.CVars.legacyPuppet.ForcePosture;
 
 	CDebugDrawContext dc;
-	dc->Draw2dLabel(10, dc->GetHeight() - 30, 2.0f, colorRed, false, "Forced Posture: %s", szPosture);
+	dc->Draw2dLabel(10.f, dc->GetHeight() - 30.f, 2.0f, colorRed, false, "Forced Posture: %s", szPosture);
 }
 
 // Player actions
 void CAISystem::DebugDrawPlayerActions() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CAIPlayer* pPlayer = CastToCAIPlayerSafe(GetPlayer());
 	if (pPlayer)
@@ -1374,7 +1188,7 @@ void CAISystem::DebugDrawPlayerActions() const
 
 void CAISystem::DebugDrawCrowdControl()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CDebugDrawContext dc;
 
@@ -1399,7 +1213,6 @@ void CAISystem::DebugDrawCrowdControl()
 			continue;
 
 		Vec3 center = pPuppet->GetPhysicsPos() + Vec3(0, 0, 0.75f);
-		const float rad = pPuppet->GetMovementAbility().pathRadius;
 
 		/* Draw circle sector */
 		pPuppet->m_steeringOccupancy.DebugDraw(center, ColorB(0, 196, 255, 240));
@@ -1479,13 +1292,13 @@ static const char* GetMovemengtUrgencyLabel(int idx)
 
 void CAISystem::DebugDrawAdaptiveUrgency() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CDebugDrawContext dc;
 
 	Vec3 camPos = dc->GetCameraPos();
 
-	int mode = gAIEnv.CVars.DebugDrawAdaptiveUrgency;
+	int mode = gAIEnv.CVars.legacyDebugDraw.DebugDrawAdaptiveUrgency;
 
 	AIObjectOwners::const_iterator ai = gAIEnv.pAIObjectManager->m_Objects.find(AIOBJECT_ACTOR);
 	for (; ai != gAIEnv.pAIObjectManager->m_Objects.end(); ++ai)
@@ -1504,7 +1317,6 @@ void CAISystem::DebugDrawAdaptiveUrgency() const
 		if (pPuppet->m_adaptiveUrgencyScaleDownPathLen <= 0.0001f)
 			continue;
 
-		int minIdx = MovementUrgencyToIndex(pPuppet->m_adaptiveUrgencyMin);
 		int maxIdx = MovementUrgencyToIndex(pPuppet->m_adaptiveUrgencyMax);
 		int curIdx = MovementUrgencyToIndex(pPuppet->GetState().fMovementUrgency);
 
@@ -1548,9 +1360,9 @@ static void DrawRadarCircle(const Vec3& pos, float radius, const ColorB& color, 
 
 void CAISystem::DrawRadarPath(CPipeUser* pPipeUser, const Matrix34& world, const Matrix34& screen)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
-	const char* pName = gAIEnv.CVars.DrawPath;
+	const char* pName = gAIEnv.CVars.legacyDebugDraw.DrawPath;
 	if (!pName)
 		return;
 	CAIObject* pTargetObject = gAIEnv.pAIObjectManager->GetAIObjectByName(pName);
@@ -1572,8 +1384,7 @@ void CAISystem::DrawRadarPath(CPipeUser* pPipeUser, const Matrix34& world, const
 		li = pPipeUser->m_OrigPath.GetPath().begin();
 		linext = li;
 		++linext;
-		// (MATT) BUG! Surely. m_Path or m_OrigPath, which is it? Appears elsewhere too. {2008/05/29}
-		Vec3 endPt = pPipeUser->m_Path.GetNextPathPos();
+
 		CDebugDrawContext dc;
 		while (linext != pPipeUser->m_OrigPath.GetPath().end())
 		{
@@ -1587,9 +1398,9 @@ void CAISystem::DrawRadarPath(CPipeUser* pPipeUser, const Matrix34& world, const
 
 void CAISystem::DebugDrawRadar()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
-	int size = gAIEnv.CVars.DrawRadar;
+	int size = gAIEnv.CVars.legacyDebugDraw.DrawRadar;
 	if (size == 0)
 		return;
 
@@ -1604,12 +1415,12 @@ void CAISystem::DebugDrawRadar()
 	int centerx = w / 2;
 	int centery = h / 2;
 
-	int radarDist = gAIEnv.CVars.DrawRadarDist;
+	int radarDist = gAIEnv.CVars.legacyDebugDraw.DrawRadarDist;
 	float worldSize = radarDist * 2.0f;
 
 	Matrix34 worldToScreen;
 	worldToScreen.SetIdentity();
-	CCamera& cam = GetISystem()->GetViewCamera();
+	const CCamera& cam = GetISystem()->GetViewCamera();
 	Vec3 camPos = cam.GetPosition();
 	Vec3 camForward = cam.GetMatrix().TransformVector(FORWARD_DIRECTION);
 	float rot(atan2f(camForward.x, camForward.y));
@@ -1621,10 +1432,10 @@ void CAISystem::DebugDrawRadar()
 	float s = (float)size / worldSize;
 	worldToScreen = Matrix34::CreateScale(Vec3(s, s, 0)) * worldToScreen;
 	// offset the position to upper right corner
-	worldToScreen.AddTranslation(Vec3(centerx, centery, 0));
+	worldToScreen.AddTranslation(Vec3(static_cast<float>(centerx), static_cast<float>(centery), 0.f));
 	// Inverse Y
 	worldToScreen = Matrix34::CreateScale(Vec3(1, -1, 0)) * worldToScreen;
-	worldToScreen.AddTranslation(Vec3(0, h, 0));
+	worldToScreen.AddTranslation(Vec3(0, static_cast<float>(h), 0));
 
 	Matrix34 screenToNorm;
 	screenToNorm.SetIdentity();
@@ -1714,14 +1525,6 @@ void CAISystem::DebugDrawRadar()
 	}
 }
 
-void CAISystem::DebugDrawDistanceLUT()
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	if (gAIEnv.CVars.DrawDistanceLUT < 1)
-		return;
-}
-
 struct SSlopeTriangle
 {
 	SSlopeTriangle(const Triangle& tri, float slope) : triangle(tri), slope(slope) {}
@@ -1737,7 +1540,7 @@ struct SSlopeTriangle
 //====================================================================
 void CAISystem::DebugDrawSteepSlopes()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	static std::vector<SSlopeTriangle> triangles;
 	/// Current centre for the region we draw
@@ -1847,9 +1650,9 @@ void CAISystem::DebugDrawSteepSlopes()
 //===================================================================
 void CAISystem::DebugDrawVegetationCollision()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
-	float range = gAIEnv.CVars.DebugDrawVegetationCollisionDist;
+	float range = static_cast<float>(gAIEnv.CVars.DebugDrawVegetationCollisionDist);
 	if (range < 0.1f)
 		return;
 
@@ -1926,177 +1729,6 @@ void CAISystem::DebugDrawVegetationCollision()
 	}
 }
 
-struct SHidePos
-{
-	SHidePos(const Vec3& pos = ZERO, const Vec3& dir = Vec3Constants<float>::fVec3_Zero) : pos(pos), dir(dir) {}
-	Vec3 pos;
-	Vec3 dir;
-};
-
-struct SVolumeFunctor
-{
-	SVolumeFunctor(std::vector<SHidePos>& hidePositions) : hidePositions(hidePositions) {}
-	void operator()(SVolumeHideSpot& hs, float) { hidePositions.push_back(SHidePos(hs.pos, hs.dir)); }
-	std::vector<SHidePos>& hidePositions;
-};
-
-//====================================================================
-// DebugDrawHideSpots
-// need to evaluate all navigation/hide types
-//====================================================================
-void CAISystem::DebugDrawHideSpots()
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	float range = gAIEnv.CVars.DebugDrawHideSpotRange;
-	if (range < 0.1f)
-		return;
-
-	CDebugDrawContext dc;
-
-	Vec3 playerPos = dc->GetCameraPos();
-
-	Vec3 groundPos = playerPos;
-	I3DEngine* pEngine = gEnv->p3DEngine;
-	groundPos.z = pEngine->GetTerrainElevation(groundPos.x, groundPos.y);
-	dc->DrawSphere(groundPos, 0.01f * (playerPos.z - groundPos.z), ColorB(255, 0, 0));
-
-	MultimapRangeHideSpots hidespots;
-	MapConstNodesDistance traversedNodes;
-	// can't get SO since we have no entity...
-	GetHideSpotsInRange(hidespots, traversedNodes, playerPos, range,
-	                    IAISystem::NAV_TRIANGULAR | IAISystem::NAV_WAYPOINT_HUMAN | IAISystem::NAV_WAYPOINT_3DSURFACE |
-	                    IAISystem::NAV_VOLUME | IAISystem::NAV_SMARTOBJECT, 0.0f, false, 0);
-
-	/// for profiling (without draw overhead)
-	const bool skipDrawing = false;
-	if (skipDrawing)
-		return;
-
-	for (MultimapRangeHideSpots::const_iterator it = hidespots.begin(); it != hidespots.end(); ++it)
-	{
-		float distance = it->first;
-		const SHideSpot& hs = it->second;
-
-		const Vec3& pos = hs.info.pos;
-		Vec3 dir = hs.info.dir;
-
-		const float radius = 0.3f;
-		const float height = 0.3f;
-		const float triHeight = 5.0f;
-		int alpha = 255;
-		if (hs.pObstacle && !hs.pObstacle->IsCollidable())
-		{
-			alpha = 128;
-		}
-		else if (hs.pAnchorObject && hs.pAnchorObject->GetType() == AIANCHOR_COMBAT_HIDESPOT_SECONDARY)
-		{
-			alpha = 128;
-			dir.zero();
-		}
-		dc->DrawSphere(pos, 0.2f * radius, ColorB(0, 255, 0, alpha));
-		if (dir.IsZero())
-			dc->DrawCone(pos + Vec3(0, 0, triHeight), Vec3(0, 0, -1), radius, triHeight, ColorB(0, 255, 0, alpha));
-		else
-			dc->DrawCone(pos + height * dir, -dir, radius, height, ColorB(0, 255, 0, alpha));
-
-	}
-
-	// INTEGRATION : (MATT) These yellow cones kindof get in the way in G04 but handy for Crysis I believe {2007/05/31:17:29:30}
-	ColorB color(255, 255, 0);
-	for (MapConstNodesDistance::const_iterator it = traversedNodes.begin(); it != traversedNodes.end(); ++it)
-	{
-		const GraphNode* pNode = it->first;
-		float dist = it->second;
-		Vec3 pos = pNode->GetPos();
-		float radius = 0.3f;
-		float coneHeight = 1.0f;
-		dc->DrawCone(pos + Vec3(0, 0, coneHeight), Vec3(0, 0, -1), radius, coneHeight, ColorB(255, 255, 0, 100));
-		dc->Draw3dLabelEx(pos + Vec3(0, 0, 0.3f), 1.0f, color, true, false, false, false, "%5.2f", dist);
-	}
-}
-
-//====================================================================
-// DebugDrawDynamicHideObjects
-//====================================================================
-void CAISystem::DebugDrawDynamicHideObjects()
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	float range = gAIEnv.CVars.DebugDrawDynamicHideObjectsRange;
-	if (range < 0.1f)
-		return;
-
-	Vec3 cameraPos = GetISystem()->GetViewCamera().GetPosition();
-	Vec3 cameraDir = GetISystem()->GetViewCamera().GetViewdir();
-
-	Vec3 pos = cameraPos + cameraDir * (range / 2);
-	Vec3 size(range / 2, range / 2, range / 2);
-
-	SEntityProximityQuery query;
-	query.box.min = pos - size;
-	query.box.max = pos + size;
-	query.nEntityFlags = (uint32)ENTITY_FLAG_AI_HIDEABLE; // Filter by entity flag.
-
-	CDebugDrawContext dc;
-	gEnv->pEntitySystem->QueryProximity(query);
-	for (int i = 0; i < query.nCount; ++i)
-	{
-		IEntity* pEntity = query.pEntities[i];
-		if (!pEntity) continue;
-
-		AABB bbox;
-		pEntity->GetLocalBounds(bbox);
-		dc->DrawAABB(bbox, pEntity->GetWorldTM(), true, ColorB(255, 0, 0, 128), eBBD_Faceted);
-	}
-
-	m_dynHideObjectManager.DebugDraw();
-}
-
-//====================================================================
-// DebugDrawGraphErrors
-//====================================================================
-void CAISystem::DebugDrawGraphErrors(CGraph* pGraph) const
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	CDebugDrawContext dc;
-
-	unsigned int numErrors = pGraph->mBadGraphData.size();
-
-	std::vector<Vec3> positions;
-	const float minRadius = 0.1f;
-	const float maxRadius = 2.0f;
-	const int numCircles = 2;
-	for (unsigned int iError = 0; iError < numErrors; ++iError)
-	{
-		const CGraph::SBadGraphData& error = pGraph->mBadGraphData[iError];
-		Vec3 errorPos1 = error.mPos1;
-		errorPos1.z = dc->GetDebugDrawZ(errorPos1, true);
-		Vec3 errorPos2 = error.mPos2;
-		errorPos2.z = dc->GetDebugDrawZ(errorPos2, true);
-
-		positions.push_back(errorPos1);
-
-		switch (error.mType)
-		{
-		case CGraph::SBadGraphData::BAD_PASSABLE:
-			dc->DrawCircles(errorPos1, minRadius, maxRadius, numCircles, Vec3(1, 0, 0), Vec3(1, 1, 0));
-			dc->DrawCircles(errorPos2, minRadius, maxRadius, numCircles, Vec3(1, 0, 0), Vec3(1, 1, 0));
-			dc->DrawLine(errorPos1, ColorB(255, 255, 0), errorPos2, ColorB(255, 255, 0));
-			break;
-		case CGraph::SBadGraphData::BAD_IMPASSABLE:
-			dc->DrawCircles(errorPos1, minRadius, maxRadius, numCircles, Vec3(0, 1, 0), Vec3(1, 1, 0));
-			dc->DrawCircles(errorPos2, minRadius, maxRadius, numCircles, Vec3(0, 1, 0), Vec3(1, 1, 0));
-			dc->DrawLine(errorPos1, ColorB(255, 255, 0), errorPos2, ColorB(255, 255, 0));
-			break;
-		}
-	}
-	const float errorRadius = 10.0f;
-	// draw the basic graph just in this region
-	DebugDrawGraph(m_pGraph, &positions, errorRadius);
-}
-
 //====================================================================
 // CheckDistance
 //====================================================================
@@ -2116,147 +1748,13 @@ static inline bool CheckDistance(const Vec3 pos1, const std::vector<Vec3>* focus
 	return false;
 }
 
-// A bit ugly, but make this global - it caches the debug graph that needs to be drawn.
-// If it's empty then DebugDrawGraph tries to fill it. Otherwise we just draw it
-// It will get zeroed when the graph is regenerated.
-std::vector<const GraphNode*> g_DebugGraphNodesToDraw;
-static CGraph* lastDrawnGraph = 0; // detects swapping between hide and nav
-
-//====================================================================
-// DebugDrawGraph
-//====================================================================
-void CAISystem::DebugDrawGraph(CGraph* pGraph, const std::vector<Vec3>* focusPositions, float focusRadius) const
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	//	if (pGraph != lastDrawnGraph)
-	{
-		lastDrawnGraph = pGraph;
-		g_DebugGraphNodesToDraw.clear();
-	}
-
-	if (g_DebugGraphNodesToDraw.empty())
-	{
-		CAllNodesContainer& allNodes = pGraph->GetAllNodes();
-		CAllNodesContainer::Iterator it(allNodes, NAV_TRIANGULAR | NAV_WAYPOINT_HUMAN | NAV_WAYPOINT_3DSURFACE | NAV_VOLUME | NAV_ROAD | NAV_SMARTOBJECT | NAV_CUSTOM_NAVIGATION);
-		while (unsigned currentNodeIndex = it.Increment())
-		{
-			GraphNode* pCurrent = pGraph->GetNodeManager().GetNode(currentNodeIndex);
-
-			g_DebugGraphNodesToDraw.push_back(pCurrent);
-		}
-	}
-	// now just render
-	const bool renderPassRadii = false;
-	const float ballRad = 0.04f;
-
-	CDebugDrawContext dc;
-
-	unsigned int nNodes = g_DebugGraphNodesToDraw.size();
-	for (unsigned int iNode = 0; iNode < nNodes; ++iNode)
-	{
-		const GraphNode* node = g_DebugGraphNodesToDraw[iNode];
-		AIAssert(node);
-
-		ColorB color(0, 0, 0);
-		Vec3 pos = node->GetPos();
-		pos.z = dc->GetDebugDrawZ(pos, node->navType == IAISystem::NAV_TRIANGULAR);
-
-		switch (node->navType)
-		{
-		case IAISystem::NAV_TRIANGULAR:
-			{
-				// NAV_TRIANGULAR is not supported anymore, it's replaced by MNM.
-				assert(false);
-			}
-			break;
-
-		case IAISystem::NAV_ROAD:
-			{
-				color.set(255, 255, 255, 255);
-				dc->DrawSphere(pos, ballRad * 3, color);
-			}
-			break;
-
-		case IAISystem::NAV_CUSTOM_NAVIGATION:
-			{
-				color.set(255, 255, 255, 255);
-				dc->DrawSphere(pos + Vec3(0.0f, 0.0f, 0.5f), ballRad * 3.0f, color);
-			}
-			break;
-
-		// Cover all other cases to provide a real view of the graph
-		default:
-			{
-				color.set(255, 0, 255, 255);
-				dc->Draw3dLabelEx(pos + Vec3(0.0f, 0.0f, 0.7f), 2.0f, ColorB(255, 255, 0), true, false, false, false, "T:%x", node->navType);
-				dc->DrawSphere(pos + Vec3(0.0f, 0.0f, 0.5f), ballRad * 4.0f, color);
-			}
-			break;
-		}
-
-		for (unsigned link = node->firstLinkIndex; link; link = pGraph->GetLinkManager().GetNextLink(link))
-		{
-			unsigned int nextIndex = pGraph->GetLinkManager().GetNextNode(link);
-			const GraphNode* next = pGraph->GetNodeManager().GetNode(nextIndex);
-			AIAssert(next);
-
-			ColorB endColor;
-			if (pGraph->GetLinkManager().GetRadius(link) > 0.0f)
-				endColor = ColorB(255, 255, 255);
-			else
-				endColor = ColorB(0, 0, 0);
-
-			if (CheckDistance(pos, focusPositions, focusRadius))
-			{
-				Vec3 v0 = node->GetPos();
-				Vec3 v1 = next->GetPos();
-				v0.z = dc->GetDebugDrawZ(v0, node->navType == IAISystem::NAV_TRIANGULAR);
-				v1.z = dc->GetDebugDrawZ(v1, node->navType == IAISystem::NAV_TRIANGULAR);
-				if (pGraph->GetLinkManager().GetStartIndex(link) != pGraph->GetLinkManager().GetEndIndex(link))
-				{
-					Vec3 mid = pGraph->GetLinkManager().GetEdgeCenter(link);
-					mid.z = dc->GetDebugDrawZ(mid, node->navType == IAISystem::NAV_TRIANGULAR);
-					dc->DrawLine(v0, endColor, mid, ColorB(0, 255, 255));
-					if (renderPassRadii)
-						dc->Draw3dLabel(mid, 1, "%.2f", pGraph->GetLinkManager().GetRadius(link));
-
-					int debugDrawVal = gAIEnv.CVars.DebugDraw;
-					if (debugDrawVal == 179)
-						dc->Draw3dLabel(mid, 2, "%x", link);
-					else if (debugDrawVal == 279)
-					{
-						float waterDepth = pGraph->GetLinkManager().GetMaxWaterDepth(link);
-						if (waterDepth > 0.6f)
-						{
-							dc->Draw3dLabelEx(mid, 1, ColorB(255, 0, 0), true, false, false, false, "%.2f", waterDepth);
-						}
-						else
-						{
-							dc->Draw3dLabelEx(mid, 1, ColorB(255, 255, 255), true, false, false, false, "%.2f", waterDepth);
-						}
-					}
-				}
-				else
-				{
-					dc->DrawLine(v0 + Vec3(0, 0, 0.5), endColor, v1 + Vec3(0, 0, 0.5), endColor);
-					if (renderPassRadii)
-					{
-						dc->Draw3dLabel(0.5f * (v0 + v1), 1, "%.2f", pGraph->GetLinkManager().GetRadius(link));
-					}
-				}
-			} // range check
-		}
-	}
-}
-
 //
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawPath()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
-	const char* pName = gAIEnv.CVars.DrawPath;
+	const char* pName = gAIEnv.CVars.legacyDebugDraw.DrawPath;
 	if (!pName)
 		return;
 	CAIObject* pTargetObject = gAIEnv.pAIObjectManager->GetAIObjectByName(pName);
@@ -2290,9 +1788,9 @@ void CAISystem::DebugDrawPath()
 //===================================================================
 void CAISystem::DebugDrawPathAdjustments() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
-	const char* pName = gAIEnv.CVars.DrawPathAdjustment;
+	const char* pName = gAIEnv.CVars.legacyDebugDraw.DrawPathAdjustment;
 	if (!pName)
 		return;
 	CAIObject* pTargetObject = gAIEnv.pAIObjectManager->GetAIObjectByName(pName);
@@ -2337,7 +1835,7 @@ void CAISystem::DebugDrawPathAdjustments() const
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawPathSingle(const CPipeUser* pPipeUser) const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (!pPipeUser->IsEnabled())
 		return;
@@ -2376,19 +1874,19 @@ void CAISystem::DebugDrawPathSingle(const CPipeUser* pPipeUser) const
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawAgents() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
-	if (gAIEnv.CVars.AgentStatsDist <= 1.0f)
+	if (gAIEnv.CVars.legacyDebugDraw.AgentStatsDist <= 1.0f)
 		return;
 
-	bool filterName = strcmp("", gAIEnv.CVars.FilterAgentName) != 0;
+	bool filterName = strcmp("", gAIEnv.CVars.legacyDebugDraw.FilterAgentName) != 0;
 
 	CDebugDrawContext dc;
-	const float drawDistSq = sqr(gAIEnv.CVars.AgentStatsDist);
+	const float drawDistSq = sqr(gAIEnv.CVars.legacyDebugDraw.AgentStatsDist);
 
 	CryFixedArray<GroupID, 128> enabledGroups;
 
-	stack_string groups = gAIEnv.CVars.DrawAgentStatsGroupFilter;
+	stack_string groups = gAIEnv.CVars.legacyGroupSystem.DrawAgentStatsGroupFilter;
 
 	if (!groups.empty())
 	{
@@ -2417,7 +1915,7 @@ void CAISystem::DebugDrawAgents() const
 			continue;
 
 		if ((!enabledGroups.size() || (std::find(enabledGroups.begin(), enabledGroups.end(), pAIActor->GetGroupId()) != enabledGroups.end())) &&
-		    !filterName || !strcmp(pAIActor->GetName(), gAIEnv.CVars.FilterAgentName))
+		    !filterName || !strcmp(pAIActor->GetName(), gAIEnv.CVars.legacyDebugDraw.FilterAgentName))
 			DebugDrawAgent(pAIActor);
 	}
 
@@ -2437,7 +1935,7 @@ void CAISystem::DebugDrawAgents() const
 
 		if (aiObject &&
 		    ((!enabledGroups.size() || (std::find(enabledGroups.begin(), enabledGroups.end(), aiObject->GetGroupId()) != enabledGroups.end())) &&
-		     !filterName || !strcmp(aiObject->GetName(), gAIEnv.CVars.FilterAgentName)))
+		     !filterName || !strcmp(aiObject->GetName(), gAIEnv.CVars.legacyDebugDraw.FilterAgentName)))
 			DebugDrawAgent(aiObject);
 	}
 
@@ -2448,7 +1946,7 @@ void CAISystem::DebugDrawAgents() const
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (!pAgentObj || !pAgentObj->IsEnabled())
 		return;
@@ -2458,14 +1956,14 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 		return;
 
 	#ifdef CRYAISYSTEM_DEBUG
-	if (gAIEnv.CVars.DebugDrawDamageControl > 0)
+	if (gAIEnv.CVars.legacyDebugDraw.DebugDrawDamageControl > 0)
 		pAgent->UpdateHealthHistory();
 	#endif
 
 	CPuppet* pPuppet = pAgent->CastToCPuppet();
 
 	if (pPuppet)
-		if (!stricmp(gAIEnv.CVars.DrawPerceptionHandlerModifiers, pAgent->GetName()))
+		if (!stricmp(gAIEnv.CVars.legacyPerception.DrawPerceptionHandlerModifiers, pAgent->GetName()))
 			pPuppet->DebugDrawPerceptionHandlerModifiers();
 
 	PREFAST_SUPPRESS_WARNING(6237);
@@ -2478,8 +1976,12 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 
 	CPipeUser* pPipeUser = pAgent->CastToCPipeUser();
 	if (pPipeUser)
-		if (gAIEnv.CVars.DebugDrawCover)
-			pPipeUser->DebugDrawCoverUser();
+	{
+		if (gAIEnv.CVars.legacyCoverSystem.DebugDrawCover && gAIEnv.pCoverSystem)
+		{
+			gAIEnv.pCoverSystem->DebugDrawCoverUser(pPipeUser->GetEntityID());
+		}
+	}
 
 	CAIVehicle* pVehicle = pAgent->CastToCAIVehicle();
 	if (pVehicle && !pVehicle->IsDriverInside())
@@ -2534,7 +2036,7 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 	};
 	const uint32 flagCount = CRY_ARRAY_COUNT(flagMap);
 
-	const char* enabledFlags = gAIEnv.CVars.DrawAgentStats;
+	const char* enabledFlags = gAIEnv.CVars.legacyDebugDraw.DrawAgentStats;
 	uint32 enabledStats = 0;
 	for (uint32 i = 0; i < flagCount; ++i)
 	{
@@ -2567,7 +2069,7 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 	y *= (float)dc->GetHeight() * 0.01f;
 
 	const bool bCameraNear = (dc->GetCameraPos() - pos).GetLengthSquared() <
-	                         sqr(gAIEnv.CVars.DebugDrawArrowLabelsVisibilityDistance);
+	                         sqr(gAIEnv.CVars.legacyDebugDraw.DebugDrawArrowLabelsVisibilityDistance);
 
 	// Define some colors used in the whole code.
 	const ColorB white(255, 255, 255, 255);
@@ -2588,7 +2090,7 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 	y -= 20.0f;
 	x -= 50.0f;
 
-	const bool bCoverOK = gAIEnv.pCoverSystem->GetSurfaceCount() > 0;
+	const bool bCoverOK = gAIEnv.pCoverSystem && gAIEnv.pCoverSystem->GetSurfaceCount() > 0;
 
 	{
 		float offset = pVehicle ? 100.0f : 130.0f;
@@ -2646,10 +2148,13 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 			cy += 1.5f;
 		}
 
-		dc->Draw2dLabel(cx, cy, fontSize * 0.85f, pPipeUser->IsMovingToCover() ? green : grey, false, "%s", "MC");
-		dc->Draw2dLabel(cx + 14.0f, cy, fontSize * 0.85f, pPipeUser->IsMovingInCover() ? green : grey, false, "%s", "M");
-		dc->Draw2dLabel(cx + 20.0f, cy, fontSize * 0.85f, pPipeUser->IsInCover() ? green : grey, false, "%s", "IC");
-		dc->Draw2dLabel(cx + 34.0f, cy, fontSize * 0.85f, pPipeUser->IsCoverCompromised() ? red : grey, false, "%s", "CC");
+		if (pPipeUser->GetCoverUser())
+		{
+			dc->Draw2dLabel(cx, cy, fontSize * 0.85f, pPipeUser->IsMovingToCover() ? green : grey, false, "%s", "MC");
+			dc->Draw2dLabel(cx + 14.0f, cy, fontSize * 0.85f, pPipeUser->IsMovingInCover() ? green : grey, false, "%s", "M");
+			dc->Draw2dLabel(cx + 20.0f, cy, fontSize * 0.85f, pPipeUser->IsInCover() ? green : grey, false, "%s", "IC");
+			dc->Draw2dLabel(cx + 34.0f, cy, fontSize * 0.85f, pPipeUser->IsCoverCompromised() ? red : grey, false, "%s", "CC");
+		}
 
 		if (pPuppet)
 			dc->Draw2dLabel(cx + 48.0f, cy, fontSize * 0.85f, pPuppet->IsAlarmed() ? red : grey, false, "%s", "AL");
@@ -2663,36 +2168,6 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 	y += fontHeight * 0.5f; // extra spacing
 
 	static string text;
-	text.clear();
-
-	// Behavior Selection
-	if (SelectionTree* behaviorSelectionTree = pAgent->GetBehaviorSelectionTree())
-	{
-		if (enabledStats & BehaviorSelectionNode)
-		{
-			SelectionNodeID nodeID = behaviorSelectionTree->GetCurrentNodeID();
-			if (nodeID)
-			{
-				const SelectionTreeNode& node = behaviorSelectionTree->GetNode(nodeID);
-				const char* nodeName = node.GetName();
-
-				if (node.GetParentID())
-				{
-					const SelectionTreeNode& parentNode = behaviorSelectionTree->GetNode(node.GetParentID());
-					text = parentNode.GetName();
-					text.append(" > ");
-					text.append(nodeName);
-				}
-				else
-					text = nodeName;
-			}
-
-			const bool isTextEmpty = text.empty();
-			dc->Draw2dLabel(x, y, fontSize * 1.15f, isTextEmpty ? red : blue, false, "%s", isTextEmpty ? "No Selection" : text.c_str());
-			y += fontHeight * 1.15;
-		}
-	}
-
 	text.clear();
 
 	// Behavior
@@ -2776,7 +2251,7 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 			}
 
 			// attentionTarget
-			if (gAIEnv.CVars.DrawAttentionTargetsPosition)
+			if (gAIEnv.CVars.legacyDebugDraw.DrawAttentionTargetsPosition)
 				dc->DrawSphere(attTargetPos, 0.1f, Col_Red);
 		}
 		else
@@ -2827,7 +2302,7 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 					}
 				}
 
-				const ColorB color = pPipeUser->IsPaused() ? Col_Grey : white;
+				const ColorB color = pPipeUser->IsPaused() ? ColorB(Col_Grey) : white;
 
 				dc->Draw2dLabel(x, y, fontSize, color, false, "%s", text.c_str());
 				y += fontHeight;
@@ -2836,7 +2311,7 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 			// Goal Op
 			if (enabledStats & GoalOp)
 			{
-				const ColorB color = pPipeUser->IsPaused() ? Col_Grey : white;
+				const ColorB color = pPipeUser->IsPaused() ? ColorB(Col_Grey) : white;
 
 				if (pPipeUser->m_lastExecutedGoalop != eGO_LAST)
 					dc->Draw2dLabel(x, y, fontSize, color, false, "%s", pPipe->GetGoalOpName(pPipeUser->m_lastExecutedGoalop));
@@ -3101,14 +2576,8 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 	if (pPipeUser)
 	{
 		// Debug Draw goal ops.
-		if (gAIEnv.CVars.DrawGoals)
+		if (gAIEnv.CVars.legacyDebugDraw.DrawGoals)
 			pPipeUser->DebugDrawGoals();
-
-		if (gAIEnv.CVars.DebugDrawCover)
-		{
-			if (pPipeUser->m_CurrentHideObject.IsValid())
-				pPipeUser->m_CurrentHideObject.DebugDraw();
-		}
 	}
 
 	// Desired view direction and movement direction are drawn in yellow, actual look and move directions are drawn in blue.
@@ -3221,7 +2690,7 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 		}
 	}
 
-	const float drawFOV = gAIEnv.CVars.DrawAgentFOV;
+	const float drawFOV = gAIEnv.CVars.legacyPerception.DrawAgentFOV;
 	if (drawFOV > 0)
 	{
 		// Draw the view cone
@@ -3229,9 +2698,9 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 		const float fovSeconday = pAgent->m_Parameters.m_PerceptionParams.FOVSecondary;
 		const float sightRange = pAgent->m_Parameters.m_PerceptionParams.sightRange;
 		const Vec3& viewDir = pAgent->GetViewDir();
-		dc->DrawWireFOVCone(pos, viewDir, sightRange * drawFOV * 0.99f, DEG2RAD(fovPrimary) * 0.5f, white);
+		dc->DrawWireFOVCone(pos, viewDir, sightRange * drawFOV * 0.99f, DEG2RAD(fovPrimary), white);
 
-		dc->DrawWireFOVCone(pos, viewDir, sightRange * drawFOV, DEG2RAD(fovSeconday) * 0.5f, grey);
+		dc->DrawWireFOVCone(pos, viewDir, sightRange * drawFOV, DEG2RAD(fovSeconday), grey);
 
 		const Vec3 midPoint = pos + viewDir * sightRange * drawFOV / 2;
 		dc->DrawLine(pos, white, midPoint, white);
@@ -3239,7 +2708,7 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 	}
 
 	// my Ref point - yellow
-	stack_string rfname = gAIEnv.CVars.DrawRefPoints;
+	stack_string rfname = gAIEnv.CVars.legacyDebugDraw.DrawRefPoints;
 	if (rfname != "")
 	{
 		// cppcheck-suppress constStatement
@@ -3257,7 +2726,7 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 		}
 	}
 
-	if (pPuppet && (gAIEnv.CVars.DebugTargetSilhouette > 0))
+	if (pPuppet && (gAIEnv.CVars.legacyDebugDraw.DebugTargetSilhouette > 0))
 	{
 		CPuppet::STargetSilhouette& targetSilhouette = pPuppet->m_targetSilhouette;
 		if (targetSilhouette.valid && !targetSilhouette.points.empty())
@@ -3304,7 +2773,7 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 				dc->DrawLine(pos2, ColorB(255, 255, 255, 128), targetSilhouette.center + pPuppet->m_targetBiasDirection, ColorB(255, 255, 255, 128));
 			}
 
-			char* szZone = "";
+			const char* szZone = "";
 			switch (pPuppet->m_targetZone)
 			{
 			case AIZONE_OUT:
@@ -3332,11 +2801,7 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 		}
 	}
 
-	// Display the readibilities.
-	if (gAIEnv.CVars.DrawReadibilities)
-		pAgent->GetProxy()->DebugDraw(2);
-
-	if (gAIEnv.CVars.DrawProbableTarget > 0)
+	if (gAIEnv.CVars.legacyDebugDraw.DrawProbableTarget > 0)
 	{
 		if (pPipeUser)
 		{
@@ -3370,7 +2835,7 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 	}
 
 	// Display damage parts.
-	if (gAIEnv.CVars.DebugDrawDamageParts > 0)
+	if (gAIEnv.CVars.legacyDebugDraw.DebugDrawDamageParts > 0)
 	{
 		if (pAgent->GetDamageParts())
 		{
@@ -3384,7 +2849,7 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 	}
 
 	// Draw the approximate stance size.
-	if (gAIEnv.CVars.DebugDrawStanceSize > 0)
+	if (gAIEnv.CVars.legacyDebugDraw.DebugDrawStanceSize > 0)
 	{
 		if (pAgent->GetProxy())
 		{
@@ -3412,26 +2877,6 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 				else if (!pReq->vehicleName.empty())
 					dc->Draw3dLabel(pos2 + Vec3(0, 0, 0.5f), 1.5f, "%s Seat:%d", pReq->vehicleName.c_str(), pReq->vehicleSeat);
 			}
-
-	#ifdef _DEBUG
-			const Vec3 size(0.1f, 0.1f, 0.1f);
-			if (!pPipeUser->m_DEBUGCanTargetPointBeReached.empty())
-			{
-				for (ListPositions::iterator it = pPipeUser->m_DEBUGCanTargetPointBeReached.begin(); it != pPipeUser->m_DEBUGCanTargetPointBeReached.end(); ++it)
-				{
-					const ColorB color(255, 0, 0, 128);
-					const Vec3 pos2 = *it;
-					dc->DrawAABB(AABB(pos2 - size, pos2 + size), true, color, eBBD_Faceted);
-					dc->DrawLine(pos2, color, pos2 - Vec3(0, 0, 1.0f), color);
-				}
-			}
-			if (!pPipeUser->m_DEBUGUseTargetPointRequest.IsZero())
-			{
-				const Vec3 pos2 = pPipeUser->m_DEBUGUseTargetPointRequest + Vec3(0, 0, 0.4f);
-				dc->DrawAABB(AABB(pos2 - size, pos2 + size), true, blue, eBBD_Faceted);
-				dc->DrawLine(pos2, blue, pos2 - Vec3(0, 0, 1.0f), blue);
-			}
-	#endif
 
 			// Actor target phase.
 			const SAIActorTargetRequest& actorTargetReq = state.actorTargetReq;
@@ -3472,10 +2917,7 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 
 				const char* szType = "<INVALID!>";
 
-				PathPointDescriptor::SmartObjectNavDataPtr pSmartObjectNavData = pPipeUser->m_Path.GetLastPathPointAnimNavSOData();
-				if (pSmartObjectNavData)
-					szType = "NAV_SO";
-				else if (pPipeUser->GetActiveActorTargetRequest())
+				if (pPipeUser->GetActiveActorTargetRequest())
 					szType = "ACTOR_TGT";
 
 				dc->Draw3dLabel(pos2 + Vec3(0, 0, 1.0f), 1, "%s\nPhase:%s ID:%d", szType, szPhase, actorTargetReq.id);
@@ -3488,7 +2930,7 @@ void CAISystem::DebugDrawAgent(CAIObject* pAgentObj) const
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawPendingEvents(CPuppet* pTargetPuppet, int xPos, int yPos) const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	typedef std::map<float, string> t_PendingMap;
 	t_PendingMap eventsMap;
@@ -3588,7 +3030,7 @@ void CAISystem::DebugDrawPendingEvents(CPuppet* pTargetPuppet, int xPos, int yPo
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawStatsTarget(const char* pName)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (!pName || !strcmp(pName, ""))
 		return;
@@ -3719,14 +3161,14 @@ void CAISystem::DebugDrawStatsTarget(const char* pName)
 		int i = 0;
 
 		dc->TextToScreen(0, 78, "Pending signals:");
-		DynArray<AISIGNAL>::iterator sig, iend = targetState.vSignals.end();
+		DynArray<AISignals::SignalSharedPtr>::iterator sig, iend = targetState.vSignals.end();
 		for (sig = targetState.vSignals.begin(); sig != iend; ++sig, i++)
 		{
-			dc->TextToScreen(0.f, 80.f + 2.f * i, "%s", (*sig).strText);
+			dc->TextToScreen(0.f, 80.f + 2.f * i, "%s", (*sig)->GetSignalDescription().GetName());
 		}
 	}
 
-	dc->TextToScreen(50, 62, "GR.MEMBERS:%" PRISIZE_T " GROUPID:%d", m_mapGroups.count(pTargetAIActor->GetGroupId()), pTargetAIActor->GetGroupId());
+	dc->TextToScreen(50, 62, "GR.MEMBERS:%" PRISIZE_T " GROUPID:%d", m_mapGroups.count(static_cast<short>(pTargetAIActor->GetGroupId())), pTargetAIActor->GetGroupId());
 
 	if (pTargetProxy)
 		pTargetProxy->DebugDraw(1);
@@ -3740,8 +3182,6 @@ void CAISystem::DebugDrawStatsTarget(const char* pName)
 	const ColorB blueMarine(0, 255, 179);
 	// ---
 
-	const Vec3& pos = pTargetObject->GetPos();
-
 	if (pTargetPuppet)
 	{
 		// Draw fire command handler stuff.
@@ -3749,13 +3189,6 @@ void CAISystem::DebugDrawStatsTarget(const char* pName)
 			pTargetPuppet->m_pFireCmdHandler->DebugDraw();
 		if (pTargetPuppet->m_pFireCmdGrenade)
 			pTargetPuppet->m_pFireCmdGrenade->DebugDraw();
-
-		// draw hide point
-		if (pTargetPipeUser->m_CurrentHideObject.IsValid())
-		{
-			dc->DrawCone(pTargetPipeUser->m_CurrentHideObject.GetObjectPos() + Vec3(0, 0, 5), Vec3(0, 0, -1), .2f, 5.f,
-			             pTargetPipeUser->AllowedToFire() ? fireColor : yellow);
-		}
 	}
 
 	// draw predicted info
@@ -3777,9 +3210,9 @@ void CAISystem::DebugDrawStatsTarget(const char* pName)
 
 	// Track and draw the trajectory of the agent.
 	Vec3 physicsPos = pTargetObject->GetPhysicsPos();
-	if (gAIEnv.CVars.DrawTrajectory)
+	if (gAIEnv.CVars.legacyDebugDraw.DrawTrajectory)
 	{
-		int type = gAIEnv.CVars.DrawTrajectory;
+		int type = gAIEnv.CVars.legacyDebugDraw.DrawTrajectory;
 		static int lastReason = -1;
 		bool updated = false;
 
@@ -3906,10 +3339,6 @@ void CAISystem::DebugDrawStatsTarget(const char* pName)
 	dc2->SetAlphaBlended(true);
 	dc2->SetDepthWrite(false);
 
-	CCamera& cam = GetISystem()->GetViewCamera();
-	Vec3 axisx = cam.GetMatrix().TransformVector(Vec3(1, 0, 0));
-	Vec3 axisy = cam.GetMatrix().TransformVector(Vec3(0, 0, 1));
-
 	if (pTargetPipeUser)
 	{
 		// Draw perception events
@@ -4007,40 +3436,11 @@ void CAISystem::DebugDrawStatsTarget(const char* pName)
 
 //
 //-----------------------------------------------------------------------------------------------------------
-void CAISystem::DebugDrawBehaviorSelection(const char* agentName)
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	if (!agentName || !*agentName)
-		return;
-
-	CAIObject* targetObject = gAIEnv.pAIObjectManager->GetAIObjectByName(agentName);
-	if (!targetObject)
-		return;
-
-	CAIActor* targetActor = targetObject->CastToCAIActor();
-	if (targetActor)
-		targetActor->DebugDrawBehaviorSelectionTree();
-}
-
-//
-//-----------------------------------------------------------------------------------------------------------
-void CAISystem::DebugDrawFormations() const
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	for (FormationMap::const_iterator itForm = m_mapActiveFormations.begin(); itForm != m_mapActiveFormations.end(); ++itForm)
-		if (itForm->second)
-			(itForm->second)->Draw();
-}
-
-//
-//-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawType() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
-	int type = gAIEnv.CVars.DrawType;
+	short type = static_cast<short>(gAIEnv.CVars.legacyDebugDraw.DrawType);
 
 	AIObjectOwners::const_iterator ai;
 	if ((ai = gAIEnv.pAIObjectManager->m_Objects.find(type)) != gAIEnv.pAIObjectManager->m_Objects.end())
@@ -4056,7 +3456,7 @@ void CAISystem::DebugDrawType() const
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawTypeSingle(CAIObject* pAIObj) const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	Vec3 pos = pAIObj->GetPhysicsPos();
 	ColorB color(230, 230, 26);
@@ -4074,9 +3474,9 @@ void CAISystem::DebugDrawTypeSingle(CAIObject* pAIObj) const
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawTargetsList() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
-	float drawDist2 = static_cast<float>(gAIEnv.CVars.DrawTargets);
+	float drawDist2 = static_cast<float>(gAIEnv.CVars.legacyPerception.DrawTargets);
 	drawDist2 *= drawDist2;
 	int column(1), row(1);
 	string eventDescr;
@@ -4190,9 +3590,9 @@ void CAISystem::DebugDrawTargetsList() const
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawStatsList() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
-	float drawDist2 = static_cast<float>(gAIEnv.CVars.DrawStats);
+	float drawDist2 = static_cast<float>(gAIEnv.CVars.legacyDebugDraw.DrawStats);
 	drawDist2 *= drawDist2;
 	int column(1), row(1);
 	// avoid memory allocations
@@ -4214,8 +3614,8 @@ void CAISystem::DebugDrawStatsList() const
 		atTargetName = pAttTarget ? pAttTarget->GetName() : "--";
 
 		CPipeUser* pPipeUser = pAIActor->CastToCPipeUser();
-		CGoalPipe* pPipe = pPipeUser ? pPipeUser->GetCurrentGoalPipe() : 0;
-		sGoalPipeName = pPipe ? pPipe->GetNameAsString() : "--";
+		CGoalPipe* pPipe = pPipeUser ? pPipeUser->GetCurrentGoalPipe() : nullptr;
+		sGoalPipeName = pPipe ? pPipe->GetNameAsString() : string("--");
 
 		ColorB color(0, 255, 255);
 		dc->Draw2dLabel(column, row, pAIActor->GetName(), color);
@@ -4233,7 +3633,7 @@ void CAISystem::DebugDrawStatsList() const
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawEnabledActors()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	const float xPos = 28.0f;
 	const float yPos = 25.0f;
@@ -4244,8 +3644,6 @@ void CAISystem::DebugDrawEnabledActors()
 	CDebugDrawContext dc;
 	dc->TextToScreen(xPos, yPos, "---- Enabled AI Actors  ----");
 	yOffset += yStep * 2;
-
-	int nEnabled = m_enabledAIActorsSet.size();
 
 	AIActorSet::const_iterator it = m_enabledAIActorsSet.begin();
 	AIActorSet::const_iterator itEnd = m_enabledAIActorsSet.end();
@@ -4272,7 +3670,7 @@ void CAISystem::DebugDrawEnabledActors()
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawEnabledPlayers() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	static float xPos = 28.0f;
 	static float yPos = 25.0f;
@@ -4306,10 +3704,10 @@ void CAISystem::DebugDrawEnabledPlayers() const
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawUpdate() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	EDrawUpdateMode mode = DRAWUPDATE_NONE;
-	switch (gAIEnv.CVars.DebugDrawUpdate)
+	switch (gAIEnv.CVars.legacyDebugDraw.DebugDrawUpdate)
 	{
 	case 1:
 		mode = DRAWUPDATE_NORMAL;
@@ -4364,7 +3762,7 @@ void CAISystem::DebugDrawUpdate() const
 //-----------------------------------------------------------------------------------------------------------
 bool CAISystem::DebugDrawUpdateUnit(CAIActor* pTargetAIActor, int row, EDrawUpdateMode mode) const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	IAIActorProxy* pAIProxy = pTargetAIActor->GetProxy();
 
@@ -4396,9 +3794,9 @@ bool CAISystem::DebugDrawUpdateUnit(CAIActor* pTargetAIActor, int row, EDrawUpda
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawLocate() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
-	const char* pString = gAIEnv.CVars.DrawLocate;
+	const char* pString = gAIEnv.CVars.LegacyDrawLocate;
 
 	if (pString[0] == 0 || !strcmp(pString, "none"))
 		return;
@@ -4468,7 +3866,7 @@ void CAISystem::DebugDrawLocate() const
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawTargetUnit(CAIObject* pAIObj) const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CAIActor* pAIActor = pAIObj->CastToCAIActor();
 	if (!pAIActor)
@@ -4494,65 +3892,9 @@ void CAISystem::DebugDrawTargetUnit(CAIObject* pAIObj) const
 
 //
 //-----------------------------------------------------------------------------------------------------------
-void CAISystem::DebugDrawSelectedHideSpots() const
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	const CAISystem::AIActorSet& enabledAIActorsSet = GetAISystem()->GetEnabledAIActorSet();
-	for (CAISystem::AIActorSet::const_iterator it = enabledAIActorsSet.begin(), itend = enabledAIActorsSet.end(); it != itend; ++it)
-	{
-		CAIActor* pAIActor = it->GetAIObject();
-		if (!pAIActor)
-			continue;
-
-		float drawDist2 = sqr(static_cast<float>(gAIEnv.CVars.DrawHideSpots));
-		CDebugDrawContext dc;
-
-		if ((dc->GetCameraPos() - pAIActor->GetPhysicsPos()).GetLengthSquared() <= drawDist2)
-		{
-			DebugDrawMyHideSpot(pAIActor);
-		}
-	}
-}
-
-//
-//-----------------------------------------------------------------------------------------------------------
-void CAISystem::DebugDrawMyHideSpot(CAIObject* pAIObj) const
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
-
-	CPipeUser* pPipeUser = pAIObj->CastToCPipeUser();
-	if (!pPipeUser)
-		return;
-
-	if (!pPipeUser->m_CurrentHideObject.IsValid())
-		return;
-
-	CDebugDrawContext dc;
-	dc->DrawCone(pPipeUser->m_CurrentHideObject.GetLastHidePos() + Vec3(0, 0, 5), Vec3(0, 0, -1), .2f, 5.f, ColorB(255, 26, 26));
-
-	Vec3 posSelf = pAIObj->GetPhysicsPos();
-	Vec3 posTarget = pPipeUser->m_CurrentHideObject.GetLastHidePos() + Vec3(0, 0, 5); // ObjectPos()+Vec3(0,0,5);
-	Vec3 verOffset(0, 0, 2);
-	Vec3 middlePoint((posSelf + posTarget) * .5f + Vec3(0, 0, 3));
-
-	ColorB colorSelf(250, 250, 25);
-	ColorB colorTarget(250, 50, 50);
-	ColorB colorMiddle(250, 100, 50);
-
-	pPipeUser->m_CurrentHideObject.DebugDraw();
-
-	dc->DrawLine(posSelf, colorSelf, posSelf + verOffset, colorSelf);
-	dc->DrawLine(posSelf + verOffset, colorSelf, middlePoint, colorMiddle);
-	dc->DrawLine(middlePoint, colorMiddle, posTarget + verOffset, colorMiddle);
-	dc->DrawLine(posTarget + verOffset, colorMiddle, posTarget, colorTarget);
-}
-
-//
-//-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawLocateUnit(CAIObject* pAIObj) const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CAIActor* pAIActor = CastToCAIActorSafe(pAIObj);
 	if (!pAIObj || !pAIObj->IsEnabled())
@@ -4592,12 +3934,12 @@ void CAISystem::DebugDrawLocateUnit(CAIObject* pAIObj) const
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawGroups()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
-	if (!gAIEnv.CVars.DebugDrawGroups)
+	if (!gAIEnv.CVars.legacyGroupSystem.DebugDrawGroups)
 		return;
 
-	bool drawWorld = gAIEnv.CVars.DebugDrawGroups > 2;
+	bool drawWorld = gAIEnv.CVars.legacyGroupSystem.DebugDrawGroups > 2;
 
 	{
 		GroupID lastGroupID = -1;
@@ -4638,7 +3980,7 @@ void CAISystem::DebugDrawGroups()
 			{
 				ColorB color = groupColors[groupCount % colorCount];
 
-				DebugDrawOneGroup(x, y, w, 1.075f, groupID, color, color, drawWorld);
+				DebugDrawOneGroup(x, y, w, 1.075f, static_cast<short>(groupID), color, color, drawWorld);
 				y += 6.5f;
 
 				if (y >= 635.0f)
@@ -4659,14 +4001,14 @@ void CAISystem::DebugDrawGroups()
 void CAISystem::DebugDrawOneGroup(float x, float& y, float& w, float fontSize, short groupID, const ColorB& textColor,
                                   const ColorB& worldColor, bool drawWorld)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	AIObjects::const_iterator end = m_mapGroups.end();
 	AIObjects::const_iterator it = m_mapGroups.find(groupID);
 	if (it == end)
 		return;
 
-	bool drawInactive = gAIEnv.CVars.DebugDrawGroups == 2;
+	bool drawInactive = gAIEnv.CVars.legacyGroupSystem.DebugDrawGroups == 2;
 
 	CDebugDrawContext dc;
 
@@ -4748,7 +4090,7 @@ void CAISystem::DebugDrawOneGroup(float x, float& y, float& w, float fontSize, s
 		if (hasLeader)
 			groupCenter = leaderCenter;
 		else if (activeMemberCount > 1)
-			groupCenter /= activeMemberCount;
+			groupCenter /= static_cast<f32>(activeMemberCount);
 
 		if (memberCount > 0)
 		{
@@ -4813,9 +4155,9 @@ void CAISystem::DebugDrawOneGroup(float x, float& y, float& w, float fontSize, s
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawShooting() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
-	const char* pName(gAIEnv.CVars.DrawShooting);
+	const char* pName(gAIEnv.CVars.legacyDebugDraw.DrawShooting);
 	if (!pName)
 		return;
 
@@ -4906,7 +4248,7 @@ void CAISystem::DebugDrawShooting() const
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawAreas() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	const int ALERT_STANDBY_IN_RANGE = 340;
 	const int ALERT_STANDBY_SPOT = 341;
@@ -4917,7 +4259,7 @@ void CAISystem::DebugDrawAreas() const
 	CDebugDrawContext dc;
 
 	Vec3 camPos = dc->GetCameraPos();
-	float statsDist = gAIEnv.CVars.AgentStatsDist;
+	float statsDist = gAIEnv.CVars.legacyDebugDraw.AgentStatsDist;
 
 	// Draw standby areas
 	for (ShapeMap::const_iterator it = m_mapGenericShapes.begin(); it != m_mapGenericShapes.end(); ++it)
@@ -4936,12 +4278,15 @@ void CAISystem::DebugDrawAreas() const
 		{
 			switch (shape.type)
 			{
+#pragma warning(push)
+#pragma warning(disable: 4244)
 			case ALERT_STANDBY_IN_RANGE:
 				dc->DrawRangePolygon(&tempVector[0], tempVector.size(), 0.75f, ColorB(255, 128, 0, a / 2), ColorB(255, 128, 0, a), true);
 				break;
 			case COMBAT_TERRITORY:
 				dc->DrawRangePolygon(&tempVector[0], tempVector.size(), 0.75f, ColorB(40, 85, 180, a / 2), ColorB(40, 85, 180, a), true);
 				break;
+#pragma warning(pop)
 			}
 		}
 	}
@@ -4984,7 +4329,7 @@ void CAISystem::DebugDrawAreas() const
 		{
 			float dist = 0;
 			Vec3 nearestPt;
-			ListPositions::const_iterator it = territoryShape->NearestPointOnPath(pPipeUser->GetPos(), false, dist, nearestPt);
+			territoryShape->NearestPointOnPath(pPipeUser->GetPos(), false, dist, nearestPt);
 			Vec3 p0 = pPipeUser->GetPos() - Vec3(0, 0, 0.5f);
 			dc->Draw3dLabel(p0 * 0.7f + nearestPt * 0.3f, 1, "Terr");
 			dc->DrawLine(p0, ColorB(30, 208, 224), nearestPt, ColorB(30, 208, 224));
@@ -4995,7 +4340,7 @@ void CAISystem::DebugDrawAreas() const
 		{
 			float dist = 0;
 			Vec3 nearestPt;
-			ListPositions::const_iterator it = refShape->NearestPointOnPath(pPipeUser->GetPos(), false, dist, nearestPt);
+			refShape->NearestPointOnPath(pPipeUser->GetPos(), false, dist, nearestPt);
 			Vec3 p0 = pPipeUser->GetPos() - Vec3(0, 0, 1.0f);
 			dc->Draw3dLabel(p0 * 0.7f + nearestPt * 0.3f, 1, "Ref");
 			dc->DrawLine(p0, ColorB(135, 224, 30), nearestPt, ColorB(135, 224, 30));
@@ -5007,7 +4352,7 @@ void CAISystem::DebugDrawAreas() const
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawExpensiveAccessoryQuota() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CDebugDrawContext dc;
 
@@ -5043,7 +4388,7 @@ void CAISystem::DebugDrawExpensiveAccessoryQuota() const
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawAmbientFire() const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CAIPlayer* pPlayer = CastToCAIPlayerSafe(GetPlayer());
 	if (!pPlayer)
@@ -5124,7 +4469,7 @@ void CAISystem::AddPerceptionDebugLine(const char* tag, const Vec3& start, const
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::DebugDrawInterestSystem(int iLevel) const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	const CCentralInterestManager* pInterestManager = CCentralInterestManager::GetInstance();
 
@@ -5132,7 +4477,6 @@ void CAISystem::DebugDrawInterestSystem(int iLevel) const
 	ColorB cGreen = ColorB(0, 255, 0);
 	ColorB cYellow = ColorB(255, 255, 0);
 	ColorB cRed = ColorB(255, 0, 0);
-	ColorB cTransparentRed = ColorB(200, 0, 0, 100);
 
 	if (iLevel > 0)
 	{
@@ -5244,6 +4588,125 @@ void CAISystem::DebugDrawSelectedTargets()
 	}
 }
 
+void CAISystem::TryDebugDrawPhysicsAccess()
+{
+	if (!gAIEnv.CVars.legacyDebugDraw.DebugDrawPhysicsAccess)
+		return;
+
+	auto rstats = gAIEnv.pRayCaster->GetContentionStats();
+	stack_string text;
+
+	text.Format(
+		"RayCaster\n"
+		"---------\n"
+		"Quota: %u\n"
+		"Queue Size: %u / %u\n"
+		"Immediate Count: %u / %u\n"
+		"Immediate Average: %.1f\n"
+		"Deferred Count: %u / %u\n"
+		"Deferred Average: %.1f",
+		rstats.quota,
+		rstats.queueSize,
+		rstats.peakQueueSize,
+		rstats.immediateCount,
+		rstats.peakImmediateCount,
+		rstats.immediateAverage,
+		rstats.deferredCount,
+		rstats.peakDeferredCount,
+		rstats.deferredAverage);
+
+	bool warning = (rstats.immediateCount + rstats.deferredCount) > rstats.quota;
+	warning = warning || (rstats.immediateAverage + rstats.deferredAverage) > rstats.quota;
+	warning = warning || rstats.queueSize > (3 * rstats.quota);
+
+	CDebugDrawContext dc;
+	dc->Draw2dLabel((float)dc->GetWidth() * 0.1f, (float)dc->GetHeight() * 0.25f, 1.25f, warning ? Col_Red : Col_DarkTurquoise, false, "%s", text.c_str());
+
+#if AIRAYCAST_EXTENDED_STATS
+	struct SRayCastRequestInfo
+	{
+		uint32 pendingCount = 0;
+		uint32 completedCount = 0;
+
+		int64  peakCompletionTime = 0;
+		int64  totalCompletionTime = 0;
+		uint32 totalCompletedCount = 0;
+	};
+	static std::unordered_map<std::string, SRayCastRequestInfo> sRequestsMap;
+
+	for (auto& keyValue : sRequestsMap)
+	{
+		keyValue.second.pendingCount = 0;
+		keyValue.second.completedCount = 0;
+	}
+
+	for (const AIRayCast::SRequestDebugInfo& requestInfo : rstats.pendingRequests)
+	{
+		sRequestsMap[requestInfo.requesterString.c_str()].pendingCount += 1;
+	}
+	for (const AIRayCast::SRequestDebugInfo& completedInfo : rstats.recentlyCompletedRequests)
+	{
+		SRayCastRequestInfo& rayCastRequestInfo = sRequestsMap[completedInfo.requesterString.c_str()];
+
+		const int64 completionTime = (completedInfo.completedTime - completedInfo.queuedTime).GetMilliSecondsAsInt64();
+		rayCastRequestInfo.completedCount += 1;
+		rayCastRequestInfo.totalCompletedCount += 1;
+		rayCastRequestInfo.peakCompletionTime = max(completionTime, rayCastRequestInfo.peakCompletionTime);
+		rayCastRequestInfo.totalCompletionTime += completionTime;
+	}
+
+	float yPos = dc->GetHeight() * 0.25f;
+	const float xPosColumns[5] = { 400.0f, 700.0f, 800.0f, 900.0f, 1000.0f };
+	const ColorB color = warning ? Col_Red : Col_DarkTurquoise;
+
+	dc->Draw2dLabel(xPosColumns[0], yPos, 1.25f, color, false, "Requester");
+	dc->Draw2dLabel(xPosColumns[1], yPos, 1.25f, color, false, "Pending");
+	dc->Draw2dLabel(xPosColumns[2], yPos, 1.25f, color, false, "Completed");
+	dc->Draw2dLabel(xPosColumns[3], yPos, 1.25f, color, false, "Average Time");
+	dc->Draw2dLabel(xPosColumns[4], yPos, 1.25f, color, false, "Peak Time");
+	yPos += 20.0f;
+
+	for (const auto& keyValue : sRequestsMap)
+	{
+		const SRayCastRequestInfo& info = keyValue.second;
+
+		dc->Draw2dLabel(xPosColumns[0], yPos, 1.25f, color, false, "%s", keyValue.first.c_str());
+		dc->Draw2dLabel(xPosColumns[1], yPos, 1.25f, color, false, "%u", info.pendingCount);
+		dc->Draw2dLabel(xPosColumns[2], yPos, 1.25f, color, false, "%u", info.completedCount);
+		dc->Draw2dLabel(xPosColumns[3], yPos, 1.25f, color, false, "%li ms", info.totalCompletedCount ? info.totalCompletionTime / info.totalCompletedCount : 0);
+		dc->Draw2dLabel(xPosColumns[4], yPos, 1.25f, color, false, "%li ms", info.peakCompletionTime);
+
+		yPos += 20.0f;
+	}
+#endif //AIRAYCAST_EXTENDED_STATS
+
+	IAISystem::GlobalIntersectionTester::ContentionStats istats = gAIEnv.pIntersectionTester->GetContentionStats();
+	text.Format(
+		"IntersectionTester\n"
+		"------------------\n"
+		"Quota: %u\n"
+		"Queue Size: %u / %u\n"
+		"Immediate Count: %u / %u\n"
+		"Immediate Average: %.1f\n"
+		"Deferred Count: %u / %u\n"
+		"Deferred Average: %.1f",
+		istats.quota,
+		istats.queueSize,
+		istats.peakQueueSize,
+		istats.immediateCount,
+		istats.peakImmediateCount,
+		istats.immediateAverage,
+		istats.deferredCount,
+		istats.peakDeferredCount,
+		istats.deferredAverage);
+
+	warning = (istats.immediateCount + istats.deferredCount) > istats.quota;
+	warning = warning || (istats.immediateAverage + istats.deferredAverage) > istats.quota;
+	warning = warning || istats.queueSize > (3 * istats.quota);
+
+	dc->Draw2dLabel(600.0, 745.0f, 1.25f, warning ? Col_Red : Col_DarkTurquoise, false, "%s", text.c_str());
+}
+
 #endif //CRYAISYSTEM_DEBUG
 
 //-----------------------------------------------------------------------------------------------------------
@@ -5254,7 +4717,7 @@ void CAISystem::DebugDrawSelectedTargets()
 void CAISystem::DebugDraw()
 {
 #ifdef CRYAISYSTEM_DEBUG
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (!m_bInitialized) return;
 
@@ -5264,10 +4727,10 @@ void CAISystem::DebugDraw()
 	int debugDrawValue = gAIEnv.CVars.DebugDraw;
 
 	// As a special case, we want to draw the InterestSystem alone sometimes
-	if (gAIEnv.CVars.DebugInterest > 0)
-		DebugDrawInterestSystem(gAIEnv.CVars.DebugInterest);
+	if (gAIEnv.CVars.legacyInterestSystem.DebugInterest > 0)
+		DebugDrawInterestSystem(gAIEnv.CVars.legacyInterestSystem.DebugInterest);
 
-	if (gAIEnv.CVars.DrawModularBehaviorTreeStatistics > 0)
+	if (gAIEnv.pBehaviorTreeManager && gAIEnv.CVars.behaviorTree.DrawModularBehaviorTreeStatistics > 0)
 		gAIEnv.pBehaviorTreeManager->DrawMemoryInformation();
 
 	if (debugDrawValue < 0)
@@ -5278,28 +4741,34 @@ void CAISystem::DebugDraw()
 	dc->Init3DMode();
 	dc->SetAlphaBlended(true);
 
-	if (gAIEnv.CVars.DebugDrawCollisionAvoidance > 0)
+	for (auto& systemComponent : m_setSystemComponents)
+	{
+		systemComponent->DebugDraw(dc.operator->());
+	}
+
+	if (gAIEnv.pCollisionAvoidanceSystem && gAIEnv.CVars.collisionAvoidance.DebugDrawCollisionAvoidance > 0)
 		gAIEnv.pCollisionAvoidanceSystem->DebugDraw();
 
-	if (gAIEnv.CVars.DebugDrawCommunication > 0)
+	if (gAIEnv.pCommunicationManager && gAIEnv.CVars.legacyCommunicationSystem.DebugDrawCommunication > 0)
 		gAIEnv.pCommunicationManager->DebugDraw();
 
-	if (gAIEnv.pVisionMap && gAIEnv.CVars.DebugDrawVisionMap != 0)
+	if (gAIEnv.pVisionMap && gAIEnv.CVars.visionMap.DebugDrawVisionMap != 0)
 		gAIEnv.pVisionMap->DebugDraw();
 
-	if (gAIEnv.pCoverSystem)
+	if (gAIEnv.pCoverSystem && gAIEnv.CVars.legacyCoverSystem.DebugDrawCover)
 		gAIEnv.pCoverSystem->DebugDraw();
 
-	if (gAIEnv.pNavigationSystem && gAIEnv.CVars.DebugDrawNavigation > 0)
+	if (gAIEnv.pNavigationSystem && gAIEnv.CVars.navigation.DebugDrawNavigation > 0)
 		gAIEnv.pNavigationSystem->DebugDraw();
 
-	if (gAIEnv.CVars.DebugGlobalPerceptionScale > 0)
+	if (gAIEnv.CVars.legacyPerception.DebugGlobalPerceptionScale > 0)
 		m_globalPerceptionScale.DebugDraw();
 
 	#ifdef CRYAISYSTEM_DEBUG
 	{
-		FRAME_PROFILER("AIBubblesSystem", gEnv->pSystem, PROFILE_AI);
-		gAIEnv.pBubblesSystem->Update();
+		CRY_PROFILE_SECTION(PROFILE_AI, "AIBubblesSystem");
+		if (gAIEnv.pBubblesSystem)
+			gAIEnv.pBubblesSystem->Update();
 	}
 	#endif
 
@@ -5309,32 +4778,25 @@ void CAISystem::DebugDraw()
 		return;
 	}
 
-	if (gAIEnv.CVars.DebugDrawEnabledActors == 1)
+	if (gAIEnv.CVars.legacyDebugDraw.DebugDrawEnabledActors == 1)
 		DebugDrawEnabledActors();   // Called only in this line => Maybe we should remove it from the interface?
-	else if (gAIEnv.CVars.DebugDrawEnabledPlayers == 1)
+	else if (gAIEnv.CVars.legacyDebugDraw.DebugDrawEnabledPlayers == 1)
 		DebugDrawEnabledPlayers();
 
 	DebugDrawUpdate();        // Called only in this line => Maybe we should remove it from the interface?
 
-	if (gAIEnv.CVars.DrawFakeTracers > 0)
-		DebugDrawFakeTracers();
-
-	if (gAIEnv.CVars.DrawFakeHitEffects > 0)
-		DebugDrawFakeHitEffects();
-
-	if (gAIEnv.CVars.DrawFakeDamageInd > 0)
+	if (gAIEnv.CVars.legacyDebugDraw.DrawFakeDamageInd > 0)
 		DebugDrawFakeDamageInd();
 
 	if (gAIEnv.CVars.DrawPlayerRanges > 0)
 		DebugDrawPlayerRanges();
 
-	if (gAIEnv.CVars.DrawPerceptionIndicators > 0 || gAIEnv.CVars.DrawPerceptionDebugging > 0)
+	if (gAIEnv.CVars.legacyPerception.DrawPerceptionIndicators > 0 || gAIEnv.CVars.legacyPerception.DrawPerceptionDebugging > 0)
 		DebugDrawPerceptionIndicators();
 
-	if (gAIEnv.CVars.DrawPerceptionModifiers > 0)
+	if (gAIEnv.CVars.legacyPerception.DrawPerceptionModifiers > 0)
 		DebugDrawPerceptionModifiers();
 
-	DebugDrawCodeCoverage();
 	DebugDrawTargetTracks();
 	DebugDrawDebugAgent();
 
@@ -5346,60 +4808,44 @@ void CAISystem::DebugDraw()
 
 	DebugDrawRecorderRange();
 
-	if (gAIEnv.CVars.DebugPerceptionManager > 0)
-		DebugDrawPerceptionManager();
-
-	//------------------------------------------------------------------------------------
-	// Check for graph and return on fail - note that graph is assumed by most of system
-	//------------------------------------------------------------------------------------
-	if (!m_pGraph)
-		return;
-
 	DebugDrawNavigation();
-	DebugDrawGraph(debugDrawValue);
 
-	if (gAIEnv.CVars.DebugDrawDamageControl > 1)
+	if (gAIEnv.CVars.legacyDebugDraw.DebugDrawDamageControl > 1)
 		DebugDrawDamageControlGraph();
 
-	if (gAIEnv.CVars.DrawAreas > 0)
+	if (gAIEnv.CVars.LegacyDrawAreas > 0)
 		DebugDrawAreas();
 
 	DebugDrawSteepSlopes();
 	DebugDrawVegetationCollision();
 
-	if (m_bUpdateSmartObjects && gAIEnv.CVars.DrawSmartObjects)
+	if (m_bUpdateSmartObjects && gAIEnv.CVars.legacySmartObjects.DrawSmartObjects)
 		m_pSmartObjectManager->DebugDraw();
 
 	DebugDrawPath();
 	DebugDrawPathAdjustments();
 
-	DebugDrawStatsTarget(gAIEnv.CVars.StatsTarget);
+	DebugDrawStatsTarget(gAIEnv.CVars.legacyDebugDraw.StatsTarget);
 
-	DebugDrawBehaviorSelection(gAIEnv.CVars.DebugBehaviorSelection);
-
-	if (gAIEnv.CVars.DrawFormations)
-		DebugDrawFormations();
+	if (gAIEnv.pFormationManager && gAIEnv.CVars.legacyFormationSystem.DrawFormations)
+		gAIEnv.pFormationManager->DebugDraw();
 
 	DebugDrawType();
 	DebugDrawLocate();
 
-	if (gAIEnv.CVars.DrawTargets)
+	if (gAIEnv.CVars.legacyPerception.DrawTargets)
 		DebugDrawTargetsList();
 
-	if (gAIEnv.CVars.DrawStats)
+	if (gAIEnv.CVars.legacyDebugDraw.DrawStats)
 		DebugDrawStatsList();
 
 	DebugDrawGroups();
-	DebugDrawHideSpots();
 
-	if (gAIEnv.CVars.DrawHideSpots)
-		DebugDrawSelectedHideSpots();
-
-	DebugDrawDynamicHideObjects();
 	DebugDrawAgents();
 	DebugDrawShooting();
 
-	gAIEnv.pTacticalPointSystem->DebugDraw();
+	if (gAIEnv.pTacticalPointSystem)
+		gAIEnv.pTacticalPointSystem->DebugDraw();
 
 	DebugDrawLightManager();
 	//DebugDrawP0AndP1();
@@ -5407,116 +4853,62 @@ void CAISystem::DebugDraw()
 	DebugDrawCheckCapsules();
 	DebugDrawCheckRay();
 	m_pSmartObjectManager->DebugDrawValidateSmartObjectArea();
-	DebugDrawCheckWalkability();
-	DebugDrawCheckWalkabilityTime();
 	DebugDrawCheckFloorPos();
 	DebugDrawCheckGravity();
 	//DebugDrawPaths();
 
-	if (gAIEnv.CVars.DrawGroupTactic > 0)
+	if (gAIEnv.CVars.legacyGroupSystem.DrawGroupTactic > 0)
 		DebugDrawGroupTactic();
 
 	DebugDrawRadar();
 
-	if (gAIEnv.CVars.DebugDrawAmbientFire > 0)
+	if (gAIEnv.CVars.legacyFiring.DebugDrawAmbientFire > 0)
 		DebugDrawAmbientFire();
 
-	if (gAIEnv.CVars.DebugDrawExpensiveAccessoryQuota > 0)
+	if (gAIEnv.CVars.legacyDebugDraw.DebugDrawExpensiveAccessoryQuota > 0)
 		DebugDrawExpensiveAccessoryQuota();
 
-	if (gAIEnv.CVars.DebugDrawDamageParts > 0)
+	if (gAIEnv.CVars.legacyDebugDraw.DebugDrawDamageParts > 0)
 		DebugDrawDamageParts();
 
-	if (gAIEnv.CVars.DebugDrawStanceSize > 0)
+	if (gAIEnv.CVars.legacyDebugDraw.DebugDrawStanceSize > 0)
 		DebugDrawStanceSize();
 
-	if (strcmp(gAIEnv.CVars.ForcePosture, "0"))
+	if (strcmp(gAIEnv.CVars.legacyPuppet.ForcePosture, "0"))
 	{
 		DebugDrawForcePosture();
 	}
 	else
 	{
-		if (strcmp(gAIEnv.CVars.ForceAGAction, "0"))
+		if (strcmp(gAIEnv.CVars.legacyPuppet.ForceAGAction, "0"))
 			DebugDrawForceAGAction();
 
-		if (strcmp(gAIEnv.CVars.ForceAGSignal, "0"))
+		if (strcmp(gAIEnv.CVars.legacyPuppet.ForceAGSignal, "0"))
 			DebugDrawForceAGSignal();
 
-		if (gAIEnv.CVars.ForceStance != -1)
+		if (gAIEnv.CVars.legacyPuppet.ForceStance != -1)
 			DebugDrawForceStance();
 	}
 
-	if (gAIEnv.CVars.DebugDrawAdaptiveUrgency > 0)
+	if (gAIEnv.CVars.legacyDebugDraw.DebugDrawAdaptiveUrgency > 0)
 		DebugDrawAdaptiveUrgency();
 
-	if (gAIEnv.CVars.DebugDrawPlayerActions > 0)
+	if (gAIEnv.CVars.legacyDebugDraw.DebugDrawPlayerActions > 0)
 		DebugDrawPlayerActions();
 
-	if (gAIEnv.CVars.DebugDrawCrowdControl > 0)
+	if (gAIEnv.CVars.legacyPuppet.DebugDrawCrowdControl > 0)
 		DebugDrawCrowdControl();
 
-	if (gAIEnv.CVars.DebugDrawBannedNavsos > 0)
+	if (gAIEnv.CVars.LegacyDebugDrawBannedNavsos > 0)
 		m_pSmartObjectManager->DebugDrawBannedNavsos();
 
-	if (gAIEnv.CVars.DrawSelectedTargets > 0)
+	if (gAIEnv.CVars.legacyDebugDraw.DrawSelectedTargets > 0)
 		DebugDrawSelectedTargets();
 
 	// Aux render flags restored by helper
 #endif //CRYAISYSTEM_DEBUG
 }
 
-//-----------------------------------------------------------------------------------------------------------
-void CAISystem::DebugDrawFakeTracer(const Vec3& pos, const Vec3& dir)
-{
-#ifdef CRYAISYSTEM_DEBUG
-	CAIObject* pPlayer = GetPlayer();
-	if (!pPlayer) return;
-
-	Vec3 dirNorm = dir.GetNormalizedSafe();
-	const Vec3& playerPos = pPlayer->GetPos();
-	Vec3 dirShooterToPlayer = playerPos - pos;
-
-	float projDist = dirNorm.Dot(dirShooterToPlayer);
-
-	float distShooterToPlayer = dirShooterToPlayer.NormalizeSafe();
-
-	if (projDist < 0.0f)
-		return;
-
-	Vec3 nearestPt = pos + dirNorm * distShooterToPlayer;
-
-	float tracerDist = Distance::Point_Point(nearestPt, playerPos);
-
-	const float maxTracerDist = 20.0f;
-	if (tracerDist > maxTracerDist)
-		return;
-
-	float a = 1 - tracerDist / maxTracerDist;
-
-	ray_hit hit;
-	float maxd = distShooterToPlayer * 2.0f;
-	if (gEnv->pPhysicalWorld->RayWorldIntersection(
-	      pos, dirNorm * maxd, COVER_OBJECT_TYPES,
-	      AI_VISION_RAY_CAST_FLAG_BLOCKED_BY_SOLID_COVER,
-	      &hit, 1))
-	{
-		maxd = hit.dist;
-		// fake hit fx
-		Vec3 p = hit.pt + hit.n * 0.1f;
-		ColorF col(cry_random(0.4f, 0.7f), cry_random(0.4f, 0.7f), cry_random(0.4f, 0.7f), 0.9f);
-		m_DEBUG_fakeHitEffect.push_back(SDebugFakeHitEffect(p, hit.n, cry_random(0.45f, 0.9f), cry_random(0.5f, 0.8f), col));
-	}
-
-	const float maxTracerLen = 50.0f;
-	float d0 = distShooterToPlayer - cry_random(0.75f, 1.0f) * maxTracerLen / 2;
-	float d1 = d0 + cry_random(0.5f, 1.0f) * maxTracerLen;
-
-	Limit(d0, 0.0f, maxd);
-	Limit(d1, 0.0f, maxd);
-
-	m_DEBUG_fakeTracers.push_back(SDebugFakeTracer(pos + dirNorm * d0, pos + dirNorm * d1, a, cry_random(0.15f, 0.3f)));
-#endif //CRYAISYSTEM_DEBUG
-}
 
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::AddDebugLine(const Vec3& start, const Vec3& end, uint8 r, uint8 g, uint8 b, float time)

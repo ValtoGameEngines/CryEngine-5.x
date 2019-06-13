@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // Includes
 #include "StdAfx.h"
@@ -562,7 +562,7 @@ bool FindPolygonCircleSplitPoints(const Vec2* pPolygon, const int numPts, const 
 		}
 
 		// Valid polygon segment?
-		if (split.validSegment = (split.A >= 0 && split.B >= 0 && split.A != split.B))
+		if ((split.validSegment = (split.A >= 0 && split.B >= 0 && split.A != split.B)))
 		{
 			// May need to swap points to ensure generating inner polygon
 			const float splitADistSq = (pPolygon[split.A] - splitPt).GetLength2();
@@ -589,7 +589,7 @@ bool FindPolygonCircleSplitPoints(const Vec2* pPolygon, const int numPts, const 
 
 				// Extra mid-point lying on circle, for use with the outer polygon only
 				split.ptMid = (split.ptA + split.ptB) * 0.5f;
-				split.ptMid = splitPt + (split.ptMid - splitPt).Normalize() * splitRadius;
+				split.ptMid = splitPt + (split.ptMid - splitPt).GetNormalized() * splitRadius;
 			}
 			else
 			{

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   FlashUI.h
@@ -19,6 +19,8 @@
 #include <CryGame/IGameFramework.h>
 #include <ILevelSystem.h>
 #include "FlashUIEventSystem.h"
+#include "FlashUIFlowNodeFactory.h"
+#include <CrySystem/ConsoleRegistration.h>
 
 #if !defined (_RELEASE) || defined(RELEASE_LOGGING)
 	#define UIACTION_LOGGING
@@ -34,7 +36,7 @@
 	#define UIACTION_ERROR   (void)
 #endif
 
-class CAutoRegUIFlowNode;
+class CFlashUiFlowNodeFactory;
 struct CUIActionManager;
 class CFlashUIActionEvents;
 
@@ -51,10 +53,10 @@ class CFlashUI
 	CRYINTERFACE_ADD(IFlashUI)
 	CRYINTERFACE_END()
 
-	CRYGENERATE_SINGLETONCLASS(CFlashUI, IFlashUIExtensionName, 0x35AE7F0FBB13437B, 0x9C5FFCD2568616A5)
+	CRYGENERATE_SINGLETONCLASS_GUID(CFlashUI, "FlashUI", "35ae7f0f-bb13-437b-9c5f-fcd2568616a5"_cry_guid)
 
 	CFlashUI();
-	virtual ~CFlashUI() {}
+	virtual ~CFlashUI() = default;
 
 public:
 	// IFlashUI
@@ -71,7 +73,10 @@ public:
 	virtual IUIElement*               GetUIElement(const char* sName) const override { return const_cast<IUIElement*>(m_elements(sName)); }
 	virtual IUIElement*               GetUIElement(int index) const override         { return index < m_elements.size() ? const_cast<IUIElement*>(m_elements[index]) : NULL; }
 	virtual int                       GetUIElementCount() const override             { return m_elements.size(); }
-	virtual IUIElement*               GetUIElementByInstanceStr(const char* sUIInstanceStr) const override;
+
+	virtual                        IUIElement*  GetUIElementByInstanceStr(const char* sUIInstanceStr) const override;
+	virtual std::pair<IUIElement*, IUIElement*> GetUIElementsByInstanceStr(const char* sUIInstanceStr) const override;
+	virtual std::pair<string, int>              GetUIIdentifiersByInstanceStr(const char* sUIInstanceStr) const override;
 
 	virtual IUIAction*                GetUIAction(const char* sName) const override { return const_cast<IUIAction*>(m_actions(sName)); }
 	virtual IUIAction*                GetUIAction(int index) const override         { return index < m_actions.size() ? const_cast<IUIAction*>(m_actions[index]) : NULL; }
@@ -180,7 +185,6 @@ public:
 
 	EPlatformUI GetCurrentPlatform();
 
-	typedef std::vector<CAutoRegUIFlowNode*> TUIFlowNodes;
 private:
 	CFlashUI(const CFlashUI&) : m_modules(8) {}
 
@@ -249,10 +253,10 @@ private:
 	bool                  m_bSortedElementsInvalidated;
 
 	bool                  m_bLoadtimeThread;
-	typedef std::vector<IFlashPlayer*> TPlayerList;
+	typedef std::vector<std::shared_ptr<IFlashPlayer>> TPlayerList;
 	TPlayerList           m_loadtimePlayerList;
 
-	TUIFlowNodes          m_UINodes;
+	CFlashUiFlowNodeFactory_AutoArray m_UINodes;
 
 	typedef std::map<ITexture*, string> TTextureMap;
 	TTextureMap       m_preloadedTextures;

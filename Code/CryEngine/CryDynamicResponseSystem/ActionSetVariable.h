@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /************************************************************************
 
@@ -17,7 +17,7 @@ namespace CryDRS
 {
 class CVariableCollection;
 
-class CActionSetVariable final : public IVariableUsingBase, public DRS::IResponseAction
+class CActionSetVariable final : public DRS::IResponseAction, public IVariableUsingBase
 {
 public:
 	enum EChangeOperation
@@ -29,7 +29,6 @@ public:
 
 	CActionSetVariable() : m_changeOperation(eChangeOperation_Set), m_cooldown(0.0f) {}
 	CActionSetVariable(const CHashedString& pCollection, const CHashedString& variableName, CVariableValue targetValue, EChangeOperation operation, float cooldown);
-	virtual ~CActionSetVariable() {}
 
 	//////////////////////////////////////////////////////////
 	// IResponseAction implementation
@@ -40,8 +39,8 @@ public:
 	//////////////////////////////////////////////////////////
 
 private:
-	CVariableValue   m_valueToSet;
+	CVariableValue m_valueToSet;
 	EChangeOperation m_changeOperation;
-	float            m_cooldown;
+	float m_cooldown;
 };
 } // namespace CryDRS

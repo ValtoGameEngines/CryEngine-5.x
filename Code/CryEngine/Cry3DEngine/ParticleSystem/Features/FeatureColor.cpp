@@ -1,56 +1,36 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  Created:     29/09/2014 by Filipe amim
-//  Description:
-// -------------------------------------------------------------------------
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2015-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
-#include "ParticleSystem/ParticleEmitter.h"
-#include <CrySerialization/SmartPtr.h>
 #include "FeatureColor.h"
-#include "TimeSource.h"
-
-CRY_PFX2_DBG
+#include "Domain.h"
+#include "ParticleSystem/ParticleEmitter.h"
+#include "ParticleSystem/ParticleComponentRuntime.h"
+#include <CrySerialization/SmartPtr.h>
 
 namespace pfx2
 {
 
-EParticleDataType PDT(EPDT_Color, UCol, 1, BHasInit(true));
-
-void IColorModifier::Serialize(Serialization::IArchive& ar)
+template<typename F>
+ILINE void VecMul(Vec3_tpl<F>& a, Vec3_tpl<F> const& b)
 {
-	ar(m_enabled);
+	a.x *= b.x;
+	a.y *= b.y;
+	a.z *= b.z;
 }
 
-CFeatureFieldColor::CFeatureFieldColor() : m_color(255, 255, 255), CParticleFeature(gpu_pfx2::eGpuFeatureType_Color) {}
+MakeDataType(EPDT_Color, UCol, EDD_ParticleUpdate);
+
+using IColorModifier = ITypeModifier<UCol, Vec3>;
 
 void CFeatureFieldColor::AddToComponent(CParticleComponent* pComponent, SComponentParams* pParams)
 {
-	m_modInit.clear();
-	m_modUpdate.clear();
+	CParamModColor::AddToComponent(pComponent, this, EPDT_Color);
 
-	pComponent->AddToUpdateList(EUL_InitUpdate, this);
-	pComponent->AddParticleData(EPDT_Color);
-
-	for (auto& pModifier : m_modifiers)
-	{
-		if (pModifier && pModifier->IsEnabled())
-			pModifier->AddToParam(pComponent, this);
-	}
-	if (!m_modUpdate.empty())
-	{
-		pComponent->AddParticleData(InitType(EPDT_Color));
-		pComponent->AddToUpdateList(EUL_Update, this);
-	}
-
-	if (auto pInt = GetGpuInterface())
+	if (auto pInt = MakeGpuInterface(pComponent, gpu_pfx2::eGpuFeatureType_Color))
 	{
 		const int numSamples = gpu_pfx2::kNumModifierSamples;
 		Vec3 samples[numSamples];
-		Sample(samples, numSamples);
+		Sample(samples);
 		gpu_pfx2::SFeatureParametersColorTable table;
 		table.samples = samples;
 		table.numSamples = numSamples;
@@ -61,79 +41,17 @@ void CFeatureFieldColor::AddToComponent(CParticleComponent* pComponent, SCompone
 void CFeatureFieldColor::Serialize(Serialization::IArchive& ar)
 {
 	CParticleFeature::Serialize(ar);
-	SModParticleField modContext;
-	Serialization::SContext _modContext(ar, static_cast<IParamModContext*>(&modContext));
-	struct SerStruct
-	{
-		SerStruct(std::vector<PColorModifier>& modifiers, ColorB& color)
-			: m_modifiers(modifiers), m_color(color) {}
-		void Serialize(Serialization::IArchive& ar)
-		{
-			ar(m_color, "Color", "^");
-			ar(m_modifiers, "Modifiers", "^");
-		}
-		std::vector<PColorModifier>& m_modifiers;
-		ColorB&                      m_color;
-	} serStruct(m_modifiers, m_color);
-	ar(serStruct, "Color", "Color");
+	ar(static_cast<CParamModColor&>(*this), "Color", "Color");
 }
 
-void CFeatureFieldColor::InitParticles(const SUpdateContext& context)
+void CFeatureFieldColor::InitParticles(CParticleComponentRuntime& runtime)
 {
-	CRY_PFX2_PROFILE_DETAIL;
-
-	CParticleContainer& container = context.m_container;
-	IOColorStream colors = container.GetIOColorStream(EPDT_Color);
-
-	UCol uColor;
-	uColor.dcolor = m_color.pack_argb8888() | 0xff000000;
-	UColv baseColor = ToUColv(uColor);
-	CRY_PFX2_FOR_SPAWNED_PARTICLEGROUP(context)
-	{
-		colors.Store(particleGroupId, baseColor);
-	}
-	CRY_PFX2_FOR_END
-
-	SUpdateRange spawnRange;
-	spawnRange.m_firstParticleId = context.m_container.GetFirstSpawnParticleId();
-	spawnRange.m_lastParticleId = context.m_container.GetLastParticleId();
-	for (auto& pModifier : m_modInit)
-		pModifier->Modify(context, spawnRange, colors);
-
-	container.CopyData(InitType(EPDT_Color), EPDT_Color, container.GetSpawnedRange());
+	Init(runtime, EPDT_Color);
 }
 
-void CFeatureFieldColor::Update(const SUpdateContext& context)
+void CFeatureFieldColor::UpdateParticles(CParticleComponentRuntime& runtime)
 {
-	CRY_PFX2_PROFILE_DETAIL;
-
-	CParticleContainer& container = context.m_container;
-	IOColorStream colors = container.GetIOColorStream(EPDT_Color);
-
-	for (auto& pModifier : m_modUpdate)
-		pModifier->Modify(context, context.m_updateRange, colors);
-}
-
-void CFeatureFieldColor::AddToInitParticles(IColorModifier* pMod)
-{
-	if (std::find(m_modInit.begin(), m_modInit.end(), pMod) == m_modInit.end())
-		m_modInit.push_back(pMod);
-}
-
-void CFeatureFieldColor::AddToUpdate(IColorModifier* pMod)
-{
-	if (std::find(m_modInit.begin(), m_modInit.end(), pMod) == m_modInit.end())
-		m_modUpdate.push_back(pMod);
-}
-
-void CFeatureFieldColor::Sample(Vec3* samples, const int numSamples)
-{
-	Vec3 baseColor(m_color.r / 255.f, m_color.g / 255.f, m_color.b / 255.f);
-
-	for (int i = 0; i < numSamples; ++i)
-		samples[i] = baseColor;
-	for (auto& pModifier : m_modUpdate)
-		pModifier->Sample(samples, numSamples);
+	Update(runtime, EPDT_Color);
 }
 
 CRY_PFX2_IMPLEMENT_FEATURE(CParticleFeature, CFeatureFieldColor, "Field", "Color", colorField);
@@ -145,9 +63,9 @@ class CColorRandom : public IColorModifier
 {
 public:
 
-	virtual void AddToParam(CParticleComponent* pComponent, CFeatureFieldColor* pParam)
+	virtual EDataDomain GetDomain() const
 	{
-		pParam->AddToInitParticles(this);
+		return EDD_None;
 	}
 
 	virtual void Serialize(Serialization::IArchive& ar)
@@ -157,50 +75,54 @@ public:
 		ar(m_rgb, "RGB", "RGB");
 	}
 
-	virtual void Modify(const SUpdateContext& context, const SUpdateRange& range, IOColorStream stream) const
+	virtual void Modify(const CParticleComponentRuntime& runtime, const SUpdateRange& range, IOColorStream stream, EDataDomain domain) const
 	{
 		CRY_PFX2_PROFILE_DETAIL;
 
 		if (m_luminance && m_rgb)
-			DoModify<true, true>(context, range, stream);
+			DoModify<true, true>(runtime, range, stream);
 		else if (m_luminance)
-			DoModify<true, false>(context, range, stream);
+			DoModify<true, false>(runtime, range, stream);
 		if (m_rgb)
-			DoModify<false, true>(context, range, stream);
+			DoModify<false, true>(runtime, range, stream);
+	}
+	virtual TRange<Vec3> GetMinMax() const
+	{
+		float lower = (1.0f - m_luminance) * (1.0f - m_rgb);
+		return TRange<Vec3>(Vec3(lower), Vec3(1));
 	}
 
 private:
 
 	template<bool doLuminance, bool doRGB>
-	void DoModify(const SUpdateContext& context, const SUpdateRange& range, IOColorStream stream) const
+	void DoModify(const CParticleComponentRuntime& runtime, const SUpdateRange& range, IOColorStream stream) const
 	{
-		SChaosKeyV::Range randRange(1.0f - m_luminance, 1.0f);
+		auto randRange = SChaosKeyV::Range(1.0f - m_luminance, 1.0f);
 		floatv rgb = ToFloatv(m_rgb),
 		       unrgb = ToFloatv(1.0f - m_rgb);
 
-		CRY_PFX2_FOR_RANGE_PARTICLESGROUP(range);
+		for (auto particleGroupId : SGroupRange(range))
 		{
-			ColorFv color = ToColorFv(stream.Load(particleGroupId));
+			Vec3v color = ToVec3v(stream.Load(particleGroupId));
 			if (doLuminance)
 			{
-				const floatv lum = context.m_spawnRngv.Rand(randRange);
+				const floatv lum = runtime.ChaosV()(randRange);
 				color = color * lum;
 			}
 			if (doRGB)
 			{
-				ColorFv randColor(
-					context.m_spawnRngv.RandUNorm(),
-					context.m_spawnRngv.RandUNorm(),
-					context.m_spawnRngv.RandUNorm());
+				Vec3v randColor(
+					runtime.ChaosV().RandUNorm(),
+					runtime.ChaosV().RandUNorm(),
+					runtime.ChaosV().RandUNorm());
 				color = color * unrgb + randColor * rgb;
 			}
-			stream.Store(particleGroupId, ColorFvToUColv(color));
+			stream.Store(particleGroupId, ToUColv(color));
 		}
-		CRY_PFX2_FOR_END;
 	}
 
-	UFloat m_luminance;
-	UFloat m_rgb;
+	UUnitFloat m_luminance;
+	UUnitFloat m_rgb;
 };
 
 SERIALIZATION_CLASS_NAME(IColorModifier, CColorRandom, "ColorRandom", "Color Random");
@@ -208,55 +130,63 @@ SERIALIZATION_CLASS_NAME(IColorModifier, CColorRandom, "ColorRandom", "Color Ran
 //////////////////////////////////////////////////////////////////////////
 // CColorCurve
 
-class CColorCurve : public CTimeSource, public IColorModifier
+class CColorCurve;
+
+template<>
+void TModFunction<CColorCurve, UCol, Vec3>::Sample(TVarArray<Vec3> samples) const
+{
+}
+
+class CColorCurve : public TModFunction<CColorCurve, UCol, Vec3>
 {
 public:
-	virtual void AddToParam(CParticleComponent* pComponent, CFeatureFieldColor* pParam)
-	{
-		if (m_spline.HasKeys())
-			CTimeSource::AddToParam(pComponent, pParam, this);
-	}
-
 	virtual void Serialize(Serialization::IArchive& ar)
 	{
-		IColorModifier::Serialize(ar);
-		CTimeSource::SerializeInplace(ar);
-		string desc = ar.isEdit() ? GetSourceDescription() : "";
+		IModifier::Serialize(ar);
+		CDomain::Serialize(ar);
+		string desc = ar.isEdit() ? GetSourceDescription() : string("");
 		Serialization::SContext _splineContext(ar, desc.data());
 		ar(m_spline, "ColorCurve", "Color Curve");
 	}
 
-	virtual void Modify(const SUpdateContext& context, const SUpdateRange& range, IOColorStream stream) const
-	{
-		CRY_PFX2_PROFILE_DETAIL;
-		CTimeSource::Dispatch<CColorCurve>(context, range, stream, EMD_PerParticle);
-	}
-
 	template<typename TTimeKernel>
-	void DoModify(const SUpdateContext& context, const SUpdateRange& range, IOColorStream stream, const TTimeKernel& timeKernel) const
+	void DoModify(const CParticleComponentRuntime& runtime, const SUpdateRange& range, IOColorStream stream, const TTimeKernel& timeKernel) const
 	{
-		CRY_PFX2_FOR_RANGE_PARTICLESGROUP(range);
+		if (!m_spline.HasKeys())
+			return;
+
+		for (auto particleGroupId : SGroupRange(range))
 		{
-			const floatv sample = timeKernel.Sample(particleGroupId);
-			const ColorFv color0 = ToColorFv(stream.Load(particleGroupId));
-			const ColorFv curve = m_spline.Interpolate(sample);
-			const ColorFv color1 = color0 * curve;
-			stream.Store(particleGroupId, ColorFvToUColv(color1));
+			const floatv sample = AdjustDomain(timeKernel.Sample(particleGroupId));
+			Vec3v color = ToVec3v(stream.Load(particleGroupId));
+			const Vec3v curve = m_spline.Interpolate(sample);
+			VecMul(color, curve);
+			stream.Store(particleGroupId, ToUColv(color));
 		}
-		CRY_PFX2_FOR_END;
 	}
 
-	virtual void Sample(Vec3* samples, int samplePoints) const
+	virtual void Sample(TVarArray<Vec3> samples) const
 	{
-		for (int i = 0; i < samplePoints; ++i)
+		if (samples.empty() || m_domain != EDomain::Age || m_sourceOwner != EDomainOwner::Self)
+			return;
+
+		float scale = 1.0f / (samples.size() - 1);
+		for (uint i = 0; i < samples.size(); ++i)
 		{
-			const float point = (float) i / samplePoints;
-			Vec3 color0 = samples[i];
-			ColorF curve = m_spline.Interpolate(point);
-			Vec3 color1(color0.x * curve.r, color0.y * curve.g, color0.z * curve.b);
-			samples[i] = color1;
+			Vec3& color = samples[i];
+			Vec3 curve = m_spline.Interpolate(i * scale);
+			VecMul(color, curve);
 		}
 	}
+
+	virtual TRange<Vec3> GetMinMax() const
+	{
+		Range ranges[3] = { m_spline.GetValueRange(0), m_spline.GetValueRange(1), m_spline.GetValueRange(2) };
+		return TRange<Vec3>(
+			Vec3(ranges[0].start, ranges[1].start, ranges[2].start),
+			Vec3(ranges[0].end, ranges[1].end, ranges[2].end));
+	}
+
 private:
 	CParticleColorSpline m_spline;
 };
@@ -269,56 +199,47 @@ SERIALIZATION_CLASS_NAME(IColorModifier, CColorCurve, "ColorCurve", "Color Curve
 class CColorAttribute : public IColorModifier
 {
 public:
-	CColorAttribute()
-		: m_scale(1.0f)
-		, m_bias(0.0f)
-		, m_gamma(1.0f) 
-		, m_spawnOnly(false) {}
-
-	virtual void AddToParam(CParticleComponent* pComponent, CFeatureFieldColor* pParam)
+	virtual EDataDomain GetDomain() const
 	{
-		if (m_spawnOnly)
-			pParam->AddToInitParticles(this);
-		else
-			pParam->AddToUpdate(this);
+		return m_spawnOnly ? EDD_HasUpdate : EDD_None;
 	}
 
 	virtual void Serialize(Serialization::IArchive& ar)
 	{
 		IColorModifier::Serialize(ar);
-		ar(m_name, "Name", "Attribute Name");
+		ar(m_attribute, "Name", "Attribute Name");
 		ar(m_scale, "Scale", "Scale");
 		ar(m_bias, "Bias", "Bias");
 		ar(m_gamma, "Gamma", "Gamma");
 		ar(m_spawnOnly, "SpawnOnly", "Spawn Only");
 	}
 
-	virtual void Modify(const SUpdateContext& context, const SUpdateRange& range, IOColorStream stream) const
+	virtual void Modify(const CParticleComponentRuntime& runtime, const SUpdateRange& range, IOColorStream stream, EDataDomain domain) const
 	{
-		CParticleContainer& container = context.m_container;
-		const CAttributeInstance& attributes = context.m_runtime.GetEmitter()->GetAttributeInstance();
-		auto attributeId = attributes.FindAttributeIdByName(m_name.c_str());
-		ColorF attribute = attributes.GetAsColorF(attributeId, ColorF(1.0f, 1.0f, 1.0f));
-		attribute.r = pow(attribute.r, m_gamma) * m_scale + m_bias;
-		attribute.g = pow(attribute.g, m_gamma) * m_scale + m_bias;
-		attribute.b = pow(attribute.b, m_gamma) * m_scale + m_bias;
-		const ColorFv value = ToColorFv(attribute);
+		CRY_PFX2_PROFILE_DETAIL;
 
-		CRY_PFX2_FOR_RANGE_PARTICLESGROUP(range)
+		const CAttributeInstance& attributes = runtime.GetEmitter()->GetAttributeInstance();
+		ColorF attribute = m_attribute.GetValueAs(attributes, ColorB(~0U));
+		Vec3 attr;
+		attr.x = pow(attribute.r, m_gamma) * m_scale + m_bias;
+		attr.y = pow(attribute.g, m_gamma) * m_scale + m_bias;
+		attr.z = pow(attribute.b, m_gamma) * m_scale + m_bias;
+		const Vec3v attrv = ToVec3v(attr);
+
+		for (auto particleGroupId : SGroupRange(range))
 		{
-			const ColorFv color0 = ToColorFv(stream.Load(particleGroupId));
-			const ColorFv color1 = color0 * value;
-			stream.Store(particleGroupId, ColorFvToUColv(color1));
+			Vec3v color = ToVec3v(stream.Load(particleGroupId));
+			VecMul(color, attrv);
+			stream.Store(particleGroupId, ToUColv(color));
 		}
-		CRY_PFX2_FOR_END;
 	}
 
 private:
-	string m_name;
-	SFloat m_scale;
-	SFloat m_bias;
-	UFloat m_gamma;
-	bool   m_spawnOnly;
+	CAttributeReference m_attribute;
+	SFloat              m_scale     = 1;
+	SFloat              m_bias      = 0;
+	UFloat              m_gamma     = 1;
+	bool                m_spawnOnly = true;
 };
 
 SERIALIZATION_CLASS_NAME(IColorModifier, CColorAttribute, "Attribute", "Attribute");
@@ -326,18 +247,16 @@ SERIALIZATION_CLASS_NAME(IColorModifier, CColorAttribute, "Attribute", "Attribut
 //////////////////////////////////////////////////////////////////////////
 // CColorInherit
 
-class CColorInherit : public IColorModifier
+using IColorFieldModifier = IFieldModifier<UCol, Vec3>;
+
+SERIALIZATION_INHERIT_CREATORS(IColorModifier, IColorFieldModifier);
+
+class CColorInherit : public IColorFieldModifier
 {
 public:
-	CColorInherit()
-		: m_spawnOnly(true) {}
-
-	virtual void AddToParam(CParticleComponent* pComponent, CFeatureFieldColor* pParam)
+	virtual EDataDomain GetDomain() const
 	{
-		if (m_spawnOnly)
-			pParam->AddToInitParticles(this);
-		else
-			pParam->AddToUpdate(this);
+		return m_spawnOnly ? EDD_Spawner : EDD_SpawnerUpdate;
 	}
 
 	virtual void Serialize(Serialization::IArchive& ar)
@@ -346,34 +265,30 @@ public:
 		ar(m_spawnOnly, "SpawnOnly", "Spawn Only");
 	}
 
-	virtual void Modify(const SUpdateContext& context, const SUpdateRange& range, IOColorStream stream) const
+	virtual void Modify(const CParticleComponentRuntime& runtime, const SUpdateRange& range, IOColorStream stream, EDataDomain domain) const
 	{
 		CRY_PFX2_PROFILE_DETAIL;
 
-		CParticleContainer& container = context.m_container;
-		CParticleContainer& parentContainer = context.m_parentContainer;
+		const CParticleContainer& parentContainer = runtime.GetParentContainer();
 		if (!parentContainer.HasData(EPDT_Color))
 			return;
-		IPidStream parentIds = context.m_container.GetIPidStream(EPDT_ParentId);
-		IColorStream parentColors = parentContainer.GetIColorStream(EPDT_Color);
-		UCol defaultColor;
-		defaultColor.dcolor = ~0u;
+		IPidStream parentIds = runtime.GetContainer().GetIPidStream(EPDT_ParentId);
+		IColorStream parentColors = parentContainer.GetIColorStream(EPDT_Color, UCol{ {~0u} });
 
-		CRY_PFX2_FOR_RANGE_PARTICLESGROUP(range)
+		for (auto particleGroupId : SGroupRange(range))
 		{
 			const TParticleIdv parentId = parentIds.Load(particleGroupId);
-			const ColorFv color0 = ToColorFv(stream.Load(particleGroupId));
-			const ColorFv parent = ToColorFv(parentColors.Load(parentId, defaultColor));
-			const ColorFv color1 = color0 * parent;
-			stream.Store(particleGroupId, ColorFvToUColv(color1));
+			Vec3v color = ToVec3v(stream.Load(particleGroupId));
+			const Vec3v parent = ToVec3v(parentColors.SafeLoad(parentId));
+			VecMul(color, parent);
+			stream.Store(particleGroupId, ToUColv(color));
 		}
-		CRY_PFX2_FOR_END;
 	}
 
 private:
-	bool m_spawnOnly;
+	bool m_spawnOnly = true;
 };
 
-SERIALIZATION_CLASS_NAME(IColorModifier, CColorInherit, "Inherit", "Inherit");
+SERIALIZATION_CLASS_NAME(IColorFieldModifier, CColorInherit, "Inherit", "Inherit");
 
 }

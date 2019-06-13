@@ -1,27 +1,9 @@
-// CRYENGINE Source Code File
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 
-// Lean zprepass for most expensive cases, skips tessellated geom
-
-struct vert2fragZPrepass
+vert2fragZPre Common_ZPrePassVS(app2vertZGeneral IN_common)
 {
-	OUT_P
-#if %_RT_ALPHATEST
-	float4 baseTC     : TEXCOORDN;
-#endif
-};
-
-struct pixout_zprepass
-{
-#if (%_RT_MSAA_QUALITY || %_RT_MSAA_QUALITY1) && %_RT_ALPHATEST
-	uint uCoverageMask	: SV_Coverage;
-#endif
-};
-
-vert2fragZPrepass Common_ZPrepassVS(app2vertZGeneral IN_common)
-{
-	vert2fragZPrepass OUT = (vert2fragZPrepass)0;
+	vert2fragZPre OUT = (vert2fragZPre)0;
 
 	app2vertZGeneral IN = IN_common;
 #if %TEMP_TERRAIN
@@ -32,51 +14,89 @@ vert2fragZPrepass Common_ZPrepassVS(app2vertZGeneral IN_common)
 	streamPos_FromZ(IN, vertPassPos);
 	
 #if %TEMP_TERRAIN
-	OUT.HPosition = Pos_VS_Terrain(0.0005f, g_VS_ViewProjZeroMatr, vertPassPos);
+	float4 HPosition = Pos_VS_Terrain(0.0005f, g_VS_ViewProjZeroMatr, vertPassPos);
 #else  
-	OUT.HPosition = Pos_VS_General(g_VS_ViewProjZeroMatr, vertPassPos);
+	float4 HPosition = Pos_VS_General(g_VS_ViewProjZeroMatr, vertPassPos);
 #endif
 
-#if %_RT_ALPHATEST
-    float fAlphaTest = Get_MaterialAlphaTest();
-	float fDissolve = Get_SPI_Dissolve();
-	OUT.baseTC.wz = float2(fAlphaTest,fDissolve);
+	float3 vPos = vertPassPos.WorldPos.xyz;
 
-	// todo: generalize alpha testing code
-	OUT.baseTC = vertPassPos.baseTC; 
-	#if %LEAVES
-		float3 worldTangentS = mul((const float3x3)vertPassPos.InstMatrix, vertPassPos.ObjToTangentSpace[0]);
-		float3 worldTangentT = mul((const float3x3)vertPassPos.InstMatrix, vertPassPos.ObjToTangentSpace[1]);
-		float3 worldTangentN = mul((const float3x3)vertPassPos.InstMatrix, vertPassPos.ObjToTangentSpace[2]);
-		OUT.baseTC.w = ParallelOpacityFalloff(vertPassPos.WorldPos.xyz, worldTangentN.xyz, CapOpacityFalloff, OUT.baseTC.w);
-	#endif
+#if ENABLE_TESSELLATION && !%_RT_NO_TESSELLATION
+	//relative position
+	OUT.vView.xyz = vPos.xyz;
+	OUT.vNormal.xyz = normalize(mul((const float3x3)vertPassPos.InstMatrix, vertPassPos.Normal.xyz));
+#else
+	OUT.HPosition = HPosition;
+#endif
+
+#if %_RT_ALPHATEST	
+	float3 worldTangentS = mul((const float3x3)vertPassPos.InstMatrix, vertPassPos.ObjToTangentSpace[0]);
+	float3 worldTangentT = mul((const float3x3)vertPassPos.InstMatrix, vertPassPos.ObjToTangentSpace[1]);
+	float3 worldTangentN = mul((const float3x3)vertPassPos.InstMatrix, vertPassPos.ObjToTangentSpace[2]);
+	
+	float4 baseTC = vertPassPos.baseTC;  
+
+	////////////////////////////////////////////////////////////////////////////////////////////////
+	// Output uv coordinates
+
+#if %_RT_DECAL_TEXGEN_2D 
+	float3 DistAtten;
+	_TCModifyDecal( vertPassPos, baseTC, DistAtten );
 #endif 
+	
+	_TCModify(baseTC, OUT.baseTC, vertPassPos.Position, vertPassPos.ObjToTangentSpace[2], TS_DIFFUSE);
 
-  return OUT;
-}
-
-pixout_zprepass Common_ZPrepassPS(vert2fragZPrepass IN)
-{
-	pixout_zprepass OUT = (pixout_zprepass) 0;
-
-#if %_RT_ALPHATEST
-	half fDiffuseAlpha = GetAlphaTex(diffuseTex, IN.baseTC.xy);
-	#if (%_RT_MSAA_QUALITY || %_RT_MSAA_QUALITY1) && %_RT_ALPHATEST
-		 GetAlphaCoverageMask( diffuseTex, IN.baseTC.xy, IN.baseTC.w, fDiffuseAlpha, OUT.uCoverageMask);
+	#if %SILHOUETTE_PARALLAX_OCCLUSION_MAPPING
+		OUT.baseTC.xy *= CM_SilPomDetailParams.xy;
 	#endif
-
-	clip(fDiffuseAlpha - IN.baseTC.w);
+	
+	float fAlphaTest = 0.0f;
+	#if %_RT_ALPHATEST	
+		fAlphaTest = Get_MaterialAlphaTest();
+		#if %LEAVES
+			fAlphaTest = ParallelOpacityFalloff(vertPassPos.WorldPos.xyz, worldTangentN.xyz, CapOpacityFalloff, fAlphaTest);
+		#endif
+	#endif
+	
+	OUT.baseTC.w = fAlphaTest;
 #endif
 
 	return OUT;
 }
 
-technique ZPrepass
+pixout_zpre Common_ZPrePassPS(vert2fragZPre IN)
+{
+	pixout_zpre OUT = (pixout_zpre) 0;
+
+#if %_RT_ALPHATEST
+	half diffuseMapAlpha = GetAlphaTex(diffuseTex, IN.baseTC.xy);
+	#if (%_RT_MSAA_QUALITY || %_RT_MSAA_QUALITY1) && %_RT_ALPHATEST
+		 GetAlphaCoverageMask( diffuseTex, IN.baseTC.xy, IN.baseTC.w, diffuseMapAlpha, OUT.uCoverageMask);
+	#endif
+
+	clip(diffuseMapAlpha - IN.baseTC.w);
+#endif
+	
+	ApplyDissolve(Get_SPI_Dissolve(), (int2)IN.WPos.xy);
+
+	return OUT;
+}
+
+#include "CommonZPrePassTess.cfi"
+
+//////////////////////////////// technique ////////////////
+
+technique ZPrePass
 {
 	pass p0
 	{
-		VertexShader = Common_ZPrepassVS() ZVS;
-		PixelShader = Common_ZPrepassPS() ZPS;
+		VertexShader = Common_ZPrePassVS() ZVS;
+#if ENABLE_TESSELLATION
+		HullShader   = Common_ZPrePassHS() GeneralHS;
+		DomainShader = Common_ZPrePassDS() GeneralDS;
+#endif
+
+		PixelShader = Common_ZPrePassPS() ZPS;
 		GeometryShader = $AutoGS_MultiRes();
 
 		ZEnable = true;

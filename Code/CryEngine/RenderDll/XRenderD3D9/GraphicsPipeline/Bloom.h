@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -8,7 +8,20 @@
 class CBloomStage : public CGraphicsPipelineStage
 {
 public:
-	void Init();
+	static const EGraphicsPipelineStage StageID = eStage_Bloom;
+
+	CBloomStage(CGraphicsPipeline& graphicsPipeline)
+		: CGraphicsPipelineStage(graphicsPipeline)
+		, m_pass1H(&graphicsPipeline)
+		, m_pass1V(&graphicsPipeline)
+		, m_pass2H(&graphicsPipeline)
+		, m_pass2V(&graphicsPipeline) {}
+
+	bool IsStageActive(EShaderRenderingFlags flags) const final
+	{
+		return CRenderer::CV_r_HDRBloom && CRenderer::CV_r_PostProcess;
+	}
+
 	void Execute();
 
 private:
@@ -16,7 +29,4 @@ private:
 	CFullscreenPass m_pass1V;
 	CFullscreenPass m_pass2H;
 	CFullscreenPass m_pass2V;
-
-	int             m_samplerPoint;
-	int             m_samplerLinear;
 };

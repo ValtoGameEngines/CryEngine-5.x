@@ -1,10 +1,9 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-#ifndef __CSHADERBIN_H__
-#define __CSHADERBIN_H__
+#pragma once
 
-#include <map>
 #include "ParserBin.h"
+#include <map>
 
 #ifndef FOURCC
 typedef DWORD FOURCC;
@@ -55,7 +54,7 @@ struct SParamCacheInfo
 	AffectedParamsVec m_AffectedSamplers;
 	AffectedParamsVec m_AffectedTextures;
 
-	SParamCacheInfo() : m_dwName(0), m_nMaskGenFX(0) {};
+	SParamCacheInfo() : m_dwName(0), m_nMaskGenFX(0) {}
 
 	int Size()
 	{
@@ -71,7 +70,7 @@ struct SParamCacheInfo
 	}
 };
 
-#define MAX_FXBIN_CACHE 32
+#define MAX_FXBIN_CACHE 200
 
 struct SShaderBin
 {
@@ -104,7 +103,7 @@ struct SShaderBin
 		, m_Prev(nullptr)
 		, m_CRC32(0)
 		, m_dwName(0)
-		, m_szName("")
+		, m_szName(const_cast<char*>(""))
 		, m_SourceCRC32(0)
 		, m_bLocked(false)
 		, m_bReadOnly(true)
@@ -131,7 +130,7 @@ struct SShaderBin
 		if (m_szName[0])
 		{
 			g_shaderBucketAllocator.deallocate((void*) m_szName);
-			m_szName = "";
+			m_szName = const_cast<char*>("");
 		}
 
 		if (name[0])
@@ -204,7 +203,6 @@ private:
 #define FXP_TEXTURES_DIRTY 4
 
 typedef std::vector<SFXParam>::iterator      FXParamsIt;
-typedef std::vector<STexSamplerFX>::iterator FXSamplersOldIt;
 typedef std::vector<SFXSampler>::iterator    FXSamplersIt;
 typedef std::vector<SFXTexture>::iterator    FXTexturesIt;
 struct SShaderFXParams
@@ -215,7 +213,6 @@ struct SShaderFXParams
 	std::vector<SFXSampler>    m_FXSamplers;
 	std::vector<SFXTexture>    m_FXTextures;
 
-	std::vector<STexSamplerFX> m_FXSamplersOld;
 	DynArray<SShaderParam>     m_PublicParams;
 
 	SShaderFXParams()
@@ -228,7 +225,6 @@ struct SShaderFXParams
 		nSize += sizeOfV(m_FXSamplers);
 		nSize += sizeOfV(m_FXSamplers);
 
-		nSize += sizeOfV(m_FXSamplersOld);
 		nSize += sizeOfV(m_PublicParams);
 
 		return nSize;
@@ -252,11 +248,9 @@ class CShaderManBin
 
 	bool              ParseBinFX_Global_Annotations(CParserBin& Parser, SParserFrame& Frame, bool* bPublic, CCryNameR techStart[2]);
 	bool              ParseBinFX_Global(CParserBin& Parser, SParserFrame& Frame, bool* bPublic, CCryNameR techStart[2]);
-	bool              ParseBinFX_Sampler_Annotations_Script(CParserBin& Parser, SParserFrame& Frame, STexSamplerFX* pSampler);
-	bool              ParseBinFX_Sampler_Annotations(CParserBin& Parser, SParserFrame& Frame, STexSamplerFX* pSampler);
-	bool              ParseBinFX_Sampler(CParserBin& Parser, SParserFrame& Data, uint32 dwName, SParserFrame Annotations, EToken samplerType);
-	bool              ParseBinFX_Sampler(CParserBin& Parser, SParserFrame& Data, SFXSampler& Sampl);
-	bool              ParseBinFX_Texture(CParserBin& Parser, SParserFrame& Data, SFXTexture& Sampl);
+	bool              ParseBinFX_Texture_Annotations_Script(CParserBin& Parser, SParserFrame& Frame, SFXTexture* pTexture);
+	bool              ParseBinFX_Texture_Annotations(CParserBin& Parser, SParserFrame& Frame, SFXTexture* pTexture);
+	bool              ParseBinFX_Texture(CParserBin& Parser, SParserFrame& Data, SFXTexture& Sampl, SParserFrame Annotations);
 
 	void              InitShaderDependenciesList(CParserBin& Parser, SCodeFragment* pFunc, TArray<byte>& bChecked, TArray<int>& AffectedFuncs);
 	void              CheckFragmentsDependencies(CParserBin& Parser, TArray<byte>& bChecked, TArray<int>& AffectedFuncs);
@@ -292,7 +286,6 @@ class CShaderManBin
 	void              mfAddFXSampler(CShader* pSH, const SFXSampler* pParam);
 	void              mfAddFXTexture(CShader* pSH, const SFXTexture* pParam);
 
-	void              mfAddFXSampler(CShader* pSH, const STexSamplerFX* pSamp);
 	void              mfGeneratePublicFXParams(CShader* pSH, CParserBin& Parser);
 
 public:
@@ -322,7 +315,3 @@ public:
 	int  Size();
 	void GetMemoryUsage(ICrySizer* pSizer) const;
 };
-
-//=====================================================================
-
-#endif  // __CSHADERBIN_H__

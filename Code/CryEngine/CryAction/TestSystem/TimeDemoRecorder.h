@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   timedemorecorder.h
@@ -16,10 +16,13 @@
 #pragma once
 
 #include <CryCore/Containers/CryListenerSet.h>
-#include <ITimeDemoRecorder.h>
+#include <CryAction/ITimeDemoRecorder.h>
+#include <CrySystem/Profilers/ILegacyProfiler.h>
+#include <3rdParty/concqueue/concqueue-spsc.hpp>
 #include "ITestModule.h"
 
-struct SRecordedGameEvent;
+struct SRecordedGameEventV4;
+struct SRecordedGameEventV7;
 
 struct STimeDemoGameEvent
 {
@@ -49,7 +52,8 @@ struct STimeDemoGameEvent
 		}
 	}
 
-	STimeDemoGameEvent(const SRecordedGameEvent& event);
+	STimeDemoGameEvent(const SRecordedGameEventV4& event);
+	STimeDemoGameEvent(const SRecordedGameEventV7& event);
 
 	void GetMemoryUsage(ICrySizer* pSizer) const
 	{
@@ -60,38 +64,40 @@ struct STimeDemoGameEvent
 };
 typedef std::vector<STimeDemoGameEvent> TGameEventRecords;
 
-class CTimeDemoRecorder : public ITimeDemoRecorder, IFrameProfilePeakCallback, IInputEventListener, IEntitySystemSink, IGameplayListener
+class CTimeDemoRecorder 
+	: public ITimeDemoRecorder
+	, public ICryProfilerFrameListener
+	, IInputEventListener
+	, IEntitySystemSink
+	, IGameplayListener
+	, IEntityEventListener
 {
 public:
 	CTimeDemoRecorder();
 	virtual ~CTimeDemoRecorder();
 
-	void Reset();
-
-	void PreUpdate();
-	void PostUpdate();
-
-	void GetMemoryStatistics(class ICrySizer* pSizer) const;
-
-	bool IsTimeDemoActive() const { return m_bChainloadingDemo || m_bPlaying || m_bRecording; }
-	bool IsChainLoading() const   { return m_bChainloadingDemo; }
-
 	//////////////////////////////////////////////////////////////////////////
 	// Implements ITimeDemoRecorder interface.
 	//////////////////////////////////////////////////////////////////////////
-	virtual bool IsRecording() const override { return m_bRecording; };
-	virtual bool IsPlaying() const override   { return m_bPlaying; };
+	virtual bool IsRecording() const override    { return m_bRecording; };
+	virtual bool IsPlaying() const override      { return m_bPlaying; };
+	virtual bool IsChainLoading() const override { return m_bChainloadingDemo; }
 	virtual void RegisterListener(ITimeDemoListener* pListener) override;
 	virtual void UnregisterListener(ITimeDemoListener* pListener) override;
 	virtual void GetCurrentFrameRecord(STimeDemoFrameRecord& externalRecord) const override;
+	virtual STimeDemoInfo* GetLastPlayedTimeDemo() const override;
+	virtual void Reset() override;
+	virtual void PreUpdate() override;
+	virtual void PostUpdate() override;
+	virtual void OnRegistered() override;
+	virtual void OnUnregistered() override;
+	virtual void GetMemoryStatistics(class ICrySizer* pSizer) const override;
 	//////////////////////////////////////////////////////////////////////////
 
 private:
-	//////////////////////////////////////////////////////////////////////////
-	// Implements IFrameProfilePeakCallback interface.
-	//////////////////////////////////////////////////////////////////////////
-	virtual void OnFrameProfilerPeak(CFrameProfiler* pProfiler, float fPeakTime) override;
-	//////////////////////////////////////////////////////////////////////////
+	// ICryProfilerFrameListener, for getting the peaks
+	void OnFrameEnd(TTime, ILegacyProfiler*) override;
+	// ~ICryProfilerFrameListener
 
 	//////////////////////////////////////////////////////////////////////////
 	// Implements IInputEventListener interface.
@@ -105,12 +111,15 @@ private:
 	//////////////////////////////////////////////////////////////////////////
 	// IEntitySystemSink
 	//////////////////////////////////////////////////////////////////////////
-	virtual bool OnBeforeSpawn(SEntitySpawnParams& params) override;
+	virtual bool OnBeforeSpawn(SEntitySpawnParams& params) override { return true; }
 	virtual void OnSpawn(IEntity* pEntity, SEntitySpawnParams& params) override;
-	virtual bool OnRemove(IEntity* pEntity) override;
-	virtual void OnReused(IEntity* pEntity, SEntitySpawnParams& params) override;
-	virtual void OnEvent(IEntity* pEntity, SEntityEvent& event) override;
+	virtual bool OnRemove(IEntity* pEntity) override { return true; }
+	virtual void OnReused(IEntity* pEntity, SEntitySpawnParams& params) override {}
 	//////////////////////////////////////////////////////////////////////////
+
+	// IEntity::IEventListener
+	virtual void OnEntityEvent(IEntity* pEntity, const SEntityEvent& event) override;
+	// ~IEntity::IEventListener
 
 private:
 	// Input event list.
@@ -119,10 +128,10 @@ private:
 		EntityId   entityId;      // What entity performed event.
 		EntityGUID guid;          // What entity performed event.
 
-		uint32     eventType;     // What event.
-		uint64     nParam[4];     // event params.
-		Vec3       pos;
-		Quat       q;
+		EEntityEvent eventType;     // What event.
+		uint64       nParam[4];     // event params.
+		Vec3         pos;
+		Quat         q;
 
 		enum Flags
 		{
@@ -196,7 +205,7 @@ private:
 
 	void               StartChainDemo(const char* levelsListFilename, bool bAutoLoadChainConfig);
 	void               StartDemoLevel(const char** levelNames, int levelCount);
-	void               StartDemoDelayed(int nFrames);
+	void               StartDemoDelayed();
 
 	void               Pause(bool paused) { m_bPaused = paused; }
 
@@ -206,11 +215,13 @@ private:
 	int                GetTotalPolysRecorded() { return m_nTotalPolysRecorded; }
 	void               LogEndOfLoop();
 
+	//! Gets current loaded level path, "" if not yet finished loading
 	static const char* GetCurrentLevelPath();
 
 	CTimeValue         GetTime();
 	// Set Value of console variable.
 	void               SetConsoleVar(const char* sVarName, float value);
+	void               SetConsoleVar(const char* sVarName, int value);
 	// Get value of console variable.
 	float              GetConsoleVar(const char* sVarName);
 
@@ -260,7 +271,7 @@ private:
 	bool         m_bPlaying;
 	bool         m_bPaused;
 	bool         m_bDemoFinished;
-	bool         m_demoEnded;
+	bool         m_bDemoEnded;
 	bool         m_bChainloadingDemo;
 
 	//! Current play or record frame.
@@ -282,9 +293,9 @@ private:
 	CTimeValue m_totalDemoTime;
 	CTimeValue m_recordedDemoTime;
 
-	// How many polygons per frame where recorded.
+	// How many polygons were recorded.
 	int   m_nTotalPolysRecorded;
-	// How many polygons per frame where played.
+	// How many polygons were played.
 	int   m_nTotalPolysPlayed;
 
 	float m_lastPlayedTotalTime;
@@ -310,18 +321,19 @@ private:
 
 	int        m_fileVersion;
 
-	bool       m_bEnabledProfiling, m_bVisibleProfiling;
-
+	bool       m_profilingPaused;
 	float      m_oldPeakTolerance;
 	float      m_fixedTimeStep;
 
 	string     m_file;
 
+	concqueue::spsc_queue_t<string> m_logInfoQueue;
+
 	//	IGameStateRecorder* m_pGameStateRecorder;
 
 	struct STimeDemoInfo* m_pTimeDemoInfo;
 
-public:
+private:
 	static ICVar*             s_timedemo_file;
 	static CTimeDemoRecorder* s_pTimeDemoRecorder;
 
@@ -350,7 +362,7 @@ public:
 
 	bool                      m_bAIEnabled;
 
-	int                       m_countDownPlay;
+	bool                      m_bDelayedPlayFlag;
 	int                       m_prevGodMode;
 
 	struct SChainDemoLevel

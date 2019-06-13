@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -215,8 +215,6 @@ void CGameRulesKingOfTheHillObjective::Update( float frameTime )
 	CGameRules *pGameRules = g_pGame->GetGameRules();
 	IGameRulesScoringModule *pScoringModule = pGameRules->GetScoringModule();
 
-	const int localTeamId = pGameRules->GetTeam(g_pGame->GetIGameFramework()->GetClientActorId());
-
 	for (int i = 0; i < HOLD_OBJECTIVE_MAX_ENTITIES; ++ i)
 	{
 		SHoldEntityDetails *pDetails = &m_entities[i];
@@ -336,11 +334,8 @@ void CGameRulesKingOfTheHillObjective::Update( float frameTime )
 //------------------------------------------------------------------------
 void CGameRulesKingOfTheHillObjective::SvSiteChangedOwner( SHoldEntityDetails *pDetails )
 {
-	SKotHEntity *pKotHEntity = static_cast<SKotHEntity*>(pDetails->m_pAdditionalData);
-	CRY_ASSERT(pKotHEntity);
-
 	// Set the team
-	g_pGame->GetGameRules()->SetTeam(MAX(0, pDetails->m_controllingTeamId), pDetails->m_id);
+	g_pGame->GetGameRules()->SetTeam(std::max(0, pDetails->m_controllingTeamId), pDetails->m_id);
 }
 
 //------------------------------------------------------------------------
@@ -384,7 +379,7 @@ void CGameRulesKingOfTheHillObjective::OnInsideStateChanged( SHoldEntityDetails 
 	{
 		int oldTeamId = pKotHEntity->m_scoringTeamId;
 
-		pKotHEntity->m_scoringTeamId = MAX(pDetails->m_controllingTeamId, 0);
+		pKotHEntity->m_scoringTeamId = std::max(pDetails->m_controllingTeamId, 0);
 		pKotHEntity->m_timeSinceLastScore = 0.f;
 
 		if (gEnv->bServer)
@@ -463,9 +458,6 @@ void CGameRulesKingOfTheHillObjective::ClSiteChangedOwner( SHoldEntityDetails *p
 	CGameRules *pGameRules = g_pGame->GetGameRules();
 	EntityId clientActorId = g_pGame->GetIGameFramework()->GetClientActorId();
 	int localTeam = pGameRules->GetTeam(clientActorId);
-
-	SKotHEntity *pKotHEntity = static_cast<SKotHEntity*>(pDetails->m_pAdditionalData);
-	CRY_ASSERT(pKotHEntity);
 
 	const int ownerTeamId = pDetails->m_controllingTeamId;
 	if (ownerTeamId > 0)
@@ -610,9 +602,6 @@ void CGameRulesKingOfTheHillObjective::OnChangedTeam( EntityId entityId, int old
 //------------------------------------------------------------------------
 EGameRulesMissionObjectives CGameRulesKingOfTheHillObjective::GetIcon( SHoldEntityDetails *pDetails, const char **ppOutName, const char **ppOutColour )
 {
-	SKotHEntity *pKotHEntity = static_cast<SKotHEntity*>(pDetails->m_pAdditionalData);
-	CRY_ASSERT(pKotHEntity);
-
 	EGameRulesMissionObjectives requestedIcon = EGRMO_Unknown;
 
 	if (!pDetails->m_id)

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -15,7 +15,11 @@ History:
 #include <CryString/CryFixedString.h>
 #include "AutoEnum.h"
 #include <CryCore/TypeInfo_impl.h>
-
+#include <CryCore/Containers/VectorMap.h>
+#include <CrySystem/CryUtils.h>
+#include <CryMemory/STLGlobalAllocator.h>
+#include <CryEntitySystem/IEntityBasicTypes.h>
+#include "ICryStats.h"
 
 //////////////////////////////////////////////////////////////////////////
 // Declaration of enums and names of stats and macros to make it easier to deal with them

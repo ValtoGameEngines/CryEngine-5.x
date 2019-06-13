@@ -1,7 +1,14 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
+#include <CryMath/Cry_Math.h>
+#include <CryCore/CryEndian.h>
+#include <CryCore/StlUtils.h>
 #include "DefragAllocator.h"
+
+#ifdef CDBA_MORE_DEBUG
+	#pragma optimize("",off)
+#endif
 
 CDefragAllocatorWalker::CDefragAllocatorWalker(CDefragAllocator& alloc)
 {
@@ -141,6 +148,10 @@ void CDefragAllocator::Init(UINT_PTR capacity, UINT_PTR minAlignment, const Poli
 
 	m_segments.reserve(policy.maxSegments);
 	m_segments.push_back(seg);
+
+#ifdef CDBA_MORE_DEBUG
+	m_nLastCheckedChunk = 0;
+#endif
 }
 
 #ifndef _RELEASE
@@ -286,8 +297,6 @@ bool CDefragAllocator::AppendSegment(UINT_PTR capacity)
 			SDefragAllocChunk& freeChunk = m_chunks[freeBlockIdx];
 			SDefragAllocChunk& addrEndSentinal = m_chunks[AddrEndSentinal];
 
-			uint32 segIdx = (uint32)m_segments.size();
-
 			uint32 allocCapacity = m_capacity;
 
 			headSentinalChunk.ptr = allocCapacity;
@@ -340,7 +349,11 @@ void CDefragAllocator::UnAppendSegment()
 	// Can't remove the last segment!
 	CDBA_ASSERT(m_segments.size() > 1);
 
+#if defined(USE_CRY_ASSERT)
 	bool bHasMoves = Defrag_CompletePendingMoves();
+#else
+	Defrag_CompletePendingMoves();
+#endif
 
 	// All outstanding moves should be completed.
 	CDBA_ASSERT(!bHasMoves);
@@ -359,8 +372,6 @@ void CDefragAllocator::UnAppendSegment()
 	ReleaseChunk(segment.headSentinalChunkIdx);
 
 	SDefragAllocChunk* pChunk = &m_chunks[chunkIdx];
-
-	int numValidSegs = (int)m_segments.size() - 1;
 
 	while (pChunk->ptr != endAddress)
 	{
@@ -397,6 +408,7 @@ IDefragAllocator::Hdl CDefragAllocator::Allocate(size_t sz, const char* source, 
 IDefragAllocator::Hdl CDefragAllocator::AllocateAligned(size_t sz, size_t alignment, const char* source, void* pContext)
 {
 	alignment = max((size_t)m_minAlignment, alignment);
+	sz = Align(sz, m_minAlignment);
 
 	// Just to check the alignment can be stored
 	CDBA_ASSERT((IntegerLog2(alignment) - m_logMinAlignment) < (1u << SDefragAllocChunk::AlignBitCount));
@@ -411,6 +423,27 @@ IDefragAllocator::AllocatePinnedResult CDefragAllocator::AllocatePinned(size_t s
 	CryOptionalAutoLock<CryCriticalSection> lock(m_lock, m_isThreadSafe);
 	AllocatePinnedResult apr = { 0 };
 	apr.hdl = Allocate_Locked(sz, m_minAlignment, source, pContext);
+	if (apr.hdl != InvalidHdl)
+	{
+		apr.offs = Pin(apr.hdl);
+		apr.usableSize = CDefragAllocator::UsableSize(apr.hdl);
+	}
+
+	return apr;
+}
+
+IDefragAllocator::AllocatePinnedResult CDefragAllocator::AllocateAlignedPinned(size_t sz, size_t alignment, const char* source, void* pContext)
+{
+	alignment = max((size_t)m_minAlignment, alignment);
+	sz = Align(sz, m_minAlignment);
+
+	// Just to check the alignment and size can be stored
+	CDBA_ASSERT((IntegerLog2(alignment) - m_logMinAlignment) < (1u << SDefragAllocChunk::AlignBitCount));
+	CDBA_ASSERT((IntegerLog2(NextPower2(sz)) - m_logMinAlignment) < (1u << SDefragAllocChunkAttr::SizeWidth));
+
+	CryOptionalAutoLock<CryCriticalSection> lock(m_lock, m_isThreadSafe);
+	AllocatePinnedResult apr = {0};
+	apr.hdl = Allocate_Locked(sz, alignment, source, pContext);
 	if (apr.hdl != InvalidHdl)
 	{
 		apr.offs = Pin(apr.hdl);
@@ -460,6 +493,17 @@ void CDefragAllocator::ChangeContext(Hdl hdl, void* pNewContext)
 	SDefragAllocChunk& chunk = m_chunks[hdlIdx];
 	CDBA_ASSERT(chunk.attr.IsBusy());
 	chunk.pContext = pNewContext;
+}
+
+void* CDefragAllocator::GetContext(Hdl hdl)
+{
+	CryOptionalAutoLock<CryCriticalSection> lock(m_lock, m_isThreadSafe);
+	CDBA_ASSERT(hdl != InvalidHdl);
+
+	Index hdlIdx = ChunkIdxFromHdl(hdl);
+	SDefragAllocChunk& chunk = m_chunks[hdlIdx];
+	CDBA_ASSERT(chunk.attr.IsBusy());
+	return chunk.pContext;
 }
 
 IDefragAllocatorStats CDefragAllocator::GetStats()
@@ -523,6 +567,10 @@ size_t CDefragAllocator::DefragmentTick(size_t maxMoves, size_t maxAmount, bool 
 	}
 
 	Defrag_CompletePendingMoves();
+
+#ifdef CDBA_MORE_DEBUG
+	Tick_Validation_Locked();
+#endif
 
 	maxMoves = min(maxMoves, (size_t)MaxPendingMoves);
 	maxMoves = min(maxMoves, m_unusedChunks.size());    // Assume that each move requires a split
@@ -592,6 +640,9 @@ CDefragAllocator::Index CDefragAllocator::AllocateChunk()
 #ifndef _RELEASE
 		chunk.source = "";
 #endif
+#ifdef CDBA_MORE_DEBUG
+		chunk.hash = 0;
+#endif
 	}
 
 	return result;
@@ -632,11 +683,7 @@ void CDefragAllocator::LinkFreeChunk(Index idx)
 
 IDefragAllocator::Hdl CDefragAllocator::Allocate_Locked(size_t sz, size_t alignment, const char* source, void* pContext)
 {
-#if CRY_PLATFORM_64BIT
 	CDBA_ASSERT(sz <= (BIT64(NumBuckets)));
-#else
-	CDBA_ASSERT(sz <= (BIT(NumBuckets)));
-#endif
 
 	sz = Align(sz, alignment) >> m_logMinAlignment;
 	alignment >>= m_logMinAlignment;
@@ -882,6 +929,52 @@ void CDefragAllocator::Defrag_ValidateFreeBlockIteration()
 		}
 	}
 }
+
+void CDefragAllocator::Tick_Validation_Locked()
+{
+	if (m_policy.pDefragPolicy)
+	{
+		uint32 nFirstChunk = m_nLastCheckedChunk;
+		uint32 nTest = 64;
+		do
+		{
+			SDefragAllocChunk& chunk = m_chunks[m_nLastCheckedChunk];
+
+			if (chunk.attr.IsBusy() && !chunk.attr.IsMoving() && chunk.attr.GetSize() > 0)
+			{
+				// Mark the chunk as moving before starting the crc - this will force
+				// any users that may want to pin to sync on the allocator lock
+				MarkAsMoving(chunk);
+
+				if (!chunk.attr.IsPinned())
+				{
+					uint32 hash = m_policy.pDefragPolicy->Hash(chunk.ptr << m_logMinAlignment, chunk.attr.GetSize() << m_logMinAlignment);
+
+					if (!chunk.attr.IsInvalid())
+					{
+						if (hash && chunk.hash && (hash != chunk.hash))
+							__debugbreak();
+					}
+
+					chunk.hash = hash;
+
+					// Release the "move"
+					MarkAsNotMovingValid(chunk);
+				}
+				else
+				{
+					// Release the "move"
+					MarkAsNotMoving(chunk);
+				}
+
+				-- nTest;
+			}
+
+			m_nLastCheckedChunk = (m_nLastCheckedChunk + 1) == m_chunks.size() ? 0 : (m_nLastCheckedChunk + 1);
+		}
+		while (nTest > 0 && m_nLastCheckedChunk != nFirstChunk);
+	}
+}
 #endif
 
 CDefragAllocator::Index CDefragAllocator::BestFit_FindFreeBlockForSegment(size_t sz, size_t alignment, uint32 seg)
@@ -1025,7 +1118,7 @@ size_t CDefragAllocator::Defrag_FindMovesBwd(PendingMove** pMoves, size_t maxMov
 
 				if (IsMoveableCandidate(candidateChunkAttr, 0xffffffff))
 				{
-#if (CRY_PLATFORM_WINDOWS && CRY_PLATFORM_64BIT) || CRY_PLATFORM_DURANGO || CRY_PLATFORM_ORBIS
+#if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_DURANGO || CRY_PLATFORM_ORBIS
 					size_t candidateChunkAlign = BIT64(candidateChunk.logAlign);
 #else
 					size_t candidateChunkAlign = BIT(candidateChunk.logAlign);
@@ -1099,13 +1192,12 @@ size_t CDefragAllocator::Defrag_FindMovesBwd(PendingMove** pMoves, size_t maxMov
 		{
 			for (Index candidateIdx = m_chunks[freeChunkIdx].addrPrevIdx; numMoves < maxMoves && curAmount < maxAmount; )
 			{
-				SDefragAllocChunk& freeChunk = m_chunks[freeChunkIdx];
 				SDefragAllocChunk& candidateChunk = m_chunks[candidateIdx];
 				SDefragAllocChunkAttr candidateChunkAttr = candidateChunk.attr;
 
 				if (IsMoveableCandidate(candidateChunkAttr, 0xffffffff))
 				{
-#if (CRY_PLATFORM_WINDOWS && CRY_PLATFORM_64BIT) || CRY_PLATFORM_DURANGO || CRY_PLATFORM_ORBIS
+#if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_DURANGO || CRY_PLATFORM_ORBIS
 					size_t candidateChunkAlign = BIT64(candidateChunk.logAlign);
 #else
 					size_t candidateChunkAlign = BIT(candidateChunk.logAlign);
@@ -1210,7 +1302,7 @@ size_t CDefragAllocator::Defrag_FindMovesFwd(PendingMove** pMoves, size_t maxMov
 
 			if (IsMoveableCandidate(candidateChunkAttr, 0xffffffff))
 			{
-#if (CRY_PLATFORM_WINDOWS && CRY_PLATFORM_64BIT) || CRY_PLATFORM_DURANGO || CRY_PLATFORM_ORBIS
+#if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_DURANGO || CRY_PLATFORM_ORBIS
 				size_t candidateChunkAlign = BIT64(candidateChunk.logAlign);
 #else
 				size_t candidateChunkAlign = BIT(candidateChunk.logAlign);
@@ -1580,7 +1672,9 @@ void CDefragAllocator::Relocate(uint32 userMoveId, Index srcChunkIdx, Index dstC
 	SDefragAllocChunk& src = pChunks[srcChunkIdx];
 	SDefragAllocChunk& dst = pChunks[dstChunkIdx];
 	SDefragAllocChunkAttr srcAttr = src.attr;
+#if defined(USE_CRY_ASSERT)
 	SDefragAllocChunkAttr dstAttr = dst.attr;
+#endif
 
 	CDBA_ASSERT(srcAttr.IsMoving());
 	CDBA_ASSERT(dstAttr.IsPinned());
@@ -1678,7 +1772,7 @@ void CDefragAllocator::SyncMoveSegment(uint32 seg)
 			CDBA_ASSERT(!pChunk->attr.IsPinned());
 			CDBA_ASSERT(m_policy.pDefragPolicy != NULL);
 
-#if (CRY_PLATFORM_WINDOWS && CRY_PLATFORM_64BIT) || CRY_PLATFORM_DURANGO || CRY_PLATFORM_ORBIS
+#if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_DURANGO || CRY_PLATFORM_ORBIS
 			size_t chunkAlign = BIT64(pChunk->logAlign);
 #else
 			size_t chunkAlign = BIT(pChunk->logAlign);
@@ -1691,8 +1785,12 @@ void CDefragAllocator::SyncMoveSegment(uint32 seg)
 
 			CDBA_ASSERT(destinationChunkIdx != InvalidChunkIdx);
 
+#if defined(USE_CRY_ASSERT)
 			SplitResult sr = SplitFreeBlock(destinationChunkIdx, pChunk->attr.GetSize(), chunkAlign, true);
 			CDBA_ASSERT(sr.bSuccessful);
+#else
+			SplitFreeBlock(destinationChunkIdx, pChunk->attr.GetSize(), chunkAlign, true);
+#endif
 
 			SDefragAllocChunk& destinationChunk = m_chunks[destinationChunkIdx];
 			MarkAsInUse(destinationChunk);
@@ -1778,7 +1876,9 @@ void CDefragAllocator::ValidateFreeLists()
 
 		for (size_t idx = root.freeNextIdx; idx != rootIdx; idx = m_chunks[idx].freeNextIdx)
 		{
+#if defined(USE_CRY_ASSERT)
 			SDefragAllocChunk& chunk = m_chunks[idx];
+#endif
 
 			CDBA_ASSERT(!chunk.attr.IsBusy());
 			CDBA_ASSERT(max((uint32)1, (uint32)chunk.attr.GetSize()) >= (1U << bucket));
@@ -1790,7 +1890,9 @@ void CDefragAllocator::ValidateFreeLists()
 
 		for (size_t idx = root.freePrevIdx; idx != rootIdx; idx = m_chunks[idx].freePrevIdx)
 		{
+#if defined(USE_CRY_ASSERT)
 			SDefragAllocChunk& chunk = m_chunks[idx];
+#endif
 
 			CDBA_ASSERT(!chunk.attr.IsBusy());
 			CDBA_ASSERT(max((uint32)1, (uint32)chunk.attr.GetSize()) >= (1U << bucket));
@@ -1800,4 +1902,44 @@ void CDefragAllocator::ValidateFreeLists()
 			CDBA_ASSERT(m_chunks[chunk.freePrevIdx].freeNextIdx == idx);
 		}
 	}
+}
+
+void SDefragAllocChunk::SwapEndian()
+{
+	::SwapEndian(addrPrevIdx, true);
+	::SwapEndian(addrNextIdx, true);
+	::SwapEndian(packedPtr, true);
+	::SwapEndian(attr.ui, true);
+
+	if (attr.IsBusy())
+	{
+		::SwapEndian(pContext, true);
+	}
+	else
+	{
+		::SwapEndian(freePrevIdx, true);
+		::SwapEndian(freeNextIdx, true);
+	}
+
+#ifndef _RELEASE
+	::SwapEndian(source, true);
+#endif
+
+#ifdef CDBA_MORE_DEBUG
+	::SwapEndian(hash, true);
+#endif
+}
+
+void SDefragAllocSegment::SwapEndian()
+{
+	::SwapEndian(address, true);
+	::SwapEndian(capacity, true);
+	::SwapEndian(headSentinalChunkIdx, true);
+}
+
+void CDefragAllocator::PendingMove::SwapEndian()
+{
+	::SwapEndian(srcChunkIdx, true);
+	::SwapEndian(dstChunkIdx, true);
+	::SwapEndian(userMoveId, true);
 }

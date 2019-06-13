@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // Includes
 #include "StdAfx.h"
@@ -24,7 +24,7 @@ float CREBreakableGlass::s_impactTimer = 0.0f;
 // Profiling
 #ifndef GLASS_FUNC_PROFILER
 // #ifndef RELEASE
-//  #define GLASS_FUNC_PROFILER			FUNCTION_PROFILER(GetISystem(), PROFILE_GLASS)
+//  #define GLASS_FUNC_PROFILER			CRY_PROFILE_FUNCTION(PROFILE_GLASS)
 //  #define GLASS_PROFILE_ENABLED
 //  #define GLASS_PROFILE_AUTO_BREAK
 // #else
@@ -453,7 +453,7 @@ void CREBreakableGlass::Update(SBreakableGlassUpdateParams& params)
 			const uint8 buffId = fragData & 0xFF;
 			const uint8 fragId = (fragData >> 8) & 0xFF;
 
-			if (m_fragGeomBufferIds[buffId].m_fragId == fragId)
+			if (buffId < GLASSCFG_MAX_NUM_PHYS_FRAGMENTS && m_fragGeomBufferIds[buffId].m_fragId == fragId)
 			{
 				m_fragGeomBufferIds[buffId].m_fragId = GLASSCFG_FRAGMENT_ARRAY_SIZE;
 				m_fragGeomBufferIds[buffId].m_geomBufferId = NO_BUFFER;
@@ -1027,7 +1027,7 @@ uint CREBreakableGlass::GenerateRadialCracks(const float totalEnergy, const uint
 {
 	GLASS_FUNC_PROFILER
 
-	const uint minCracksToBreak = 3;
+	//const uint minCracksToBreak = 3;
 	const float minEnergyPerStep = 0.005f;
 	const float maxEnergyPerStep = 0.1f;
 	const float energyStepRelaxRate = 2.5f;
@@ -1094,7 +1094,7 @@ uint CREBreakableGlass::GenerateRadialCracks(const float totalEnergy, const uint
 					sincos_tpl(angle, &sinA, &cosA);
 
 					const Vec2 nextPt(pStartPt->x + cosA, pStartPt->y + sinA);
-					const Vec2 nextDir = (nextPt - *pCenterPt).Normalize();
+					const Vec2 nextDir = (nextPt - *pCenterPt).GetNormalized();
 					const float cosAngle = nextDir.Dot(initialDir);
 
 					if (cosAngle < halfCosAngleInc)
@@ -1121,7 +1121,7 @@ uint CREBreakableGlass::GenerateRadialCracks(const float totalEnergy, const uint
 				// Record initial direction
 				if (crackStepIndex == 1)
 				{
-					initialDir = (*pStartPt - *pCenterPt).Normalize();
+					initialDir = (*pStartPt - *pCenterPt).GetNormalized();
 				}
 
 				// Assert boundaries
@@ -1196,7 +1196,6 @@ bool CREBreakableGlass::ApplyImpactToFragments(SGlassImpactParams& impact)
 	if (foundFrag)
 	{
 		uint32 fragBit = (uint32)1 << impactFrag;
-		const uint impactIndex = m_impactParams.size() - 1;
 
 		// Shift impact slightly towards center of fragment to avoid
 		// incredibly rare case where point is *exactly* on fragment edge
@@ -1328,7 +1327,6 @@ bool CREBreakableGlass::FindImpactFragment(const SGlassImpactParams& impact, uin
 #else
 	// Perform a brute force loop through all active fragments
 	const uint32 validState = m_fragsActive & ~(m_fragsLoose | m_fragsFree);
-	const SGlassFragment* pFrags = m_frags.begin();
 
 	uint32 fragBit = 1;
 	for (uint i = 0; i < GLASSCFG_FRAGMENT_ARRAY_SIZE; ++i, fragBit <<= 1)
@@ -2670,7 +2668,6 @@ void CREBreakableGlass::BuildFragmentTriangleData(const uint8 fragIndex, uint& v
 	default: // EGlassSurfaceSide_Center
 		surfaceZOffset = m_glassParams.thickness * 0.5f;
 	}
-	;
 
 	// Create vertex data
 	for (int i = 0; i < vertCount; ++i)

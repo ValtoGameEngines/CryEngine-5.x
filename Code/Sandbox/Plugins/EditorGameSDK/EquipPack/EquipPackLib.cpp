@@ -1,12 +1,16 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "EquipPackLib.h"
 #include "EquipPack.h"
 #include "GameEngine.h"
-#include "Util/FileUtil.h"
+
+#include <Util/FileUtil.h>
+
+#include <Util/EditorUtils.h>
 
 #include <CrySandbox/IEditorGame.h>
+#include <CrySystem/XML/IXml.h>
 
 #include "UIEnumsDatabase.h"
 
@@ -199,14 +203,14 @@ void CEquipPackLib::Serialize(XmlNodeRef& xmlNode, bool bLoading, bool bResetWhe
 				string packName;
 				if (!node->getAttr("name", packName))
 				{
-					CLogFile::FormatLine("Warning: Unnamed EquipPack found !");
+					CryLog("Warning: Unnamed EquipPack found !");
 					packName = "Unnamed";
 					node->setAttr("name", packName);
 				}
 				CEquipPack* pCurPack = CreateEquipPack(packName);
 				if (!pCurPack)
 				{
-					CLogFile::FormatLine("Warning: Unable to create EquipPack %s !", packName.GetString());
+					CryLog("Warning: Unable to create EquipPack %s !", packName.GetString());
 					continue;
 				}
 				pCurPack->Load(node);

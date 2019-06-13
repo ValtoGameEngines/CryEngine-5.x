@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -18,7 +18,9 @@
 #include "StatsRecordingMgr.h"
 #include <CryGame/IGameStatistics.h>
 #include "StatHelpers.h"
+#include "GameCVars.h"
 #include "GameRules.h"
+#include "Game.h"
 #include "Weapon.h"
 #include "Player.h"
 #include "Network/Lobby/GameLobbyData.h"
@@ -29,15 +31,9 @@
 #include "ISaveGame.h"
 #include "GameRulesModules/IGameRulesRoundsModule.h"
 #include <CryCore/TypeInfo_impl.h>
+#include <CrySystem/CryVersion.h>
 #include "DataPatchDownloader.h"
 #include "PatchPakManager.h"
-
-
-static const char	*k_stats_suitMode_any="any";
-static const char	*k_stats_suitMode_tactical="tactical";
-static const char	*k_stats_suitMode_infiltration="infiltration";
-static const char	*k_stats_suitMode_combat="combat";
-static const char	*k_stats_suitMode_agility="agility";
 
 CStatsRecordingMgr::CStatsRecordingMgr() :
 	m_gameStats(NULL),
@@ -407,6 +403,24 @@ void CStatsRecordingMgr::DataFailedToDownload(
 	m_submitPermissions=0;
 }
 
+void CStatsRecordingMgr::TryTrackEvent(IActor *pActor, size_t eventID, const SStatAnyValue &value /*= SStatAnyValue()*/)
+{
+	if (pActor)
+	{
+		CStatsRecordingMgr *pStatsRecordingMgr = g_pGame->GetStatsRecorder();
+
+		if (pStatsRecordingMgr != NULL && pStatsRecordingMgr->ShouldRecordEvent(eventID, pActor))
+		{
+			IStatsTracker	*pStatsTracker = pStatsRecordingMgr->GetStatsTracker(pActor);
+
+			if (pStatsTracker)
+			{
+				pStatsTracker->Event(eventID, value);
+			}
+		}
+	}
+}
+
 bool CStatsRecordingMgr::IsTrackingEnabled()
 {
 	ITelemetryCollector		*tc=static_cast<CGame*>(g_pGame)->GetITelemetryCollector();
@@ -504,7 +518,7 @@ void CStatsRecordingMgr::StateEndOfSessionStats()
 		}
 
 		SFileVersion ver = gEnv->pSystem->GetFileVersion();
-		m_sessionTracker->StateValue(eGSS_BuildNumber,ver.v[0]);
+		m_sessionTracker->StateValue(eGSS_BuildNumber,ver[0]);
 
 		m_sessionTracker->StateValue(eGSS_StatsFileFormatVersion,1);
 
@@ -561,7 +575,7 @@ void CStatsRecordingMgr::StateEndOfSessionStats()
 					childNode->setAttr( "entity_id", itBonusXp->entityId);
 					CGameLobby* pGameLobby = g_pGame->GetGameLobby();
 					
-					const char* szOnlineGUID = pGameLobby ? pGameLobby->GetGUIDFromActorID(itBonusXp->entityId) : "";
+					const char* szOnlineGUID = pGameLobby ? pGameLobby->GetGUIDFromActorID(itBonusXp->entityId).c_str() : "";
 #if defined( _RELEASE )
 					const uint32 guidHash = CCrc32::Compute( szOnlineGUID );
 					stack_string clientHashStr;
@@ -751,7 +765,7 @@ void CStatsRecordingMgr::BeginRound()
 			IActorIteratorPtr it = pActorSystem->CreateActorIterator();
 			while (IActor *pActor = it->Next())
 			{
-				if(m_checkpointCount != 0 && pActor->GetEntity()->IsActive())
+				if(m_checkpointCount != 0 && pActor->GetEntity()->IsActivatedForUpdates())
 				{
 					CRY_ASSERT_MESSAGE(strcmp(pActor->GetEntity()->GetName(), "PoolEntity"), "Support for pooled entities has been deprecated.");
 					StartTrackingStats(pActor);
@@ -867,7 +881,7 @@ void CStatsRecordingMgr::StateCorePlayerStats(
 	{
 		EntityId		eid=inPlayerActor->GetEntityId();
 
-		const char* szOnlineGUID = g_pGame->GetGameLobby() ? g_pGame->GetGameLobby()->GetGUIDFromActorID(inPlayerActor->GetEntityId()) : "";
+		const char* szOnlineGUID = g_pGame->GetGameLobby() ? g_pGame->GetGameLobby()->GetGUIDFromActorID(inPlayerActor->GetEntityId()).c_str() : "";
 
 #if ! defined( _RELEASE )
 		stack_string playerName = inPlayerActor->GetEntity()->GetName();
@@ -1026,7 +1040,6 @@ IStatsTracker* CStatsRecordingMgr::GetStatsTracker(
 void CStatsRecordingMgr::StopTrackingAllPlayerStats()
 {
 	CGameRules::TPlayers		players;
-	IActorSystem				*as=g_pGame->GetIGameFramework()->GetIActorSystem();
 
 	// AI aren't in the gamerules player list,
 	//	so use actors here instead (the previous approach didn't work in SP)
@@ -1375,10 +1388,10 @@ void CStatsRecordingMgr::OnNodeAdded(const SNodeLocator& locator)
 						CRY_ASSERT_MESSAGE(pActor->m_telemetry.GetStatsTracker()==NULL,"setting stats tracker for AI, but one is already set?!");
 
 						//////////////////////////////////////////////////
-
+#if !defined(EXCLUDE_NORMAL_LOG)
 						const char	*pActorName = pActor->GetEntity()->GetName();
-
 						CryLog("%s\n", pActorName);
+#endif
 
 						//////////////////////////////////////////////////
 
@@ -1467,10 +1480,10 @@ void CStatsRecordingMgr::OnNodeRemoved(const SNodeLocator& locator, IStatsTracke
 					if (pActor)
 					{
 						//////////////////////////////////////////////////
-
+#if !defined(EXCLUDE_NORMAL_LOG)
 						const char	*pActorName = pActor->GetEntity()->GetName();
-
 						CryLog("%s\n", pActorName);
+#endif
 
 						//////////////////////////////////////////////////
 
@@ -1518,7 +1531,6 @@ void CStatsRecordingMgr::OnHit(const HitInfo& hit)
 			return;
 
 		IGameFramework* pGameFrameWork = g_pGame->GetIGameFramework();
-		IGameStatistics		*gs=pGameFrameWork->GetIGameStatistics();
 		if (IStatsTracker *tracker=GetStatsTracker(actor))
 		{
 			char weaponClassName[128];

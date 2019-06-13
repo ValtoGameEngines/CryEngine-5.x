@@ -1,11 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "PickAndThrowUtilities.h"
 #include <IActorSystem.h>
 #include <IMovementController.h>
 #include "GameRules.h"
-
+#include "Game.h"
+#include "GameCVars.h"
 
 namespace PickAndThrow
 {

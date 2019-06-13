@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 //====================================================================
 // Clear
@@ -387,7 +387,6 @@ template<typename SAIQuadTreeElement>
 void CAIQuadTree<SAIQuadTreeElement >::Dump(const char* debugName) const
 {
 	AILogAlways("QuadTree %s", debugName);
-	int indentLevel = 0;
 
 	if (m_cells.empty())
 	{

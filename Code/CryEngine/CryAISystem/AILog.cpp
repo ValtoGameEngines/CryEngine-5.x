@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    -------------------------------------------------------------------------
@@ -25,7 +25,6 @@
 	#include <CrySystem/IValidator.h>
 	#include <CrySystem/IConsole.h>
 	#include "DebugDrawContext.h"
-	#include <CrySystem/ITestSystem.h>
 
 // these should all be in sync - so testing one for 0 should be the same for all
 ISystem* pSystem = 0;
@@ -87,7 +86,7 @@ void AILogDisplaySavedMsgs()
 	static int col = 1;
 
 	int row = -1;
-	CTimeValue currentTime = gEnv->pTimer->GetFrameStartTime();
+	CTimeValue currentTime = GetAISystem()->GetFrameStartTime();
 	CTimeValue time = currentTime - CTimeValue(savedMsgDuration);
 	for (int i = 0; i < maxSavedMsgs; ++i)
 	{
@@ -117,11 +116,6 @@ void AIInitLog(ISystem* system)
 	if (!system)
 		return;
 	IConsole* console = gEnv->pConsole;
-	#ifdef _DEBUG
-	int isDebug = 1;
-	#else
-	int isDebug = 0;
-	#endif
 
 	if (console)
 		pSystem = system;
@@ -206,7 +200,7 @@ void AIError(const char* format, ...)
 	savedMsgIndex = (savedMsgIndex + 1) % maxSavedMsgs;
 	savedMsgs[savedMsgIndex].savedMsgType = SMT_ERROR;
 	cry_strcpy(savedMsgs[savedMsgIndex].savedMsg, outputBufferLog);
-	savedMsgs[savedMsgIndex].time = gEnv->pTimer->GetFrameStartTime();
+	savedMsgs[savedMsgIndex].time = GetAISystem()->GetFrameStartTime();
 }
 
 //====================================================================
@@ -228,7 +222,7 @@ void AIWarning(const char* format, ...)
 	savedMsgIndex = (savedMsgIndex + 1) % maxSavedMsgs;
 	savedMsgs[savedMsgIndex].savedMsgType = SMT_WARNING;
 	cry_strcpy(savedMsgs[savedMsgIndex].savedMsg, outputBufferLog);
-	savedMsgs[savedMsgIndex].time = gEnv->pTimer->GetFrameStartTime();
+	savedMsgs[savedMsgIndex].time = GetAISystem()->GetFrameStartTime();
 }
 
 //====================================================================

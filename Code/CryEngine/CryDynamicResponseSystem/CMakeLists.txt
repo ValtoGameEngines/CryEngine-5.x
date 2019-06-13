@@ -5,7 +5,7 @@ start_sources()
 # -- crydynamicresponsesystem.waf_files --
 sources_platform(ALL)
 add_sources("CryDRS_Uber_0.cpp"
-	SOURCE_GROUP "Response Actions\\\\Impl"
+	SOURCE_GROUP "Response Actions"
 		"ActionCancelSignal.h"
 		"ActionCancelSignal.cpp"
 		"ActionExecuteResponse.h"
@@ -24,12 +24,13 @@ add_sources("CryDRS_Uber_0.cpp"
 		"ActionSpeakLine.cpp"
 		"ActionWait.h"
 		"ActionWait.cpp"
+		"ActionCopyVariable.h"
+		"ActionCopyVariable.cpp"
 		"DelayActionAction.h"
 		"DelayActionAction.cpp"
 	SOURCE_GROUP "Response Conditions"
 		"ConditionsCollection.cpp"
 		"ConditionsCollection.h"
-	SOURCE_GROUP "Response Conditions\\\\Impl"
 		"ConditionImpl.cpp"
 		"SpecialConditionsImpl.cpp"
 		"ConditionImpl.h"
@@ -80,7 +81,45 @@ CryEngineModule(CryDynamicResponseSystem PCH "stdafx.cpp" SOLUTION_FOLDER "CryEn
 
 target_include_directories(${THIS_PROJECT}
 PRIVATE 
-	${CRYENGINE_DIR}/Code/CryEngine/CryCommon
-	${CRYENGINE_DIR}/Code/CryEngine/CrySchematyc/Core/Interface
-	${CRYENGINE_DIR}/Code/CryEngine/CrySchematyc/STDEnv/Interface
+	"${CRYENGINE_DIR}/Code/CryEngine/CryCommon"
+	"${CRYENGINE_DIR}/Code/CryEngine/CrySchematyc/Core/Interface"
+	"${CRYENGINE_DIR}/Code/CryEngine/CrySchematyc/STDEnv/Interface"
 )
+if (ORBIS OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+	target_compile_options(${THIS_PROJECT} PRIVATE
+		-Wno-reorder
+		-Wno-unknown-pragmas
+		-Wno-parentheses
+		-Wno-unused-private-field
+		-Wno-multichar
+		-Wno-format
+		-Wno-switch
+		-Wno-comment
+		-Wno-empty-body
+		-Wno-char-subscripts
+		-Wno-empty-body
+		-Wno-unused-value
+		-Wno-unused-function
+	)
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+	target_compile_options(${THIS_PROJECT} PRIVATE
+		-Wno-unused-function
+		-Wno-unused-value
+		-Wno-sign-compare
+		-Wno-ignored-attributes
+		-Wno-int-in-bool-context
+		-Wno-unused-but-set-variable
+		-Wno-misleading-indentation
+		-Wno-unknown-pragmas
+		-Wno-strict-aliasing
+		-Wno-maybe-uninitialized
+		-Wno-unused-const-variable
+		-Wno-multichar
+		-Wno-char-subscripts
+		-Wno-parentheses
+		-Wno-comment
+		-Wno-address
+		-Wno-format
+		-Wno-switch
+	)
+endif()

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*=============================================================================
    RemoteCompiler.h : socket wrapper for shader compile server connections
@@ -138,10 +138,14 @@ const char* CShaderSrv::GetPlatform() const
 		szTarget = "DURANGO";
 	else if (CParserBin::m_nPlatform == SF_D3D11)
 		szTarget = "D3D11";
+	else if (CParserBin::m_nPlatform == SF_D3D12)
+		szTarget = "D3D12";
 	else if (CParserBin::m_nPlatform == SF_GL4)
 		szTarget = "GL4";
 	else if (CParserBin::m_nPlatform == SF_GLES3)
 		szTarget = "GLES3";
+	else if (CParserBin::m_nPlatform == SF_VULKAN)
+		szTarget = "VULKAN";
 
 	return szTarget;
 }
@@ -226,7 +230,7 @@ EServerError CShaderSrv::Compile(std::vector<uint8>& rVec,
 	do
 	{
 		if (errCompile != ESOK)
-			Sleep(5000);
+			CrySleep(5000);
 
 		if (!CreateRequest(CompileData, Nodes))
 		{
@@ -243,7 +247,7 @@ EServerError CShaderSrv::Compile(std::vector<uint8>& rVec,
 	if (errCompile != ESOK)
 	{
 		bool logError = true;
-		char* why = "";
+		const char* why = "";
 		switch (errCompile)
 		{
 		case ESNetworkError:
@@ -277,7 +281,7 @@ bool CShaderSrv::RequestLine(const string& rList, const string& rString) const
 	if (!gRenDev->CV_r_shaderssubmitrequestline)
 		return true;
 
-	string list = m_RequestLineRootFolder + rList;
+	string list = m_RequestLineRootFolder.c_str() + rList;
 
 	std::vector<uint8> CompileData;
 	std::vector<std::pair<string, string>> Nodes;
@@ -304,7 +308,6 @@ bool CShaderSrv::Send(CRYSOCKET Socket, const char* pBuffer, uint32 Size)  const
 		CrySock::eCrySockError sockErr = CrySock::TranslateSocketError(result);
 		if (sockErr != CrySock::eCSE_NO_ERROR)
 		{
-			;
 			iLog->Log("ERROR:CShaderSrv::Send failed (%d, %d)\n", (int)result, CrySock::TranslateToSocketError(sockErr));
 			return false;
 		}
@@ -361,7 +364,7 @@ EServerError CShaderSrv::Recv(CRYSOCKET Socket, std::vector<uint8>& rCompileData
 					waitingtime += 5;
 
 					// sleep a bit and try again
-					Sleep(5);
+					CrySleep(5);
 				}
 				else
 				{
@@ -466,14 +469,8 @@ EServerError CShaderSrv::Send(std::vector<uint8>& rCompileData) const
 	if (gRenDev->CV_r_ShaderCompilerServer)
 		Tokenize(ServerVec, gRenDev->CV_r_ShaderCompilerServer->GetString(), ";");
 
-	if (ServerVec.empty())
-	{
-		ServerVec.push_back("localhost");
-	}
-
-#if CRY_PLATFORM_WINDOWS
-	int nPort = 0;
-#endif
+	// Always add localhost as last resort
+	ServerVec.push_back("localhost");
 
 	//connect
 	for (uint32 nRetries = m_LastWorkingServer; nRetries < m_LastWorkingServer + ServerVec.size() + 6; nRetries++)
@@ -525,7 +522,7 @@ EServerError CShaderSrv::Send(std::vector<uint8>& rCompileData) const
 			// (for more info on windows side check : http://www.proxyplus.cz/faq/articles/EN/art10002.htm)
 			if (sockErr == CrySock::eCSE_ENOBUFS)
 			{
-				Sleep(5000);
+				CrySleep(5000);
 			}
 
 			CrySock::closesocket(Socket);
@@ -551,7 +548,6 @@ EServerError CShaderSrv::Send(std::vector<uint8>& rCompileData) const
 		CrySock::closesocket(Socket);
 		return ESNetworkError;
 	}
-	;
 
 	int Status = WSAEventSelect(Socket, wsaEvent, FD_READ);
 	if (Status == CRY_SOCKET_ERROR)

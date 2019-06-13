@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "CharacterTrack.h"
@@ -66,11 +66,10 @@ void CCharacterTrack::SerializeKey(SCharacterKey& key, XmlNodeRef& keyNode, bool
 float CCharacterTrack::GetKeyDuration(int key) const
 {
 	assert(key >= 0 && key < (int)m_keys.size());
-	const float EPSILON = 0.001f;
 	if (m_keys[key].m_bLoop)
 	{
 		SAnimTime lastTime = m_timeRange.end;
-		if (key + 1 < (int)m_keys.size() && m_keys[key + 1].m_animDuration > SAnimTime(0.0f))
+		if (key + 1 < (int)m_keys.size() && m_keys[key + 1].GetAnimDuration() > SAnimTime(0.0f))
 		{
 			lastTime = m_keys[key + 1].m_time + min(LOOP_TRANSITION_TIME, SAnimTime(GetKeyDuration(key + 1)));
 		}
@@ -79,6 +78,6 @@ float CCharacterTrack::GetKeyDuration(int key) const
 	}
 	else
 	{
-		return m_keys[key].m_animDuration;
+		return m_keys[key].GetCroppedAnimDuration();
 	}
 }

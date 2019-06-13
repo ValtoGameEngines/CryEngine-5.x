@@ -6,15 +6,52 @@ start_sources()
 sources_platform(ALL)
 add_sources("EditorFmod_uber_0.cpp"
 	SOURCE_GROUP "Root"
-		"AudioSystemEditor_fmod.cpp"
-		"AudioSystemEditor_fmod.h"
+		"AudioTableInfo.h"
+		"Common.cpp"
+		"Common.h"
+		"Impl.cpp"
+		"Impl.h"
+		"Item.cpp"
+		"Item.h"
+		"Utils.cpp"
+		"Utils.h"
 		"main.cpp"
-		"StdAfx.h"
+		"ProjectLoader.cpp"
+		"ProjectLoader.h"
 		"StdAfx.cpp"
+		"StdAfx.h"
+	SOURCE_GROUP "Connections"
+		"EventConnection.cpp"
+		"EventConnection.h"
+		"GenericConnection.h"
+		"KeyConnection.cpp"
+		"KeyConnection.h"
+		"ParameterConnection.cpp"
+		"ParameterConnection.h"
+		"ParameterToStateConnection.cpp"
+		"ParameterToStateConnection.h"
+		"SnapshotConnection.cpp"
+		"SnapshotConnection.h"
+	SOURCE_GROUP "DataPanel"
+		"DataPanel.cpp"
+		"DataPanel.h"
+		"FilterProxyModel.cpp"
+		"FilterProxyModel.h"
+		"ItemModel.cpp"
+		"ItemModel.h"
+		"TreeView.cpp"
+		"TreeView.h"
+)
+
+add_sources("NoUberFile"
+	SOURCE_GROUP "Resources"
+		"EditorFmodUI.qrc"
 )
 
 end_sources()
 #END-FILE-LIST
 
-CryEditorPlugin(EditorCryAudioImplFmod SOLUTION_FOLDER "Sandbox/Plugins/EditorAudioControlsEditor/Impl")
-target_include_directories(${THIS_PROJECT} PRIVATE ../common)
+CryEditorPlugin(EditorCryAudioImplFmod SOLUTION_FOLDER "Sandbox/Plugins/EditorAudioControlsEditor/Impl" OUTDIR EditorPlugins/ace)
+target_include_directories(${THIS_PROJECT} PRIVATE "${CRYENGINE_DIR}/Code/CryEngine/CryAudioSystem/Common" "${CRYENGINE_DIR}/Code/CryEngine/CryAudioSystem/implementations")
+target_compile_definitions(${THIS_PROJECT} PRIVATE -DNOT_USE_CRY_MEMORY_MANAGER -DACE_PLUGIN_EXPORTS -DUSE_BACKWARDS_COMPATIBILITY)
+

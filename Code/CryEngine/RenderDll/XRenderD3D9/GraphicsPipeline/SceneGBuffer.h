@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -11,54 +11,85 @@ struct SGraphicsPipelineStateDescription;
 
 class CSceneGBufferStage : public CGraphicsPipelineStage
 {
+public:
+	enum EExecutionMode
+	{
+		eZPassMode_Off                = 0,
+		eZPassMode_GBufferOnly        = 1,
+		eZPassMode_PartialZPrePass    = 2,
+		eZPassMode_DiscardingZPrePass = 3,
+		eZPassMode_FullZPrePass       = 4
+	};
+
+	static const EGraphicsPipelineStage StageID = eStage_SceneGBuffer;
+
 	enum EPerPassTexture
 	{
-		ePerPassTexture_TerrainElevMap = 26,
+		ePerPassTexture_PerlinNoiseMap = 25,
 		ePerPassTexture_WindGrid,
+		ePerPassTexture_TerrainElevMap,
 		ePerPassTexture_TerrainNormMap,
 		ePerPassTexture_TerrainBaseMap,
 		ePerPassTexture_NormalsFitting,
-		ePerPassTexture_DissolveNoise,
 
-		ePerPassTexture_Count
+		ePerPassTexture_SceneLinearDepth = 32,
 	};
 
-	// NOTE: DXOrbis only supports 32 shader slots at this time, don't use t32 or higher if DXOrbis support is desired!
-	static_assert(ePerPassTexture_Count <= 32, "Bind slot too high for DXOrbis");
-
-	enum EPass
+	enum EPass : uint8
 	{
-		ePass_GBufferFill  = 0,
-		ePass_DepthPrepass = 1
+		// limit: MAX_PIPELINE_SCENE_STAGE_PASSES
+		ePass_FullGBufferFill  = 0,
+		ePass_DepthBufferFill  = 1,
+		ePass_AttrGBufferFill  = 2,
+		ePass_MicroGBufferFill = 3,
+
+		ePass_Count
 	};
 
-public:
-	virtual void Init() override;
-	virtual void Prepare(CRenderView* pRenderView) override;
-	void         Execute();
-	void         ExecuteLinearizeDepth();
+	static_assert(ePass_Count <= MAX_PIPELINE_SCENE_STAGE_PASSES,
+		"The pipeline-state array is unable to carry as much pass-permutation as defined here!");
 
-	bool         CreatePipelineStates(DevicePipelineStatesArray* pStateArray, const SGraphicsPipelineStateDescription& stateDesc, CGraphicsPipelineStateLocalCache* pStateCache);
+	CSceneGBufferStage(CGraphicsPipeline& graphicsPipeline);
 
-private:
+	void Init() final;
+	void Update() final;
+
+	bool IsStageActive(EShaderRenderingFlags flags) const final
+	{
+		// TODO: GBuffer shouldn't be responsible for ZPrePass
+	//	if (flags & EShaderRenderingFlags::SHDF_FORWARD_MINIMAL)
+	//		return false;
+
+		return true;
+	}
+
+	void Execute();
+	void ExecuteMinimumZpass();
+	void ExecuteMicroGBuffer();
+	void ExecuteGBufferVisualization();
+
+	bool CreatePipelineStates(DevicePipelineStatesArray* pStateArray, const SGraphicsPipelineStateDescription& stateDesc, CGraphicsPipelineStateLocalCache* pStateCache);
 	bool CreatePipelineState(const SGraphicsPipelineStateDescription& desc, EPass passID, CDeviceGraphicsPSOPtr& outPSO);
 
-	bool PreparePerPassResources(bool bOnInit);
-	bool PrepareResourceLayout();
-
-	void OnResolutionChanged();
-	void RenderDepthPrepass();
-	void RenderSceneOpaque();
-	void RenderSceneOverlays();
+	bool IsGBufferVisualizationEnabled() const { return CRendererCVars::CV_r_DeferredShadingDebugGBuffer > 0; }
 
 private:
-	CDeviceResourceSetPtr    m_pPerPassResources;
+	bool UpdatePerPassResources(bool bOnInit);
+
+	void ExecuteDepthPrepass();
+	void ExecuteSceneOpaque();
+	void ExecuteSceneOverlays();
+
+private:
+	CDeviceResourceSetPtr    m_pPerPassResourceSet;
+	CDeviceResourceSetDesc   m_perPassResources;
 	CDeviceResourceLayoutPtr m_pResourceLayout;
 
 	CSceneRenderPass         m_depthPrepass;
 	CSceneRenderPass         m_opaquePass;
 	CSceneRenderPass         m_opaqueVelocityPass;
 	CSceneRenderPass         m_overlayPass;
+	CSceneRenderPass         m_microGBufferPass;
 
-	CFullscreenPass          m_passDepthLinearization;
+	CFullscreenPass          m_passBufferVisualization;
 };

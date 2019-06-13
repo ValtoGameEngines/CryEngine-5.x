@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -42,8 +42,13 @@ History:
 
 #include "AI/GameAIEnv.h"
 #include "AI/HazardModule/HazardModule.h"
+
 #include "ItemAnimation.h"
 #include "Melee.h"
+
+#include <IPerceptionManager.h>
+#include <IGameplayRecorder.h>
+#include <CryGame/GameUtils.h>
 
 CRY_IMPLEMENT_GTI(CSingle, CFireMode);
 
@@ -159,7 +164,7 @@ void CSingle::PostInit()
 //------------------------------------------------------------------------
 void CSingle::Update(float frameTime, uint32 frameId)
 {
-	FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	bool keepUpdating = false;
 	CActor* pOwnerActor = m_pWeapon->GetOwnerActor();
@@ -667,7 +672,6 @@ void CSingle::CancelReload()
 void CSingle::PlayShootAction(int ammoCount)
 {
 	CActor *pActor = m_pWeapon->GetOwnerActor();
-	const bool playerIsShooter = pActor ? pActor->IsPlayer() : false;
 	int flags = CItem::eIPAF_Default;
 
 	float speedOverride = -1.0f;
@@ -1138,8 +1142,6 @@ Vec3 CSingle::GetProbableHit(float maxRayLength, bool *pbHit, ray_hit *pHit) con
 	static Vec3 pos(ZERO), dir(FORWARD_DIRECTION);
 
 	CActor *pActor = m_pWeapon->GetOwnerActor();
-	IEntity *pWeaponEntity = m_pWeapon->GetEntity();
-
 	static PhysSkipList skipList;
 	skipList.clear();
 	GetSkipEntities(m_pWeapon, skipList);
@@ -1260,8 +1262,6 @@ void CSingle::DeferGetProbableHit(float maxRayLength)
 {
 	static Vec3 pos(ZERO), dir(FORWARD_DIRECTION);
 	CActor *pActor = m_pWeapon->GetOwnerActor();
-	IEntity *pWeaponEntity = m_pWeapon->GetEntity();
-
 	static PhysSkipList skipList;
 	skipList.clear();
 	GetSkipEntities(m_pWeapon, skipList);
@@ -1562,7 +1562,7 @@ Vec3 CSingle::GetTracerPos(const Vec3 &firingPos, const STracerParams* useTracer
 
 void CSingle::SmokeEffect(bool effect)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (effect)
 	{		
@@ -1595,7 +1595,7 @@ void CSingle::SmokeEffect(bool effect)
 //------------------------------------------------------------------------
 void CSingle::SpinUpEffect(bool attach)
 { 
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if(m_spinUpEffectId)
 	{
@@ -1794,7 +1794,6 @@ void CSingle::NetShootEx(const Vec3 &pos, const Vec3 &dir, const Vec3 &vel, cons
 	int weaponAmmoCount = m_pWeapon->GetAmmoCount(ammo);
 	int inventoryAmmoCount = m_pWeapon->GetInventoryAmmoCount(ammo);
 	int ammoCount					= (clipSize == 0) ? inventoryAmmoCount : weaponAmmoCount;
-	bool playerIsShooter	= pActor ? pActor->IsPlayer() : false;
 	FragmentID action		= (ammoCount == 1 || m_fireParams->fireparams.no_cock) ? GetFragmentIds().fire : GetFragmentIds().fire_cock;
 
 	int ammoCost = m_fireParams->fireparams.fake_fire_rate ? m_fireParams->fireparams.fake_fire_rate : 1;
@@ -1911,9 +1910,6 @@ void CSingle::ReplayShoot()
 
 		if (firePosInFrustum || DoesFireLineSegmentIntersectFrustum(pos, hit))
 		{
-			Vec3 dir = GetFiringDir(hit, pos);
-			Vec3 vel = GetFiringVelocity(dir);
-
 			const STracerParams * tracerParams = &m_fireParams->tracerparams;
 			if (tracerParams->frequency > 0 && (!tracerParams->geometry.empty() || !tracerParams->effect.empty()))
 			{
@@ -1942,22 +1938,24 @@ void CSingle::RecoilImpulse(const Vec3& firingPos, const Vec3& firingDir)
 //------------------------------------------------------------------------
 void CSingle::CheckNearMisses(const Vec3 &probableHit, const Vec3 &pos, const Vec3 &dir, float range, float radius)
 {
-	FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
-	IAISystem* pAISystem = gEnv->pAISystem;
-	EntityId ownerId = m_pWeapon->GetOwnerId();
-	if (pAISystem && (ownerId != 0) && !GetShared()->fireparams.is_silenced)
+	if (IPerceptionManager::GetInstance())
 	{
-		// Associate event with vehicle if the shooter is in a vehicle (tank cannon shot, etc)
-		CActor* pActor = m_pWeapon->GetOwnerActor();
-		IVehicle* pVehicle = pActor ? pActor->GetLinkedVehicle() : NULL;
-		if (pVehicle)
+		EntityId ownerId = m_pWeapon->GetOwnerId();
+		if ((ownerId != 0) && !GetShared()->fireparams.is_silenced)
 		{
-			ownerId = pVehicle->GetEntityId();
-		}
+			// Associate event with vehicle if the shooter is in a vehicle (tank cannon shot, etc)
+			CActor* pActor = m_pWeapon->GetOwnerActor();
+			IVehicle* pVehicle = pActor ? pActor->GetLinkedVehicle() : NULL;
+			if (pVehicle)
+			{
+				ownerId = pVehicle->GetEntityId();
+			}
 
-		SAIStimulus stim(AISTIM_BULLET_WHIZZ, 0, ownerId, 0, pos, dir, range);
-		pAISystem->RegisterStimulus(stim);
+			SAIStimulus stim(AISTIM_BULLET_WHIZZ, 0, ownerId, 0, pos, dir, range);
+			IPerceptionManager::GetInstance()->RegisterStimulus(stim);
+		}
 	}
 }
 

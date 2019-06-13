@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -25,7 +25,7 @@ History:
 
 #define SQUADMGR_MAX_SQUAD_SIZE			(MAX_PLAYER_LIMIT)
 
-#define SQUADMGR_DBG_ADD_FAKE_RESERVATION		(0 && !defined(_RELEASE))  // BE CAREFUL COMMITTING THIS! (must be 0!)
+#define SQUADMGR_DBG_ADD_FAKE_RESERVATION 0
 
 #define SQUADMGR_NUM_STORED_KICKED_SESSION 8
 

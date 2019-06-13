@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:  ActorsPresenceAwareness.h
@@ -37,13 +37,9 @@ public:
 		};
 
 		AloneDetectorSetup(
-			const float _rangeSq, 
-			const char* _aloneSignal, 
-			const char* _notAloneSignal
+			const float _rangeSq 
 			)
 			:range(_rangeSq)
-			,aloneSignal(_aloneSignal)
-			,notAloneSignal(_notAloneSignal)
 			,state(Unkown)
 		{
 		}
@@ -53,8 +49,6 @@ public:
 		}
 
 		float		range;
-		string		aloneSignal;
-		string		notAloneSignal;
 		State		state;
 	};
 

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include <CrySerialization/IArchiveHost.h>
@@ -9,13 +9,20 @@
 #include "XmlOArchive.h"
 #include <CrySerialization/BlackBox.h>
 #include <CrySerialization/ClassFactory.h>
+#include <CrySystem/File/ICryPak.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 namespace Serialization
 {
+constexpr const char* kXmlVersionAttribute = "CryXmlVersion";
+constexpr ECryXmlVersion kXmlVersionCurrent = ECryXmlVersion::Version2;
 
-bool LoadFile(std::vector<char>& content, const char* filename)
+static int g_sys_archive_host_xml_version = (int)kXmlVersionCurrent;
+
+
+bool LoadFile(std::vector<char>& content, const char* filename, bool bFileCanBeOnDisk)
 {
-	FILE* f = gEnv->pCryPak->FOpen(filename, "rb");
+	FILE* f = gEnv->pCryPak->FOpen(filename, "rb", bFileCanBeOnDisk ? ICryPak::FOPEN_ONDISK : 0);
 	if (!f)
 		return false;
 
@@ -34,25 +41,25 @@ bool LoadFile(std::vector<char>& content, const char* filename)
 class CArchiveHost : public IArchiveHost
 {
 public:
-	bool LoadJsonFile(const SStruct& obj, const char* filename) override
+	bool LoadJsonFile(const SStruct& outObj, const char* filename, bool bCanBeOnDisk) override
 	{
 		std::vector<char> content;
-		if (!LoadFile(content, filename))
+		if (!LoadFile(content, filename, true))
 			return false;
 		yasli::JSONIArchive ia;
 		if (!ia.open(content.data(), content.size()))
 			return false;
-		return ia(obj);
+		return ia(outObj);
 	}
 
 	bool SaveJsonFile(const char* gameFilename, const SStruct& obj) override
 	{
-		char buffer[ICryPak::g_nMaxPath];
-		const char* filename = gEnv->pCryPak->AdjustFileName(gameFilename, buffer, ICryPak::FLAGS_FOR_WRITING);
+		CryPathString adjustedName;
+		gEnv->pCryPak->AdjustFileName(gameFilename, adjustedName, ICryPak::FLAGS_FOR_WRITING);
 		yasli::JSONOArchive oa;
 		if (!oa(obj))
 			return false;
-		return oa.save(filename);
+		return oa.save(adjustedName);
 	}
 
 	bool LoadJsonBuffer(const SStruct& obj, const char* buffer, size_t bufferLength) override
@@ -77,7 +84,7 @@ public:
 	bool LoadBinaryFile(const SStruct& obj, const char* filename) override
 	{
 		std::vector<char> content;
-		if (!LoadFile(content, filename))
+		if (!LoadFile(content, filename, false))
 			return false;
 		yasli::BinIArchive ia;
 		if (!ia.open(content.data(), content.size()))
@@ -87,11 +94,11 @@ public:
 
 	bool SaveBinaryFile(const char* gameFilename, const SStruct& obj) override
 	{
-		char buffer[ICryPak::g_nMaxPath];
-		const char* filename = gEnv->pCryPak->AdjustFileName(gameFilename, buffer, ICryPak::FLAGS_FOR_WRITING);
+		CryPathString adjustedName;
+		gEnv->pCryPak->AdjustFileName(gameFilename, adjustedName, ICryPak::FLAGS_FOR_WRITING);
 		yasli::BinOArchive oa;
 		obj(oa);
-		return oa.save(filename);
+		return oa.save(adjustedName);
 	}
 
 	bool LoadBinaryBuffer(const SStruct& obj, const char* buffer, size_t bufferLength) override
@@ -134,25 +141,85 @@ public:
 		return memcmp(oa1.buffer(), oa2.buffer(), oa1.length()) == 0;
 	}
 
-	bool SaveXmlFile(const char* filename, const SStruct& obj, const char* rootNodeName) override
+	bool SaveXmlFile(const char* filename, const SStruct& obj, const char* rootNodeName, ECryXmlVersion forceVersion = ECryXmlVersion::Auto) override
 	{
-		XmlNodeRef node = SaveXmlNode(obj, rootNodeName);
+		XmlNodeRef node = SaveXmlNode(obj, rootNodeName, forceVersion);
 		if (!node)
 			return false;
 		return node->saveToFile(filename);
 	}
 
-	bool LoadXmlFile(const SStruct& obj, const char* filename) override
+	bool LoadXmlFile(const SStruct& obj, const char* filename, ECryXmlVersion forceVersion = ECryXmlVersion::Auto) override
 	{
 		XmlNodeRef node = gEnv->pSystem->LoadXmlFromFile(filename);
 		if (!node)
 			return false;
-		return LoadXmlNode(obj, node);
+		return LoadXmlNode(obj, node, forceVersion);
 	}
 
-	XmlNodeRef SaveXmlNode(const SStruct& obj, const char* nodeName) override
+	static ECryXmlVersion SelectCryXmlVersionToSave(ECryXmlVersion forceVersion)
 	{
-		CXmlOArchive oa;
+		ECryXmlVersion version = ECryXmlVersion::Auto;
+		if (forceVersion == ECryXmlVersion::Auto)
+		{
+			version = (ECryXmlVersion)g_sys_archive_host_xml_version;
+		}
+		if (version == ECryXmlVersion::Auto || version >= ECryXmlVersion::Last)
+		{
+			version = kXmlVersionCurrent;
+		}
+		return version;
+	}
+
+	XmlNodeRef SaveXmlNode(const SStruct& obj, const char* nodeName, ECryXmlVersion forceVersion = ECryXmlVersion::Auto) override
+	{
+		const ECryXmlVersion version = SelectCryXmlVersionToSave(forceVersion);
+		switch (version)
+		{
+		case ECryXmlVersion::Version1: return SaveXmlNodeVer1(obj, nodeName);
+		case ECryXmlVersion::Version2: return SaveXmlNodeVer2(obj, nodeName);
+		}
+		return XmlNodeRef();
+	}
+
+	bool SaveXmlNode(XmlNodeRef& node, const SStruct& obj, ECryXmlVersion forceVersion = ECryXmlVersion::Auto) override
+	{
+		const ECryXmlVersion version = SelectCryXmlVersionToSave(forceVersion);
+		switch (version)
+		{
+		case ECryXmlVersion::Version1: return SaveXmlNodeVer1(node, obj);
+		case ECryXmlVersion::Version2: return SaveXmlNodeVer2(node, obj);
+		}
+		return false;
+	}
+
+
+	XmlNodeRef SaveXmlNodeVer2(const SStruct& obj, const char* nodeName)
+	{
+		CXmlOutputArchive oa;
+		XmlNodeRef node = gEnv->pSystem->CreateXmlNode(nodeName);
+		if (!node)
+			return XmlNodeRef();
+		node->setAttr(kXmlVersionAttribute, (int)ECryXmlVersion::Version2);
+		oa.SetXmlNode(node);
+		if (!obj(oa))
+			return XmlNodeRef();
+		return oa.GetXmlNode();
+	}
+
+	bool SaveXmlNodeVer2(XmlNodeRef& node, const SStruct& obj)
+	{
+		if (!node)
+			return false;
+		CXmlOutputArchive oa;
+		node->setAttr(kXmlVersionAttribute, (int)ECryXmlVersion::Version2);
+		oa.SetXmlNode(node);
+		return obj(oa);
+	}
+
+	XmlNodeRef SaveXmlNodeVer1(const SStruct& obj, const char* nodeName)
+	{
+		CXmlOArchiveVer1 oa;
 		XmlNodeRef node = gEnv->pSystem->CreateXmlNode(nodeName);
 		if (!node)
 			return XmlNodeRef();
@@ -162,22 +229,54 @@ public:
 		return oa.GetXmlNode();
 	}
 
-	bool SaveXmlNode(XmlNodeRef& node, const SStruct& obj) override
+	bool SaveXmlNodeVer1(XmlNodeRef& node, const SStruct& obj)
 	{
 		if (!node)
 			return false;
-		CXmlOArchive oa;
+		CXmlOArchiveVer1 oa;
 		oa.SetXmlNode(node);
 		return obj(oa);
 	}
 
-	bool LoadXmlNode(const SStruct& obj, const XmlNodeRef& node) override
+	static ECryXmlVersion SelectCryXmlVersionToLoad(const XmlNodeRef& node, ECryXmlVersion forceVersion)
 	{
-		CXmlIArchive ia;
+		ECryXmlVersion version = ECryXmlVersion::Version1;   // Default to old version
+		if (forceVersion == ECryXmlVersion::Auto)
+		{
+			int iVersion = (int)version;
+			node->getAttr(kXmlVersionAttribute, iVersion);
+			version = (ECryXmlVersion)iVersion;
+		}
+		else
+		{
+			version = forceVersion;
+		}
+		return version;
+	}
+
+	bool LoadXmlNode(const SStruct& obj, const XmlNodeRef& node, ECryXmlVersion forceVersion = ECryXmlVersion::Auto) override
+	{
+		const ECryXmlVersion version = SelectCryXmlVersionToLoad(node, forceVersion);
+		switch (version)
+		{
+		case ECryXmlVersion::Version1: return LoadXmlNodeVer1(obj, node);
+		case ECryXmlVersion::Version2: return LoadXmlNodeVer2(obj, node);
+		}
+		return false;
+	}
+
+	bool LoadXmlNodeVer1(const SStruct& obj, const XmlNodeRef& node)
+	{
+		CXmlIArchiveVer1 ia;
 		ia.SetXmlNode(node);
-		if (!obj(ia))
-			return false;
-		return true;
+		return obj(ia);
+	}
+
+	bool LoadXmlNodeVer2(const SStruct& obj, const XmlNodeRef& node)
+	{
+		CXmlInputArchive ia;
+		ia.SetXmlNode(node);
+		return obj(ia);
 	}
 
 	bool LoadBlackBox(const SStruct& outObj, SBlackBox& box) override
@@ -190,7 +289,7 @@ public:
 			}
 			else if (strcmp(box.format, "xml") == 0)
 			{
-				return LoadXmlNode(outObj, *static_cast<const XmlNodeRef*>(box.data));
+				return LoadXmlNode(outObj, *static_cast<const XmlNodeRef*>(box.data), (ECryXmlVersion)box.xmlVersion);
 			}
 		}
 		return false;
@@ -201,5 +300,12 @@ IArchiveHost* CreateArchiveHost()
 {
 	return new CArchiveHost;
 }
+
+void RegisterArchiveHostCVars()
+{
+	REGISTER_CVAR2("sys_archive_host_xml_version", &g_sys_archive_host_xml_version, g_sys_archive_host_xml_version, VF_NULL,
+		"Selects default CryXmlVersion");
+}
+
 
 }

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -97,8 +97,7 @@ void CGameRulesMPActorAction::OnActorAction(IActor *pActor, const ActionId& acti
 		{
 			// is spectating
 
-			int  curspecmode = pActorImpl->GetSpectatorMode();
-			int  curspecstate = pActorImpl->GetSpectatorState();
+			int curspecmode = pActorImpl->GetSpectatorMode();
 
 			const CRecordingSystem* pRecordingSystem = g_pGame->GetRecordingSystem();
 			// actions general across almost all spectator modes

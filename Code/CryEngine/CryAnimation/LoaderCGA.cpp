@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "LoaderCGA.h"
@@ -18,7 +18,7 @@
 CDefaultSkeleton* CryCGALoader::LoadNewCGA(const char* OriginalGeomName, CharacterManager* pManager, uint32 nLoadingFlags)
 {
 	CRY_DEFINE_ASSET_SCOPE("CGA", OriginalGeomName);
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_CGA, 0, "%s", OriginalGeomName);
+	MEMSTAT_CONTEXT(EMemStatContextType::CGA, OriginalGeomName);
 
 	Reset();
 	//return 0;
@@ -98,7 +98,7 @@ CDefaultSkeleton* CryCGALoader::LoadNewCGA(const char* OriginalGeomName, Charact
 		return 0;
 	}
 
-	pCGAModel->PrepareJointIDHash();
+	pCGAModel->RebuildJointLookupCaches();
 
 	//
 	m_CtrlVec3.clear();
@@ -110,7 +110,7 @@ CDefaultSkeleton* CryCGALoader::LoadNewCGA(const char* OriginalGeomName, Charact
 //////////////////////////////////////////////////////////////////////////
 void CryCGALoader::LoadAnimations(const char* cgaFile, CDefaultSkeleton* pCGAModel, uint32 unique_model_id, uint32 nLoadingFlags)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	// Load all filename_***.anm files.
 	char filter[_MAX_PATH];
@@ -330,10 +330,6 @@ void CryCGALoader::InitNodes(CHeaderTCB* pSkinningInfo, CDefaultSkeleton* pCGAMo
 
 	m_arrControllers = pSkinningInfo->m_arrControllersTCB;
 
-#ifdef _DEBUG
-	uint32 numController = m_arrControllers.size();
-#endif
-
 	//-------------------------------------------------------------------------
 	//-------------------------------------------------------------------------
 	//-------------------------------------------------------------------------
@@ -394,7 +390,9 @@ void CryCGALoader::InitNodes(CHeaderTCB* pSkinningInfo, CDefaultSkeleton* pCGAMo
 			nd.rot_cont_id = pGFXNode2->rot_cont_id;
 			nd.scl_cont_id = pGFXNode2->scl_cont_id;
 
+#if defined(USE_CRY_ASSERT)
 			int numChunks = (int)m_arrChunkNodes.size();
+#endif
 
 			if (nd.pos_cont_id != 0xffff)
 				assert(nd.pos_cont_id < numChunks);
@@ -482,9 +480,6 @@ void CryCGALoader::InitNodes(CHeaderTCB* pSkinningInfo, CDefaultSkeleton* pCGAMo
 	//------------------------------------------------------------------------
 	//---    init nodes                                                    ---
 	//------------------------------------------------------------------------
-	uint32 numControllers0 = m_CtrlVec3.size();
-	uint32 numControllers1 = m_CtrlQuat.size();
-
 	uint32 numAktiveNodes = 0;
 	uint32 numNodes = m_arrChunkNodes.size();
 	for (uint32 i = 0; i < numNodes; i++)

@@ -1,40 +1,21 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-/*************************************************************************
-   -------------------------------------------------------------------------
-   $Id$
-   $DateTime$
-   Description: The Editor->Game communication interface.
-
-   -------------------------------------------------------------------------
-   History:
-   - 30:8:2004   11:11 : Created by Márcio Martins
-
-*************************************************************************/
+//! \cond INTERNAL
 
 #pragma once
 
-struct IFlowSystem;
-struct IGameTokenSystem;
+#include <CryEntitySystem/IEntityBasicTypes.h>
+#include <CryGame/IGame.h>
+
 namespace Telemetry {
 struct ITelemetryRepository;
 }
-
-enum EReloadScriptsType
-{
-	eReloadScriptsType_None   = 0,
-	eReloadScriptsType_Entity = BIT(0),
-	eReloadScriptsType_Actor  = BIT(1),
-	eReloadScriptsType_Item   = BIT(2),
-	eReloadScriptsType_AI     = BIT(3),
-	eReloadScriptsType_UI     = BIT(4),
-};
 
 //! For game to access Editor functionality.
 struct IGameToEditorInterface
 {
 	// <interfuscator:shuffle>
-	virtual ~IGameToEditorInterface(){}
+	virtual ~IGameToEditorInterface() {}
 	virtual void SetUIEnums(const char* sEnumName, const char** sStringsArray, int nStringCount) = 0;
 	// </interfuscator:shuffle>
 };
@@ -96,17 +77,9 @@ struct IEditorGame
 {
 	typedef IEditorGame*(* TEntryFunction)();
 
-	struct HelpersDrawMode
-	{
-		enum EType
-		{
-			Hide = 0,
-			Show
-		};
-	};
-
 	// <interfuscator:shuffle>
-	virtual ~IEditorGame(){}
+	CRY_DEPRECATED_GAME_DLL IEditorGame() = default;
+	virtual ~IEditorGame() {}
 	virtual bool                       Init(ISystem* pSystem, IGameToEditorInterface* pEditorInterface) = 0;
 	virtual void                       Update(bool haveFocus, unsigned int updateFlags) = 0;
 	virtual void                       Shutdown() = 0;
@@ -117,23 +90,23 @@ struct IEditorGame
 	virtual void                       OnAfterLevelLoad(const char* levelName, const char* levelFolder) = 0;
 	virtual void                       OnCloseLevel() = 0;
 	virtual void                       OnSaveLevel() = 0;
-	
+
 	virtual bool                       BuildEntitySerializationList(XmlNodeRef output) = 0;
 	virtual bool                       GetAdditionalMinimapData(XmlNodeRef output) = 0;
 
 	virtual IEquipmentSystemInterface* GetIEquipmentSystemInterface() = 0;
 
-	// telemetry functions: possibly should find a better place for these
+	// Telemetry functions: possibly should find a better place for these
 	virtual void RegisterTelemetryTimelineRenderers(Telemetry::ITelemetryRepository* pRepository) = 0;
 
-	//! Update (and render) all sorts of generic editor 'helpers'.
-	//! This could be used, for example, to render certain metrics, boundaries, invalid links, etc.
-	virtual void UpdateHelpers(const HelpersDrawMode::EType drawMode) {}
+	//! Update all sorts of generic editor 'helpers'.
+	//! This could be used, for example, to update certain metrics, boundaries, invalid links, etc.
+	virtual void                  UpdateHelpers(bool helpersEnabledInActiveViewport) {}
 
-	virtual void OnDisplayRenderUpdated(bool displayHelpers) = 0;
-	virtual void OnEntitySelectionChanged(EntityId entityId, bool isSelected) = 0;
-	virtual void OnReloadScripts(EReloadScriptsType scriptsType) = 0;
+	virtual void                  OnEntitySelectionChanged(EntityId entityId, bool isSelected) = 0;
 
 	virtual IGamePhysicsSettings* GetIGamePhysicsSettings() = 0;
+
 	// </interfuscator:shuffle>
 };
+//! \endcond

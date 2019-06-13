@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   XMLPatcher.h
@@ -13,6 +13,8 @@
 #include "StdAfx.h"
 #include "XMLPatcher.h"
 #include <CryString/StringUtils.h>
+#include <CrySystem/ConsoleRegistration.h>
+#include <CrySystem/File/ICryPak.h>
 
 CXMLPatcher::CXMLPatcher(XmlNodeRef& patchXML)
 {

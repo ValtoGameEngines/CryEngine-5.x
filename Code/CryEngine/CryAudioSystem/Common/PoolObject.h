@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -25,9 +25,9 @@
 //!
 //////////////////////////////////////////////////////////////////////////
 
-using SyncMechanism = stl::PSyncNone;
-
-template<typename T>
+namespace CryAudio
+{
+template<typename T, typename SyncMechanism>
 class CPoolObject
 {
 public:
@@ -52,7 +52,7 @@ public:
 
 	static void FreeMemoryPool()
 	{
-		ms_pAllocator->FreeMemoryForce();
+		s_pAllocator->FreeMemoryForce();
 	}
 
 protected:
@@ -62,10 +62,9 @@ protected:
 private:
 	static void* AllocateObjectStorage();
 
-	static Allocator* ms_pAllocator;
+	static Allocator* s_pAllocator;
 };
-
-//------------------------------------------------------------------------
+} // namespace CryAudio
 
 //! \note MSVC (tested@14u3) does not seem to automatically instantiate the
 //! operator delete and new CPoolObject member functions at the point of
@@ -73,6 +72,6 @@ private:
 //! leading to missing-symbol linker error in non-uber builds. For this
 //! reason we have to provide the definition of the template here for this
 //! compiler.
-#if defined(_MSC_VER) || defined(__clang__)
+#if defined(_MSC_VER) || CRY_COMPILER_CLANG
 	#include "PoolObject_impl.h"
-#endif // _MSC_VER || __clang__
+#endif // _MSC_VER || CRY_COMPILER_CLANG

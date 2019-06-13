@@ -35,6 +35,7 @@ qt_modules = [
 	'Svg',
 	'Widgets',
 	'Qml',
+	'WebEngineWidgets'
 ]
 
 qt_core_binaries = [
@@ -127,9 +128,9 @@ def configure_qt(conf):
 	v['MOC'] = os.path.join(get_qt_path(conf), 'bin', 'moc.exe')
 	v['MOC_PCH'] = ''
 	v['MOC_ST'] = '-o'
-	v['MOC_CPPPATH_ST'] = '-I"%s"'
+	v['MOC_CPPPATH_ST'] = '-I%s'
 	v['MOC_DEFINES_ST'] = '-D%s'
-	v['MOC_PCH_ST'] = '-b"%s"'
+	v['MOC_PCH_ST'] = '-b%s'
 
 @feature('qt')
 @before_method('process_source')
@@ -169,14 +170,15 @@ class qt_moc(Task.Task):
 	def run (self):
 		env = self.env
 		
-		cmd = '"%s" %s %s %s %s %s %s' % (
-			env['MOC'],
-			' '.join(env['MOC_FLAGS']),
-			' '.join([env['MOC_CPPPATH_ST'] % x for x in env['INCPATHS'] if os.path.abspath(x).startswith(self.generator.bld.CreateRootRelativePath('Code')) and not os.path.abspath(x).startswith(self.generator.bld.CreateRootRelativePath('Code/SDKs'))]),
-			' '.join([env['MOC_DEFINES_ST'] % x for x in env['DEFINES']]),
-			env['MOC_PCH_ST'] % env['MOC_PCH'] if env['MOC_PCH'] else '',
-			'%s"%s"' % (env['MOC_ST'], self.inputs[0].abspath()),
-			'"%s"' % self.h_node.abspath() )
+
+		cmd = ['%s' % env['MOC']]
+		cmd += [x for x in env['MOC_FLAGS']] 
+		cmd += [env['MOC_CPPPATH_ST'] % x for x in env['INCPATHS'] if os.path.abspath(x).startswith(self.generator.bld.CreateRootRelativePath('Code')) and not os.path.abspath(x).startswith(self.generator.bld.CreateRootRelativePath('Code/SDKs'))]
+		cmd += [env['MOC_DEFINES_ST'] % x for x in env['DEFINES']]
+		if env['MOC_PCH']:
+			cmd.append(env['MOC_PCH_ST'] % env['MOC_PCH'])
+		cmd.append('%s%s' % (env['MOC_ST'], self.inputs[0].abspath()))
+		cmd.append('%s' % self.h_node.abspath())
 
 		# Run moc command
 		ret = 0
@@ -197,12 +199,13 @@ class qt_moc(Task.Task):
 			self.err_msg += "Compilation failed - File: %r, Module: %r, Configuration: '%s|%s', error code %d\n" % (os.path.basename(self.outputs[0].abspath()), self.generator.target, self.generator.bld.env['PLATFORM'], self.generator.bld.env['CONFIGURATION'], ret )
 			self.err_msg += "\tInput Files:   '%s'\n" % ', '.join(i.abspath() for i in self.inputs)
 			self.err_msg += "\tOutput Files:  '%s'\n" % (', ').join(i.abspath() for i in self.outputs)
-			self.err_msg += "\tCommand:       '%s'\n" % ''.join(cmd)
+			self.err_msg += "\tCommand:       '%s'\n" % ' '.join(cmd)
 			self.err_msg += "\tOutput:\n%s" % out_str
 			self.err_msg += "<++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++>\n"
 			link_output = False
 		# Check if file needed to be mocced. Otherwise return and strip file from linker			
-		elif out_str.rstrip().endswith('No output generated.'):			
+		#elif out_str.rstrip().endswith('No output generated.'):  # commented out as IB 9.0 has a bug where it adds "Start{{xgTaskID=00000000}}" to the end of the line
+		elif 'No output generated.' in out_str:
 			link_output = False			
 			
 		if not link_output:

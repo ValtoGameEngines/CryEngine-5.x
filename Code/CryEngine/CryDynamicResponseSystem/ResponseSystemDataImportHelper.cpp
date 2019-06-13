@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "ResponseSystemDataImportHelper.h"
@@ -240,7 +240,7 @@ bool CDataImportHelper::AddResponseCondition(DRS::IDataImportHelper::ResponseID 
 	if (itFound == m_mappedSignals.end())
 		return false;
 
-	ResponsePtr& response = itFound->second;
+	//ResponsePtr& response = itFound->second;
 	//if (!response->m_pBaseSegment)
 	//{
 	//	response->m_pBaseSegment = new CResponseSegment();
@@ -259,7 +259,7 @@ bool CDataImportHelper::AddResponseAction(DRS::IDataImportHelper::ResponseID res
 	if (itFound == m_mappedSignals.end())
 		return false;
 
-	ResponsePtr& response = itFound->second;
+	//ResponsePtr& response = itFound->second;
 	//if (!response->m_pBaseSegment)
 	//{
 	//	response->m_pBaseSegment = new CResponseSegment();
@@ -276,7 +276,7 @@ DRS::IDataImportHelper::ResponseSegmentID CDataImportHelper::AddResponseSegment(
 	CResponseManager::MappedSignals::iterator itFound = m_mappedSignals.find(signalName);
 	if (itFound == m_mappedSignals.end())
 		return INVALID_ID;
-	ResponsePtr& response = itFound->second;
+	//ResponsePtr& response = itFound->second;
 	CResponseSegment temp;
 #if !defined(_RELEASE)
 	temp.m_name = szName;
@@ -294,7 +294,7 @@ bool CDataImportHelper::AddResponseSegmentAction(ResponseID parentResponse, Resp
 	CResponseManager::MappedSignals::iterator itFound = m_mappedSignals.find(signalName);
 	if (itFound == m_mappedSignals.end())
 		return false;
-	ResponsePtr& response = itFound->second;
+	//ResponsePtr& response = itFound->second;
 	//if (response->m_responseSegments.size() <= segmentID)
 	//	return false;
 	//CResponseSegment& responseSegment = response->m_responseSegments[segmentID];
@@ -309,7 +309,7 @@ bool CDataImportHelper::AddResponseSegmentCondition(ResponseID parentResponse, R
 	CResponseManager::MappedSignals::iterator itFound = m_mappedSignals.find(signalName);
 	if (itFound == m_mappedSignals.end())
 		return false;
-	ResponsePtr& response = itFound->second;
+	//ResponsePtr& response = itFound->second;
 	//if (response->m_responseSegments.size() <= segmentID)
 	//	return false;
 	//CResponseSegment& responseSegment = response->m_responseSegments[segmentID];
@@ -355,7 +355,7 @@ DRS::IResponseActionSharedPtr CDataImportHelper::CreateActionFromString(const CH
 	{
 		return itFound->second(data, szFormatName);
 	}
-	DrsLogWarning((string("Could not find a creator methode for actions of type '") + type.GetText() + "' data was: " + data).c_str());
+	DrsLogWarning((string("Could not find a creator method for actions of type '") + type.GetText() + "' data was: " + data).c_str());
 	return nullptr;
 }
 
@@ -367,7 +367,7 @@ DRS::IConditionSharedPtr CDataImportHelper::CreateConditionFromString(const CHas
 	{
 		return itFound->second(data, szFormatName);
 	}
-	DrsLogWarning((string("Could not find a creator methode for condition of type '") + type.GetText() + "' data was: " + data).c_str());
+	DrsLogWarning((string("Could not find a creator method for condition of type '") + type.GetText() + "' data was: " + data).c_str());
 	return nullptr;
 }
 

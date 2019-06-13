@@ -1,14 +1,29 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-#ifndef __CREPARTICLE_H__
-#define __CREPARTICLE_H__
-
-#include <CryThreading/IJobManager.h>
+#pragma once
 #include <CryMemory/MemoryAccess.h>
+#include "RendElement.h"
 
 // forward declarations
 class CREParticle;
 typedef SVF_P3F_C4B_T4B_N3F2 SVF_Particle;
+
+namespace gpu_pfx2
+{
+	class CParticleComponentRuntime;
+}
+class CDeviceGraphicsCommandInterface;
+
+struct CRY_ALIGN(16) SAddParticlesToSceneJob
+{
+	void GetMemoryUsage(ICrySizer* pSizer) const {}
+
+	SShaderItem* pShaderItem;
+	CRenderObject* pRenderObject;
+	IParticleVertexCreator* pVertexCreator = nullptr;
+	gpu_pfx2::IParticleComponentRuntime* pGpuRuntime = nullptr;
+	const CCamera* pCamera = nullptr;
+};
 
 struct SParticleAxes
 {
@@ -38,15 +53,19 @@ struct SRenderVertices
 struct SCameraInfo
 {
 	const CCamera* pCamera;
+	const CCamera* pMainCamera;
 	IVisArea*      pCameraVisArea;
 	bool           bCameraUnderwater;
 	bool           bRecursivePass;
+	bool           bShadowPass;
 
 	SCameraInfo(const SRenderingPassInfo& passInfo) :
 		pCamera(&passInfo.GetCamera()),
+		pMainCamera(&passInfo.GetCamera()),
 		pCameraVisArea(gEnv->p3DEngine->GetVisAreaFromPos(passInfo.GetCamera().GetOccPos())),
 		bCameraUnderwater(passInfo.IsCameraUnderWater()),
-		bRecursivePass(passInfo.IsRecursivePass())
+		bRecursivePass(passInfo.IsRecursivePass()),
+		bShadowPass(passInfo.IsShadowPass())
 	{}
 };
 
@@ -58,46 +77,45 @@ struct IParticleVertexCreator
 	virtual ~IParticleVertexCreator() {}
 };
 
+class CCompiledParticle;
+class CDeviceGraphicsPSO;
+typedef std::shared_ptr<CCompiledParticle>  TCompiledParticlePtr;
+typedef std::shared_ptr<CDeviceGraphicsPSO> CDeviceGraphicsPSOPtr;
+
 class CREParticle : public CRenderElement
 {
 public:
 	static const uint numBuffers = 3;
-
-	enum EParticleObjFlags
-	{
-		ePOF_HALF_RES              = BIT(0),
-		ePOF_VOLUME_FOG            = BIT(1),
-		ePOF_USE_VERTEX_PULL_MODEL = BIT(2),
-	};
 
 public:
 	CREParticle();
 
 	//! Custom copy constructor required to avoid m_Lock copy.
 	CREParticle(const CREParticle& in)
-		: m_pVertexCreator(in.m_pVertexCreator)
+		: m_pCompiledParticle(in.m_pCompiledParticle)
+		, m_pVertexCreator(in.m_pVertexCreator)
+		, m_pGpuRuntime(in.m_pGpuRuntime)
 		, m_nThreadId(in.m_nThreadId)
 	{
 	}
 
-	void Reset(IParticleVertexCreator* pVC, int nThreadId, uint allocId);
+	static void ResetPool();
 
-	virtual void GetMemoryUsage(ICrySizer* pSizer) const
-	{
-	}
+	void Reset(IParticleVertexCreator* pVC, int nThreadId, uint allocId);
+	void SetRuntime(gpu_pfx2::CParticleComponentRuntime* pRuntime);
 
 	//! CRenderElement implementation.
-	virtual CRenderElement* mfCopyConstruct()
+	virtual CRenderElement* mfCopyConstruct() override
 	{
 		return new CREParticle(*this);
 	}
-	virtual int Size()
+	virtual int Size() override
 	{
 		return sizeof(*this);
 	}
 
-	virtual void mfPrepare(bool bCheckOverflow);
-	virtual bool mfDraw(CShader* ef, SShaderPass* sl);
+	virtual bool Compile(CRenderObject* pObj, uint64 objFlags, ERenderElementFlags elmFlags, const AABB &localAABB, CRenderView *pRenderView, bool updateInstanceDataOnly) override;
+	virtual void DrawToCommandList(CRenderObject* pRenderObject, const struct SGraphicsPipelinePassContext& context, CDeviceCommandList* commandList) override;
 
 	// Additional methods.
 
@@ -107,17 +125,24 @@ public:
 
 	void                     ComputeVertices(SCameraInfo camInfo, uint64 uRenderFlags);
 
-	bool                     AddedToView() const { return m_addedToView != 0; }
-	void                     SetAddedToView() { m_addedToView = 1; }
+	void                     mfGetBBox(AABB& bb) const override { bb = m_bbWorld; }
+	void                     SetBBox(const AABB& bb) { m_bbWorld = bb; }
 
 private:
-	IParticleVertexCreator* m_pVertexCreator;   //!< Particle object which computes vertices.
-	SRenderVertices         m_RenderVerts;
-	uint32                  m_nFirstVertex;
-	uint32                  m_nFirstIndex;
-	uint32                  m_allocId;
-	uint16                  m_nThreadId;
-	uint8                   m_addedToView;
-};
+	CDeviceGraphicsPSOPtr GetGraphicsPSO(CRenderObject* pRenderObject, const struct SGraphicsPipelinePassContext& context) const;
+	void                  PrepareDataToRender(CRenderView *pRenderView,CRenderObject* pRenderObject);
+	void                  BindPipeline(CRenderObject* pRenderObject, CDeviceGraphicsCommandInterface& commandInterface, CDeviceGraphicsPSOPtr pGraphicsPSO);
+	void                  DrawParticles(CRenderObject* pRenderObject, CDeviceGraphicsCommandInterface& commandInterface, int frameId);
+	void                  DrawParticlesLegacy(CRenderObject* pRenderObject, CDeviceGraphicsCommandInterface& commandInterface, int frameId);
 
-#endif  // __CREPARTICLE_H__
+	TCompiledParticlePtr                 m_pCompiledParticle;
+	IParticleVertexCreator*              m_pVertexCreator;
+	gpu_pfx2::CParticleComponentRuntime* m_pGpuRuntime;
+	SRenderVertices                      m_RenderVerts;
+	uint32                               m_nFirstVertex;
+	uint32                               m_nFirstIndex;
+	uint32                               m_allocId;
+	uint16                               m_nThreadId;
+	bool                                 m_bCompiled;
+	AABB                                 m_bbWorld;
+};

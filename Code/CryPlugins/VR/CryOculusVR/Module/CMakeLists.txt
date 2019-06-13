@@ -31,13 +31,13 @@ end_sources()
 #END-FILE-LIST
 
 # We currently only build the oculus library for Windows
-if (WIN32 OR WIN64)
+if (WINDOWS)
 	CryEngineModule(CryOculusVR PCH "StdAfx.cpp" SOLUTION_FOLDER "CryPlugins")
 
 	target_include_directories( ${THIS_PROJECT}
 	PRIVATE
-		${CRYENGINE_DIR}/Code/SDKs/OculusSDK/LibOVR/Include
-		${CRYENGINE_DIR}/Code/CryEngine/CryCommon
+		"${CRYENGINE_DIR}/Code/SDKs/OculusSDK/LibOVR/Include"
+		"${CRYENGINE_DIR}/Code/CryEngine/CryCommon"
 	PUBLIC
 		../Interface
 	)

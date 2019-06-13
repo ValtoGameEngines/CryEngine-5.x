@@ -1,36 +1,29 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
-namespace uqs
+namespace UQS
 {
-	namespace core
+	namespace Core
 	{
 
 		CQuery_SequentialBase::CQuery_SequentialBase(const SCtorContext& ctorContext)
-			: CQueryBase(ctorContext, false)
+			: CQueryBase(ctorContext)
+			, m_priority(ctorContext.priority)
 			, m_indexOfNextChildToInstantiate(0)
-			, m_queryIDOfCurrentlyRunningChild(CQueryID::CreateInvalid())
-			, m_bExceptionOccurredInChild(false)
+			, m_bExceptionOccurredUponChildInstantiation(false)
 		{
 			// nothing
 		}
 
-		CQuery_SequentialBase::~CQuery_SequentialBase()
-		{
-			// - cancel the possibly running child
-			// - it's important to get rid of the callback pointer before the child could possibly call back into us after we've been destroyed
-			g_hubImpl->GetQueryManager().CancelQuery(m_queryIDOfCurrentlyRunningChild);
-		}
-
-		bool CQuery_SequentialBase::OnInstantiateFromQueryBlueprint(const shared::IVariantDict& runtimeParams, shared::CUqsString& error)
+		bool CQuery_SequentialBase::OnStart(const Shared::IVariantDict& runtimeParams, Shared::IUqsString& error)
 		{
 			// no children? -> exception
-			if (m_queryBlueprint->GetChildCount() == 0)
+			if (m_pQueryBlueprint->GetChildCount() == 0)
 			{
-				error.Format("CQuery_SequentialBase::OnInstantiateFromQueryBlueprint: at least 1 child is required to instanitate this query");
+				error.Format("CQuery_SequentialBase::OnStart: at least 1 child is required to instanitate this query");
 				return false;
 			}
 
@@ -38,40 +31,90 @@ namespace uqs
 			runtimeParams.AddSelfToOtherAndReplace(m_runtimeParams);
 
 			// instantiate the first child query
-			InstantiateNextChildQueryBlueprint();
-			if (m_bExceptionOccurredInChild)
+			InstantiateNextChildQueryBlueprint(m_pOptionalShuttledItems);
+			if (m_bExceptionOccurredUponChildInstantiation)
 			{
-				error = m_exceptionMessageFromChild;
+				error.Set(m_exceptionMessageFromChildInstantiation.c_str());
 				return false;
 			}
 
 			return true;
 		}
 
-		CQueryBase::EUpdateState CQuery_SequentialBase::OnUpdate(const CTimeValue& timeBudget, shared::CUqsString& error)
+		CQueryBase::EUpdateState CQuery_SequentialBase::OnUpdate(const CTimeValue& amountOfGrantedTime, Shared::CUqsString& error)
 		{
-			// did an error occur during the last child query?
-			if (m_bExceptionOccurredInChild)
-			{
-				error = m_exceptionMessageFromChild;
-				return EUpdateState::ExceptionOccurred;
-			}
+			CRY_ASSERT(m_pCurrentlyRunningChildQuery);
+			CRY_ASSERT(!m_bExceptionOccurredUponChildInstantiation);
 
-			// we assume the following: if there are more children that could potentially run, then the derived should have already instantiated the next one in its HandleChildQueryFinishedWithSuccess()
-			// -> in other words: if none is running now, then this composite query counts as finished
-			if (!m_queryIDOfCurrentlyRunningChild.IsValid())
+			//
+			// update the child query and deal with its status
+			// (we do this in an infinite loop to update newly instantiated children in a timely manner to prevent unnecessary latency)
+			//
+
+			CTimeValue remainingTimeBudget = amountOfGrantedTime;
+
+			while (1)
 			{
-				// notice: the result set is expected to have already been made availabe to the caller in HandleChildQueryFinishedWithSuccess()
+				const CTimeValue timestampBefore = gEnv->pTimer->GetAsyncTime();
+				const EUpdateState state = m_pCurrentlyRunningChildQuery->Update(remainingTimeBudget, error);
+				const CTimeValue elapsedTime = gEnv->pTimer->GetAsyncTime() - timestampBefore;
+
+				remainingTimeBudget -= elapsedTime;
+
+				if (state == EUpdateState::StillRunning)
+				{
+					return EUpdateState::StillRunning;
+				}
+
+				if (state == EUpdateState::ExceptionOccurred)
+				{
+					return EUpdateState::ExceptionOccurred;
+				}
+
+				CRY_ASSERT(state == EUpdateState::Finished);
+
+				// the query has finished => ask the derived class what to do next
+				QueryBaseUniquePtr q = std::move(m_pCurrentlyRunningChildQuery);
+				HandleChildQueryFinishedWithSuccess(*q);
+
+				// the derived class may or may not have decided to instantiate further children
+				// -> see if maybe an exception has occurred while trying to instantiate the next child
+				if (m_bExceptionOccurredUponChildInstantiation)
+				{
+					error = m_exceptionMessageFromChildInstantiation;
+					return EUpdateState::ExceptionOccurred;
+				}
+
+				if (m_pCurrentlyRunningChildQuery)
+				{
+					// the derived class has successfully instantiated the next child
+					// => keep the update loop running if we have some time left (to make optimal use of the remaining time budget)
+
+					if (remainingTimeBudget.GetValue() > 0)
+					{
+						// keep the update loop running
+						continue;
+					}
+					else
+					{
+						// no more time left => continue updating the child query in the next frame
+						return EUpdateState::StillRunning;
+					}
+				}
+
+				// we're done (the derived class figured that there are no more child queries that it could instantiate or is already happy with the outcome of the just finished child)
 				return EUpdateState::Finished;
 			}
-
-			return EUpdateState::StillRunning;
 		}
 
 		void CQuery_SequentialBase::OnCancel()
 		{
 			// cancel the possibly running child
-			g_hubImpl->GetQueryManager().CancelQuery(m_queryIDOfCurrentlyRunningChild);
+			if (m_pCurrentlyRunningChildQuery)
+			{
+				m_pCurrentlyRunningChildQuery->Cancel();
+				m_pCurrentlyRunningChildQuery.reset();
+			}
 		}
 
 		void CQuery_SequentialBase::OnGetStatistics(SStatistics& out) const
@@ -86,84 +129,30 @@ namespace uqs
 			// nothing else to add
 		}
 
-		void CQuery_SequentialBase::OnChildQueryFinished(const SQueryResult& result)
-		{
-			assert(m_queryIDOfCurrentlyRunningChild == result.queryID);
-
-			m_queryIDOfCurrentlyRunningChild = CQueryID::CreateInvalid();
-
-			switch (result.status)
-			{
-			case SQueryResult::EStatus::Success:
-				assert(result.pResultSet != nullptr);
-				HandleChildQueryFinishedWithSuccess(result.queryID, std::move(result.pResultSet));
-				break;
-
-			case SQueryResult::EStatus::ExceptionOccurred:
-				// track the exception for returning it on next OnUpdate()
-				m_bExceptionOccurredInChild = true;
-				m_exceptionMessageFromChild.Format("%s", result.error);
-				break;
-
-			default:
-				assert(0);
-			}
-		}
-
 		bool CQuery_SequentialBase::HasMoreChildrenLeftToInstantiate() const
 		{
-			return (m_indexOfNextChildToInstantiate < m_queryBlueprint->GetChildCount());
+			return (m_indexOfNextChildToInstantiate < m_pQueryBlueprint->GetChildCount());
 		}
 
-		void CQuery_SequentialBase::StoreResultSetForUseInNextChildQuery(const IQueryResultSet& resultSetOfPreviousChildQuery)
+		void CQuery_SequentialBase::InstantiateNextChildQueryBlueprint(const std::shared_ptr<CItemList>& pResultingItemsOfPotentialPreviousChildQuery)
 		{
-			// TODO: copying the items from the result set to a separate list is not very efficient
-			//       -> would be better to somehow move-transfer what is in the underlying CItemList
-
-			client::IItemFactory& itemFactory = resultSetOfPreviousChildQuery.GetItemFactory();
-			const size_t numItemsInResultSet = resultSetOfPreviousChildQuery.GetResultCount();
-
-			m_pResultingItemsOfLastChildQuery.reset(new CItemList);
-			m_pResultingItemsOfLastChildQuery->SetItemFactory(itemFactory);
-			m_pResultingItemsOfLastChildQuery->CreateItemsByItemFactory(numItemsInResultSet);
-
-			// copy all items from the child result set to the list which will act as input for the next query in the chain
-			for (size_t i = 0; i < numItemsInResultSet; ++i)
-			{
-				const void* pSourceItem = resultSetOfPreviousChildQuery.GetResult(i).pItem;
-				void* pTargetItem = m_pResultingItemsOfLastChildQuery->GetItemAtIndex(i);
-				itemFactory.CopyItem(pTargetItem, pSourceItem);
-			}
-		}
-
-		void CQuery_SequentialBase::InstantiateNextChildQueryBlueprint()
-		{
-			assert(m_indexOfNextChildToInstantiate < m_queryBlueprint->GetChildCount());
-			assert(!m_queryIDOfCurrentlyRunningChild.IsValid());
+			CRY_ASSERT(!m_bExceptionOccurredUponChildInstantiation);
+			CRY_ASSERT(m_indexOfNextChildToInstantiate < m_pQueryBlueprint->GetChildCount());
+			CRY_ASSERT(!m_pCurrentlyRunningChildQuery);
 
 			const size_t indexOfChildToInstantiate = m_indexOfNextChildToInstantiate++;
-			std::shared_ptr<const CQueryBlueprint> childQueryBlueprintToInstantiate = m_queryBlueprint->GetChild(indexOfChildToInstantiate);
+			const std::shared_ptr<const CQueryBlueprint> pChildQueryBlueprintToInstantiate = m_pQueryBlueprint->GetChild(indexOfChildToInstantiate);
 
-			stack_string querierName;
-			querierName.Format("%s::[childQuery_#%i]", m_querierName.c_str(), (int)indexOfChildToInstantiate);
-
-			m_queryIDOfCurrentlyRunningChild = g_hubImpl->GetQueryManager().StartQueryInternal(
+			m_pCurrentlyRunningChildQuery = CQueryBase::CreateQuery(
 				m_queryID,
-				childQueryBlueprintToInstantiate,
-				m_runtimeParams,
-				querierName.c_str(),
-				functor(*this, &CQuery_SequentialBase::OnChildQueryFinished),
-				m_pResultingItemsOfLastChildQuery,
-				m_exceptionMessageFromChild);
+				pChildQueryBlueprintToInstantiate,
+				m_querierName.c_str(),
+				pResultingItemsOfPotentialPreviousChildQuery,
+				m_priority);
 
-			// - the query should have move-transferred the possibly existing items from the previous query
-			// - this assert() is just a convenience to ensure that CQueryBase's ctor really did that
-			assert(!m_pResultingItemsOfLastChildQuery);
-
-			if (!m_queryIDOfCurrentlyRunningChild.IsValid())
+			if (!m_pCurrentlyRunningChildQuery->Start(m_runtimeParams, m_exceptionMessageFromChildInstantiation))
 			{
-				// the error message is already stored in m_exceptionMessageFromChild
-				m_bExceptionOccurredInChild = true;
+				m_bExceptionOccurredUponChildInstantiation = true;
 			}
 		}
 

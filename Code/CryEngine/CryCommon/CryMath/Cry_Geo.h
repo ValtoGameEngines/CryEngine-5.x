@@ -1,23 +1,8 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-//
-//	File: Cry_Geo.h
-//	Description: Common structures for geometry computations
-//
-//	History:
-//	-March 15,2003: Created by Ivo Herzeg
-//
-//////////////////////////////////////////////////////////////////////
+#pragma once
 
-#ifndef CRYGEOSTRUCTS_H
-#define CRYGEOSTRUCTS_H
-
-#if _MSC_VER > 1000
-	#pragma once
-#endif
-
-#include "Cry_Math.h"
-#include "Random.h"
+#include <CryMath/Cry_Math.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 // Forward declarations                                                      //
@@ -65,6 +50,12 @@ struct PosNorm
 {
 	Vec3 vPos;
 	Vec3 vNorm;
+
+	PosNorm() {}
+	PosNorm(type_zero)
+		: vPos(ZERO), vNorm(ZERO) {}
+	PosNorm(const Vec3& pos, const Vec3& norm)
+		: vPos(pos), vNorm(norm) {}
 
 	void zero()
 	{
@@ -192,6 +183,7 @@ struct Cone
 		: mTip(tip), mDir(dir), mBase(tip + dir * height), mHeight(height), mBaseRadius(baseRadius) {}
 };
 
+//! Represents an axis-aligned bounding box
 struct AABB
 {
 
@@ -455,24 +447,17 @@ struct AABB
 	 */
 	ILINE void SetTransformedAABB(const Matrix34& m34, const AABB& aabb)
 	{
-
 		if (aabb.IsReset())
+		{
 			Reset();
+		}
 		else
 		{
-			Matrix33 m33;
-			m33.m00 = fabs_tpl(m34.m00);
-			m33.m01 = fabs_tpl(m34.m01);
-			m33.m02 = fabs_tpl(m34.m02);
-			m33.m10 = fabs_tpl(m34.m10);
-			m33.m11 = fabs_tpl(m34.m11);
-			m33.m12 = fabs_tpl(m34.m12);
-			m33.m20 = fabs_tpl(m34.m20);
-			m33.m21 = fabs_tpl(m34.m21);
-			m33.m22 = fabs_tpl(m34.m22);
+			Matrix34 m34a = m34.GetMagnitude();
+			m34a.SetTranslation(Vec3(0.0f));
 
-			Vec3 sz = m33 * ((aabb.max - aabb.min) * 0.5f);
-			Vec3 pos = m34 * ((aabb.max + aabb.min) * 0.5f);
+			Vec3 sz = m34a.TransformPoint((aabb.max - aabb.min) * 0.5f);
+			Vec3 pos = m34.TransformPoint((aabb.max + aabb.min) * 0.5f);
 			min = pos - sz;
 			max = pos + sz;
 		}
@@ -483,23 +468,12 @@ struct AABB
 	ILINE void SetTransformedAABB(const QuatT& qt, const AABB& aabb)
 	{
 		if (aabb.IsReset())
+		{
 			Reset();
+		}
 		else
 		{
-			Matrix33 m33 = Matrix33(qt.q);
-			m33.m00 = fabs_tpl(m33.m00);
-			m33.m01 = fabs_tpl(m33.m01);
-			m33.m02 = fabs_tpl(m33.m02);
-			m33.m10 = fabs_tpl(m33.m10);
-			m33.m11 = fabs_tpl(m33.m11);
-			m33.m12 = fabs_tpl(m33.m12);
-			m33.m20 = fabs_tpl(m33.m20);
-			m33.m21 = fabs_tpl(m33.m21);
-			m33.m22 = fabs_tpl(m33.m22);
-			Vec3 sz = m33 * ((aabb.max - aabb.min) * 0.5f);
-			Vec3 pos = qt * ((aabb.max + aabb.min) * 0.5f);
-			min = pos - sz;
-			max = pos + sz;
+			SetTransformedAABB(Matrix34(qt), aabb);
 		}
 	}
 	ILINE static AABB CreateTransformedAABB(const QuatT& qt, const AABB& aabb)
@@ -561,6 +535,7 @@ ILINE bool IsEquivalent(const AABB& a, const AABB& b, float epsilon = VEC_EPSILO
 	return IsEquivalent(a.min, b.min, epsilon) && IsEquivalent(a.max, b.max, epsilon);
 }
 
+//! Exposes oriented bounding box functionality
 template<typename F> struct OBB_tpl
 {
 
@@ -683,10 +658,14 @@ struct TRect_tpl
 
 	Vec Min, Max;
 
-	inline TRect_tpl() {}
-	inline TRect_tpl(Num x1, Num y1, Num x2, Num y2) : Min(x1, y1), Max(x2, y2) {}
-	inline TRect_tpl(const TRect_tpl<Num>& rc) : Min(rc.Min), Max(rc.Max) {}
-	inline TRect_tpl(const Vec& min, const Vec& max) : Min(min), Max(max) {}
+	TRect_tpl() = default;
+	TRect_tpl(Num x1, Num y1, Num x2, Num y2) : Min(x1, y1), Max(x2, y2) {}
+	TRect_tpl(const Vec& min, const Vec& max) : Min(min), Max(max) {}
+
+	TRect_tpl(const TRect_tpl& rc) = default;
+	TRect_tpl(TRect_tpl&& rc) = default;
+	TRect_tpl &operator=(const TRect_tpl& rc) = default;
+	TRect_tpl &operator=(TRect_tpl&& rc) = default;
 
 	inline TRect_tpl<Num> operator*(Num k) const
 	{
@@ -716,6 +695,9 @@ struct TRect_tpl
 		else if (pt.y > Max.y) pt.y = Max.y;
 		return pt;
 	}
+
+	inline bool operator==(const TRect_tpl& rc)const { return this->IsEqual(rc); }
+	inline bool operator!=(const TRect_tpl& rc)const { return !this->IsEqual(rc); }
 
 	inline bool Intersects(const TRect_tpl<Num>& rc) const
 	{
@@ -880,5 +862,3 @@ inline float CalcArea(const Vec3* vertices, int numvertices, const Vec3& normal)
 	float area = 0.5f * (float)fabs(normal | csum);
 	return (area);
 }
-
-#endif //geostructs

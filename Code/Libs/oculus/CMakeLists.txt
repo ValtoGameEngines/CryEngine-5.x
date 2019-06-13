@@ -90,10 +90,10 @@ add_sources("NoUberFile"
 		"../../SDKs/OculusSDK/LibOVR/Include/Extras/OVR_Math.h"
 		"../../SDKs/OculusSDK/LibOVR/Include/Extras/OVR_CAPI_Util.h"
 		"../../SDKs/OculusSDK/LibOVR/Include/Extras/OVR_StereoProjection.h"
-		"../../SDKs/OculusSDK/LibOVR/Src/OVR_CAPIShim.c"
-		"../../SDKs/OculusSDK/LibOVR/Src/OVR_CAPI_Util.cpp"
-		"../../SDKs/OculusSDK/LibOVR/Src/OVR_StereoProjection.cpp"
-		"../../SDKs/OculusSDK/LibOVR/Src/OVR_CAPI_Prototypes.h"
+		"../../SDKs/OculusSDK/LibOVR/Shim/OVR_CAPIShim.c"
+		"../../SDKs/OculusSDK/LibOVR/Shim/OVR_CAPI_Util.cpp"
+		"../../SDKs/OculusSDK/LibOVR/Shim/OVR_StereoProjection.cpp"
+		"../../SDKs/OculusSDK/LibOVR/Shim/OVR_CAPI_Prototypes.h"
 		"../../SDKs/OculusSDK/LibOVR/Src/Resources/Windows/LibOVR.rc"
 		"../../SDKs/OculusSDK/LibOVR/Src/Resources/Windows/Oculus.ico"
 		"../../SDKs/OculusSDK/LibOVR/Src/Resources/Windows/resource.h"
@@ -121,18 +121,18 @@ add_sources("NoUberFile"
 end_sources()
 #END-FILE-LIST
 
-if(MSVC_VERSION EQUAL 1900 AND (WIN32 OR WIN64))
-	CryEngineStaticModule(oculus SOLUTION_FOLDER "Libs")
-	if(WIN32 OR WIN64)
+if(NOT MSVC_VERSION LESS 1900 AND WINDOWS)
+	CryEngineStaticModule(oculus SOLUTION_FOLDER "Libs" MSVC_PERMISSIVE)
+	if(WINDOWS)
 		target_compile_options(${THIS_PROJECT} PRIVATE /EHsc /W0 /Wv:18)
-		target_include_directories(${THIS_PROJECT} PRIVATE ${SDK_DIR}/OculusSDK/LibOVRKernel/Src ${SDK_DIR}/OculusSDK/LibOVR/Include ${SDK_DIR}/OculusSDK/Logging/Include)
+		target_include_directories(${THIS_PROJECT} PRIVATE "${SDK_DIR}/OculusSDK/LibOVRKernel/Src" "${SDK_DIR}/OculusSDK/LibOVR/Include" "${SDK_DIR}/OculusSDK/Logging/Include")
 		target_link_libraries(${THIS_PROJECT} PUBLIC oleaut32)
 	endif()
 	target_compile_definitions(${THIS_PROJECT} INTERFACE -DINCLUDE_OCULUS_SDK)
-	target_include_directories(${THIS_PROJECT} INTERFACE ${SDK_DIR}/OculusSDK/LibOVR/Include)
+	target_include_directories(${THIS_PROJECT} INTERFACE "${SDK_DIR}/OculusSDK/LibOVR/Include")
 else()
-	if (WIN32 OR WIN64)
-		message(STATUS "MSVC 14.0 is not being used - oculus cannot be built.")
+	if (WINDOWS)
+		message(STATUS "MSVC 14.0 or above is required to build oculus.")
 	endif()
 	CryFileContainer(oculus SOLUTION_FOLDER "Libs")
 endif()

@@ -1,9 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "LipSync.h"
 
 #include <CryAnimation/ICryAnimation.h>
+#include <CryRenderer/IRenderAuxGeom.h>
 #include "../CharacterInstance.h"
 #include "FaceAnimation.h"
 #include "FacialInstance.h"
@@ -276,7 +277,6 @@ bool CFacialSentence::GetPhonemeInfo(int phonemeId, SPhonemeInfo& phonemeInfo) c
 //////////////////////////////////////////////////////////////////////////
 void CFacialSentence::Serialize(XmlNodeRef& node, bool bLoading)
 {
-	CPhonemesLibrary* pPhonemeLib = (CPhonemesLibrary*)gEnv->pCharacterManager->GetIFacialAnimation()->GetPhonemeLibrary();
 	if (bLoading)
 	{
 		m_phonemes.clear();

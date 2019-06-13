@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "Actor.h"
@@ -24,7 +24,7 @@ m_updatecoords(false)
 	// Register as System listener
 	if (gEnv->pSystem)
 	{
-		gEnv->pSystem->GetISystemEventDispatcher()->RegisterListener( this );
+		gEnv->pSystem->GetISystemEventDispatcher()->RegisterListener( this, "CScreenEffects");
 	}
 }
 

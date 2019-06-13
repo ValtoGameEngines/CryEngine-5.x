@@ -1,11 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include "ModelAnimationSet.h"
 #include "ModelMesh.h"
 #include <CrySystem/IStreamEngine.h>
-#include "ParamLoader.h"
+#include "ChrParamLoader.h"
 
 class CSkin;
 class CDefaultSkeleton;

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -650,7 +650,7 @@ void CAIActionManager::ExecuteAIAction(const IAIAction* pAction, IEntity* pUser,
 	}
 
 	// Tell entity about action start
-	GetAISystem()->SendSignal(SIGNALFILTER_SENDER, 1, "OnActionStart", pAI);
+	GetAISystem()->SendSignal(AISignals::ESignalFilter::SIGNALFILTER_SENDER, GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnActionStart(), pAI->GetEntityID()));
 
 	if (pFlowGraph)
 	{
@@ -756,7 +756,7 @@ void CAIActionManager::ExecuteAIAction(const char* sActionName, IEntity* pUser, 
 // removes deleted AI Action from the list of active actions
 void CAIActionManager::Update()
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI)
+	CRY_PROFILE_FUNCTION(PROFILE_AI)
 
 	TActiveActions::iterator it = m_ActiveActions.begin();
 	while (it != m_ActiveActions.end())
@@ -842,11 +842,12 @@ void CAIActionManager::ActionDone(CActiveAction& action, bool bRemoveAction /*= 
 		CAIActor* pAIActor = pAI->CastToCAIActor();
 		if (pAIActor)
 		{
-			IAISignalExtraData* pData = GetAISystem()->CreateSignalExtraData();
+			AISignals::IAISignalExtraData* pData = GetAISystem()->CreateSignalExtraData();
 			pData->SetObjectName(copy.GetName());
 			pData->nID = copy.m_pObjectEntity->GetId();
 			pData->iValue = copy.m_bDeleted ? 1 : 0; // if m_bDeleted is true it means the action was succeeded
-			pAIActor->SetSignal(10, "OnActionDone", NULL, pData, gAIEnv.SignalCRCs.m_nOnActionDone);
+			
+			pAIActor->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_ALLOW_DUPLICATES, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnActionDone(), 0, pData));
 			if (CPipeUser* pPipeUser = pAIActor->CastToCPipeUser())
 			{
 				pPipeUser->SetLastActionStatus(copy.m_bDeleted);   // if m_bDeleted is true it means the action was succeeded
@@ -874,7 +875,8 @@ void CAIActionManager::ActionDone(CActiveAction& action, bool bRemoveAction /*= 
 	//		ResumeActionsOnEntity( copy.m_pObjectEntity );
 
 	// Tell entity about action end
-	GetAISystem()->SendSignal(SIGNALFILTER_SENDER, 1, "OnActionEnd", pAI);
+	GetAISystem()->SendSignal(AISignals::ESignalFilter::SIGNALFILTER_SENDER, GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnActionEnd(), pAI->GetEntityID()));
+
 }
 
 // loads the library of AI Action Flow Graphs

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   statobjrend.cpp
@@ -14,6 +14,7 @@
 #include "StdAfx.h"
 
 #include "StatObj.h"
+#include "StatObjFoliage.h"
 #include "../RenderDll/Common/Shadow_Renderer.h"
 #include "IndexedMesh.h"
 #include "VisAreas.h"
@@ -43,38 +44,13 @@ void CStatObj::Render(const SRendParams& rParams, const SRenderingPassInfo& pass
 	}
 #endif // _RELEASE
 
-	CRenderObject* pObj = GetRenderer()->EF_GetObject_Temp(passInfo.ThreadID());
+	CRenderObject* pObj = passInfo.GetIRenderView()->AllocateTemporaryRenderObject();
 	FillRenderObject(rParams, rParams.pRenderNode, m_pMaterial, NULL, pObj, passInfo);
-
-#ifdef SEG_WORLD
-	if (GetISystem()->GetIConsole()->GetCVar("sw_debugInfo")->GetIVal() == 4)
-	{
-		//////////////////////////////////////////////////////////////////////////
-		// Show colored sw object.
-		//////////////////////////////////////////////////////////////////////////
-
-		ColorB clr = ColorB(0, 255, 0, 255);
-		if (rParams.nCustomFlags & COB_SW_GLOBAL)
-		{
-			clr = ColorB(255, 0, 0, 255);
-		}
-		else if (rParams.nCustomFlags & COB_SW_CROSSSEG)
-		{
-			clr = ColorB(0, 0, 255, 255);
-		}
-
-		if (pObj)
-		{
-			pObj->m_II.m_AmbColor = ColorF(clr.r / 155.0f, clr.g / 155.0f, clr.b / 155.0f, 1);
-			pObj->m_nMaterialLayers = 0;
-		}
-	}
-#endif //SEG_WORLD
 
 	RenderInternal(pObj, rParams.nSubObjHideMask, rParams.lodValue, passInfo);
 }
 
-void CStatObj::RenderStreamingDebugInfo(CRenderObject* pRenderObject)
+void CStatObj::RenderStreamingDebugInfo(CRenderObject* pRenderObject, const SRenderingPassInfo& passInfo)
 {
 #ifndef _RELEASE
 	//	CStatObj * pStreamable = m_pParentObject ? m_pParentObject : this;
@@ -103,7 +79,7 @@ void CStatObj::RenderStreamingDebugInfo(CRenderObject* pRenderObject)
 	{
 		//		nKB = GetStreamableContentMemoryUsage(true) >> 10;
 
-		char* pComment = 0;
+		const char* pComment = 0;
 
 		pStreamable = pStreamable->m_pParentObject ? pStreamable->m_pParentObject : pStreamable;
 
@@ -117,14 +93,14 @@ void CStatObj::RenderStreamingDebugInfo(CRenderObject* pRenderObject)
 			pComment = "No LODs";
 
 		int nDiff = SATURATEB(int(float(nKB - GetCVars()->e_StreamCgfDebugMinObjSize) / max((int)1, GetCVars()->e_StreamCgfDebugMinObjSize) * 255));
-		DrawBBoxLabeled(m_AABB, pRenderObject->m_II.m_Matrix, ColorB(nDiff, 255 - nDiff, 0, 255),
+		DrawBBoxLabeled(m_AABB, pRenderObject->GetMatrix(passInfo), ColorB(nDiff, 255 - nDiff, 0, 255),
 		                "%.2f mb, %s", 1.f / 1024.f * (float)nKB, pComment);
 	}
 #endif //_RELEASE
 }
 
 //////////////////////////////////////////////////////////////////////
-void CStatObj::RenderCoverInfo(CRenderObject* pRenderObject)
+void CStatObj::RenderCoverInfo(CRenderObject* pRenderObject, const SRenderingPassInfo& passInfo)
 {
 	for (int i = 0; i < GetSubObjectCount(); ++i)
 	{
@@ -139,7 +115,7 @@ void CStatObj::RenderCoverInfo(CRenderObject* pRenderObject)
 
 		GetRenderer()->GetIRenderAuxGeom()->DrawAABB(
 		  AABB(localBoxMin, localBoxMax),
-		  pRenderObject->m_II.m_Matrix * subObject->localTM,
+		  pRenderObject->GetMatrix(passInfo) * subObject->localTM,
 		  true, ColorB(192, 0, 255, 255),
 		  eBBD_Faceted);
 	}
@@ -155,8 +131,6 @@ void CStatObj::FillRenderObject(const SRendParams& rParams, IRenderNode* pRender
 	////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Specify transformation
 	////////////////////////////////////////////////////////////////////////////////////////////////////
-
-	IRenderer* pRend = GetRenderer();
 
 	assert(pObj);
 	if (!pObj)
@@ -204,10 +178,10 @@ void CStatObj::FillRenderObject(const SRendParams& rParams, IRenderNode* pRender
 
 	assert(rParams.pMatrix);
 	{
-		pObj->m_II.m_Matrix = *rParams.pMatrix;
+		pObj->SetMatrix(*rParams.pMatrix, passInfo);
 	}
 
-	pObj->m_II.m_AmbColor = rParams.AmbientColor;
+	pObj->SetAmbientColor(rParams.AmbientColor, passInfo);
 	pObj->m_nClipVolumeStencilRef = rParams.nClipVolumeStencilRef;
 
 	pObj->m_ObjFlags |= FOB_INSHADOW;
@@ -220,19 +194,22 @@ void CStatObj::FillRenderObject(const SRendParams& rParams, IRenderNode* pRender
 	if (pRenderNode && pRenderNode->GetRndFlags() & ERF_RECVWIND)
 	{
 		// This can be different for CVegetation class render nodes
-		pObj->m_vegetationBendingData.scale = 1.0f; //#TODO Read it from RenderNode?
-		pObj->m_vegetationBendingData.verticalRadius = GetRadiusVert();
+		pObj->SetBendingData({ 1.0f, GetRadiusVert() }, passInfo);
+	}
+	else
+	{
+		pObj->SetBendingData({ 0.0f, 0.0f }, passInfo);
 	}
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////
 	// Set render quality
 	////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	pObj->m_fDistance = rParams.fDistance;
-
 	{
 		//clear, when exchange the state of pLightMapInfo to NULL, the pObj parameters must be update...
-		pObj->m_nSort = fastround_positive(rParams.fDistance * 2.0f);
+		CRY_ASSERT(rParams.fDistance * 2.0f <= std::numeric_limits<decltype(CRenderObject::m_nSort)>::max());
+		pObj->m_fDistance = rParams.fDistance;
+		pObj->m_nSort = HalfFlip(CryConvertFloatToHalf(rParams.fDistance * 2.0f));
 	}
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -320,12 +297,12 @@ bool CStatObj::RenderDebugInfo(CRenderObject* pObj, const SRenderingPassInfo& pa
 	if (!pAuxGeom)
 		return false;
 
-	Matrix34 tm = pObj->m_II.m_Matrix;
+	Matrix34 tm = pObj->GetMatrix(passInfo);
 
 	// Convert "camera space" to "world space"
 	if (pObj->m_ObjFlags & FOB_NEAREST)
 	{
-		tm.AddTranslation(gEnv->pRenderer->GetCamera().GetPosition());
+		tm.AddTranslation(passInfo.GetCamera().GetPosition());
 	}
 
 	bool bOnlyBoxes = GetCVars()->e_DebugDraw == -1;
@@ -345,6 +322,9 @@ bool CStatObj::RenderDebugInfo(CRenderObject* pObj, const SRenderingPassInfo& pa
 
 		bFiltered = name.find(e_DebugDrawFilter) == string::npos;
 	}
+
+	if (pObj->m_fDistance > GetCVars()->e_DebugDrawMaxDistance)
+		return false;
 
 	if ((GetCVars()->e_DebugDraw == 1 || bOnlyBoxes) && !bFiltered)
 	{
@@ -405,15 +385,71 @@ bool CStatObj::RenderDebugInfo(CRenderObject* pObj, const SRenderingPassInfo& pa
 		{
 		case 1:
 			{
+				float fontSize = 1.3f;
+				ColorB clr;
+
+				if (nLod == 0)
+				{
+					clr = ColorB(255, 0, 0, 255);
+					fontSize = 1.3f;
+				}
+				else if (nLod == 1)
+				{
+					clr = ColorB(0, 255, 0, 255);
+					fontSize = 1.5f;
+				}
+				else if (nLod == 2)
+				{
+					clr = ColorB(200, 100, 255, 255);
+					fontSize = 1.7f;
+				}
+				else if (nLod == 3)
+				{
+					clr = ColorB(0, 255, 255, 255);
+					fontSize = 1.9f;
+				}
+				else if (nLod == 4)
+				{
+					clr = ColorB(255, 255, 0, 255);
+					fontSize = 2.1f;
+				}
+				else if (nLod == 5)
+				{
+					clr = ColorB(255, 0, 255, 255);
+					fontSize = 2.3f;
+				}
+				else
+				{
+					clr = ColorB(255, 255, 255, 255);
+					fontSize = 2.5f;
+				}
+				
 				const char* shortName = "";
 				if (!m_szGeomName.empty())
 					shortName = m_szGeomName.c_str();
 				else
 					shortName = PathUtil::GetFile(m_szFileName.c_str());
 				if (nNumLods > 1)
-					IRenderAuxText::DrawLabelExF(pos, 1.3f, color, true, true, "%s\n%d (LOD %d/%d)", shortName, m_nRenderTrisCount, nLod, nNumLods);
+					IRenderAuxText::DrawLabelExF(pos, fontSize, clr, true, true, "%s\n%d (LOD %d/%d)", shortName, m_nRenderTrisCount, nLod, nNumLods);
 				else
-					IRenderAuxText::DrawLabelExF(pos, 1.3f, color, true, true, "%s\n%d", shortName, m_nRenderTrisCount);
+					IRenderAuxText::DrawLabelExF(pos, fontSize, clr, true, true, "%s\n%d", shortName, m_nRenderTrisCount);
+
+				// Render color scheme here		
+				SAuxGeomRenderFlags prevState = pAuxGeom->GetRenderFlags();
+				pAuxGeom->SetRenderFlags(e_Mode2D | e_AlphaNone);
+				float screenWidth = (float)gEnv->pRenderer->GetWidth();
+				float screenHeight = (float)gEnv->pRenderer->GetHeight();
+				pAuxGeom->Draw2dLabel(screenWidth - 420, screenHeight - 40, 1.3f, ColorB(255, 255, 255, 255), true, "LOD: 0");
+				pAuxGeom->Draw2dLabel(screenWidth - 225, screenHeight - 40, 1.3f, ColorB(255, 255, 255, 255), true, "3");
+				pAuxGeom->Draw2dLabel(screenWidth - 50, screenHeight - 40, 1.3f, ColorB(255, 255, 255, 255), true, ">= 5");
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 400, screenHeight - 10), Vec2(screenWidth - 350, screenHeight - 15)), true, ColorB(255, 0, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 350, screenHeight - 10), Vec2(screenWidth - 300, screenHeight - 15)), true, ColorB(0, 255, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 300, screenHeight - 10), Vec2(screenWidth - 250, screenHeight - 15)), true, ColorB(200, 100, 255, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 250, screenHeight - 10), Vec2(screenWidth - 200, screenHeight - 15)), true, ColorB(0, 255, 255, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 200, screenHeight - 10), Vec2(screenWidth - 150, screenHeight - 15)), true, ColorB(255, 255, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 150, screenHeight - 10), Vec2(screenWidth - 100, screenHeight - 15)), true, ColorB(255, 0, 255, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 100, screenHeight - 10), Vec2(screenWidth - 50, screenHeight - 15)), true, ColorB(255, 255, 255, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->SetRenderFlags(prevState.m_renderFlags);
 			}
 			break;
 
@@ -424,29 +460,46 @@ bool CStatObj::RenderDebugInfo(CRenderObject* pObj, const SRenderingPassInfo& pa
 				//////////////////////////////////////////////////////////////////////////
 				int fMult = 1;
 				int nTris = m_nRenderTrisCount;
-				ColorB clr = ColorB(0, 0, 0, 255);
+				ColorB clr = ColorB(0, 255, 0, 255);
 				if (nTris >= 20000 * fMult)
 					clr = ColorB(255, 0, 0, 255);
 				else if (nTris >= 10000 * fMult)
-					clr = ColorB(255, 255, 0, 255);
+					clr = ColorB(255, 80, 0, 255);
 				else if (nTris >= 5000 * fMult)
-					clr = ColorB(0, 255, 0, 255);
+					clr = ColorB(255, 127, 0, 255);
 				else if (nTris >= 2500 * fMult)
-					clr = ColorB(0, 255, 255, 255);
+					clr = ColorB(255, 255, 0, 255);
 				else if (nTris > 1250 * fMult)
-					clr = ColorB(0, 0, 255, 255);
+					clr = ColorB(0, 127, 0, 255);
 
 				if (pMaterial)
 					pMaterial = GetMatMan()->GetDefaultHelperMaterial();
 				if (pObj)
 				{
-					pObj->m_II.m_AmbColor = ColorF(clr.r / 155.0f, clr.g / 155.0f, clr.b / 155.0f, 1);
 					pObj->m_nMaterialLayers = 0;
-					pObj->m_ObjFlags |= FOB_SELECTED;
+					pObj->m_ObjFlags |= FOB_SELECTED | FOB_HUD_REQUIRE_DEPTHTEST;
+					pObj->m_data.m_nHUDSilhouetteParams = RGBA8(0.0f, clr.b, clr.g, clr.r); // Zero-Alpha == solid fill mode
 				}
 
 				if (!bNoText)
 					IRenderAuxText::DrawLabelExF(pos, 1.3f, color, true, true, "%d", m_nRenderTrisCount);
+
+				// Render color scheme here		
+				SAuxGeomRenderFlags prevState = pAuxGeom->GetRenderFlags();
+				pAuxGeom->SetRenderFlags(e_Mode2D | e_AlphaNone);
+				float screenWidth = (float)gEnv->pRenderer->GetWidth();
+				float screenHeight = (float)gEnv->pRenderer->GetHeight();
+				pAuxGeom->Draw2dLabel(screenWidth - 375, screenHeight - 40, 1.3f, ColorB(255, 255, 255, 255), true, "Polycount: < 1250");
+				pAuxGeom->Draw2dLabel(screenWidth - 175, screenHeight - 40, 1.3f, ColorB(255, 255, 255, 255), true, "> 5000");
+				pAuxGeom->Draw2dLabel(screenWidth - 50, screenHeight - 40, 1.3f, ColorB(255, 255, 255, 255), true, ">= 20000");
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 350, screenHeight - 10), Vec2(screenWidth - 300, screenHeight - 15)), true, ColorB(0, 255, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 300, screenHeight - 10), Vec2(screenWidth - 250, screenHeight - 15)), true, ColorB(0, 127, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 250, screenHeight - 10), Vec2(screenWidth - 200, screenHeight - 15)), true, ColorB(255, 255, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 200, screenHeight - 10), Vec2(screenWidth - 150, screenHeight - 15)), true, ColorB(255, 127, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 150, screenHeight - 10), Vec2(screenWidth - 100, screenHeight - 15)), true, ColorB(255, 80, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 100, screenHeight - 10), Vec2(screenWidth - 50, screenHeight - 15)), true, ColorB(255, 0, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+
+				pAuxGeom->SetRenderFlags(prevState.m_renderFlags);
 
 				return false;
 				//////////////////////////////////////////////////////////////////////////
@@ -473,28 +526,28 @@ bool CStatObj::RenderDebugInfo(CRenderObject* pObj, const SRenderingPassInfo& pa
 				else
 				{
 					if (nLod == 0)
-						clr = ColorB(255, 0, 0, 255);
-					else if (nLod == 1)
 						clr = ColorB(0, 255, 0, 255);
+					else if (nLod == 1)
+						clr = ColorB(0, 127, 0, 255);
 					else if (nLod == 2)
-						clr = ColorB(0, 0, 255, 255);
+						clr = ColorB(0, 80, 0, 255);
 					else if (nLod == 3)
-						clr = ColorB(0, 255, 255, 255);
-					else if (nLod == 4)
 						clr = ColorB(255, 255, 0, 255);
+					else if (nLod == 4)
+						clr = ColorB(255, 127, 0, 255);
 					else if (nLod == 5)
-						clr = ColorB(255, 0, 255, 255);
+						clr = ColorB(255, 80, 0, 255);
 					else
-						clr = ColorB(255, 255, 255, 255);
+						clr = ColorB(255, 0, 0, 255);
 				}
 
 				if (pMaterial)
 					pMaterial = GetMatMan()->GetDefaultHelperMaterial();
 				if (pObj)
 				{
-					pObj->m_II.m_AmbColor = ColorF(clr.r / 180.0f, clr.g / 180.0f, clr.b / 180.0f, 1);
 					pObj->m_nMaterialLayers = 0;
-					pObj->m_ObjFlags |= FOB_SELECTED;
+					pObj->m_ObjFlags |= FOB_SELECTED | FOB_HUD_REQUIRE_DEPTHTEST;
+					pObj->m_data.m_nHUDSilhouetteParams = RGBA8(0.0f, clr.b, clr.g, clr.r); // Zero-Alpha == solid fill mode
 				}
 
 				if (pObj && nNumLods > 1 && !bNoText)
@@ -507,6 +560,23 @@ bool CStatObj::RenderDebugInfo(CRenderObject* pObj, const SRenderingPassInfo& pa
 					                   nLod, nLod0, maxLod,
 					                   bRenderNodeValid ? pRN->GetLodRatio() : -1, pObj->m_fDistance);
 				}
+
+				// Render color scheme here		
+				SAuxGeomRenderFlags prevState = pAuxGeom->GetRenderFlags();
+				pAuxGeom->SetRenderFlags(e_Mode2D | e_AlphaNone);
+				float screenWidth = (float)gEnv->pRenderer->GetWidth();
+				float screenHeight = (float)gEnv->pRenderer->GetHeight();
+				pAuxGeom->Draw2dLabel(screenWidth - 420, screenHeight - 40, 1.3f, ColorB(255, 255, 255, 255), true, "LOD: 0");
+				pAuxGeom->Draw2dLabel(screenWidth - 225, screenHeight - 40, 1.3f, ColorB(255, 255, 255, 255), true, "3");
+				pAuxGeom->Draw2dLabel(screenWidth - 50, screenHeight - 40, 1.3f, ColorB(255, 255, 255, 255), true, ">= 5");
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 400, screenHeight - 10), Vec2(screenWidth - 350, screenHeight - 15)), true, ColorB(0, 255, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 350, screenHeight - 10), Vec2(screenWidth - 300, screenHeight - 15)), true, ColorB(0, 127, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 300, screenHeight - 10), Vec2(screenWidth - 250, screenHeight - 15)), true, ColorB(0, 80, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 250, screenHeight - 10), Vec2(screenWidth - 200, screenHeight - 15)), true, ColorB(255, 255, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 200, screenHeight - 10), Vec2(screenWidth - 150, screenHeight - 15)), true, ColorB(255, 127, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 150, screenHeight - 10), Vec2(screenWidth - 100, screenHeight - 15)), true, ColorB(255, 80, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 100, screenHeight - 10), Vec2(screenWidth - 50, screenHeight - 15)), true, ColorB(255, 0, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->SetRenderFlags(prevState.m_renderFlags);
 
 				return false;
 				//////////////////////////////////////////////////////////////////////////
@@ -529,31 +599,48 @@ bool CStatObj::RenderDebugInfo(CRenderObject* pObj, const SRenderingPassInfo& pa
 				//////////////////////////////////////////////////////////////////////////
 				ColorB clr(0, 0, 0, 0);
 				if (nRenderMats == 1)
-					clr = ColorB(0, 0, 255, 255);
-				else if (nRenderMats == 2)
-					clr = ColorB(0, 255, 255, 255);
-				else if (nRenderMats == 3)
 					clr = ColorB(0, 255, 0, 255);
+				else if (nRenderMats == 2)
+					clr = ColorB(0, 127, 0, 255);
+				else if (nRenderMats == 3)
+					clr = ColorB(0, 80, 0, 255);
 				else if (nRenderMats == 4)
-					clr = ColorB(255, 0, 255, 255);
-				else if (nRenderMats == 5)
 					clr = ColorB(255, 255, 0, 255);
+				else if (nRenderMats == 5)
+					clr = ColorB(255, 127, 0, 255);
 				else if (nRenderMats >= 6)
-					clr = ColorB(255, 0, 0, 255);
+					clr = ColorB(255, 80, 0, 255);
 				else if (nRenderMats >= 11)
-					clr = ColorB(255, 255, 255, 255);
+					clr = ColorB(255, 0, 0, 255);
 
 				if (pMaterial)
 					pMaterial = GetMatMan()->GetDefaultHelperMaterial();
 				if (pObj)
 				{
-					pObj->m_II.m_AmbColor = ColorF(clr.r / 155.0f, clr.g / 155.0f, clr.b / 155.0f, 1);
 					pObj->m_nMaterialLayers = 0;
-					pObj->m_ObjFlags |= FOB_SELECTED;
+					pObj->m_ObjFlags |= FOB_SELECTED | FOB_HUD_REQUIRE_DEPTHTEST;
+					pObj->m_data.m_nHUDSilhouetteParams = RGBA8(0.0f, clr.b, clr.g, clr.r); // Zero-Alpha == solid fill mode
 				}
 
 				if (!bNoText)
 					IRenderAuxText::DrawLabelExF(pos, 1.3f, color, true, true, "%d", nRenderMats);
+
+				// Render color scheme here		
+				SAuxGeomRenderFlags prevState = pAuxGeom->GetRenderFlags();
+				pAuxGeom->SetRenderFlags(e_Mode2D | e_AlphaNone);
+				float screenWidth = (float)gEnv->pRenderer->GetWidth();
+				float screenHeight = (float)gEnv->pRenderer->GetHeight();
+				pAuxGeom->Draw2dLabel(screenWidth - 440, screenHeight - 40, 1.3f, ColorB(255, 255, 255, 255), true, "NumMaterials: 1");
+				pAuxGeom->Draw2dLabel(screenWidth - 245, screenHeight - 40, 1.3f, ColorB(255, 255, 255, 255), true, "4");
+				pAuxGeom->Draw2dLabel(screenWidth - 50, screenHeight - 40, 1.3f, ColorB(255, 255, 255, 255), true, ">= 11");
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 400, screenHeight - 10), Vec2(screenWidth - 350, screenHeight - 15)), true, ColorB(0, 255, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 350, screenHeight - 10), Vec2(screenWidth - 300, screenHeight - 15)), true, ColorB(0, 127, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 300, screenHeight - 10), Vec2(screenWidth - 250, screenHeight - 15)), true, ColorB(0, 80, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 250, screenHeight - 10), Vec2(screenWidth - 200, screenHeight - 15)), true, ColorB(255, 255, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 200, screenHeight - 10), Vec2(screenWidth - 150, screenHeight - 15)), true, ColorB(255, 127, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 150, screenHeight - 10), Vec2(screenWidth - 100, screenHeight - 15)), true, ColorB(255, 80, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->DrawAABB(AABB(Vec2(screenWidth - 100, screenHeight - 10), Vec2(screenWidth - 50, screenHeight - 15)), true, ColorB(255, 0, 0, 255), EBoundingBoxDrawStyle::eBBD_Faceted);
+				pAuxGeom->SetRenderFlags(prevState.m_renderFlags);
 			}
 			break;
 
@@ -566,7 +653,7 @@ bool CStatObj::RenderDebugInfo(CRenderObject* pObj, const SRenderingPassInfo& pa
 				if (pObj)
 				{
 					pObj->m_nMaterialLayers = 0;
-					col = pObj->m_II.m_AmbColor;
+					col = pObj->GetAmbientColor(passInfo);
 				}
 
 				IRenderAuxText::DrawLabelExF(pos, 1.3f, color, true, true, "%d,%d,%d,%d", (int)(col.r * 255.0f), (int)(col.g * 255.0f), (int)(col.b * 255.0f), (int)(col.a * 255.0f));
@@ -578,6 +665,29 @@ bool CStatObj::RenderDebugInfo(CRenderObject* pObj, const SRenderingPassInfo& pa
 			{
 				int nTexMemUsage = m_pRenderMesh->GetTextureMemoryUsage(pMaterial);
 				IRenderAuxText::DrawLabelExF(pos, 1.3f, color, true, true, "%d,%d,%d", m_nRenderTrisCount, nRenderMats, nTexMemUsage / 1024);
+			}
+			break;
+		case 8:
+			{
+				if (pObj && pObj->m_pRenderNode)
+				{
+					IRenderNode* pRenderNode = (IRenderNode*)pObj->m_pRenderNode;
+					float perObjectMaxViewDist = pRenderNode->m_ucViewDistRatio;
+
+					ColorF clr = ColorF(0.f, 1.f, 0.f, 1.0f);
+					Vec3 red, green;
+					ColorF(1.f, 0.f, 0.f, 1.0f).toHSV(red.x, red.y, red.z);
+					ColorF(0.f, 1.f, 0.f, 1.0f).toHSV(green.x, green.y, green.z);
+
+					float interpValue = perObjectMaxViewDist / 255.0f;
+					Vec3 c = Vec3::CreateLerp(green, red, interpValue);
+					clr.fromHSV(c.x, c.y, c.z);
+
+					float fontSize = 1.3f;
+					fontSize = LERP(fontSize, 2.3f, interpValue);
+
+					IRenderAuxText::DrawLabelExF(pos, fontSize, clr, true, true, "%.1f", perObjectMaxViewDist);
+				}
 			}
 			break;
 
@@ -729,10 +839,10 @@ bool CStatObj::RenderDebugInfo(CRenderObject* pObj, const SRenderingPassInfo& pa
 
 						pMaterial = GetMatMan()->GetDefaultHelperMaterial();
 					}
-
-					pObj->m_II.m_AmbColor = clr;
+					
 					pObj->m_nMaterialLayers = 0;
-					pObj->m_ObjFlags |= FOB_SELECTED;
+					pObj->m_ObjFlags |= FOB_SELECTED | FOB_HUD_REQUIRE_DEPTHTEST;
+					pObj->m_data.m_nHUDSilhouetteParams = RGBA8(0.0f, clr.b * 255.0f, clr.g * 255.0f, clr.r * 255.0f); // Zero-Alpha == solid fill mode
 				}
 				return false;
 			}
@@ -815,8 +925,10 @@ float CStatObj::GetExtent(EGeomForm eForm)
 	}
 
 	CGeomExtent& ext = m_Extents.Make(eForm);
-	if (!ext)
+	if (!ext || ext.TotalExtent() == 0.0f)
 	{
+		ext.Clear();
+
 		// Create parts for main and sub-objects.
 		ext.ReserveParts(1 + nSubCount);
 
@@ -839,25 +951,31 @@ float CStatObj::GetExtent(EGeomForm eForm)
 	return ext.TotalExtent();
 }
 
-void CStatObj::GetRandomPos(PosNorm& ran, CRndGen& seed, EGeomForm eForm) const
+void CStatObj::GetRandomPoints(Array<PosNorm> points, CRndGen& seed, EGeomForm eForm) const
 {
 	if (!m_subObjects.empty())
 	{
 		CGeomExtent const& ext = m_Extents[eForm];
-		int iSubObj = ext.RandomPart(seed);
-		if (iSubObj-- > 0)
+		for (auto part : ext.RandomPartsAliasSum(points, seed))
 		{
-			IStatObj::SSubObject const* pSub = &m_subObjects[iSubObj];
-			assert(pSub && pSub->pStatObj);
-			pSub->pStatObj->GetRandomPos(ran, seed, eForm);
-			ran <<= pSub->tm;
-			return;
+			if (part.iPart > 0)
+			{
+				IStatObj::SSubObject const* pSub = &m_subObjects[part.iPart - 1];
+				assert(pSub && pSub->pStatObj);
+				pSub->pStatObj->GetRandomPoints(part.aPoints, seed, eForm);
+				for (auto& point : part.aPoints)
+					point <<= pSub->tm;
+			}
+			else if (m_pRenderMesh)
+				m_pRenderMesh->GetRandomPoints(part.aPoints, seed, eForm);
+			else
+				part.aPoints.fill(ZERO);
 		}
 	}
-	if (m_pRenderMesh)
-		m_pRenderMesh->GetRandomPos(ran, seed, eForm);
+	else if (m_pRenderMesh)
+		m_pRenderMesh->GetRandomPoints(points, seed, eForm);
 	else
-		ran.zero();
+		points.fill(ZERO);
 }
 
 SMeshLodInfo CStatObj::ComputeAndStoreLodDistances()
@@ -999,9 +1117,10 @@ void CStatObj::RenderInternal(CRenderObject* pRenderObject, hidemask nSubObjectH
 	if (pRenderObject->m_pRenderNode)
 	{
 		IRenderNode* pRN = (IRenderNode*)pRenderObject->m_pRenderNode;
+		IRenderNode::RenderFlagsType renderFlags = pRN->GetRndFlags();
 		if (m_bEditor)
 		{
-			if (pRN->m_dwRndFlags & ERF_SELECTED)
+			if (renderFlags & ERF_SELECTED)
 			{
 				m_nSelectedFrameId = passInfo.GetMainFrameID();
 				if (m_pParentObject)
@@ -1011,26 +1130,19 @@ void CStatObj::RenderInternal(CRenderObject* pRenderObject, hidemask nSubObjectH
 			else
 				pRenderObject->m_ObjFlags &= ~FOB_SELECTED;
 
-			if (!gEnv->IsEditing() && pRN->m_dwRndFlags & ERF_RAYCAST_PROXY)
+			if (!gEnv->IsEditing() && (renderFlags & ERF_RAYCAST_PROXY))
 			{
 				return;
 			}
 		}
 		else
 		{
-			if (pRN->m_dwRndFlags & ERF_RAYCAST_PROXY)
+			if (renderFlags & ERF_RAYCAST_PROXY)
 			{
 				return;
 			}
 		}
 	}
-
-#ifdef SEG_WORLD
-	if (GetISystem()->GetIConsole()->GetCVar("sw_debugInfo")->GetIVal() == 4)
-	{
-		pRenderObject->m_ObjFlags |= FOB_SELECTED;
-	}
-#endif //SEG_WORLD
 
 	if ((m_nFlags & STATIC_OBJECT_COMPOUND) && !m_bMerged)
 	{
@@ -1075,7 +1187,7 @@ void CStatObj::RenderInternal(CRenderObject* pRenderObject, hidemask nSubObjectH
 			}
 
 			hidemaskOneBit nBitIndex = hidemask1;
-			Matrix34A renderTM = pRenderObject->m_II.m_Matrix;
+			Matrix34A renderTM = pRenderObject->GetMatrix(passInfo);
 			for (int32 i = 0, subObjectsSize = m_subObjects.size(); i < subObjectsSize; ++i, nBitIndex <<= 1)
 			{
 				const SSubObject& subObj = m_subObjects[i];
@@ -1093,7 +1205,7 @@ void CStatObj::RenderInternal(CRenderObject* pRenderObject, hidemask nSubObjectH
 						
 						if (lodValue.LodA() >= 0)
 						{
-						RenderSubObject(pRenderObject, lodValue.LodA(), i, renderTM, passInfo);
+							RenderSubObject(pRenderObject, lodValue.LodA(), i, renderTM, passInfo);
 						}
 
 						if (pRenderObjectB && lodValue.LodB()>=0)
@@ -1122,10 +1234,10 @@ void CStatObj::RenderInternal(CRenderObject* pRenderObject, hidemask nSubObjectH
 		// draw mesh, don't even try to render childs
 		if (lodValue.LodA() >= 0)
 		{
-		RenderObjectInternal(pRenderObject, lodValue.LodA(), lodValue.DissolveRefA(), true, passInfo);
+			RenderObjectInternal(pRenderObject, lodValue.LodA(), lodValue.DissolveRefA(), true, passInfo);
 		}
 
-		if (lodValue.DissolveRefB() != 255 && lodValue.LodB()>=0) // check here since we're passing in A's ref.
+		if (lodValue.DissolveRefB() != 255 && lodValue.LodB() >= 0) // check here since we're passing in A's ref.
 		{
 			pRenderObject = GetRenderer()->EF_DuplicateRO(pRenderObject, passInfo);
 			RenderObjectInternal(pRenderObject, lodValue.LodB(), lodValue.DissolveRefA(), false, passInfo);
@@ -1149,7 +1261,7 @@ void CStatObj::RenderSubObject(CRenderObject* pRenderObject, int nLod,
 	{
 		pRenderObject = GetRenderer()->EF_DuplicateRO(pRenderObject, passInfo);
 		pOD = pRenderObject->GetObjData();
-		pOD->m_pSkinningData = subObj.pFoliage->GetSkinningData(pRenderObject->m_II.m_Matrix, passInfo);
+		pOD->m_pSkinningData = subObj.pFoliage->GetSkinningData(pRenderObject->GetMatrix(passInfo), passInfo);
 		pOD->m_uniqueObjectId = reinterpret_cast<uintptr_t>(subObj.pFoliage);
 		pRenderObject->m_ObjFlags |= FOB_SKINNED | FOB_DYNAMIC_OBJECT;
 		((CStatObjFoliage*)subObj.pFoliage)->m_pRenderObject = pRenderObject;
@@ -1157,17 +1269,22 @@ void CStatObj::RenderSubObject(CRenderObject* pRenderObject, int nLod,
 
 	if (subObj.bIdentityMatrix)
 	{
-		pStatObj->RenderSubObjectInternal(pRenderObject, nLod, passInfo);
+		if ((pRenderObject->m_ObjFlags & FOB_DYNAMIC_OBJECT) && (pRenderObject->m_ObjFlags & FOB_NEAREST))
+		{
+			SRenderObjData* pRenderObjectData = pRenderObject->GetObjData();
+			pRenderObjectData->m_uniqueObjectId = pRenderObjectData->m_uniqueObjectId + nSubObjId;
+		}
 	}
 	else
 	{
 		pRenderObject = GetRenderer()->EF_DuplicateRO(pRenderObject, passInfo);
-		pRenderObject->m_II.m_Matrix = renderTM * subObj.tm;
+		pRenderObject->SetMatrix(renderTM * subObj.tm, passInfo);
+
 		SRenderObjData* pRenderObjectData = pRenderObject->GetObjData();
 		pRenderObjectData->m_uniqueObjectId = pRenderObjectData->m_uniqueObjectId + nSubObjId;
-
-		pStatObj->RenderSubObjectInternal(pRenderObject, nLod, passInfo);
 	}
+
+	pStatObj->RenderSubObjectInternal(pRenderObject, nLod, passInfo);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1185,14 +1302,14 @@ void CStatObj::RenderSubObjectInternal(CRenderObject* pRenderObject, int nLod, c
 	assert(!(m_nFlags & STATIC_OBJECT_COMPOUND));
 
 	nLod = CLAMP(nLod, GetMinUsableLod(), (int)m_nMaxUsableLod);
-	assert(nLod < MAX_STATOBJ_LODS_NUM);
+	CRY_ASSERT(nLod >= 0 && nLod < MAX_STATOBJ_LODS_NUM);
 
 	// Skip rendering of this suboject if it is marked as deformable
 	if (GetCVars()->e_MergedMeshes == 1 && nLod == 0 && m_isDeformable)
 		return;
 
 	// try next lod's if selected one is not ready
-	if ((!nLod && m_pRenderMesh && m_pRenderMesh->CanRender()) || !GetCVars()->e_Lods)
+	if ((!nLod && m_pRenderMesh && m_pRenderMesh->CanUpdate()) || !GetCVars()->e_Lods)
 	{
 		PrefetchLine(pRenderObject, 0);
 		RenderRenderMesh(pRenderObject, NULL, passInfo);
@@ -1216,7 +1333,7 @@ void CStatObj::RenderSubObjectInternal(CRenderObject* pRenderObject, int nLod, c
 		if (m_pLODs)
 			for (; nLod <= (int)m_nMaxUsableLod; nLod++)
 			{
-				if (m_pLODs[nLod] && m_pLODs[nLod]->m_pRenderMesh && m_pLODs[nLod]->m_pRenderMesh->CanRender())
+				if (m_pLODs[nLod] && m_pLODs[nLod]->m_pRenderMesh && m_pLODs[nLod]->m_pRenderMesh->CanUpdate())
 				{
 					PrefetchLine(pRenderObject, 0);
 					m_pLODs[nLod]->RenderRenderMesh(pRenderObject, NULL, passInfo);
@@ -1235,7 +1352,7 @@ void CStatObj::RenderObjectInternal(CRenderObject* pRenderObject, int nTargetLod
 	}
 
 	int nLod = CLAMP(nTargetLod, GetMinUsableLod(), (int)m_nMaxUsableLod);
-	assert(nLod < MAX_STATOBJ_LODS_NUM);
+	CRY_ASSERT(nLod >= 0 && nLod < MAX_STATOBJ_LODS_NUM);
 
 	// Skip rendering of this suboject if it is marked as deformable
 	if (GetCVars()->e_MergedMeshes == 1 && nTargetLod == 0 && m_isDeformable)
@@ -1243,8 +1360,9 @@ void CStatObj::RenderObjectInternal(CRenderObject* pRenderObject, int nTargetLod
 
 	if (passInfo.IsShadowPass() && passInfo.GetShadowMapType() == SRenderingPassInfo::SHADOW_MAP_CACHED && pRenderObject->m_pRenderNode)
 	{
+		CRY_ASSERT(passInfo.ShadowCacheLod() < MAX_GSM_CACHED_LODS_NUM);
 		IShadowCaster* pCaster = static_cast<IShadowCaster*>(pRenderObject->m_pRenderNode);
-		pCaster->m_cStaticShadowLod = nLod;
+		pCaster->m_shadowCacheLod[passInfo.ShadowCacheLod()] = nLod;
 	}
 
 	pRenderObject->m_DissolveRef = uLodDissolveRef;
@@ -1266,7 +1384,7 @@ void CStatObj::RenderObjectInternal(CRenderObject* pRenderObject, int nTargetLod
 	}
 
 	// try next lod's if selected one is not ready
-	if ((!nLod && m_pRenderMesh && m_pRenderMesh->CanRender()) || !GetCVars()->e_Lods)
+	if ((!nLod && m_pRenderMesh && m_pRenderMesh->CanUpdate()) || !GetCVars()->e_Lods)
 	{
 		PrefetchLine(pRenderObject, 0);
 		RenderRenderMesh(pRenderObject, NULL, passInfo);
@@ -1290,7 +1408,7 @@ void CStatObj::RenderObjectInternal(CRenderObject* pRenderObject, int nTargetLod
 		if (m_pLODs)
 			for (; nLod <= (int)m_nMaxUsableLod; nLod++)
 			{
-				if (m_pLODs[nLod] && m_pLODs[nLod]->m_pRenderMesh && m_pLODs[nLod]->m_pRenderMesh->CanRender())
+				if (m_pLODs[nLod] && m_pLODs[nLod]->m_pRenderMesh && m_pLODs[nLod]->m_pRenderMesh->CanUpdate())
 				{
 					PrefetchLine(pRenderObject, 0);
 					m_pLODs[nLod]->RenderRenderMesh(pRenderObject, NULL, passInfo);
@@ -1328,15 +1446,17 @@ void CStatObj::RenderRenderMesh(CRenderObject* pRenderObject, SInstancingInfo* p
 	if (GetCVars()->e_DebugDraw && (!GetCVars()->e_DebugDrawShowOnlyCompound || (m_bSubObject || m_pParentObject)))
 	{
 		int nLod = 0;
+		// Determine LOD of this instance
 		if (m_pLod0 && m_pLod0->m_pLODs)
+		{
 			for (; nLod < MAX_STATOBJ_LODS_NUM; nLod++)
 			{
 				if (m_pLod0->m_pLODs[nLod] == this)
 				{
-					m_pRenderMesh->SetMeshLod(nLod);
 					break;
 				}
 			}
+		}
 
 		if (GetCVars()->e_DebugDrawShowOnlyLod >= 0)
 			if (GetCVars()->e_DebugDrawShowOnlyLod != nLod)
@@ -1353,12 +1473,12 @@ void CStatObj::RenderRenderMesh(CRenderObject* pRenderObject, SInstancingInfo* p
 	{
 		if (GetCVars()->e_StreamCgfDebug == 1)
 		{
-			RenderStreamingDebugInfo(pRenderObject);
+			RenderStreamingDebugInfo(pRenderObject, passInfo);
 		}
 
 		if (GetCVars()->e_CoverCgfDebug == 1)
 		{
-			RenderCoverInfo(pRenderObject);
+			RenderCoverInfo(pRenderObject, passInfo);
 		}
 	}
 #endif
@@ -1380,19 +1500,25 @@ void CStatObj::RenderRenderMesh(CRenderObject* pRenderObject, SInstancingInfo* p
 ///////////////////////////////////////////////////////////////////////////////
 int CStatObj::GetMaxUsableLod()
 {
+	auto lodMax = GetCVars()->e_LodMax;
+	lodMax = CLAMP(lodMax, 0, MAX_STATOBJ_LODS_NUM - 1);
+
 	int maxUsable = m_pLod0 ? max((int)m_nMaxUsableLod, (int)m_pLod0->m_nMaxUsableLod) : (int)m_nMaxUsableLod;
-	return min(maxUsable, GetCVars()->e_LodMax);
+	return min(maxUsable, lodMax);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 int CStatObj::GetMinUsableLod()
 {
+	auto lodMin = GetCVars()->e_LodMin;
+	lodMin = CLAMP(lodMin, 0, MAX_STATOBJ_LODS_NUM - 1);
+
 	int minUsable = m_pLod0 ? max((int)m_nMinUsableLod0, (int)m_pLod0->m_nMinUsableLod0) : (int)m_nMinUsableLod0;
-	return max(minUsable, GetCVars()->e_LodMin);
+	return max(minUsable, lodMin);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-int CStatObj::FindNearesLoadedLOD(int nLodIn, bool bSearchUp)
+int CStatObj::FindNearestLoadedLOD(int nLodIn, bool bSearchUp)
 {
 	// make sure requested lod is loaded
 	/*  if(CStatObj * pObjForStreamIn = nLodIn ? m_pLODs[nLodIn] : this)
@@ -1405,10 +1531,10 @@ int CStatObj::FindNearesLoadedLOD(int nLodIn, bool bSearchUp)
 	// if requested lod is not ready - find nearest ready one
 	int nLod = nLodIn;
 
-	if (nLod == 0 && !GetRenderMesh())
+	if (nLod == 0 && (!GetRenderMesh() || !GetRenderMesh()->CanUpdate()))
 		nLod++;
 
-	while (nLod && nLod < MAX_STATOBJ_LODS_NUM && (!m_pLODs || !m_pLODs[nLod] || !m_pLODs[nLod]->GetRenderMesh()))
+	while (nLod && nLod < MAX_STATOBJ_LODS_NUM && (!m_pLODs || !m_pLODs[nLod] || !m_pLODs[nLod]->GetRenderMesh() || !m_pLODs[nLod]->GetRenderMesh()->CanUpdate()))
 		nLod++;
 
 	if (nLod >(int)m_nMaxUsableLod)
@@ -1417,10 +1543,10 @@ int CStatObj::FindNearesLoadedLOD(int nLodIn, bool bSearchUp)
 		{
 			nLod = min((int)m_nMaxUsableLod, nLodIn);
 
-			while (nLod && (!m_pLODs || !m_pLODs[nLod] || !m_pLODs[nLod]->GetRenderMesh()))
+			while (nLod && (!m_pLODs || !m_pLODs[nLod] || !m_pLODs[nLod]->GetRenderMesh() || !m_pLODs[nLod]->GetRenderMesh()->CanUpdate()))
 				nLod--;
 
-			if (nLod == 0 && !GetRenderMesh())
+			if (nLod == 0 && (!GetRenderMesh() || !GetRenderMesh()->CanUpdate()))
 				nLod--;
 		}
 		else

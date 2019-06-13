@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 //
 ////////////////////////////////////////////////////////////////////////////
@@ -7,6 +7,7 @@
 
 #include "ICryMannequin.h"
 #include <CryExtension/ClassWeaver.h>
+#include <CryRenderer/IRenderAuxGeom.h>
 
 #include "IActorSystem.h"
 #include "IAnimatedCharacter.h"
@@ -181,7 +182,7 @@ private:
 	virtual ~CProceduralContext_AdjustPos() {}
 
 public:
-	PROCEDURAL_CONTEXT(CProceduralContext_AdjustPos, "AdjustPosContext", 0xC6C0871214214854, 0xADC56AB6422834BD);
+	PROCEDURAL_CONTEXT(CProceduralContext_AdjustPos, "AdjustPosContext", "c6c08712-1421-4854-adc5-6ab6422834bd"_cry_guid);
 
 	virtual void Update(float timePassed) override
 	{
@@ -294,7 +295,7 @@ public:
 			{
 				if (installedScopeMask & BIT64(i))
 				{
-					if (IActionController* pSlaveActionController = m_actionController->GetScope(i)->GetEnslavedActionController())
+					if (m_actionController->GetScope(i)->GetEnslavedActionController() != nullptr)
 					{
 						m_slaveScopeIds.push_back(i);
 						m_collisionCheck = true;
@@ -409,7 +410,7 @@ private:
 					{
 						if (IEntity* pSlaveEntity = &(pActionController->GetEntity()))
 						{
-							if (CProceduralContext_AdjustPos* pSlaveContext = static_cast<CProceduralContext_AdjustPos*>(pActionController->FindProceduralContext("AdjustPosContext")))
+							if (CProceduralContext_AdjustPos* pSlaveContext = static_cast<CProceduralContext_AdjustPos*>(pActionController->FindProceduralContext(CProceduralContext_AdjustPos::GetCID())))
 							{
 								slaveProceduralContexts.push_back(pSlaveContext);
 
@@ -838,9 +839,6 @@ public:
 	virtual void OnEnter(float blendTime, float duration, const SPositionAdjustAnimParams& params)
 	{
 		m_posAdjuster.Init(m_scope->GetEntity(), blendTime);
-
-		CAnimation* anim = m_scope->GetTopAnim(0);
-
 		QuatT animStartLoc(IDENTITY);
 		const bool isRootEntity = IsRootEntity();
 		const bool hasParam = GetParam("TargetPos", m_posAdjuster.m_targetLoc);

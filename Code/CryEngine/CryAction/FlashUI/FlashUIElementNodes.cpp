@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   FlashUIElementNodes.cpp
@@ -667,7 +667,6 @@ void CFlashUIMCTemplateCreateNode::ProcessEvent(EFlowEvent event, SActivationInf
 			m_TmplDescHelper.UpdateObjectDesc(GetPortString(pActInfo, eI_UIMovieClipTmpl), pActInfo, true);
 		}
 
-		IUIElement* pElement = GetElement();
 		if (IsPortActive(pActInfo, eI_UIParentMovieClip))
 		{
 			m_ParentDescHelper.UpdateObjectDesc(GetPortString(pActInfo, eI_UIParentMovieClip), pActInfo, false);

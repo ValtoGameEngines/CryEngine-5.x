@@ -1,10 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name: ChunkFileParsers.h
-//  Created:   2013/11/18 by Sergey Sokov
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include <Cry3DEngine/CGF/CryHeaders.h>
@@ -12,12 +6,6 @@
 
 namespace ChunkFile
 {
-
-//////////////////////////////////////////////////////////////////////////
-
-CryFileReader::CryFileReader()
-{
-}
 
 CryFileReader::~CryFileReader()
 {
@@ -73,10 +61,6 @@ bool CryFileReader::Read(void* buffer, size_t size)
 MemoryReader::MemoryReader()
 	: m_ptr(0)
 	, m_size(0)
-{
-}
-
-MemoryReader::~MemoryReader()
 {
 }
 

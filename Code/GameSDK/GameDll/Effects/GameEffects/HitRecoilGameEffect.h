@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -19,10 +19,12 @@ History:
 
 #include "GameEffect.h"
 #include <IForceFeedbackSystem.h>
+#include <CryMemory/CrySizer.h>
 
 class CPlayer;
 class CProjectile;
 struct HitInfo;
+struct IEntityClass;
 
 
 

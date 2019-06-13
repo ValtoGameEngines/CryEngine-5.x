@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 //
 //////////////////////////////////////////////////////////////////////
@@ -11,8 +11,7 @@ void COpticsManager::Reset()
 	m_OpticsMap.clear();
 	m_SearchedOpticsSet.clear();
 
-	for (auto& pOpticsElement : m_OpticsList)
-		gEnv->pRenderer->ReleaseOptics(pOpticsElement);
+	m_OpticsList.clear();
 
 	stl::free_container(m_OpticsList);
 }
@@ -94,7 +93,7 @@ bool COpticsManager::Load(const char* fullFlareName, int& nOutIndex)
 	if (rootNode == (IXmlNode*)NULL)
 		return false;
 
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Other, 0, "%s", fullFlareName);
+	MEMSTAT_CONTEXT_FMT(EMemStatContextType::Other, "%s", fullFlareName);
 
 	string opticsLibName = strFullFlareName.substr(nPos + 1, restLength);
 	m_SearchedOpticsSet.insert(fullFlareName);

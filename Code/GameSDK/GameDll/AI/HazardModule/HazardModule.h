@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // This module keeps track of all hazards in the world and will notify 
 // entities/agents when they are inside any of them (most of the 
@@ -97,10 +97,10 @@ private:
 	void                                ReportHazardCollisions();
 	inline void                         ReportHazardCollisionsHelper();
 	inline void                         ProcessCollisionsWithEntity(const EntityId entityID);
-	template<class CONTAINER> void      ProcessCollisionsWithEntityProcessContainer(CONTAINER& container, Agent& agent, const char *signalFunctionName, const EntityId entityID);
+	template<class CONTAINER> void      ProcessCollisionsWithEntityProcessContainer(CONTAINER& container, Agent& agent, const AISignals::ISignalDescription& signalDescription, const EntityId entityID);
 	void                                ProcessAgentAndProjectile(Agent& agent, const HazardSystem::HazardDataProjectile& HazardData);
 	void                                ProcessAgentAndSphere(Agent& agent, const HazardSystem::HazardDataSphere& HazardData);
-	void                                SendSignalToAgent(Agent& agent, const char *warningName, const Vec3& estimatedHazardPos, const Vec3& hazardNormal);
+	void                                SendSignalToAgent(Agent& agent, const AISignals::ISignalDescription& signalDescription, const Vec3& estimatedHazardPos, const Vec3& hazardNormal);
 
 	// Hazard instance management:
 	template<class CONTAINER> int       IndexOfInstanceID(const CONTAINER& container, const HazardSystem::HazardID instanceID) const;	

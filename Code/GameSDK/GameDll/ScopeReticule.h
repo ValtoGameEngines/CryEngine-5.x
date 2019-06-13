@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -16,8 +16,11 @@ History:
 #ifndef __SCOPE_RETICULE_H__
 #define __SCOPE_RETICULE_H__
 
+#include <CryCore/smartptr.h>
+
 
 struct SScopeParams;
+struct IMaterial;
 class CWeapon;
 
 

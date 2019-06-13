@@ -1,12 +1,8 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-/******************************************************************************
-** IZLibCompressor.h
-** 23/6/10
-******************************************************************************/
+//! \cond INTERNAL
 
-#ifndef __IZLIBCOMPRESSOR_H__
-#define __IZLIBCOMPRESSOR_H__
+#pragma once
 
 /*
    wrapper interface for the zlib compression / deflate interface
@@ -128,7 +124,7 @@ enum EZDeflateState
 struct IZLibDeflateStream
 {
 protected:
-	virtual ~IZLibDeflateStream() {};    //!< Use Release().
+	virtual ~IZLibDeflateStream() {}    //!< Use Release().
 
 public:
 	struct SStats
@@ -181,7 +177,7 @@ struct IZLibCompressor
 {
 protected:
 	//! Use Release().
-	virtual ~IZLibCompressor()  {};
+	virtual ~IZLibCompressor() {}
 
 public:
 	// <interfuscator:shuffle>
@@ -203,4 +199,4 @@ public:
 	// </interfuscator:shuffle>
 };
 
-#endif // __IZLIBCOMPRESSOR_H__
+//! \endcond

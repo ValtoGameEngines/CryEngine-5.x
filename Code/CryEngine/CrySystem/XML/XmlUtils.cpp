@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   XmlUtils.h
@@ -24,6 +24,7 @@
 #include "XMLBinaryReader.h"
 
 #include "XMLPatcher.h"
+#include <CryNetwork/SimpleSerialize.h>
 
 //////////////////////////////////////////////////////////////////////////
 CXmlNode_PoolAlloc* g_pCXmlNode_PoolAlloc = 0;
@@ -37,7 +38,7 @@ extern bool g_bEnableBinaryXmlLoading;
 CXmlUtils::CXmlUtils(ISystem* pSystem)
 {
 	m_pSystem = pSystem;
-	m_pSystem->GetISystemEventDispatcher()->RegisterListener(this);
+	m_pSystem->GetISystemEventDispatcher()->RegisterListener(this,"CXmlUtils");
 
 	// create IReadWriteXMLSink object
 	m_pReadWriteXMLSink = new CReadWriteXMLSink();
@@ -264,15 +265,15 @@ void CXmlUtils::OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR lpar
 }
 
 //////////////////////////////////////////////////////////////////////////
-class CXmlBinaryDataWriterFile : public XMLBinary::IDataWriter
+class CXmlBinaryDataWriterFile final : public XMLBinary::IDataWriter
 {
 public:
-	CXmlBinaryDataWriterFile(const char* file) { m_file = gEnv->pCryPak->FOpen(file, "wb"); }
-	~CXmlBinaryDataWriterFile() { if (m_file) gEnv->pCryPak->FClose(m_file); };
-	virtual bool IsOk()                                { return m_file != 0; };
-	virtual void Write(const void* pData, size_t size) { if (m_file) gEnv->pCryPak->FWrite(pData, size, 1, m_file); }
+	CXmlBinaryDataWriterFile(const char* szFile) { m_pFile = gEnv->pCryPak->FOpen(szFile, "wb"); }
+	~CXmlBinaryDataWriterFile() { if (m_pFile) gEnv->pCryPak->FClose(m_pFile); };
+	bool         IsOk()                                         { return m_pFile != nullptr; };
+	virtual void Write(const void* pData, size_t size) override { if (m_pFile) gEnv->pCryPak->FWrite(pData, size, 1, m_pFile); }
 private:
-	FILE* m_file;
+	FILE* m_pFile;
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -281,9 +282,15 @@ bool CXmlUtils::SaveBinaryXmlFile(const char* filename, XmlNodeRef root)
 	CXmlBinaryDataWriterFile fileSink(filename);
 	if (!fileSink.IsOk())
 		return false;
+	return SaveBinaryXmlWithWriter(fileSink, root);
+}
+
+//////////////////////////////////////////////////////////////////////////
+bool CXmlUtils::SaveBinaryXmlWithWriter(XMLBinary::IDataWriter& dataWriter, XmlNodeRef root)
+{
 	XMLBinary::CXMLBinaryWriter writer;
 	string error;
-	return writer.WriteNode(&fileSink, root, false, 0, error);
+	return writer.WriteNode(&dataWriter, root, false, 0, error);
 }
 
 //////////////////////////////////////////////////////////////////////////

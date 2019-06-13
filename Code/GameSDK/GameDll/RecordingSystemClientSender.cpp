@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "RecordingSystem.h"
@@ -170,7 +170,6 @@ size_t CClientKillCamSender::AddVictimDataToSendQueue(IActor *pShooter, EntityId
 {
 	// Will never overlap so always send in full.
 	CRecordingSystem *crs = g_pGame->GetRecordingSystem();
-	INetContext* pNetContext = gEnv->pGameFramework->GetNetContext();
 	SNetObjectID netId;
 	uint8 *pData;
 	size_t datasize=crs->GetVictimDataForTimeRange(&pData, victim, from, to, bulletTimeKill, (bFinal && timeOffset!=0.0f)?timeOffset:0.0f);

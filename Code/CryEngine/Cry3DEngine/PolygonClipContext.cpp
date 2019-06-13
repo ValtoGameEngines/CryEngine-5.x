@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   PolygonClipContext.cpp
@@ -77,11 +77,13 @@ void CPolygonClipContext::ClipPolygon(PodArray<Vec3>& PolygonOut, const PodArray
 	}
 
 	// check result
+#if defined(USE_CRY_ASSERT)
 	for (int i = 0; i < PolygonOut.Count(); i++)
 	{
 		float d1 = -ClipPlane.DistFromPlane(PolygonOut.GetAt(i));
 		assert(d1 >= -0.01f);
 	}
+#endif
 
 	assert(PolygonOut.Count() == 0 || PolygonOut.Count() >= 3);
 }

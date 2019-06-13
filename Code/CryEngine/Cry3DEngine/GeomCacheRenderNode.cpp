@@ -1,12 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// ------------------------------------------------------------------------
-//  File name:   GeomCacheRenderNode.cpp
-//  Created:     19/7/2012 by Axel Gneiting
-//  Description: Draws geometry caches
-// -------------------------------------------------------------------------
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "xxhash.h"
@@ -97,11 +89,6 @@ void CGeomCacheRenderNode::SetBBox(const AABB& bBox)
 	m_bBox = bBox;
 }
 
-const AABB CGeomCacheRenderNode::GetBBox() const
-{
-	return m_bBox;
-}
-
 void CGeomCacheRenderNode::UpdateBBox()
 {
 	AABB newAABB;
@@ -140,17 +127,15 @@ void CGeomCacheRenderNode::UpdateBBox()
 	}
 }
 
-void CGeomCacheRenderNode::GetLocalBounds(AABB& bbox)
+void CGeomCacheRenderNode::GetLocalBounds(AABB& bbox) const
 {
 	bbox = m_currentAABB;
 }
 
 void CGeomCacheRenderNode::OffsetPosition(const Vec3& delta)
 {
-	#ifdef SEG_WORLD
 	m_matrix.SetTranslation(m_matrix.GetTranslation() + delta);
 	UpdateBBox();
-	#endif
 }
 
 bool CGeomCacheRenderNode::DidBoundsChange()
@@ -176,8 +161,10 @@ void CGeomCacheRenderNode::Render(const struct SRendParams& rendParams, const SR
 {
 	FUNCTION_PROFILER_3DENGINE;
 
+	DBG_LOCK_TO_THREAD(this);
+
 	if (!m_bInitialized || !m_bDrawing || (m_renderMeshes.empty() && m_renderMeshUpdateContexts.empty())
-	    || !m_pGeomCache || m_dwRndFlags & ERF_HIDDEN || !passInfo.RenderGeomCaches())
+	    || !m_pGeomCache || !passInfo.RenderGeomCaches())
 	{
 		return;
 	}
@@ -205,7 +192,7 @@ void CGeomCacheRenderNode::Render(const struct SRendParams& rendParams, const SR
 			drawParams.pMaterial = m_pMaterial;
 
 			IRenderer* const pRenderer = GetRenderer();
-			CRenderObject* pRenderObject = pRenderer->EF_GetObject_Temp(passInfo.ThreadID());
+			CRenderObject* pRenderObject = passInfo.GetIRenderView()->AllocateTemporaryRenderObject();
 
 			if (pRenderObject)
 			{
@@ -227,7 +214,7 @@ void CGeomCacheRenderNode::Render(const struct SRendParams& rendParams, const SR
 
 					if (pGraphicsPipelineCV->GetIVal() == 0)
 					{
-						pRenderer->EF_AddEf(pCREGeomCache, shaderItem, pRenderObject, passInfo, EFSLIST_GENERAL, afterWater);
+						passInfo.GetIRenderView()->AddRenderObject(pCREGeomCache, shaderItem, pRenderObject, passInfo, EFSLIST_GENERAL, afterWater);
 					}
 					else
 					{
@@ -268,7 +255,7 @@ void CGeomCacheRenderNode::Render(const struct SRendParams& rendParams, const SR
 									}
 
 									auto pInstanceRenderObject = pRenderer->EF_DuplicateRO(pRenderObject, passInfo);
-									pInstanceRenderObject->m_II.m_Matrix = pieceMatrix;
+									pInstanceRenderObject->SetMatrix(pieceMatrix, passInfo);
 
 									if (pMotionVectorsCV->GetIVal() && passInfo.IsGeneralPass() && ((pInstanceRenderObject->m_ObjFlags & FOB_DYNAMIC_OBJECT) != 0))
 									{
@@ -276,20 +263,20 @@ void CGeomCacheRenderNode::Render(const struct SRendParams& rendParams, const SR
 										{
 											uint8 hashableData[] =
 											{
-												0,                                                                 0,          0, 0, 0, 0, 0, 0,
+												0, 0, 0, 0, 0, 0, 0, 0,  //this part will be filled with the address of pCREGeomCache
 												(uint8)std::distance(pCREGeomCache->GetMeshFillDataPtr()->begin(), &meshData),
 												(uint8)std::distance(meshData.m_pRenderMesh->GetChunks().begin(),  &chunk),
 												(uint8)std::distance(meshData.m_instances.begin(),                 &instance)
 											};
 
-											memcpy(hashableData, pCREGeomCache, sizeof(pCREGeomCache));
+											memcpy(hashableData, &pCREGeomCache, sizeof(CREGeomCache*)); //copy the address of the pCREGeomCache into our hash-data-object
 											pRenderObjData->m_uniqueObjectId = static_cast<uintptr_t>(XXH64(hashableData, sizeof(hashableData), 0)) + reinterpret_cast<uintptr_t>(this);
 
 											pCREGeomCache->SetupMotionBlur(pInstanceRenderObject, passInfo);
 										}
 									}
 
-									pRenderer->EF_AddEf(pREMesh, shaderItem, pInstanceRenderObject, passInfo, EFSLIST_GENERAL, afterWater);
+									passInfo.GetIRenderView()->AddRenderObject(pREMesh, shaderItem, pInstanceRenderObject, passInfo, EFSLIST_GENERAL, afterWater);
 								}
 							}
 						}
@@ -359,11 +346,6 @@ IMaterial* CGeomCacheRenderNode::GetMaterial(Vec3* pHitPos) const
 	}
 
 	return NULL;
-}
-
-float CGeomCacheRenderNode::GetMaxViewDist()
-{
-	return m_maxViewDist;
 }
 
 void CGeomCacheRenderNode::GetMemoryUsage(ICrySizer* pSizer) const
@@ -672,7 +654,6 @@ bool CGeomCacheRenderNode::FillFrameAsync(const char* const pFloorFrameData, con
 	// Update meshes & clear instances
 	for (uint meshId = 0; meshId < numMeshes; ++meshId)
 	{
-		const SGeomCacheStaticMeshData& meshData = staticMeshData[meshId];
 		for (TRenderElementMap::iterator iter = m_pRenderElements.begin(); iter != m_pRenderElements.end(); ++iter)
 		{
 			SGeomCacheRenderElementData& data = iter->second;
@@ -731,7 +712,7 @@ bool CGeomCacheRenderNode::FillFrameAsync(const char* const pFloorFrameData, con
 	return true;
 }
 
-void CGeomCacheRenderNode::UpdateMesh_JobEntry(SGeomCacheRenderMeshUpdateContext* pUpdateContext, SGeomCacheStaticMeshData* pStaticMeshData,
+void CGeomCacheRenderNode::UpdateMesh_JobEntry(SGeomCacheRenderMeshUpdateContext* pUpdateContext, const SGeomCacheStaticMeshData* pStaticMeshData,
                                                const char* pFloorMeshData, const char* pCeilMeshData, float lerpFactor)
 {
 	GeomCacheDecoder::FillMeshDataFromDecodedFrame(m_bFilledFrameOnce, *pUpdateContext, *pStaticMeshData, pFloorMeshData, pCeilMeshData, lerpFactor);
@@ -875,23 +856,21 @@ void CGeomCacheRenderNode::FillRenderObject(const SRendParams& rendParams, const
 {
 	FUNCTION_PROFILER_3DENGINE;
 
-	IRenderNode* const pRenderNode = rendParams.pRenderNode;
-	IRenderer* const pRenderer = GetRenderer();
-
 	pRenderObject->m_pRenderNode = rendParams.pRenderNode;
 	pRenderObject->m_fDistance = rendParams.fDistance;
 
 	pRenderObject->m_ObjFlags |= FOB_TRANS_MASK | FOB_DYNAMIC_OBJECT;
+	pRenderObject->m_ObjFlags |= (rendParams.dwFObjFlags & ERF_FOB_ALLOW_TERRAIN_LAYER_BLEND) ? FOB_ALLOW_TERRAIN_LAYER_BLEND : FOB_NONE;
 	pRenderObject->m_ObjFlags |= rendParams.dwFObjFlags;
 
-	pRenderObject->m_II.m_AmbColor = rendParams.AmbientColor;
+	pRenderObject->SetAmbientColor(rendParams.AmbientColor, passInfo);
 
 	if (rendParams.nTextureID >= 0)
 	{
 		pRenderObject->m_nTextureID = rendParams.nTextureID;
 	}
 
-	pRenderObject->m_II.m_Matrix = *rendParams.pMatrix;
+	pRenderObject->SetMatrix(*rendParams.pMatrix, passInfo);
 	pRenderObject->m_nClipVolumeStencilRef = rendParams.nClipVolumeStencilRef;
 
 	SRenderObjData* pRenderObjData = pRenderObject->GetObjData();
@@ -972,7 +951,7 @@ _smart_ptr<IRenderMesh> CGeomCacheRenderNode::SetupDynamicRenderMesh(SGeomCacheR
 	}
 
 	_smart_ptr<IRenderMesh> pRenderMesh = gEnv->pRenderer->CreateRenderMeshInitialized(NULL, meshData.m_numVertices,
-	                                                                                   eVF_P3F_C4B_T2F, NULL, numIndices, prtTriangleList,
+	                                                                                   EDefaultInputLayouts::P3F_C4B_T2F, NULL, numIndices, prtTriangleList,
 	                                                                                   "GeomCacheDynamicMesh", m_pGeomCache->GetFilePath(), eRMT_Dynamic);
 
 	pRenderMesh->LockForThreadAccess();
@@ -1508,7 +1487,6 @@ void CGeomCacheRenderNode::UpdatePhysicalMaterials()
 
 void CGeomCacheRenderNode::UpdateStreamableComponents(float fImportance, float fDistance, bool bFullUpdate, int nLod, const float fInvScale, bool bDrawNear)
 {
-	CObjManager* pObjManager = GetObjManager();
 	Matrix34A matrix = GetMatrix();
 
 	const bool bAllowStandIn = GetCVars()->e_Lods != 0;
@@ -1533,8 +1511,7 @@ void CGeomCacheRenderNode::PrecacheStandIn(IStatObj* pStandIn, float fImportance
 		if (pLod)
 		{
 			CObjManager* pObjManager = GetObjManager();
-			Matrix34A matrix = GetMatrix();
-			static_cast<CStatObj*>(pLod)->UpdateStreamableComponents(fImportance, matrix, bFullUpdate, nLod);
+			static_cast<CStatObj*>(pLod)->UpdateStreamableComponents(fImportance, bFullUpdate, nLod);
 			pObjManager->PrecacheStatObjMaterial(pLod->GetMaterial(), fDistance * fInvScale, pLod, bFullUpdate, bDrawNear);
 		}
 	}

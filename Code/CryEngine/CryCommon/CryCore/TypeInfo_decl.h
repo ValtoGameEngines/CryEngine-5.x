@@ -1,19 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   TypeInfo.h
-//  Version:     v1.00
-//  Created:     19/03/2007 by Scott.
-//  Description: Macros and other definitions needed for TypeInfo declarations.
-// -------------------------------------------------------------------------
-//  History:		 Refactored out of Endian.h
-//
-////////////////////////////////////////////////////////////////////////////
-
-#ifndef __TypeInfo_h__
-#define __TypeInfo_h__
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
+
+// -------------------------------------------------------------------------
+//  Description: Macros and other definitions needed for TypeInfo declarations.
+// -------------------------------------------------------------------------
 
 // Meta-type support.
 
@@ -133,5 +124,3 @@ inline const CTypeInfo& TypeInfo(T** t)
 {
 	return PtrTypeInfo();
 }
-
-#endif // __TypeInfo_h__

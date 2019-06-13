@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "CCryDX12Device.hpp"
@@ -26,9 +26,9 @@
 #include "DX12/Resource/View/CCryDX12ShaderResourceView.hpp"
 #include "DX12/Resource/View/CCryDX12UnorderedAccessView.hpp"
 
-CCryDX12Device* CCryDX12Device::Create(IDXGIAdapter* pAdapter, D3D_FEATURE_LEVEL* pFeatureLevel)
+CCryDX12Device* CCryDX12Device::Create(CCryDX12GIAdapter* pAdapter, D3D_FEATURE_LEVEL* pFeatureLevel)
 {
-	DX12_PTR(NCryDX12::CDevice) device = NCryDX12::CDevice::Create(pAdapter ? static_cast<CCryDX12GIAdapter*>(pAdapter)->GetDXGIAdapter() : nullptr, pFeatureLevel);
+	DX12_PTR(NCryDX12::CDevice) device = NCryDX12::CDevice::Create(pAdapter, pFeatureLevel);
 
 	if (!device)
 	{
@@ -47,14 +47,14 @@ CCryDX12Device::CCryDX12Device(NCryDX12::CDevice* device)
 {
 	DX12_FUNC_LOG
 		
-#ifdef CRY_USE_DX12_MULTIADAPTER
+#ifdef DX12_LINKEDADAPTER
 	// TODO: CVar ...
 	if (CRenderer::CV_r_StereoEnableMgpu)
 	{
 		const UINT numNodes = m_numNodes = m_pDevice->GetNodeCount();
 		const UINT allMask = m_allMask = (1UL << numNodes) - 1UL;
 		const UINT crtMask = m_crtMask = allMask;
-		const UINT visMask = m_visMask = 0U;
+		const UINT visMask = m_visMask = allMask;
 		const UINT shrMask = m_shrMask = 1U;
 
 		m_pMainContext = CCryDX12DeviceContext::Create(this, allMask, false);
@@ -69,19 +69,13 @@ CCryDX12Device::CCryDX12Device(NCryDX12::CDevice* device)
 		const UINT numNodes = m_numNodes = 1U;
 		const UINT allMask = m_allMask = (1UL << numNodes) - 1UL;
 		const UINT crtMask = m_crtMask = 1U;
-		const UINT visMask = m_visMask = 0U;
+		const UINT visMask = m_visMask = 1U;
 		const UINT shrMask = m_shrMask = 1U;
 
-		m_pMainContext = CCryDX12DeviceContext::Create(this, 0, false);
+		m_pMainContext = CCryDX12DeviceContext::Create(this, allMask, false);
 	}
 	//report the node count used
 	gRenDev->m_adapterInfo.nNodeCount = m_numNodes;
-}
-
-CCryDX12Device::~CCryDX12Device()
-{
-	DX12_FUNC_LOG
-
 }
 
 #pragma region /* ID3D11Device implementation */
@@ -745,12 +739,4 @@ HRESULT STDMETHODCALLTYPE CCryDX12Device::ReleaseStagingResource(
 
 	pStagingResource->Release();
 	return S_OK;
-}
-
-void CCryDX12Device::FlushAndWaitForGPU()
-{
-	// Submit pending command-lists in case there are left-overs, make sure it's flushed to and executed on the hardware
-	GetDeviceContext()->Flush();
-	GetDeviceContext()->GetCoreGraphicsCommandListPool().GetAsyncCommandQueue().Flush();
-	GetDeviceContext()->GetCoreGraphicsCommandListPool().WaitForFenceOnCPU();
 }

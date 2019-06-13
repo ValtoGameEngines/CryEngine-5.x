@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -19,6 +19,8 @@ History:
 #include "ReplayActor.h"
 #include "RecordingSystem.h"
 #include "Effects/GameEffects/ParameterGameEffect.h"
+#include "Game.h"
+#include <CryGame/GameUtils.h>
 
 REGISTER_DATA_CALLBACKS(CPlayerHealthGameEffect::LoadStaticData,CPlayerHealthGameEffect::ReleaseStaticData,CPlayerHealthGameEffect::ReloadStaticData,PlayerHealthData);
 
@@ -254,7 +256,7 @@ void CPlayerHealthGameEffect::Start()
 			assert(pMaterialEffects);
 
 			SMFXRunTimeEffectParams effectParams;
-			effectParams.pos = gEnv->pRenderer->GetCamera().GetPosition();
+			effectParams.pos = GetISystem()->GetViewCamera().GetPosition();
 			//effectParams.soundSemantic = eSoundSemantic_None;
 
 			pMaterialEffects->ExecuteEffect(m_playerHealthEffectId, effectParams);
@@ -349,7 +351,7 @@ void CPlayerHealthGameEffect::OnKill()
 			IMaterialEffects* pMaterialEffects = gEnv->pGameFramework->GetIMaterialEffects();
 
 			SMFXRunTimeEffectParams effectParams;
-			effectParams.pos = gEnv->pRenderer->GetCamera().GetPosition();
+			effectParams.pos = GetISystem()->GetViewCamera().GetPosition();
 			//effectParams.soundSemantic = eSoundSemantic_None;
 
 			pMaterialEffects->ExecuteEffect(m_playerDeathEffectId, effectParams);
@@ -395,7 +397,6 @@ void CPlayerHealthGameEffect::UpdateHealthReadibility(float effectIntensity, flo
 	const float radialBlurOscillationTime = s_playerHealthGEData.radialBlurOscillationTime;
 	const float minIllumination = s_playerHealthGEData.minIllumination;
 	const float maxIllumination = s_playerHealthGEData.maxIllumination;
-	const float maxContrast = s_playerHealthGEData.maxContrast;
 	const float minSaturation = s_playerHealthGEData.minSaturation;
 	const float interpolateVelocity = (effectIntensity > m_lastEffectIntensity) ? 1.0f : 12.0f;
 

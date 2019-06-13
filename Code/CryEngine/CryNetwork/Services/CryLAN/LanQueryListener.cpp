@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -13,6 +13,9 @@
 *************************************************************************/
 
 #include "StdAfx.h"
+
+#if ENABLE_GAME_QUERY
+
 #include "LanQueryListener.h"
 #include <CrySystem/ITimer.h>
 #include "Config.h"
@@ -77,7 +80,7 @@ bool CLanQueryListener::IsSuicidal()
 	return false;
 }
 
-void CLanQueryListener::DeleteThis()
+void CLanQueryListener::DeleteThis() const
 {
 	delete this;
 }
@@ -109,7 +112,7 @@ void CLanQueryListener::OnError(const TNetAddress& addr, ESocketError error)
 
 void CLanQueryListener::TimerCallback(NetTimerId id, void* pUser, CTimeValue time)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_NETWORK);
+	CRY_PROFILE_FUNCTION(PROFILE_NETWORK);
 
 	CLanQueryListener* pThis = static_cast<CLanQueryListener*>(pUser);
 	NET_ASSERT(pThis->m_timer == id);
@@ -157,7 +160,7 @@ void CLanQueryListener::DeleteNetQueryListener()
 
 void CLanQueryListener::ProcessPongFrom(const uint8* buffer, size_t bufferLength, const TNetAddress& addr)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_NETWORK);
+	CRY_PROFILE_FUNCTION(PROFILE_NETWORK);
 
 	// only accept pongs for which we have pinged
 	TOutstandingPings::const_iterator iter = m_outstandingPings.find(addr);
@@ -172,7 +175,7 @@ void CLanQueryListener::ProcessPongFrom(const uint8* buffer, size_t bufferLength
 	if (0 != memcmp(PONG, buffer, PONG_LENGTH))
 		return;
 	int64 serNumber;
-#if defined(__GNUC__)
+#if defined(CRY_COMPILER_GCC) || defined(CRY_COMPILER_CLANG)
 	{
 		char serNumBuffer[bufferLength - PONG_LENGTH + 1];
 		memcpy(serNumBuffer, buffer + PONG_LENGTH, bufferLength - PONG_LENGTH);
@@ -206,7 +209,7 @@ void CLanQueryListener::ProcessPongFrom(const uint8* buffer, size_t bufferLength
 
 void CLanQueryListener::ProcessResultFrom(const uint8* buffer, size_t bufferLength, const TNetAddress& addr)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_NETWORK);
+	CRY_PROFILE_FUNCTION(PROFILE_NETWORK);
 
 	if (IsDead())
 		return;
@@ -276,7 +279,7 @@ void CLanQueryListener::GQ_Lazy_PrepareSendPingTo(CNameRequestPtr pReq)
 
 void CLanQueryListener::GQ_SendPingTo(CNameRequestPtr pReq)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_NETWORK);
+	CRY_PROFILE_FUNCTION(PROFILE_NETWORK);
 
 	TNetAddressVec addrVec;
 	if (pReq->GetResult(addrVec) != eNRR_Succeeded)
@@ -290,7 +293,7 @@ void CLanQueryListener::GQ_SendPingTo(CNameRequestPtr pReq)
 	CTimeValue when = g_time;
 	int64 serNumber = when.GetValue();
 	cry_sprintf(buffer, "%s %" PRIi64, "PING",
-#if defined(__GNUC__)
+#if defined(CRY_COMPILER_GCC) || defined(CRY_COMPILER_CLANG)
 	            (long long)serNumber
 #else
 	            serNumber
@@ -331,3 +334,5 @@ void CLanQueryListener::NQ_RefreshPings()
 {
 	m_pGameQueryListener->RefreshPings();
 }
+
+#endif // ENABLE_GAME_QUERY

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*
  * data for the gaussian encoding routines
@@ -8,7 +8,7 @@
 #include "Config.h"
 
 #if USE_MEMENTO_PREDICTORS
-
+#if 0
 struct SSlotData
 {
 	uint32 low;
@@ -731,4 +731,5 @@ static SGaussianCurve Curves[MAX_SLOT_DATA - MIN_SLOT_DATA + 1] = {
 	ENT(26),
 	#undef ENT
 };
-#endif
+#endif // 0
+#endif // USE_MEMENTO_PREDICTORS

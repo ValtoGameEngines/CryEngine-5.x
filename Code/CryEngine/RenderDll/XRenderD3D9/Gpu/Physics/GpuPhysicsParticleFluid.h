@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef GPU_FLUID_SIM_H
 #define GPU_FLUID_SIM_H
@@ -6,6 +6,12 @@
 #include <CryRenderer/IGpuPhysics.h>
 #include "Gpu/GpuComputeBackend.h"
 #include "GraphicsPipeline/Common/ComputeRenderPass.h"
+
+// Fwd
+namespace gpu_pfx2
+{
+	struct SUpdateContext;
+}
 
 namespace gpu_physics
 {
@@ -39,12 +45,12 @@ struct SSimulationData
 		adjacencyList.CreateDeviceBuffer();
 	};
 
-	gpu::CTypedResource<SFluidBody, gpu::BufferFlagsReadWriteAppend>   bodies;
-	gpu::CTypedResource<SFluidBody, gpu::BufferFlagsReadWriteReadback> bodiesTemp;
-	gpu::CTypedResource<uint, gpu::BufferFlagsReadWrite>               bodiesOffsets;
-	gpu::CTypedResource<SGridCell, gpu::BufferFlagsReadWrite>          grid;
-	gpu::CTypedResource<SFluidBody, gpu::BufferFlagsDynamic>           bodiesInject;
-	gpu::CTypedResource<int, gpu::BufferFlagsDynamic>                  adjacencyList;
+	gpu::CStructuredResource<SFluidBody, gpu::BufferFlagsReadWriteAppend>   bodies;
+	gpu::CStructuredResource<SFluidBody, gpu::BufferFlagsReadWriteReadback> bodiesTemp;
+	gpu::CStructuredResource<uint, gpu::BufferFlagsReadWrite>               bodiesOffsets;
+	gpu::CStructuredResource<SGridCell, gpu::BufferFlagsReadWrite>          grid;
+	gpu::CStructuredResource<SFluidBody, gpu::BufferFlagsDynamic>           bodiesInject;
+	gpu::CStructuredResource<int, gpu::BufferFlagsDynamic>                  adjacencyList;
 };
 
 // fwd
@@ -55,7 +61,7 @@ class CParticleFluidSimulation : public ISimulationInstance
 public:
 	enum { simulationType = eSimulationType_ParticleFluid };
 
-	CParticleFluidSimulation(const int maxBodies);
+	CParticleFluidSimulation(CGraphicsPipeline* pGraphicsPipeline, const int maxBodies);
 	~CParticleFluidSimulation();
 
 	// most of the simulation runs in the render thread
@@ -63,7 +69,7 @@ public:
 
 	void CreateResources();
 	void EvolveParticles(CDeviceCommandListRef RESTRICT_REFERENCE commandList, CGpuBuffer& defaultParticleBuffer, int numParticles);
-	void FluidCollisions(CDeviceCommandListRef RESTRICT_REFERENCE commandList, CConstantBufferPtr parameterBuffer, int constantBufferSlot, int texSampler, int texPointSampler);
+	void FluidCollisions(CDeviceCommandListRef RESTRICT_REFERENCE commandList, const gpu_pfx2::SUpdateContext& context, CConstantBufferPtr parameterBuffer, int constantBufferSlot);
 protected:
 	void InternalInjectBodies(const EBodyType type, const SBodyBase* b, const int numBodies);
 	void InternalSetParameters(const EParameterType type, const SParameterBase* p);

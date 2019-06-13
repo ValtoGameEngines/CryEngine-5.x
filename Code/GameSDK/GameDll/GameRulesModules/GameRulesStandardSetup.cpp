@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -15,6 +15,7 @@
 #include "StdAfx.h"
 #include "GameRulesStandardSetup.h"
 #include <CrySystem/XML/IXml.h>
+#include "GameCVars.h"
 #include "GameRules.h"
 #include "Player.h"
 #include "UI/HUD/HUDEventDispatcher.h"
@@ -206,7 +207,7 @@ void CGameRulesStandardSetup::OnPlayerRevived(EntityId playerId)
 	if (pActor)
 	{
 		CRY_ASSERT_MESSAGE(pActor->IsPlayer(), "Actor that is being spawned is not a player!");
-		CPlayer *pPlayer = static_cast<CPlayer*>(pActor);
+		//CPlayer *pPlayer = static_cast<CPlayer*>(pActor);
 
 		bool  luaEquip = (m_usesTeamSpecifics && !m_luaEquipTeamSpecificsFunc.empty());
 
@@ -244,9 +245,12 @@ void CGameRulesStandardSetup::OnPlayerRevived(EntityId playerId)
 			pItemSystem->GiveItem(pActor, "FragGrenades", false, true, true);
 			pItemSystem->GiveItem(pActor, "Pistol", false, true, true);
 
+#if defined(USE_CRY_ASSERT)
 			EntityId weaponId = pItemSystem->GiveItem(pActor, "Rifle", false, true, true);
-
 			CRY_ASSERT_MESSAGE(pItemSystem->GetItem(weaponId), "Failed to find CItem for Rifle");
+#else
+			pItemSystem->GiveItem(pActor, "Rifle", false, true, true);
+#endif
 		}
 
 		if (luaEquip)

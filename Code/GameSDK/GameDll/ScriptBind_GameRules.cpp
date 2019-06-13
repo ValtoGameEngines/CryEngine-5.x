@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -929,7 +929,7 @@ int CScriptBind_GameRules::GetPrimaryTeam(IFunctionHandler *pH)
 
 	if (CGameRules* pGameRules=g_pGame->GetGameRules())
 	{
-		if (IGameRulesRoundsModule* pRoundsModule=g_pGame->GetGameRules()->GetRoundsModule())
+		if (IGameRulesRoundsModule* pRoundsModule=pGameRules->GetRoundsModule())
 		{
 			t = pRoundsModule->GetPrimaryTeam();
 		}

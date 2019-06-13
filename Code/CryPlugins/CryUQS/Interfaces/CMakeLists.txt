@@ -23,9 +23,12 @@ add_sources("NoUberFile"
 		"client/QueryRequest.h"
 		"client/IQueryBlueprintRuntimeParamVisitor.h"
 		"client/IItemMonitor.h"
+		"client/IItemConverter.h"
+		"client/IQueryVisitor.h"
+		"client/IQueryFinishedListener.h"
+		"client/IQueryWarningListener.h"
 	SOURCE_GROUP "core"
 		"core/IDebugRenderWorld.h"
-		"core/IDeferredEvaluatorBlueprint.h"
 		"core/IDeferredEvaluatorFactoryDatabase.h"
 		"core/IEditorService.h"
 		"core/IFactoryDatabase.h"
@@ -37,7 +40,6 @@ add_sources("NoUberFile"
 		"core/IHub.h"
 		"core/IHubPlugin.h"
 		"core/IInputBlueprint.h"
-		"core/IInstantEvaluatorBlueprint.h"
 		"core/IInstantEvaluatorFactoryDatabase.h"
 		"core/IItemDebugProxies.h"
 		"core/IItemDebugProxyFactory.h"
@@ -53,12 +55,18 @@ add_sources("NoUberFile"
 		"core/ItemEvaluationResult.h"
 		"core/ItemIterationContext.h"
 		"core/IUtils.h"
-		"core/QueryBlackboard.h"
+		"core/QueryContext.h"
 		"core/IQueryFactory.h"
 		"core/IQueryHistoryManager.h"
 		"core/IQueryHistoryListener.h"
 		"core/IQueryHistoryConsumer.h"
 		"core/QueryBlueprintID.h"
+		"core/ITimeBudget.h"
+		"core/ILeafFunctionReturnValue.h"
+		"core/IScoreTransformFactory.h"
+		"core/ITextualEvaluatorBlueprint.h"
+		"core/ISettingsManager.h"
+		"core/IDebugMessageCollection.h"
 	SOURCE_GROUP "datasource"
 		"datasource/IEditorLibraryProvider.h"
 		"datasource/IQueryBlueprintLoader.h"
@@ -71,12 +79,20 @@ add_sources("NoUberFile"
 		"shared/IUqsString.h"
 		"shared/IVariantDict.h"
 		"shared/TypeInfo.h"
+		"shared/GUIDHelper.h"
 )
 
 end_sources()
 #END-FILE-LIST
 
 CryFileContainer(CryUQS_Interfaces SOLUTION_FOLDER "CryPlugins/CryUQS")
+
+if(OPTION_UQS_SCHEMATYC_SUPPORT)
+	set_property(TARGET ${THIS_PROJECT} PROPERTY INTERFACE_INCLUDE_DIRECTORIES
+		INTERFACE "${CRYENGINE_DIR}/Code/CryEngine/CrySchematyc/Core/Interface"
+		INTERFACE "${CRYENGINE_DIR}/Code/CryEngine/CrySchematyc/STDEnv/Interface"
+	)
+endif()
 
 #set_property(TARGET ${THIS_PROJECT} PROPERTY INTERFACE_INCLUDE_DIRECTORIES
 #	"${CMAKE_CURRENT_SOURCE_DIR}/../.."

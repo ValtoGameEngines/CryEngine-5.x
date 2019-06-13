@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 #include "AlignmentTools.h"
@@ -90,6 +90,18 @@ public:
 	{
 		CRY_ASSERT_MESSAGE(m_count != 0, "Container is empty");
 		return *ptr(wrap(m_begin + m_count - 1));
+	}
+
+	reference operator[](size_t idx)
+	{
+		CRY_ASSERT_MESSAGE(idx < m_count, "Out of bounds!");
+		return *ptr(wrap(m_begin + idx));
+	}
+	
+	const_reference operator[](size_t idx) const
+	{
+		CRY_ASSERT_MESSAGE(idx < m_count, "Out of bounds!");
+		return *ptr(wrap(m_begin + idx));
 	}
 
 	// Adds an item to the front of the collection.

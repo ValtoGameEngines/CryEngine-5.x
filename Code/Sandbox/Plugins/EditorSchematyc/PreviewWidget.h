@@ -1,12 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <QWidget>
-#include <QObject.h>
-#include <QScrollableBox.h>
+#include <QObject>
 #include <QViewportSettings.h>
-#include <QWidget.h>
 #include "Gizmos/ITransformManipulator.h"
 
 // Forward declare interfaces.
@@ -16,8 +14,7 @@ struct SRenderContext;
 struct SMouseEvent;
 // Forward declare classes.
 class QBoxLayout;
-class QParentWndWidget;
-class QAdvancedPropertyTree;
+class QAdvancedPropertyTreeLegacy;
 class QPushButton;
 class QSplitter;
 class QViewport;
@@ -29,7 +26,7 @@ struct IScriptClass;
 // Forward declare classes.
 class CPreviewWidget;
 
-class CPreviewSettingsWidget : public QScrollableBox
+class CPreviewSettingsWidget : public QWidget
 {
 	Q_OBJECT
 
@@ -40,14 +37,12 @@ protected:
 	void showEvent(QShowEvent* pEvent);
 
 private:
-	QAdvancedPropertyTree* m_pPropertyTree;
+	QAdvancedPropertyTreeLegacy* m_pPropertyTree;
 };
 
 struct IGizmoTransformOp // #SchematycTODO : Use generalized transform system.
 {
-public:
-
-	virtual ~IGizmoTransformOp() {};
+	virtual ~IGizmoTransformOp() {}
 
 	virtual void OnInit() = 0;
 	virtual void OnMove(const Vec3& offset) = 0;
@@ -93,7 +88,7 @@ public:
 	void       Serialize(Serialization::IArchive& archive);
 
 	// ITransformManipulatorOwner
-	virtual bool GetManipulatorMatrix(RefCoordSys coordSys, Matrix34& tm) override;
+	virtual bool GetManipulatorMatrix(Matrix34& tm) override;
 	virtual void GetManipulatorPosition(Vec3& position) override;
 	// ~ITransformManipulatorOwner
 
@@ -117,8 +112,8 @@ private:
 
 	SViewportSettings                  m_viewportSettings;
 
-	SGUID                              m_classGUID;
-	SGUID                              m_componentInstanceGUID;
+	CryGUID                            m_classGUID;
+	CryGUID                            m_componentInstanceGUID;
 
 	IObjectPreviewer*                  m_pObjectPreviewer = nullptr;
 	ObjectId                           m_objectId = ObjectId::Invalid;

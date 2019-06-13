@@ -1,12 +1,18 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __IBreakableManager_h__
 #define __IBreakableManager_h__
 #pragma once
+#include "IEntityBasicTypes.h"
 
 // Forward declaration from physics interface.
 struct EventPhys;
 struct EventPhysRemoveEntityParts;
+struct IEntityClass;
+struct SpawnParams;
+struct IBreakEventListener;
+struct SRenderNodeCloneLookup;
+class CEntity;
 
 //////////////////////////////////////////////////////////////////////////
 enum EPlaneBreakFlags

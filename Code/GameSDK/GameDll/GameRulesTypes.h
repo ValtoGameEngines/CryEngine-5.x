@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -15,6 +15,8 @@
 #define __GAMERULESTYPES_H__
 
 #include "AutoEnum.h"
+#include <CryEntitySystem/IEntityBasicTypes.h>
+#include <CryNetwork/ISerialize.h>
 
 class CActor;
 

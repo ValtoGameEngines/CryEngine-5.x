@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -9,15 +9,16 @@
 // this code is disable by default due it's runtime cost
 //#define SUPPORT_LOG_IDENTER
 
-enum ELogMode
+enum ELogMode : uint16
 {
-	eLogMode_Normal   = BIT(0),
-	eLogMode_AppCrash = BIT(1), //!< Log straight to file. Do not write to console.
+	eLogMode_Normal   = BIT16(0),
+	eLogMode_AppCrash = BIT16(1) //!< Log straight to file. Do not write to console.
 };
 
 // forward declarations
 class ICrySizer;
 
+//! \cond INTERNAL
 //! Callback interface to the ILog.
 struct ILogCallback
 {
@@ -27,6 +28,7 @@ struct ILogCallback
 	virtual void OnWriteToFile(const char* sText, bool bNewLine) = 0;
 	// </interfuscator:shuffle>
 };
+//! \endcond
 
 //! Interface for logging operations based on IMiniLog.
 //! Logging in CryEngine should be done using the following global functions:
@@ -44,8 +46,11 @@ struct ILog : public IMiniLog
 	//! Set the file used to log to disk.
 	virtual bool SetFileName(const char* command = NULL) = 0;
 
-	//! Get the filename used to log to disk.
+	//! Get the file name (without any directories, includes .extention) used to log to disk.
 	virtual const char* GetFileName() const = 0;
+
+	//! Get the full file path used to log to disk.
+	virtual const char* GetFilePath() const = 0;
 
 	//! Get the filename where the current log backup was copied to on disk.
 	virtual const char* GetBackupFileName() const = 0;
@@ -107,9 +112,9 @@ struct ILog : public IMiniLog
 	//! Asset scope strings help to figure out asset dependencies in case of asset loading errors.
 	//! Should not be used directly, only by using define CRY_DEFINE_ASSET_SCOPE.
 	//! \see CRY_DEFINE_ASSET_SCOPE.
-	virtual void        PushAssetScopeName(const char* sAssetType, const char* sName) {};
-	virtual void        PopAssetScopeName()                                           {};
-	virtual const char* GetAssetScopeString()                                         { return ""; };
+	virtual void        PushAssetScopeName(const char* sAssetType, const char* sName) {}
+	virtual void        PopAssetScopeName()                                           {}
+	virtual const char* GetAssetScopeString()                                         { return ""; }
 	// </interfuscator:shuffle>
 
 #if defined(SUPPORT_LOG_IDENTER)

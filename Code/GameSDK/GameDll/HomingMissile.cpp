@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -26,6 +26,10 @@ History:
 	#define DEBUG_HOMINGMISSILE 1
 #else
 	#define DEBUG_HOMINGMISSILE 0
+#endif
+
+#if DEBUG_HOMINGMISSILE
+	#include <CryRenderer/IRenderAuxGeom.h>
 #endif
 
 #define HM_TIME_TO_UPDATE 0.0f
@@ -102,10 +106,11 @@ void CHomingMissile::Launch(const Vec3 &pos, const Vec3 &dir, const Vec3 &veloci
 				// give authority of the missile entity to whoever just fired it
 				if (pActor && pActor->IsPlayer())
 				{
-					INetContext *pNetContext = pFramework->GetNetContext();	
-					if(pNetContext)
+					INetContext *pNetContext = pFramework->GetNetContext();
+					INetChannel *pNetChannel = pFramework->GetNetChannel(pActor->GetChannelId());
+					if (pNetContext && pNetChannel)
 					{
-						pNetContext->DelegateAuthority(GetEntityId(), pActor->GetGameObject()->GetNetChannel()); 
+						pNetContext->DelegateAuthority(GetEntityId(), pNetChannel);
 					}
 				}
 			}
@@ -117,7 +122,7 @@ void CHomingMissile::Launch(const Vec3 &pos, const Vec3 &dir, const Vec3 &veloci
 void CHomingMissile::Update(SEntityUpdateContext &ctx, int updateSlot)
 {
 
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	CRocket::Update(ctx, updateSlot);
 
@@ -163,14 +168,12 @@ void CHomingMissile::UpdateControlledMissile(float frameTime)
 	bool isOwnerActor = pOwnerActor && pOwnerActor->IsClient();
 	bool shouldFollowHomingGuide = isOwnerActor;
 	
-
-	float color[4] = {1,1,1,1};
-	const static float step = 15.f;  
-	float y = 20.f;    
-
 	const SHomingMissileParams& homingParams = *(m_pAmmoParams->pHomingParams);
 
 #if DEBUG_HOMINGMISSILE
+	float color[4] = { 1,1,1,1 };
+	const static float step = 15.f;
+	float y = 20.f;
 	bool bDebug = g_pGameCVars->i_debug_projectiles > 0;
 #endif
 
@@ -385,14 +388,13 @@ void CHomingMissile::UpdateControlledMissile(float frameTime)
 //----------------------------------------------------------------------------
 void CHomingMissile::UpdateCruiseMissile(float frameTime)
 {
-	IRenderer* pRenderer = gEnv->pRenderer;
-	IRenderAuxGeom* pGeom = pRenderer->GetIRenderAuxGeom();
-	float color[4] = {1,1,1,1};
-	const static float step = 15.f;  
-	float y = 20.f;    
-
 	const SHomingMissileParams& homingParams = *(m_pAmmoParams->pHomingParams);
 #if DEBUG_HOMINGMISSILE
+	IRenderer* pRenderer = gEnv->pRenderer;
+	IRenderAuxGeom* pGeom = pRenderer->GetIRenderAuxGeom();
+	float color[4] = { 1,1,1,1 };
+	const static float step = 15.f;
+	float y = 20.f;
 	bool bDebug = g_pGameCVars->i_debug_projectiles > 0;
 #endif
 

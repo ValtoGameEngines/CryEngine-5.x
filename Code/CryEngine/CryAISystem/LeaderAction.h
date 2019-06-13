@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    -------------------------------------------------------------------------
@@ -20,9 +20,7 @@
 #endif
 
 #include <CryAISystem/IAgent.h>
-#include <CryAISystem/AIFormationDescriptor.h>
 #include "AIObject.h"
-#include "Graph.h"
 #include "UnitAction.h"
 #include "UnitImg.h"
 #include <CrySystem/TimeValue.h>
@@ -123,7 +121,7 @@ public:
 	virtual void                BusyUnitNotify(CUnitImg&); // CLeaderAction will manage the inter-dependencies between
 	// the busy member's actions and other members ones
 	virtual void                ResumeUnit(CUnitImg&)                 {}; // CLeaderAction will re-create a planning for the resumed unit
-	virtual bool                ProcessSignal(const AISIGNAL& signal) { return false; }
+	virtual bool                ProcessSignal(const AISignals::SignalSharedPtr pSignal) { return false; }
 	inline void                 SetPriority(int priority)             { m_Priority = priority; };
 	inline int                  GetPriority() const                   { return m_Priority; };
 
@@ -164,7 +162,7 @@ public:
 	CLeaderAction_Attack();//used for derived classes' constructors
 	virtual ~CLeaderAction_Attack();
 
-	virtual bool ProcessSignal(const AISIGNAL& signal);
+	virtual bool ProcessSignal(const AISignals::SignalSharedPtr pSignal);
 	virtual void Serialize(TSerialize ser);
 protected:
 	bool         HasTarget(CAIObject* unit) const;
@@ -179,8 +177,6 @@ protected:
 	Vec3               m_vEnemyPos;
 
 };
-
-typedef std::list<CObstacleRef> ListObstacleRefs;
 
 class CLeaderAction_Search : public CLeaderAction
 {
@@ -210,7 +206,7 @@ public:
 
 	virtual eActionUpdateResult Update();
 
-	virtual bool                ProcessSignal(const AISIGNAL& signal);
+	virtual bool                ProcessSignal(const AISignals::SignalSharedPtr pSignal);
 	virtual void                Serialize(TSerialize ser);
 private:
 	void                        PopulateSearchSpotList(Vec3& initPos);
@@ -223,11 +219,9 @@ private:
 	Vec3                m_vEnemyPos;
 	float               m_fSearchDistance;
 	//SetObstacleRefs		m_Passed;
-	//ListObstacleRefs	m_Obstacles;
 	TPointMap m_HideSpots;
 	bool      m_bInitialized;
 	int       m_iSearchSpotAIObjectType;
-	bool      m_bUseHideSpots;
 	CAIActor* pSelectedUnit;
 
 };
@@ -243,7 +237,7 @@ public:
 	virtual ~CLeaderAction_Attack_SwitchPositions();
 	virtual eActionUpdateResult Update();
 	virtual void                Serialize(TSerialize ser);
-	bool                        ProcessSignal(const AISIGNAL& signal);
+	virtual bool                ProcessSignal(const AISignals::SignalSharedPtr pSignal);
 	virtual void                OnObjectRemoved(CAIObject* pObject);
 	virtual void                AddUnitNotify(CAIActor* pUnit);
 	void                        UpdateBeaconWithTarget(const CAIObject* pTarget = NULL) const;

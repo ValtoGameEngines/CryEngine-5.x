@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "CET_LevelLoading.h"
@@ -21,7 +21,7 @@ public:
 	EContextEstablishTaskResult OnStep(SContextEstablishState& state)
 	{
 		CGameContext* pGameContext = CCryAction::GetCryAction()->GetGameContext();
-		string levelName = pGameContext ? pGameContext->GetLevelName() : "";
+		string levelName = pGameContext ? pGameContext->GetLevelName() : string("");
 		if (levelName.empty())
 		{
 			//GameWarning("No level name set");
@@ -51,25 +51,24 @@ void AddPrepareLevelLoad(IContextEstablisher* pEst, EContextViewState state)
 class CCET_LoadLevel : public CCET_Base
 {
 public:
-	CCET_LoadLevel() : m_bStarted(false) {}
+	CCET_LoadLevel() : m_started(false) {}
 
 	const char*                 GetName() { return "LoadLevel"; }
 
 	EContextEstablishTaskResult OnStep(SContextEstablishState& state)
 	{
-		ILevelInfo* pILevel = NULL;
-		string levelName = CCryAction::GetCryAction()->GetGameContext()->GetLevelName();
+		CCryAction* pAction = CCryAction::GetCryAction();
+		CGameContext* pGameContext = pAction->GetGameContext();
+		string levelName = pGameContext ? pGameContext->GetLevelName() : string("");
 		if (levelName.empty())
 		{
 			GameWarning("No level name set");
 			return eCETR_Failed;
 		}
 
-		CCryAction* pAction = CCryAction::GetCryAction();
-
 		pAction->StartNetworkStallTicker(true);
-		GetISystem()->GetISystemEventDispatcher()->OnSystemEvent(ESYSTEM_EVENT_LEVEL_LOAD_START, (UINT_PTR)(levelName.c_str()), 0);
-		pILevel = pAction->GetILevelSystem()->LoadLevel(levelName);
+		GetISystem()->GetISystemEventDispatcher()->OnSystemEvent(ESYSTEM_EVENT_LEVEL_LOAD_START, reinterpret_cast<UINT_PTR>(levelName.c_str()), 0);
+		ILevelInfo* pILevel = pAction->GetILevelSystem()->LoadLevel(levelName);
 		GetISystem()->GetISystemEventDispatcher()->OnSystemEvent(ESYSTEM_EVENT_LEVEL_LOAD_END, 0, 0);
 		pAction->StopNetworkStallTicker();
 
@@ -78,11 +77,11 @@ public:
 			GameWarning("Failed to load level: %s", levelName.c_str());
 			return eCETR_Failed;
 		}
-		m_bStarted = true;
+		m_started = true;
 		return eCETR_Ok;
 	}
 
-	bool m_bStarted;
+	bool m_started;
 };
 
 class CLevelLoadingThread : public IThread
@@ -103,13 +102,19 @@ public:
 	virtual void ThreadEntry() override
 	{
 		const threadID levelLoadingThreadId = CryGetCurrentThreadId();
-		gEnv->pRenderer->SetLevelLoadingThreadId(levelLoadingThreadId);
-		gEnv->pAudioSystem->SetAllowedThreadId(levelLoadingThreadId);
+
+		if (gEnv->pRenderer) //Renderer may be unavailable when turned off
+		{
+			gEnv->pRenderer->SetLevelLoadingThreadId(levelLoadingThreadId);
+		}
 
 		const ILevelInfo* pLoadedLevelInfo = m_pLevelSystem->LoadLevel(m_levelName.c_str());
 		const bool bResult = (pLoadedLevelInfo != NULL);
-		gEnv->pRenderer->SetLevelLoadingThreadId(0);
-		gEnv->pAudioSystem->SetAllowedThreadId(gEnv->mMainThreadId);
+
+		if (gEnv->pRenderer) //Renderer may be unavailable when turned off
+		{
+			gEnv->pRenderer->SetLevelLoadingThreadId(0);
+		}
 
 		m_state = bResult ? eState_Succeeded : eState_Failed;
 	}
@@ -138,7 +143,8 @@ public:
 	virtual EContextEstablishTaskResult OnStep( SContextEstablishState& state ) override
 	{
 		CCryAction* pAction = CCryAction::GetCryAction();
-		const string levelName = pAction->GetGameContext()->GetLevelName();
+		CGameContext* pGameContext = pAction->GetGameContext();
+		string levelName = pGameContext ? pGameContext->GetLevelName() : string("");
 		if (!m_bStarted)
 		{
 			if (levelName.empty())
@@ -148,7 +154,7 @@ public:
 			} 
 
 			pAction->StartNetworkStallTicker(true);
-			GetISystem()->GetISystemEventDispatcher()->OnSystemEvent(ESYSTEM_EVENT_LEVEL_LOAD_START, (UINT_PTR)(levelName.c_str()), 0);
+			GetISystem()->GetISystemEventDispatcher()->OnSystemEvent(ESYSTEM_EVENT_LEVEL_LOAD_START, reinterpret_cast<UINT_PTR>(levelName.c_str()), 0);
 
 			ILevelSystem* pLevelSystem = pAction->GetILevelSystem();
 			m_pLevelLoadingThread = new CLevelLoadingThread(pLevelSystem, levelName.c_str());
@@ -185,6 +191,77 @@ public:
 	CLevelLoadingThread* m_pLevelLoadingThread;
 };
 
+
+class CCET_LoadLevelTimeSliced : public CCET_Base
+{
+public:
+	virtual const char* GetName() override { return "LoadLevelTimeSliced"; }
+
+	virtual EContextEstablishTaskResult OnStep(SContextEstablishState& state) override
+	{
+		if (!m_started)
+		{
+			m_started = Start();
+			if (!m_started)
+			{
+				return eCETR_Failed;
+			}
+		}
+
+		return DoStep();
+	}
+
+	bool Start()
+	{
+		CCryAction* pAction = CCryAction::GetCryAction();
+		CGameContext* pGameContext = pAction->GetGameContext();
+		m_levelName = pGameContext ? pGameContext->GetLevelName() : string("");
+		if (m_levelName.empty())
+		{
+			GameWarning("No level name set");
+			return false;
+		}
+
+		GetISystem()->GetISystemEventDispatcher()->OnSystemEvent(ESYSTEM_EVENT_LEVEL_LOAD_START, reinterpret_cast<UINT_PTR>(m_levelName.c_str()), 0);
+		const bool started = pAction->GetILevelSystem()->StartLoadLevel(m_levelName);
+		if (!started)
+		{
+			GameWarning("Failed to load level: %s", m_levelName.c_str());
+			GetISystem()->GetISystemEventDispatcher()->OnSystemEvent(ESYSTEM_EVENT_LEVEL_LOAD_END, 0, 0);
+		}
+		pAction->StartNetworkStallTicker(true);
+		return started;
+	}
+
+	EContextEstablishTaskResult DoStep()
+	{
+		CCryAction* pAction = CCryAction::GetCryAction();
+		const ILevelSystem::ELevelLoadStatus status = pAction->GetILevelSystem()->UpdateLoadLevelStatus();
+
+		if (status == ILevelSystem::ELevelLoadStatus::InProgress)
+		{
+			return eCETR_Wait;
+		}
+
+		EContextEstablishTaskResult result = eCETR_Ok;
+		if (status == ILevelSystem::ELevelLoadStatus::Failed)
+		{
+			GameWarning("Failed to load level: %s", m_levelName.c_str());
+			result = eCETR_Failed;
+		}
+
+		GetISystem()->GetISystemEventDispatcher()->OnSystemEvent(ESYSTEM_EVENT_LEVEL_LOAD_END, 0, 0);
+		pAction->StopNetworkStallTicker();
+
+		return result;
+	}
+
+
+	bool m_started = false;
+	string m_levelName;
+};
+
+
 void AddLoadLevel( IContextEstablisher * pEst, EContextViewState state, bool ** ppStarted )
 {
 	const bool bIsEditor = gEnv->IsEditor();
@@ -200,9 +277,21 @@ void AddLoadLevel( IContextEstablisher * pEst, EContextViewState state, bool ** 
 	}
 	else
 	{
-		CCET_LoadLevel* pLL = new CCET_LoadLevel;
-		pEst->AddTask( state, pLL );
-		*ppStarted = &pLL->m_bStarted;
+		const ICVar* pTimeSliced = gEnv->pConsole->GetCVar("g_levelLoadTimeSliced");
+		const bool isTimeSliced = pTimeSliced && pTimeSliced->GetIVal() > 0;
+
+		if (isTimeSliced)
+		{
+			CCET_LoadLevelTimeSliced* pLL = new CCET_LoadLevelTimeSliced;
+			pEst->AddTask(state, pLL);
+			*ppStarted = &pLL->m_started;
+		}
+		else
+		{
+			CCET_LoadLevel* pLL = new CCET_LoadLevel;
+			pEst->AddTask(state, pLL);
+			*ppStarted = &pLL->m_started;
+		}
 	}
 }
 
@@ -260,66 +349,6 @@ public:
 void AddResetAreas(IContextEstablisher* pEst, EContextViewState state)
 {
 	pEst->AddTask(state, new CCET_ResetAreas);
-}
-
-/*
- * Lock resources
- */
-
-struct SLockResourcesState : public CMultiThreadRefCount
-{
-	SLockResourcesState() : m_bLocked(false) {}
-	bool m_bLocked;
-};
-typedef _smart_ptr<SLockResourcesState> SLockResourcesStatePtr;
-
-class CCET_LockResources : public CCET_Base
-{
-public:
-	const char* GetName() { return (m_bLock) ? "LockResources (lock)" : "LockResources (unlock)"; }
-
-	CCET_LockResources(bool bLock, SLockResourcesStatePtr pState, CGameContext* pGameContext) : m_pState(pState), m_bLock(bLock), m_pGameContext(pGameContext) {}
-
-	EContextEstablishTaskResult OnStep(SContextEstablishState& state)
-	{
-		if (m_bLock && !m_pState->m_bLocked)
-		{
-			m_pGameContext->LockResources();
-			m_pState->m_bLocked = true;
-		}
-		if (!m_bLock && m_pState->m_bLocked)
-		{
-			m_pGameContext->UnlockResources();
-			m_pState->m_bLocked = false;
-		}
-		return eCETR_Ok;
-	}
-
-	EContextEstablishTaskResult OnLeaveState(SContextEstablishState& state)
-	{
-		return eCETR_Ok;
-	}
-
-	void OnFailLoading(bool hasEntered)
-	{
-		if (m_pState->m_bLocked)
-		{
-			m_pGameContext->UnlockResources();
-			m_pState->m_bLocked = false;
-		}
-	}
-
-private:
-	SLockResourcesStatePtr m_pState;
-	bool                   m_bLock;
-	CGameContext*          m_pGameContext;
-};
-
-void AddLockResources(IContextEstablisher* pEst, EContextViewState stateBegin, EContextViewState stateEnd, CGameContext* pGameContext)
-{
-	SLockResourcesStatePtr pState = new SLockResourcesState;
-	pEst->AddTask(stateBegin, new CCET_LockResources(true, pState, pGameContext));
-	pEst->AddTask(stateEnd, new CCET_LockResources(false, pState, pGameContext));
 }
 
 /*

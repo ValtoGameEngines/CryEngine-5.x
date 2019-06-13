@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -14,7 +14,7 @@ History:
 #include "Item.h"
 #include "ItemSharedParams.h"
 #include "Actor.h"
-
+#include "Game.h"
 
 //------------------------------------------------------------------------
 EntityId CItem::NetGetOwnerId() const
@@ -101,15 +101,17 @@ IMPLEMENT_RMI(CItem, SvRequestAttachAccessory)
 	if (IInventory *pInventory=GetActorInventory(GetOwnerActor()))
 	{
 		char accessoryName[128];
-		bool result = g_pGame->GetIGameFramework()->GetNetworkSafeClassName(accessoryName, sizeof(accessoryName), params.accessoryClassId);
 
 #if !defined(_RELEASE)
-	if(!result)
-	{
-		char errorMsg[256];
-		cry_sprintf(errorMsg, "CItem::SvRequestAttachAccessory failed to find network safe class name for id %d", params.accessoryClassId);
-		CRY_ASSERT_MESSAGE(result, errorMsg);
-	}
+		bool result = g_pGame->GetIGameFramework()->GetNetworkSafeClassName(accessoryName, sizeof(accessoryName), params.accessoryClassId);
+		if (!result)
+		{
+			char errorMsg[256];
+			cry_sprintf(errorMsg, "CItem::SvRequestAttachAccessory failed to find network safe class name for id %d", params.accessoryClassId);
+			CRY_ASSERT_MESSAGE(result, errorMsg);
+		}
+#else
+		g_pGame->GetIGameFramework()->GetNetworkSafeClassName(accessoryName, sizeof(accessoryName), params.accessoryClassId);
 #endif
 
 		if (accessoryName[0] != '\0' && pInventory->GetCountOfClass(accessoryName)>0)
@@ -128,15 +130,17 @@ IMPLEMENT_RMI(CItem, SvRequestAttachAccessory)
 IMPLEMENT_RMI(CItem, ClAttachAccessory)
 {
 	char accessoryName[128];
-	bool result = g_pGame->GetIGameFramework()->GetNetworkSafeClassName(accessoryName, sizeof(accessoryName), params.accessoryClassId);
 
 #if !defined(_RELEASE)
+	bool result = g_pGame->GetIGameFramework()->GetNetworkSafeClassName(accessoryName, sizeof(accessoryName), params.accessoryClassId);
 	if(!result)
 	{
 		char errorMsg[256];
 		cry_sprintf(errorMsg, "CItem::ClAttachAccessory failed to find network safe class name for id %d", params.accessoryClassId);
 		CRY_ASSERT_MESSAGE(result, errorMsg);
 	}
+#else
+	g_pGame->GetIGameFramework()->GetNetworkSafeClassName(accessoryName, sizeof(accessoryName), params.accessoryClassId);
 #endif
 
 	DoSwitchAccessory(accessoryName, false);
@@ -148,15 +152,17 @@ IMPLEMENT_RMI(CItem, ClAttachAccessory)
 IMPLEMENT_RMI(CItem, ClAttachInitialAccessory)
 {
 	char accessoryName[128];
-	bool result = g_pGame->GetIGameFramework()->GetNetworkSafeClassName(accessoryName, sizeof(accessoryName), params.accessoryClassId);
 
 #if !defined(_RELEASE)
+	bool result = g_pGame->GetIGameFramework()->GetNetworkSafeClassName(accessoryName, sizeof(accessoryName), params.accessoryClassId);
 	if(!result)
 	{
 		char errorMsg[256];
 		cry_sprintf(errorMsg, "CItem::ClAttachAccessory failed to find network safe class name for id %d", params.accessoryClassId);
 		CRY_ASSERT_MESSAGE(result, errorMsg);
 	}
+#else
+	g_pGame->GetIGameFramework()->GetNetworkSafeClassName(accessoryName, sizeof(accessoryName), params.accessoryClassId);
 #endif
 
 	DoSwitchAccessory(accessoryName, true);
@@ -168,18 +174,20 @@ IMPLEMENT_RMI(CItem, ClAttachInitialAccessory)
 //------------------------------------------------------------------------
 IMPLEMENT_RMI(CItem, SvRequestDetachAccessory)
 {
-	if (IInventory *pInventory=GetActorInventory(GetOwnerActor()))
+	if (GetActorInventory(GetOwnerActor()) != nullptr)
 	{
 		char accessoryName[128];
-		bool result = g_pGame->GetIGameFramework()->GetNetworkSafeClassName(accessoryName, sizeof(accessoryName), params.accessoryClassId);
 
 #if !defined(_RELEASE)
+		bool result = g_pGame->GetIGameFramework()->GetNetworkSafeClassName(accessoryName, sizeof(accessoryName), params.accessoryClassId);
 		if(!result)
 		{
 			char errorMsg[256];
 			cry_sprintf(errorMsg, "CItem::SvRequestDetachAccessory failed to find network safe class name for id %d", params.accessoryClassId);
 			CRY_ASSERT_MESSAGE(result, errorMsg);
 		}
+#else
+		g_pGame->GetIGameFramework()->GetNetworkSafeClassName(accessoryName, sizeof(accessoryName), params.accessoryClassId);
 #endif
 
 		if (accessoryName[0] != '\0')
@@ -197,15 +205,17 @@ IMPLEMENT_RMI(CItem, SvRequestDetachAccessory)
 IMPLEMENT_RMI(CItem, ClDetachAccessory)
 {
 	char accessoryName[128];
-	bool result = g_pGame->GetIGameFramework()->GetNetworkSafeClassName(accessoryName, sizeof(accessoryName), params.accessoryClassId);
 
 #if !defined(_RELEASE)
+	bool result = g_pGame->GetIGameFramework()->GetNetworkSafeClassName(accessoryName, sizeof(accessoryName), params.accessoryClassId);
 	if(!result)
 	{
 		char errorMsg[256];
 		cry_sprintf(errorMsg, "CItem::ClDetachAccessory failed to find network safe class name for id %d", params.accessoryClassId);
 		CRY_ASSERT_MESSAGE(result, errorMsg);
 	}
+#else
+	g_pGame->GetIGameFramework()->GetNetworkSafeClassName(accessoryName, sizeof(accessoryName), params.accessoryClassId);
 #endif
 
 	AttachAccessory(accessoryName, false, true, true);

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   FlowInventoryNodes.cpp
@@ -18,9 +18,48 @@
 #include "GameObjects/GameObject.h"
 #include "Inventory.h"
 #include "IGameRulesSystem.h"
-#include "FlowFrameworkBaseNode.h"
+#include <CryFlowGraph/IFlowBaseNode.h>
 
-class CFlowNode_InventoryAddItem : public CFlowFrameworkBaseNode<eNCT_Singleton>
+template<ENodeCloneType CLONE_TYPE>
+class CFlowBaseNodeInventory : public CFlowBaseNode<CLONE_TYPE>
+{
+protected:
+	bool InputEntityIsLocalPlayer(const IFlowNode::SActivationInfo* const pActInfo) const
+	{
+		bool bRet = true;
+
+		if (pActInfo->pEntity)
+		{
+			IActor* pActor = gEnv->pGameFramework->GetIActorSystem()->GetActor(pActInfo->pEntity->GetId());
+			if (pActor != gEnv->pGameFramework->GetClientActor())
+			{
+				bRet = false;
+			}
+		}
+		else if (gEnv->bMultiplayer)
+		{
+			bRet = false;
+		}
+
+		return bRet;
+	}
+
+	//-------------------------------------------------------------
+	// returns the actor associated with the input entity. In single player, it returns the local player if that actor does not exists.
+	IActor* GetInputActor(const IFlowNode::SActivationInfo* const pActInfo) const
+	{
+		IActor* pActor = pActInfo->pEntity ? gEnv->pGameFramework->GetIActorSystem()->GetActor(pActInfo->pEntity->GetId()) : nullptr;
+		if (!pActor && !gEnv->bMultiplayer)
+		{
+			pActor = gEnv->pGameFramework->GetClientActor();
+		}
+
+		return pActor;
+	}
+};
+
+
+class CFlowNode_InventoryAddItem : public CFlowBaseNodeInventory<eNCT_Singleton>
 {
 public:
 	CFlowNode_InventoryAddItem(SActivationInfo* pActInfo)
@@ -58,8 +97,6 @@ public:
 			IActor* pActor = GetInputActor(pActInfo);
 			if (!pActor || pActor != gEnv->pGameFramework->GetClientActor())  // to avoid some extra RMIs and object creation. Tho, this causes the node to not work properly if it is used with non players entities. (which was never intended anyway)
 				return;
-
-			IEntitySystem* pEntSys = gEnv->pEntitySystem;
 
 			IInventory* pInventory = pActor->GetInventory();
 			if (!pInventory)
@@ -111,7 +148,7 @@ public:
 	}
 };
 
-class CFlowNode_InventoryRemoveItem : public CFlowFrameworkBaseNode<eNCT_Singleton>
+class CFlowNode_InventoryRemoveItem : public CFlowBaseNodeInventory<eNCT_Singleton>
 {
 public:
 	CFlowNode_InventoryRemoveItem(SActivationInfo* pActInfo)
@@ -191,7 +228,7 @@ public:
 	}
 };
 
-class CFlowNode_InventoryRemoveAllItems : public CFlowFrameworkBaseNode<eNCT_Singleton>
+class CFlowNode_InventoryRemoveAllItems : public CFlowBaseNodeInventory<eNCT_Singleton>
 {
 public:
 	CFlowNode_InventoryRemoveAllItems(SActivationInfo* pActInfo)
@@ -223,8 +260,6 @@ public:
 	{
 		if (event == eFE_Activate && IsPortActive(pActInfo, 0))
 		{
-			IGameFramework* pGF = gEnv->pGameFramework;
-
 			IActor* pActor = GetInputActor(pActInfo);
 			if (!pActor || pActor != gEnv->pGameFramework->GetClientActor())  // to avoid some extra RMIs and object creation. Tho, this causes the node to not work properly if it is used with non players entities. (which was never intended anyway)
 				return;
@@ -245,7 +280,7 @@ public:
 	}
 };
 
-class CFlowNode_InventoryHasItem : public CFlowFrameworkBaseNode<eNCT_Singleton>
+class CFlowNode_InventoryHasItem : public CFlowBaseNodeInventory<eNCT_Singleton>
 {
 public:
 	CFlowNode_InventoryHasItem(SActivationInfo* pActInfo)
@@ -305,7 +340,7 @@ public:
 	}
 };
 
-class CFlowNode_InventorySelectItem : public CFlowFrameworkBaseNode<eNCT_Singleton>
+class CFlowNode_InventorySelectItem : public CFlowBaseNodeInventory<eNCT_Singleton>
 {
 public:
 	CFlowNode_InventorySelectItem(SActivationInfo* pActInfo)
@@ -417,7 +452,7 @@ public:
 	}
 };
 
-class CFlowNode_InventoryItemSelected : public CFlowFrameworkBaseNode<eNCT_Instanced>, public IItemSystemListener
+class CFlowNode_InventoryItemSelected : public CFlowBaseNodeInventory<eNCT_Instanced>, public IItemSystemListener
 {
 
 	enum
@@ -546,7 +581,7 @@ protected:
 	IGameFramework* m_pGF;
 };
 
-class CFlowNode_InventoryRemoveAllAmmo : public CFlowFrameworkBaseNode<eNCT_Singleton>
+class CFlowNode_InventoryRemoveAllAmmo : public CFlowBaseNodeInventory<eNCT_Singleton>
 {
 public:
 	CFlowNode_InventoryRemoveAllAmmo(SActivationInfo* pActInfo)
@@ -629,7 +664,7 @@ public:
 	}
 };
 
-class CFlowNode_AddEquipmentPack : public CFlowFrameworkBaseNode<eNCT_Singleton>
+class CFlowNode_AddEquipmentPack : public CFlowBaseNodeInventory<eNCT_Singleton>
 {
 public:
 	enum EInputs

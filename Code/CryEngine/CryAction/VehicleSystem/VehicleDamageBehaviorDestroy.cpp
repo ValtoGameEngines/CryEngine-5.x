@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "VehicleDamageBehaviorDestroy.h"
@@ -111,12 +111,6 @@ void CVehicleDamageBehaviorDestroy::SetDestroyed(bool isDestroyed, EntityId shoo
 		entityEvent.nParam[1] = IEntityClass::EVT_BOOL;
 		entityEvent.nParam[2] = (INT_PTR)&val;
 		m_pVehicle->GetEntity()->SendEvent(entityEvent);
-
-		IAISystem* pAISystem = gEnv->pAISystem;
-		if (pAISystem && pAISystem->IsEnabled() && pAISystem->GetSmartObjectManager())
-		{
-			gEnv->pAISystem->GetSmartObjectManager()->SetSmartObjectState(m_pVehicle->GetEntity(), "Dead");
-		}
 
 		m_pVehicle->OnDestroyed();
 	}

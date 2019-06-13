@@ -1,15 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   Entity.h
-//  Version:     v1.00
-//  Created:     18/5/2004 by Timur.
-//  Compilers:   Visual Studio.NET 2003
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "Entity.h"
@@ -20,6 +9,7 @@
 #include "AreaProxy.h"
 #include "FlowGraphProxy.h"
 #include <CryNetwork/ISerialize.h>
+#include "NetEntity.h"
 #include "TriggerProxy.h"
 #include "EntityNodeProxy.h"
 #include "PartitionGrid.h"
@@ -28,12 +18,9 @@
 #include "EntitySlot.h"
 #include "RopeProxy.h"
 #include <CryAISystem/IAISystem.h>
-#include <CryAISystem/IAgent.h>
-#include <CryAISystem/IAIActorProxy.h>
+#include <CryAISystem/IAIObjectManager.h>
 #include <CryRenderer/IRenderAuxGeom.h>
 #include <CryAnimation/ICryAnimation.h>
-#include <CryAISystem/IAIObjectManager.h>
-#include <CryAISystem/IAIActor.h>
 #include "EntityLayer.h"
 #include "GeomCacheAttachmentManager.h"
 #include "CharacterBoneAttachmentManager.h"
@@ -41,9 +28,15 @@
 #include "ClipVolumeProxy.h"
 #include "DynamicResponseProxy.h"
 #include <CryExtension/CryCreateClassInstance.h>
+#include <CrySchematyc/CoreAPI.h>
+#include <CrySchematyc/Utils/ClassProperties.h>
+#include <CryGame/IGameFramework.h>
+#include <CryPhysics/IPhysics.h>
 
 // enable this to check nan's on position updates... useful for debugging some weird crashes
+#if !defined(_RELEASE)
 #define ENABLE_NAN_CHECK
+#endif
 
 #ifdef ENABLE_NAN_CHECK
 	#define CHECKQNAN_FLT(x) \
@@ -55,110 +48,46 @@
 #define CHECKQNAN_VEC(v) \
   CHECKQNAN_FLT(v.x); CHECKQNAN_FLT(v.y); CHECKQNAN_FLT(v.z)
 
-namespace
-{
-Matrix34 sIdentityMatrix = Matrix34::CreateIdentity();
-}
-
 //////////////////////////////////////////////////////////////////////////
-CEntity::CEntity(SEntitySpawnParams& params)
+void CEntity::PreInit(SEntitySpawnParams& params)
 {
-	m_render.m_pEntity = this;
-	m_physics.m_pEntity = this;
-
 	m_pClass = params.pClass;
 	m_pArchetype = params.pArchetype;
-	m_nID = params.id;
+	m_id = params.id;
 	m_flags = params.nFlags;
 	m_flagsExtended = params.nFlagsExtended;
 	m_guid = params.guid;
 
-	// Set flags.
-	m_bActive = 0;
-	m_bRequiresComponentUpdate = 0;
-	m_bInActiveList = 0;
-
-	m_bBoundsValid = 0;
-	m_bInitialized = 0;
-	m_bHidden = 0;
-	m_bInvisible = 0;
-	m_bGarbage = 0;
-	m_nUpdateCounter = 0;
-
-	m_bTrigger = 0;
-	m_bWasRelocated = 0;
-	m_bNotInheritXform = 0;
-	m_bInShutDown = 0;
-	m_bLoadedFromLevelFile = 0;
-
-	m_pGridLocation = 0;
-	m_pProximityEntity = 0;
-
-	m_eUpdatePolicy = ENTITY_UPDATE_NEVER;
-	m_aiObjectID = INVALID_AIOBJECTID;
-
-	m_pEntityLinks = 0;
-
-	// Forward dir cache is initially invalid
-	m_bDirtyForwardDir = true;
-
-	m_objectID = 0;
-
-#ifdef SEG_WORLD
-	m_bLocalSeg = false;
-#endif
-
-	//////////////////////////////////////////////////////////////////////////
-	// Initialize basic parameters.
-	//////////////////////////////////////////////////////////////////////////
 	if (params.sName && params.sName[0] != '\0')
 		SetName(params.sName);
 	CHECKQNAN_VEC(params.vPosition);
-	m_vPos = params.vPosition;
-	m_qRotation = params.qRotation;
-	m_vScale = params.vScale;
+	m_position = params.vPosition;
+	m_rotation = params.qRotation;
+	m_scale = params.vScale;
 
-	CalcLocalTM(m_worldTM);
-
-	ComputeForwardDir();
+	m_worldTM = Matrix34::Create(m_scale, m_rotation, m_position);
 
 	//////////////////////////////////////////////////////////////////////////
 	// Check if entity needs to create a script proxy.
-	IEntityScript* pEntityScript = m_pClass->GetIEntityScript();
-	if (pEntityScript)
+	if (IEntityScript* pEntityScript = m_pClass->GetIEntityScript())
 	{
 		// Creates a script proxy.
 		CEntityScript* pCEntityScript = static_cast<CEntityScript*>(pEntityScript);
 		if (pCEntityScript->LoadScript())
 		{
-			auto pScriptProxy = CreateComponent<IEntityScriptComponent>();
+			auto pScriptProxy = GetOrCreateComponent<IEntityScriptComponent>();
 			pScriptProxy->ChangeScript(pEntityScript, &params);
 		}
 	}
 
-	m_nKeepAliveCounter = 0;
-
-	m_cloneLayerId = -1;
-}
-
-//////////////////////////////////////////////////////////////////////////
-CEntity::~CEntity()
-{
-	assert(m_nKeepAliveCounter == 0);
-
-	// Components could still be referring to m_szName, so clear them before it gets destroyed
-	m_components.Clear();
+	// #netentity Will be addressed in BindToNetwork-refactoring
+	m_pNetEntity = std::unique_ptr<INetEntity>(new CNetEntity(this, params));
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CEntity::SetName(const char* sName)
 {
-	if ((m_flags & ENTITY_FLAG_UNREMOVABLE) && m_bInitialized && !gEnv->IsEditor())
-		CryWarning(VALIDATOR_MODULE_ENTITYSYSTEM, VALIDATOR_ERROR, "!Unremovable entities should never change their name! This is non-compatible with C2 savegames.");
-
 	g_pIEntitySystem->ChangeEntityName(this, sName);
-	if (IAIObject* pAIObject = GetAIObject())
-		pAIObject->SetName(sName);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -171,7 +100,7 @@ void CEntity::SetFlags(uint32 flags)
 		if (m_pGridLocation)
 			m_pGridLocation->nEntityFlags = flags;
 	}
-};
+}
 
 //////////////////////////////////////////////////////////////////////////
 void CEntity::SetFlagsExtended(uint32 flagsExtended)
@@ -181,181 +110,68 @@ void CEntity::SetFlagsExtended(uint32 flagsExtended)
 		m_flagsExtended = flagsExtended;
 		m_render.UpdateRenderNodes();
 	}
-};
+}
 
 //////////////////////////////////////////////////////////////////////////
-bool CEntity::SendEvent(SEntityEvent& event)
+bool CEntity::SendEvent(const SEntityEvent& event)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ENTITY);
-
-	CTimeValue t0;
-	if (CVar::es_DebugEvents)
+	if (!IsGarbage())
 	{
-		t0 = gEnv->pTimer->GetAsyncTime();
+		return SendEventInternal(event);
 	}
 
-	if (CVar::es_DisableTriggers)
+	return false;
+}
+
+//////////////////////////////////////////////////////////////////////////
+bool CEntity::SendEventInternal(const SEntityEvent& event)
+{
+	CRY_PROFILE_FUNCTION(PROFILE_ENTITY);
+
+#ifdef ENABLE_PROFILING_CODE
+	CTimeValue timeBeforeEventSend;
+	if (CVar::es_profileComponentUpdates != 0)
 	{
-		static IEntityClass* pProximityTriggerClass = NULL;
-		static IEntityClass* pAreaTriggerClass = NULL;
+		timeBeforeEventSend = gEnv->pTimer->GetAsyncTime();
 
-		if (pProximityTriggerClass == NULL || pAreaTriggerClass == NULL)
-		{
-			IEntitySystem* pEntitySystem = gEnv->pEntitySystem;
-
-			if (pEntitySystem != NULL)
-			{
-				IEntityClassRegistry* pClassRegistry = pEntitySystem->GetClassRegistry();
-
-				if (pClassRegistry != NULL)
-				{
-					pProximityTriggerClass = pClassRegistry->FindClass("ProximityTrigger");
-					pAreaTriggerClass = pClassRegistry->FindClass("AreaTrigger");
-				}
-			}
-		}
-
-		IEntityClass* pEntityClass = GetClass();
-		if (pEntityClass == pProximityTriggerClass || pEntityClass == pAreaTriggerClass)
-		{
-			if (event.event == ENTITY_EVENT_ENTERAREA || event.event == ENTITY_EVENT_LEAVEAREA)
-			{
-				return true;
-			}
-		}
+		g_pIEntitySystem->m_profiledEvents[GetEntityEventIndex(event.event)].numEvents++;
 	}
+#endif
 
-	// AI object position must be updated first so proxies could eventually use it (as CSmartObjects does)
-	switch (event.event)
+	if (m_eventListenerMask.Check(event.event))
 	{
-	case ENTITY_EVENT_XFORM:
-		if (!m_bGarbage)
-		{
-			UpdateAIObject();
-		}
-		break;
-	case ENTITY_EVENT_ENTERAREA:
-	case ENTITY_EVENT_HIDE:
-	case ENTITY_EVENT_UNHIDE:
-		{
-			if (!m_bGarbage)
-			{
-				// Notify audio proxies before script proxies!
-				auto pIEntityAudioComponent = GetComponent<IEntityAudioComponent>();
+		CRY_ASSERT_MESSAGE(event.event <= Cry::Entity::EEvent::LastNonPerformanceCritical, "Performance critical events should be handled in CEntitySystem!");
 
-				if (pIEntityAudioComponent != NULL)
-				{
-					pIEntityAudioComponent->ProcessEvent(event);
-				}
-			}
+		auto it = std::lower_bound(m_simpleEventListeners.begin(), m_simpleEventListeners.end(), event.event, [](const std::unique_ptr<SEventListenerSet>& a, const EEntityEvent event) -> bool { return a->event < event; });
+		CRY_ASSERT_MESSAGE(it != m_simpleEventListeners.end() && it->get()->event == event.event, "Listener must be contained in storage if m_eventListenerMask is set!");
 
-			break;
-		}
-	case ENTITY_EVENT_RESET:
+		SEventListenerSet& listenerSet = *it->get();
+
+		m_sendEventRecursionCount++;
+
+		listenerSet.SendEvent(event);
+
+		// Sort vector and remove invalidated elements when we are done recursing
+		if (--m_sendEventRecursionCount == 0 && !listenerSet.IsSorted())
 		{
-			// Activate entity if was deactivated:
-			if (m_bGarbage)
+			listenerSet.SortUnsortedElements();
+			if (!listenerSet.HasValidElements())
 			{
-				m_bGarbage = false;
-				// If entity was deleted in game, ressurect it.
-				SEntityEvent entevnt;
-				entevnt.event = ENTITY_EVENT_INIT;
-				SendEvent(entevnt);
-			}
-
-			//CryLogAlways( "%s became visible",GetEntityTextDescription() );
-			// [marco] needed when going in and out of game mode in the editor
-			{
-				m_render.SetLastSeenTime(gEnv->pTimer->GetCurrTime());
-				ICharacterInstance* pCharacterInstance = m_render.GetCharacter(0);
-				if (pCharacterInstance)
-					pCharacterInstance->SetPlaybackScale(1.0f);
-			}
-			break;
-		}
-	case ENTITY_EVENT_INIT:
-		m_bGarbage = false;
-		break;
-
-	case ENTITY_EVENT_ANIM_EVENT:
-		{
-			// If the event is a sound event, make sure we have a sound proxy.
-			const AnimEventInstance* pAnimEvent = reinterpret_cast<const AnimEventInstance*>(event.nParam[0]);
-			const char* eventName = (pAnimEvent ? pAnimEvent->m_EventName : 0);
-			if (eventName && stricmp(eventName, "sound") == 0)
-			{
-				GetOrCreateComponent<IEntityAudioComponent>();
+				m_simpleEventListeners.erase(it);
 			}
 		}
-		break;
 
-	case ENTITY_EVENT_DONE:
-		// When deleting should detach all children.
+#ifdef ENABLE_PROFILING_CODE
+		const CTimeValue timeAfterEventSent = gEnv->pTimer->GetAsyncTime();
+		const float eventCostMs = (timeAfterEventSent - timeBeforeEventSend).GetMilliSeconds();
+		const uint8 eventIndex = GetEntityEventIndex(event.event);
+
+		g_pIEntitySystem->m_profiledEvents[eventIndex].totalCostMs += eventCostMs;
+
+		if (eventCostMs > g_pIEntitySystem->m_profiledEvents[eventIndex].mostExpensiveEntityCostMs)
 		{
-			//g_pIEntitySystem->RemoveTimerEvent(GetId(), -1);
-			DetachAll();
-			DetachThis(0);
-
-			IPhysicalEntity* pPhysics = GetPhysics();
-			if (pPhysics && pPhysics->GetForeignData(PHYS_FOREIGN_ID_ENTITY))
-			{
-				pe_params_foreign_data pfd;
-				pfd.pForeignData = 0;
-				pfd.iForeignData = -1;
-				pPhysics->SetParams(&pfd, 1);
-			}
-		}
-		break;
-
-	case ENTITY_EVENT_PRE_SERIALIZE:
-		//filter out event if not using save/load
-		if (!g_pIEntitySystem->ShouldSerializedEntity(this))
-			return true;
-		break;
-	}
-
-	if (!m_bGarbage)
-	{
-		// Broadcast event to proxies.
-		m_render.ProcessEvent(event);
-		m_physics.ProcessEvent(event);
-
-		// Send event to components.
-		m_components.ForEachSorted(
-		  [&event](const SEntityComponentRecord& componentRecord)
-		{
-			if (componentRecord.registeredEventsMask & BIT64(event.event))
-			{
-			  componentRecord.pComponent->ProcessEvent(event);
-			}
-		}
-		  );
-
-		// Give entity system a chance to check the event, and notify other listeners.
-		uint32 nWhyFlags = (uint32)event.nParam[0];
-		if (event.event != ENTITY_EVENT_XFORM || !(nWhyFlags & ENTITY_XFORM_NO_SEND_TO_ENTITY_SYSTEM))
-		{
-			if (m_pEventListeners)
-			{
-				if (m_pEventListeners->haveListenersMask & BIT64(event.event))
-				{
-					// Fast mask check to see if any listeners for this event type existed on entity
-					m_pEventListeners->m_listeners.ForEach(
-					  [this, &event](const SEventListeners::SListener& l)
-					{
-						if (l.event == event.event)
-							l.pListener->OnEntityEvent(this, event);
-					});
-				}
-			}
-			g_pIEntitySystem->OnEntityEvent(this, event);
-		}
-
-#ifndef _RELEASE
-		if (CVar::es_DebugEvents)
-		{
-			CTimeValue t1 = gEnv->pTimer->GetAsyncTime();
-			LogEvent(event, t1 - t0);
+			g_pIEntitySystem->m_profiledEvents[eventIndex].mostExpensiveEntityCostMs = eventCostMs;
+			g_pIEntitySystem->m_profiledEvents[eventIndex].mostExpensiveEntity = CEntitySystem::SProfiledEntityEvent::SEntityInfo(*this);
 		}
 #endif
 
@@ -365,10 +181,180 @@ bool CEntity::SendEvent(SEntityEvent& event)
 	return false;
 }
 
-//////////////////////////////////////////////////////////////////////////
+#define FOR_ENABLED_ENTITY_EVENTS_IN_MASK(mask) \
+	const uint8 firstEventIndex = static_cast<uint8>(countTrailingZeros64(mask)); /* Index of the first set bit in mask */ \
+	const uint8 lastUsedEventIndex = static_cast<uint8>(std::numeric_limits<EntityEventMask>::digits - static_cast<uint8>(countLeadingZeros64(mask)));  /* Index of the last set bit in mask */ \
+	const uint8 lastEventIndex = min(lastUsedEventIndex, CEntity::GetEntityEventIndex(Cry::Entity::EEvent::LastNonPerformanceCritical)); /* Index of the last usable set bit in mask, perf critical events don't matter */ \
+	for (uint8 i = firstEventIndex; i <= lastEventIndex; i += static_cast<uint8>(countTrailingZeros64(mask >> (i + 1)) + 1)) /* Iterate through the set events, skip past segments that are set to 0 - faster than check inside since majority of events will have the majority of mask bits set to 0 */ \
+	
+
+/////////////////////////////////////////////////////////////////////////
+void CEntity::AddSimpleEventListeners(Cry::Entity::EventFlags events, ISimpleEntityEventListener* pListener, IEntityComponent::ComponentEventPriority priority)
+{
+	FOR_ENABLED_ENTITY_EVENTS_IN_MASK(events.UnderlyingValue())
+	{
+		AddSimpleEventListener((EEntityEvent)i, pListener, priority);
+	}
+}
+
+/////////////////////////////////////////////////////////////////////////
+void CEntity::ClearComponentEventListeners()
+{
+	m_components.ForEach([this](SEntityComponentRecord& record) -> EComponentIterationResult
+	{
+		if (!record.registeredEventsMask.IsEmpty())
+		{
+			Cry::Entity::EventFlags prevMask = record.registeredEventsMask;
+			record.registeredEventsMask.Clear();
+
+			OnComponentMaskChanged(record, prevMask);
+		}
+
+		return EComponentIterationResult::Continue;
+	});
+}
+
+/////////////////////////////////////////////////////////////////////////
+void CEntity::AddSimpleEventListener(EEntityEvent event, ISimpleEntityEventListener* pListener, IEntityComponent::ComponentEventPriority priority)
+{
+	CRY_PROFILE_FUNCTION(PROFILE_ENTITY);
+	CRY_ASSERT_MESSAGE(event <= Cry::Entity::EEvent::LastNonPerformanceCritical, "Performance critical events should not add listeners, as they are sent by the entity system and not entity instances");
+
+	SEventListener eventListener = SEventListener {
+		pListener, priority
+	};
+
+#ifdef ENABLE_PROFILING_CODE
+	g_pIEntitySystem->m_profiledEvents[GetEntityEventIndex(event)].numListenerAdditions++;
+#endif
+
+	auto it = std::lower_bound(m_simpleEventListeners.begin(), m_simpleEventListeners.end(), event, [](const std::unique_ptr<SEventListenerSet>& a, const EEntityEvent event) -> bool { return a->event < event; });
+
+	// Check if a collection of listeners exists for the event
+	if (it != m_simpleEventListeners.end() && it->get()->event == event)
+	{
+		SEventListenerSet& listenerSet = *it->get();
+		if (!listenerSet.HasValidElements())
+		{
+			// Re-apply the event listener mask, was automatically removed when the last entry was invalidated
+			m_eventListenerMask |= ENTITY_EVENT_BIT(event);
+		}
+
+		if (m_sendEventRecursionCount > 0)
+		{
+			listenerSet.UnsortedInsert(eventListener);
+		}
+		else
+		{
+			// Sorted insertion based on the requested event priority
+			listenerSet.SortedInsert(std::move(eventListener));
+		}
+	}
+	else
+	{
+		auto upperBoundIt = std::upper_bound(m_simpleEventListeners.begin(), m_simpleEventListeners.end(), event, [](const EEntityEvent event, const std::unique_ptr<SEventListenerSet>& b) -> bool { return event < b->event; });
+		m_simpleEventListeners.emplace(upperBoundIt, stl::make_unique<SEventListenerSet>(event, std::move(eventListener)));
+
+		// Event listener was not present, in this case it is safe to always create
+		m_eventListenerMask |= ENTITY_EVENT_BIT(event);
+	}
+}
+
+/////////////////////////////////////////////////////////////////////////
+void CEntity::RemoveSimpleEventListener(EEntityEvent event, ISimpleEntityEventListener* pListener)
+{
+	CRY_PROFILE_FUNCTION(PROFILE_ENTITY);
+	CRY_ASSERT_MESSAGE(event <= Cry::Entity::EEvent::LastNonPerformanceCritical, "Performance critical events should not add listeners, as they are sent by the entity system and not entity instances");
+
+#ifdef ENABLE_PROFILING_CODE
+	g_pIEntitySystem->m_profiledEvents[GetEntityEventIndex(event)].numListenerRemovals++;
+#endif
+
+	CRY_ASSERT(m_eventListenerMask.Check(event));
+
+	auto it = std::lower_bound(m_simpleEventListeners.begin(), m_simpleEventListeners.end(), event, [](const std::unique_ptr<SEventListenerSet>& a, const EEntityEvent& event) -> bool { return a->event < event; });
+	CRY_ASSERT(it != m_simpleEventListeners.end() && it->get()->event == event);
+
+	SEventListenerSet& listenerSet = *it->get();
+	const SEventListenerSet::TStorage::iterator listenerIt = listenerSet.FindListener(pListener);
+	if (listenerIt == listenerSet.GetEnd())
+	{
+		// Listener was most likely invalidated before, we can skip removal
+		return;
+	}
+
+	if (m_sendEventRecursionCount > 0)
+	{
+		// Invalidate, will be removed when we are done sending events
+		listenerSet.InvalidateElement(listenerIt);
+		if (!listenerSet.HasValidElements())
+		{
+			m_eventListenerMask &= ~ENTITY_EVENT_BIT(event);
+		}
+	}
+	else
+	{
+		listenerSet.RemoveElement(listenerIt);
+
+		if (!listenerSet.HasValidElements())
+		{
+			m_simpleEventListeners.erase(it);
+			m_eventListenerMask &= ~ENTITY_EVENT_BIT(event);
+		}
+	}
+}
+
+/////////////////////////////////////////////////////////////////////////
 bool CEntity::Init(SEntitySpawnParams& params)
 {
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Entity, 0, "Init: %s", params.sName ? params.sName : "(noname)");
+	MEMSTAT_CONTEXT_FMT(EMemStatContextType::Entity, "Init: %s", params.sName ? params.sName : "(noname)");
+
+	bool bIsPreview = (params.nFlagsExtended & ENTITY_FLAG_EXTENDED_PREVIEW) != 0;
+
+	if (bIsPreview)
+	{
+		m_simulationMode = Schematyc::ESimulationMode::Preview;
+	}
+	else if (gEnv->IsEditing() && !gEnv->pSystem->IsLoading())
+	{
+		m_simulationMode = EEntitySimulationMode::Editor;
+	}
+	else if (gEnv->pGameFramework->IsGameStarted())
+	{
+		m_simulationMode = EEntitySimulationMode::Game;
+	}
+	else
+	{
+		m_simulationMode = EEntitySimulationMode::Idle;
+	}
+
+	CEntityClass* pClass = static_cast<CEntityClass*>(params.pClass);
+
+	if (params.pParent != nullptr)
+	{
+		static_cast<CEntity*>(params.pParent)->AttachChild(this, params.attachmentParams);
+
+		m_scale = params.vScale;
+		m_rotation = params.qRotation;
+		m_position = params.vPosition;
+
+		InvalidateTM(ENTITY_XFORM_FROM_PARENT, true);
+	}
+
+	// Create Schematyc object is class have runtime class for it.
+	if (pClass->GetSchematycRuntimeClass())
+	{
+		CreateSchematycObject(params);
+	}
+
+	const IEntityClass::OnSpawnCallback& onSpawnCallback = params.pClass->GetOnSpawnCallback();
+	if (onSpawnCallback)
+	{
+		if (!onSpawnCallback(*this, params))
+		{
+			return false;
+		}
+	}
 
 	//////////////////////////////////////////////////////////////////////////
 	// Check if entity needs to create a proxy class.
@@ -378,76 +364,34 @@ bool CEntity::Init(SEntitySpawnParams& params)
 		pUserProxyCreateFunc(this, params, params.pClass->GetUserProxyData());
 	}
 
+	//////////////////////////////////////////////////////////////////////////
+	// Before calling Init event serialize entity from xml node
+	//////////////////////////////////////////////////////////////////////////
+	if (params.entityNode)
+	{
+		SerializeXML(params.entityNode, true, false);
+	}
+
 	SEntityEvent entevnt;
 	entevnt.event = ENTITY_EVENT_INIT;
 	SendEvent(entevnt);
 
 	// Make sure position is registered.
-	if (!m_bWasRelocated)
-		OnRellocate(ENTITY_XFORM_POS);
+	OnRellocate(ENTITY_XFORM_POS);
 
-	//Render Proxy is initialized last.
+	if (params.entityNode)
+	{
+		// Physics state serialization must be after full initialization
+		m_physics.SerializeXML(params.entityNode, true);
+	}
+
+	// Initialize rendered slots last
 	m_render.PostInit();
-	m_bInitialized = true;
+
+	SetInternalFlag(EInternalFlag::Initialized, true);
+	m_pNetEntity->OnEntityInitialized();
 
 	return true;
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CEntity::Update(SEntityUpdateContext& ctx)
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ENTITY);
-
-	if (m_bHidden && !CheckFlags(ENTITY_FLAG_UPDATE_HIDDEN))
-		return;
-
-	// Broadcast event to proxies.
-	SEntityEvent event;
-	event.event = ENTITY_EVENT_UPDATE;
-	event.nParam[0] = (INT_PTR)&ctx;
-	event.fParam[0] = ctx.fFrameTime;
-
-	m_components.ForEachSorted(
-	  [&event](const SEntityComponentRecord& componentRecord)
-	{
-		if (componentRecord.registeredEventsMask & BIT64(ENTITY_EVENT_UPDATE))
-		{
-		  componentRecord.pComponent->ProcessEvent(event);
-		}
-	}
-	  );
-
-	// Validate if any components where updated bounding box of entity could have potentially changed
-	m_render.CheckLocalBoundsChanged();
-
-	if (m_nUpdateCounter != 0)
-	{
-		if (--m_nUpdateCounter == 0)
-		{
-			ActivateEntityIfNecessary();
-		}
-	}
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CEntity::PrePhysicsUpdate(SEntityEvent& event)
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ENTITY);
-
-	m_components.ForEachSorted(
-	  [&event](const SEntityComponentRecord& componentRecord)
-	{
-		if (componentRecord.registeredEventsMask & BIT64(ENTITY_EVENT_PREPHYSICSUPDATE))
-		{
-		  componentRecord.pComponent->ProcessEvent(event);
-		}
-	}
-	  );
-}
-
-bool CEntity::IsPrePhysicsActive()
-{
-	return g_pIEntitySystem->IsPrePhysicsActive(this);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -455,7 +399,8 @@ void CEntity::ShutDown()
 {
 	ENTITY_PROFILER;
 
-	m_bInShutDown = true;
+	CRY_ASSERT(m_keepAliveCounter == 0);
+	SetInternalFlag(EInternalFlag::MarkedForDeletion, true);
 
 	RemoveAllEntityLinks();
 	m_physics.ReleasePhysicalEntity();
@@ -481,47 +426,40 @@ void CEntity::ShutDown()
 
 	if (m_flags & ENTITY_FLAG_TRIGGER_AREAS)
 	{
-		static_cast<CAreaManager*>(g_pIEntitySystem->GetAreaManager())->ExitAllAreas(m_nID);
+		static_cast<CAreaManager*>(g_pIEntitySystem->GetAreaManager())->ExitAllAreas(m_id);
 	}
 
-	//////////////////////////////////////////////////////////////////////////
-	// release AI object and SmartObject
-	{
-		if (gEnv->pAISystem)
-		{
-			if (IAIObject* pAIObject = GetAIObject())
-			{
-				gEnv->pAISystem->GetAIObjectManager()->RemoveObject(m_aiObjectID);
-			}
-		}
+	m_simpleEventListeners.clear();
+	m_eventListenerMask.Clear();
 
-		m_aiObjectID = INVALID_AIOBJECTID;
-		m_flags &= ~ENTITY_FLAG_HAS_AI;
-	}
-
-	if (gEnv->pAISystem && gEnv->pAISystem->GetSmartObjectManager())
-		gEnv->pAISystem->GetSmartObjectManager()->RemoveSmartObject(this);
-
-	//////////////////////////////////////////////////////////////////////////
-	// remove timers and listeners
-	RemoveAllEventListeners();
-
-	g_pIEntitySystem->RemoveTimerEvent(GetId(), -1);
+	g_pIEntitySystem->RemoveAllTimerEvents(GetId());
 	g_pIEntitySystem->RemoveEntityFromLayers(GetId());
 
 	DetachAll();
-	DetachThis(0);
+	DetachThis();
+
+	m_pLegacySchematycData.reset();
+
+	m_externalEventListeners.clear();
+	m_simpleEventListeners.clear();
+	m_eventListenerMask.Clear();
+	// Update the registered event mask in all components, as to indicate that no listeners were registered
+	m_components.NonRecursiveForEach([](SEntityComponentRecord& record) -> EComponentIterationResult
+	{
+		record.registeredEventsMask.Clear();
+		return EComponentIterationResult::Continue;
+	});
 
 	// ShutDown all components.
 	m_components.Clear();
-
-	m_bInShutDown = false;
 }
 
-//////////////////////////////////////////////////////////////////////////
-void CEntity::EnableInheritXForm(bool bEnable)
+CEntity::SLegacySchematycData::~SLegacySchematycData()
 {
-	m_bNotInheritXform = !bEnable;
+	if (pSchematycObject != nullptr)
+	{
+		gEnv->pSchematyc->DestroyObject(pSchematycObject->GetId());
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -531,7 +469,7 @@ void CEntity::AttachChild(IEntity* pChildEntity, const SChildAttachParams& attac
 	// In debug mode check for attachment recursion.
 #ifdef _DEBUG
 	assert(this != pChildEntity && "Trying to Attach to itself");
-	for (IEntity* pParent = GetParent(); pParent; pParent = pParent->GetParent())
+	for (CEntity* pParent = static_cast<CEntity*>(GetParent()); pParent; pParent = static_cast<CEntity*>(pParent->GetParent()))
 	{
 		assert(pParent != pChildEntity && "Recursive Attachment");
 
@@ -561,25 +499,32 @@ void CEntity::AttachChild(IEntity* pChildEntity, const SChildAttachParams& attac
 	{
 #if defined(USE_GEOM_CACHES)
 		pChild->m_hierarchy.parentBindingType = EBindingType::eBT_GeomCacheNode;
-		CGeomCacheAttachmentManager* pGeomCacheAttachmentManager = static_cast<CEntitySystem*>(GetEntitySystem())->GetGeomCacheAttachmentManager();
+		CGeomCacheAttachmentManager* pGeomCacheAttachmentManager = g_pIEntitySystem->GetGeomCacheAttachmentManager();
 		pGeomCacheAttachmentManager->RegisterAttachment(pChild, this, CryStringUtils::HashString(attachParams.m_target));
 #endif
 	}
 	else if (attachParams.m_nAttachFlags & ATTACHMENT_CHARACTERBONE)
 	{
 		pChild->m_hierarchy.parentBindingType = EBindingType::eBT_CharacterBone;
-		CCharacterBoneAttachmentManager* pCharacterBoneAttachmentManager = static_cast<CEntitySystem*>(GetEntitySystem())->GetCharacterBoneAttachmentManager();
+		CCharacterBoneAttachmentManager* pCharacterBoneAttachmentManager = g_pIEntitySystem->GetCharacterBoneAttachmentManager();
 		const uint32 targetCRC = CCrc32::ComputeLowercase(attachParams.m_target);
 		pCharacterBoneAttachmentManager->RegisterAttachment(pChild, this, targetCRC);
 	}
+	else if (attachParams.m_nAttachFlags & ATTACHMENT_LOCAL_SIM)
+	{
+		pChild->m_hierarchy.parentBindingType = EBindingType::eBT_LocalSim;
+	}
 
 	// Add to child list first to make sure node not get deleted while re-attaching.
-	m_hierarchy.childs.push_back(pChild);
+	m_hierarchy.children.push_back(pChild);
 	if (pChild->m_hierarchy.pParent)
 		pChild->DetachThis(); // Detach node if attached to other parent.
 
 	// Assign this entity as parent to child entity.
 	pChild->m_hierarchy.pParent = this;
+
+	if (attachParams.m_nAttachFlags & ATTACHMENT_SUPPRESS_UPDATE)
+		return;
 
 	if (attachParams.m_nAttachFlags & ATTACHMENT_KEEP_TRANSFORMATION)
 	{
@@ -590,16 +535,20 @@ void CEntity::AttachChild(IEntity* pChildEntity, const SChildAttachParams& attac
 	{
 		// If entity should trigger areas, when attaching it make sure local translation is reset to (0,0,0).
 		// This prevents invalid position to propagate to area manager and incorrectly leave/enter areas.
-		pChild->m_vPos.Set(0, 0, 0);
+		pChild->m_position.Set(0, 0, 0);
 		pChild->InvalidateTM(ENTITY_XFORM_FROM_PARENT);
 	}
 	else
 		pChild->InvalidateTM(ENTITY_XFORM_FROM_PARENT);
 
+	m_physics.OnChildEntityAttached(pChild->GetId());
+
 	// Send attach event.
 	SEntityEvent event(ENTITY_EVENT_ATTACH);
 	event.nParam[0] = pChild->GetId();
 	SendEvent(event);
+
+	pChild->m_render.OnAttachedToParent();
 
 	// Send ATTACH_THIS event to child
 	SEntityEvent eventThis(ENTITY_EVENT_ATTACH_THIS);
@@ -608,23 +557,23 @@ void CEntity::AttachChild(IEntity* pChildEntity, const SChildAttachParams& attac
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::DetachAll(int nDetachFlags)
+void CEntity::DetachAll(AttachmentFlagsType attachmentFlags)
 {
-	while (!m_hierarchy.childs.empty())
+	while (!m_hierarchy.children.empty())
 	{
-		CEntity* pChild = m_hierarchy.childs.front();
-		pChild->DetachThis(nDetachFlags);
+		CEntity* pChild = m_hierarchy.children.front();
+		pChild->DetachThis(attachmentFlags);
 	}
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::DetachThis(int nDetachFlags, int nWhyFlags)
+void CEntity::DetachThis(AttachmentFlagsType attachmentFlags, EntityTransformationFlagsType transformReasons)
 {
 	if (m_hierarchy.pParent)
 	{
 		Matrix34 worldTM;
 
-		bool bKeepTransform = (nDetachFlags & ATTACHMENT_KEEP_TRANSFORMATION) || (m_flags & ENTITY_FLAG_TRIGGER_AREAS);
+		bool bKeepTransform = (attachmentFlags & ATTACHMENT_KEEP_TRANSFORMATION) || (m_flags & ENTITY_FLAG_TRIGGER_AREAS);
 
 		if (bKeepTransform)
 		{
@@ -635,21 +584,30 @@ void CEntity::DetachThis(int nDetachFlags, int nWhyFlags)
 		CEntity* pParent = m_hierarchy.pParent;
 		m_hierarchy.pParent = NULL;
 
-		// Remove child pointer from parent array of childs.
-		stl::find_and_erase(pParent->m_hierarchy.childs, this);
+		// Remove child pointer from parent array of children.
+		stl::find_and_erase(pParent->m_hierarchy.children, this);
+
+		if (attachmentFlags & ATTACHMENT_SUPPRESS_UPDATE)
+			return;
 
 		if (bKeepTransform)
 		{
 			// Keep old world space transformation.
-			SetLocalTM(worldTM, nWhyFlags | ENTITY_XFORM_FROM_PARENT);
+			SetLocalTM(worldTM, { static_cast<EEntityXFormFlags>(transformReasons), ENTITY_XFORM_FROM_PARENT });
 		}
 		else
-			InvalidateTM(nWhyFlags | ENTITY_XFORM_FROM_PARENT);
+		{
+			InvalidateTM({ static_cast<EEntityXFormFlags>(transformReasons), ENTITY_XFORM_FROM_PARENT });
+		}
+
+		pParent->m_physics.OnChildEntityDetached(GetId());
 
 		// Send detach event to parent.
 		SEntityEvent event(ENTITY_EVENT_DETACH);
 		event.nParam[0] = GetId();
 		pParent->SendEvent(event);
+
+		m_render.OnDetachedFromParent();
 
 		// Send DETACH_THIS event to child
 		SEntityEvent eventThis(ENTITY_EVENT_DETACH_THIS);
@@ -659,13 +617,13 @@ void CEntity::DetachThis(int nDetachFlags, int nWhyFlags)
 		if (m_hierarchy.parentBindingType == EBindingType::eBT_GeomCacheNode)
 		{
 #if defined(USE_GEOM_CACHES)
-			CGeomCacheAttachmentManager* pGeomCacheAttachmentManager = static_cast<CEntitySystem*>(GetEntitySystem())->GetGeomCacheAttachmentManager();
+			CGeomCacheAttachmentManager* pGeomCacheAttachmentManager = g_pIEntitySystem->GetGeomCacheAttachmentManager();
 			pGeomCacheAttachmentManager->UnregisterAttachment(this, pParent);
 #endif
 		}
 		else if (m_hierarchy.parentBindingType == EBindingType::eBT_CharacterBone)
 		{
-			CCharacterBoneAttachmentManager* pCharacterBoneAttachmentManager = static_cast<CEntitySystem*>(GetEntitySystem())->GetCharacterBoneAttachmentManager();
+			CCharacterBoneAttachmentManager* pCharacterBoneAttachmentManager = g_pIEntitySystem->GetCharacterBoneAttachmentManager();
 			pCharacterBoneAttachmentManager->UnregisterAttachment(this, pParent);
 		}
 	}
@@ -674,126 +632,112 @@ void CEntity::DetachThis(int nDetachFlags, int nWhyFlags)
 //////////////////////////////////////////////////////////////////////////
 int CEntity::GetChildCount() const
 {
-	return m_hierarchy.childs.size();
+	return m_hierarchy.children.size();
 }
 
 //////////////////////////////////////////////////////////////////////////
 IEntity* CEntity::GetChild(int nIndex) const
 {
-	if (nIndex >= 0 && nIndex < (int)m_hierarchy.childs.size())
-		return m_hierarchy.childs[nIndex];
+	if (nIndex >= 0 && nIndex < (int)m_hierarchy.children.size())
+		return m_hierarchy.children[nIndex];
 
 	return nullptr;
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::SetWorldTM(const Matrix34& tm, int nWhyFlags)
+void CEntity::SetWorldTM(const Matrix34& tm, EntityTransformationFlagsMask transformReasons)
 {
-	if (GetParent() && !m_bNotInheritXform)
+	if (GetParent())
 	{
 		Matrix34 localTM = GetParentAttachPointWorldTM().GetInverted() * tm;
-		SetLocalTM(localTM, nWhyFlags);
+		SetLocalTM(localTM, transformReasons);
 	}
 	else
 	{
-		SetLocalTM(tm, nWhyFlags);
+		SetLocalTM(tm, transformReasons);
 	}
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::SetLocalTM(const Matrix34& tm, int nWhyFlags)
+void CEntity::SetLocalTM(const Matrix34& tm, EntityTransformationFlagsMask transformReasons)
 {
-	if (m_bNotInheritXform && (nWhyFlags & ENTITY_XFORM_FROM_PARENT)) // Ignore parent x-forms.
-		return;
-
 	if (tm.IsOrthonormal())
-		SetPosRotScale(tm.GetTranslation(), Quat(tm), Vec3(1.0f, 1.0f, 1.0f), nWhyFlags);
+	{
+		SetPosRotScale(tm.GetTranslation(), Quat(tm), Vec3(1.0f, 1.0f, 1.0f), transformReasons);
+	}
 	else
 	{
 		AffineParts affineParts;
 		affineParts.SpectralDecompose(tm);
 
-		SetPosRotScale(affineParts.pos, affineParts.rot, affineParts.scale, nWhyFlags);
+		SetPosRotScale(affineParts.pos, affineParts.rot, affineParts.scale, transformReasons);
 	}
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::SetPosRotScale(const Vec3& vPos, const Quat& qRotation, const Vec3& vScale, int nWhyFlags)
+void CEntity::SetPosRotScale(const Vec3& vPos, const Quat& qRotation, const Vec3& vScale, EntityTransformationFlagsMask transformReasons)
 {
 	int changed = 0;
 
-	if (m_bNotInheritXform && (nWhyFlags & ENTITY_XFORM_FROM_PARENT)) // Ignore parent x-forms.
-		return;
-
-	if (CheckFlags(ENTITY_FLAG_IGNORE_PHYSICS_UPDATE) && (nWhyFlags & ENTITY_XFORM_PHYSICS_STEP)) // Ignore physical based position in editor related entities
+	if (CheckFlags(ENTITY_FLAG_IGNORE_PHYSICS_UPDATE) && (transformReasons & ENTITY_XFORM_PHYSICS_STEP)) // Ignore physical based position in editor related entities
 	{
 		return;
 	}
 
-	if (m_vPos != vPos)
+	if (m_position != vPos)
 	{
-		nWhyFlags |= ENTITY_XFORM_POS;
+		transformReasons |= ENTITY_XFORM_POS;
 		changed++;
 		CHECKQNAN_VEC(vPos);
-		m_vPos = vPos;
+		m_position = vPos;
 	}
 
-	if (m_qRotation.v != qRotation.v || m_qRotation.w != qRotation.w)
+	if (m_rotation.v != qRotation.v || m_rotation.w != qRotation.w)
 	{
-		nWhyFlags |= ENTITY_XFORM_ROT;
+		transformReasons |= ENTITY_XFORM_ROT;
 		changed++;
-		m_qRotation = qRotation;
+		m_rotation = qRotation;
 	}
 
-	if (m_vScale != vScale)
+	if (m_scale != vScale)
 	{
-		nWhyFlags |= ENTITY_XFORM_SCL;
+		transformReasons |= ENTITY_XFORM_SCL;
 		changed++;
-		m_vScale = vScale;
+		m_scale = vScale;
 	}
 
 	if (changed != 0)
 	{
-		InvalidateTM(nWhyFlags);
+		InvalidateTM(transformReasons);
 	}
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CEntity::CalcLocalTM(Matrix34& tm) const
-{
-	tm.Set(m_vScale, m_qRotation, m_vPos);
 }
 
 //////////////////////////////////////////////////////////////////////////
 Matrix34 CEntity::GetLocalTM() const
 {
-	Matrix34 tm;
-	CalcLocalTM(tm);
-	return tm;
+	return Matrix34::Create(m_scale, m_rotation, m_position);
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::AddEntityEventListener(EEntityEvent event, IEntityEventListener* pListener)
+void CEntity::AddEventListener(EEntityEvent event, IEntityEventListener* pListener)
 {
-	if (!m_pEventListeners)
+	m_externalEventListeners.emplace_back(stl::make_unique<SExternalEventListener>(pListener, this));
+
+	AddSimpleEventListener(event, m_externalEventListeners.back().get(), 0);
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CEntity::RemoveEventListener(EEntityEvent event, IEntityEventListener* pListener)
+{
+	for(size_t i = 0, size = m_externalEventListeners.size(); i < size; ++i)
 	{
-		m_pEventListeners.reset(new SEventListeners(1));
+		if (m_externalEventListeners[i]->m_pListener == pListener)
+		{
+			RemoveSimpleEventListener(event, m_externalEventListeners[i].get());
+			m_externalEventListeners.erase(i);
+			break;
+		}
 	}
-	m_pEventListeners->haveListenersMask |= (BIT64(event));
-	m_pEventListeners->m_listeners.Add(SEventListeners::SListener(event, pListener));
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CEntity::RemoveEntityEventListener(EEntityEvent event, IEntityEventListener* pListener)
-{
-	if (m_pEventListeners)
-		m_pEventListeners->m_listeners.Remove(SEventListeners::SListener(event, pListener));
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CEntity::RemoveAllEventListeners()
-{
-	m_pEventListeners.reset();
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -802,15 +746,25 @@ bool CEntity::IsRendered() const
 	return m_render.IsRendered();
 }
 
-void CEntity::PreviewRender(SPreviewRenderParams &params)
+void CEntity::PreviewRender(SEntityPreviewContext& context)
 {
-	m_render.PreviewRender(params);
+	m_render.PreviewRender(context);
+
+	m_components.ForEach([this, &context](const SEntityComponentRecord& rec) -> EComponentIterationResult
+	{
+		if (IEntityComponentPreviewer* pPreviewer = rec.pComponent->GetPreviewer())
+		{
+			pPreviewer->Render(*this, *rec.pComponent.get(), context);
+		}
+
+		return EComponentIterationResult::Continue;
+	});
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::OnRellocate(int nWhyFlags)
+void CEntity::OnRellocate(EntityTransformationFlagsMask transformReasons)
 {
-	if (m_flags & ENTITY_FLAG_TRIGGER_AREAS && (nWhyFlags & ENTITY_XFORM_POS))
+	if (m_flags & ENTITY_FLAG_TRIGGER_AREAS && (transformReasons & ENTITY_XFORM_POS))
 	{
 		static_cast<CAreaManager*>(g_pIEntitySystem->GetAreaManager())->MarkEntityForUpdate(GetId());
 	}
@@ -818,45 +772,35 @@ void CEntity::OnRellocate(int nWhyFlags)
 	//////////////////////////////////////////////////////////////////////////
 	// Reposition entity in the partition grid.
 	//////////////////////////////////////////////////////////////////////////
-	if ((m_flags & ENTITY_FLAG_NO_PROXIMITY) == 0 &&
-	    (!m_bHidden || (nWhyFlags & ENTITY_XFORM_EDITOR))
-	    && !m_bInShutDown)
+	if (CVar::es_UseProximityTriggerSystem && (m_flags & ENTITY_FLAG_NO_PROXIMITY) == 0 && (!IsHidden() || (transformReasons & ENTITY_XFORM_EDITOR)) && !IsGarbage())
 	{
-		if (nWhyFlags & ENTITY_XFORM_POS)
+		if (transformReasons & ENTITY_XFORM_POS)
 		{
-			m_bWasRelocated = true;
 			Vec3 wp = GetWorldPos();
 			m_pGridLocation = g_pIEntitySystem->GetPartitionGrid()->Rellocate(m_pGridLocation, wp, this);
 			if (m_pGridLocation)
 				m_pGridLocation->nEntityFlags = m_flags;
 
-			if (!m_bTrigger)
-			{
-				if (!m_pProximityEntity)
-					m_pProximityEntity = g_pIEntitySystem->GetProximityTriggerSystem()->CreateEntity(m_nID);
-				g_pIEntitySystem->GetProximityTriggerSystem()->MoveEntity(m_pProximityEntity, wp);
-			}
+			if (!m_pProximityEntity)
+				m_pProximityEntity = g_pIEntitySystem->GetProximityTriggerSystem()->CreateEntity(m_id);
+			g_pIEntitySystem->GetProximityTriggerSystem()->MoveEntity(m_pProximityEntity, wp);
 		}
 	}
 	else
 	{
 		if (m_pGridLocation)
 		{
-			m_bWasRelocated = true;
 			g_pIEntitySystem->GetPartitionGrid()->FreeLocation(m_pGridLocation);
 			m_pGridLocation = 0;
 		}
 
-		if (m_bHidden)
+		if (IsHidden())
 		{
-			if (!m_bTrigger)
+			//////////////////////////////////////////////////////////////////////////
+			if (m_pProximityEntity && !(m_flags & ENTITY_FLAG_LOCAL_PLAYER)) // Hidden local player still should trigger proximity triggers in editor.
 			{
-				//////////////////////////////////////////////////////////////////////////
-				if (m_pProximityEntity && !(m_flags & ENTITY_FLAG_LOCAL_PLAYER)) // Hidden local player still should trigger proximity triggers in editor.
-				{
-					g_pIEntitySystem->GetProximityTriggerSystem()->RemoveEntity(m_pProximityEntity, true);
-					m_pProximityEntity = 0;
-				}
+				g_pIEntitySystem->GetProximityTriggerSystem()->RemoveEntity(m_pProximityEntity, true);
+				m_pProximityEntity = 0;
 			}
 		}
 	}
@@ -869,49 +813,49 @@ IMaterial* CEntity::GetRenderMaterial(int nSlot) const
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::InvalidateTM(int nWhyFlags, bool bRecalcPhyBounds)
+void CEntity::InvalidateTM(EntityTransformationFlagsMask transformReasons, bool bRecalcPhyBounds)
 {
-	if (nWhyFlags & ENTITY_XFORM_FROM_PARENT)
+	if (transformReasons & ENTITY_XFORM_FROM_PARENT)
 	{
-		nWhyFlags |= ENTITY_XFORM_POS | ENTITY_XFORM_ROT | ENTITY_XFORM_SCL;
+		transformReasons |= ENTITY_XFORM_POS;
+		transformReasons |= ENTITY_XFORM_ROT;
+		transformReasons |= ENTITY_XFORM_SCL;
 	}
 
-	CalcLocalTM(m_worldTM);
-
-	if (m_hierarchy.pParent && !m_bNotInheritXform)
+	// Create world space TM
+	if (m_hierarchy.pParent != nullptr)
 	{
-		m_worldTM = GetParentAttachPointWorldTM() * m_worldTM;
+		m_worldTM = GetParentAttachPointWorldTM() * Matrix34::Create(m_scale, m_rotation, m_position);
+	}
+	else
+	{
+		m_worldTM = Matrix34::Create(m_scale, m_rotation, m_position);
 	}
 
 	// Invalidate matrices for all child objects.
-	std::vector<CEntity*>::const_iterator it = m_hierarchy.childs.begin();
-	const std::vector<CEntity*>::const_iterator end = m_hierarchy.childs.end();
-	CEntity* pChild = NULL;
-	for (; it != end; ++it)
+	for(CEntity* pChild : m_hierarchy.children)
 	{
-		pChild = *it;
-		if (pChild)
+		if (pChild != nullptr)
 		{
-			pChild->InvalidateTM(nWhyFlags | ENTITY_XFORM_FROM_PARENT);
+			pChild->InvalidateTM(transformReasons | ENTITY_XFORM_FROM_PARENT);
 		}
 	}
 
-	// [*DavidR | 23/Sep/2008] Caching world-space forward dir ignoring scaling
-	if (nWhyFlags & (ENTITY_XFORM_SCL | ENTITY_XFORM_ROT))
-	{
-		m_bDirtyForwardDir = true;
-	}
-
-	OnRellocate(nWhyFlags);
+	OnRellocate(transformReasons);
 
 	// Send transform event.
-	if (!(nWhyFlags & ENTITY_XFORM_NO_EVENT))
+	if (!(transformReasons & ENTITY_XFORM_NO_EVENT))
 	{
+		if (m_pNetEntity != nullptr)
+		{
+			m_pNetEntity->OnNetworkedEntityTransformChanged(transformReasons);
+		}
+
+		m_render.OnEntityXForm(transformReasons);
+		m_physics.OnEntityXForm(transformReasons);
+
 		SEntityEvent event(ENTITY_EVENT_XFORM);
-		event.nParam[0] = nWhyFlags;
-#ifdef SEG_WORLD
-		event.nParam[1] = bRecalcPhyBounds;
-#endif
+		event.nParam[0] = transformReasons.UnderlyingValue();
 		SendEvent(event);
 	}
 }
@@ -926,34 +870,34 @@ IScriptTable* CEntity::GetScriptTable() const
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::SetPos(const Vec3& vPos, int nWhyFlags, bool bRecalcPhyBounds, bool bForce)
+void CEntity::SetPos(const Vec3& vPos, EntityTransformationFlagsMask transformReasons, bool bRecalcPhyBounds, bool bForce)
 {
 	CHECKQNAN_VEC(vPos);
-	if (m_vPos == vPos)
+	if (m_position == vPos)
 		return;
 
-	m_vPos = vPos;
-	InvalidateTM(nWhyFlags | ENTITY_XFORM_POS, bRecalcPhyBounds); // Position change.
+	m_position = vPos;
+	InvalidateTM(transformReasons | ENTITY_XFORM_POS, bRecalcPhyBounds); // Position change.
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::SetRotation(const Quat& qRotation, int nWhyFlags)
+void CEntity::SetRotation(const Quat& qRotation, EntityTransformationFlagsMask transformReasons)
 {
-	if (m_qRotation.v == qRotation.v && m_qRotation.w == qRotation.w)
+	if (m_rotation.v == qRotation.v && m_rotation.w == qRotation.w)
 		return;
 
-	m_qRotation = qRotation;
-	InvalidateTM(nWhyFlags | ENTITY_XFORM_ROT); // Rotation change.
+	m_rotation = qRotation;
+	InvalidateTM(transformReasons | ENTITY_XFORM_ROT); // Rotation change.
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::SetScale(const Vec3& vScale, int nWhyFlags)
+void CEntity::SetScale(const Vec3& vScale, EntityTransformationFlagsMask transformReasons)
 {
-	if (m_vScale == vScale)
+	if (m_scale == vScale)
 		return;
 
-	m_vScale = vScale;
-	InvalidateTM(nWhyFlags | ENTITY_XFORM_SCL); // Scale change.
+	m_scale = vScale;
+	InvalidateTM(transformReasons | ENTITY_XFORM_SCL); // Scale change.
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -976,7 +920,7 @@ Ang3 CEntity::GetWorldAngles() const
 //////////////////////////////////////////////////////////////////////////
 Quat CEntity::GetWorldRotation() const
 {
-	//	if (m_vScale == Vec3(1,1,1))
+	//	if (m_scale == Vec3(1,1,1))
 	if (IsScaled())
 	{
 		Matrix34 tm = GetWorldTM();
@@ -987,6 +931,12 @@ Quat CEntity::GetWorldRotation() const
 	{
 		return Quat(GetWorldTM());
 	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+Vec3 CEntity::GetWorldScale() const
+{
+	return m_worldTM.GetScale();
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -1002,7 +952,7 @@ void CEntity::GetLocalBounds(AABB& bbox) const
 	bbox.min.Set(0, 0, 0);
 	bbox.max.Set(0, 0, 0);
 
-	if (GetSlotCount() > 0)
+	if (GetSlotCount() > 0 || HasInternalFlag(EInternalFlag::FixedBounds))
 	{
 		m_render.GetLocalBounds(bbox);
 	}
@@ -1033,144 +983,450 @@ void CEntity::InvalidateLocalBounds()
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::ActivateEntityIfNecessary()
+void CEntity::PrepareForDeletion()
 {
-	bool bEnable = ShouldActivate();
+	// When deleting should detach all children.
+	DetachAll();
+	DetachThis();
 
-	if (bEnable != m_bInActiveList)
+	IPhysicalEntity* pPhysics = GetPhysics();
+	if (pPhysics && pPhysics->GetForeignData(PHYS_FOREIGN_ID_ENTITY))
 	{
-		g_pIEntitySystem->ActivateEntity(this, bEnable);
-
-		if (IAIObject* pAIObject = GetAIObject())
-			if (IAIActorProxy* pProxy = pAIObject->GetProxy())
-				pProxy->EnableUpdate(bEnable);
+		pe_params_foreign_data pfd;
+		pfd.pForeignData = 0;
+		pfd.iForeignData = -1;
+		pPhysics->SetParams(&pfd, 1);
 	}
+
+	ClearComponentEventListeners();
 }
 
 //////////////////////////////////////////////////////////////////////////
-bool CEntity::ShouldActivate()
+void CEntity::UpdateComponentEventMask(const IEntityComponent* pComponent)
 {
-	bool bActivateByPhysics = false;
-	
-	EEntityUpdatePolicy policy = (EEntityUpdatePolicy)m_eUpdatePolicy;
-	// If its update depends on physics, physics state defines if this entity is to be updated.
-	if (policy == ENTITY_UPDATE_PHYSICS || policy == ENTITY_UPDATE_PHYSICS_VISIBLE)
+	m_components.ForEach([this, pComponent](SEntityComponentRecord& record) -> EComponentIterationResult
 	{
-		if ((m_physics.m_nFlags & CEntityPhysics::FLAG_ACTIVE) != 0)
+		if (record.pComponent.get() == pComponent)
 		{
-			bActivateByPhysics = true;
+			const Cry::Entity::EventFlags newMask = record.pComponent->GetEventMask();
+			const Cry::Entity::EventFlags prevMask = record.registeredEventsMask;
+			if (prevMask != newMask)
+			{
+				record.registeredEventsMask = newMask;
+				OnComponentMaskChanged(record, prevMask);
+			}
+
+			return EComponentIterationResult::Break;
+		}
+
+		return EComponentIterationResult::Continue;
+	});
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CEntity::OnComponentMaskChanged(const SEntityComponentRecord& componentRecord, Cry::Entity::EventFlags prevMask)
+{
+	if (componentRecord.registeredEventsMask.Check(ENTITY_EVENT_RENDER_VISIBILITY_CHANGE))
+	{
+		// If any component want to process ENTITY_EVENT_RENDER_VISIBILITY_CHANGE we have to enable ENTITY_FLAG_SEND_RENDER_EVENT flag on the entity
+		SetFlags(GetFlags() | ENTITY_FLAG_SEND_RENDER_EVENT);
+	}
+
+	UpdateComponentEventListeners(componentRecord, prevMask);
+}
+
+void CEntity::UpdateComponentEventListeners(const SEntityComponentRecord& componentRecord, Cry::Entity::EventFlags prevMask)
+{
+	const Cry::Entity::EventFlags maskDifference = componentRecord.registeredEventsMask ^ prevMask;
+
+	FOR_ENABLED_ENTITY_EVENTS_IN_MASK(maskDifference.UnderlyingValue())
+	{
+		const bool hasEvent = componentRecord.registeredEventsMask.Check(EEntityEvent(1ull << i));
+		const bool hadEvent = prevMask.Check(EEntityEvent(1ull << i));
+
+		if (hasEvent && !hadEvent)
+		{
+			AddSimpleEventListener(EEntityEvent(1ull << i), componentRecord.pComponent.get(), componentRecord.eventPriority);
+		}
+		else if (hadEvent && !hasEvent)
+		{
+			RemoveSimpleEventListener(EEntityEvent(1ull << i), componentRecord.pComponent.get());
 		}
 	}
 
-	// TODO: in future handle m_bRequiresComponentUpdate
-	return (m_bActive || m_nUpdateCounter || bActivateByPhysics) && 
-		(!m_bHidden || CheckFlags(ENTITY_FLAG_UPDATE_HIDDEN));
+	if (maskDifference.Check(ENTITY_EVENT_UPDATE))
+	{
+		const bool wantsUpdates = componentRecord.registeredEventsMask.Check(ENTITY_EVENT_UPDATE);
+		const bool hadUpdates = prevMask.Check(ENTITY_EVENT_UPDATE);
+
+		if (wantsUpdates && !hadUpdates)
+		{
+			g_pIEntitySystem->EnableComponentUpdates(componentRecord.pComponent.get(), true);
+		}
+		else if (!wantsUpdates && hadUpdates)
+		{
+			g_pIEntitySystem->EnableComponentUpdates(componentRecord.pComponent.get(), false);
+		}
+	}
+
+	if (maskDifference.Check(ENTITY_EVENT_PREPHYSICSUPDATE))
+	{
+		const bool wantsPrePhysicsUpdates = componentRecord.registeredEventsMask.Check(ENTITY_EVENT_PREPHYSICSUPDATE);
+		const bool hadPrePhysicsUpdates = prevMask.Check(ENTITY_EVENT_PREPHYSICSUPDATE);
+
+		if (wantsPrePhysicsUpdates && !hadPrePhysicsUpdates)
+		{
+			g_pIEntitySystem->EnableComponentPrePhysicsUpdates(componentRecord.pComponent.get(), true);
+		}
+		else if (!wantsPrePhysicsUpdates && hadPrePhysicsUpdates)
+		{
+			g_pIEntitySystem->EnableComponentPrePhysicsUpdates(componentRecord.pComponent.get(), false);
+		}
+	}
+
+	if (maskDifference.Check(ENTITY_EVENT_TIMER))
+	{
+		const bool wantsTimerEvents = componentRecord.registeredEventsMask.Check(ENTITY_EVENT_TIMER);
+		const bool hadTimerEvents = prevMask.Check(ENTITY_EVENT_TIMER);
+
+		if (hadTimerEvents && !wantsTimerEvents)
+		{
+			g_pIEntitySystem->RemoveAllTimerEvents(componentRecord.pComponent.get());
+		}
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::Activate(bool bActive)
+void CEntity::SetTimer(ISimpleEntityEventListener* pListener, EntityId id, const CryGUID& componentInstanceGUID, uint32 timerId, int timeInMilliseconds)
 {
-	m_bActive = bActive;
-	ActivateEntityIfNecessary();
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CEntity::PrePhysicsActivate(bool bActive)
-{
-	g_pIEntitySystem->ActivatePrePhysicsUpdateForEntity(this, bActive);
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CEntity::SetTimer(int nTimerId, int nMilliSeconds)
-{
-	KillTimer(nTimerId);
+	KillTimer(pListener, timerId);
 	SEntityTimerEvent timeEvent;
-	timeEvent.entityId = m_nID;
-	timeEvent.nTimerId = nTimerId;
-	timeEvent.nMilliSeconds = nMilliSeconds;
+	timeEvent.pListener = pListener;
+	timeEvent.entityId = id;
+	timeEvent.componentInstanceGUID = componentInstanceGUID;
+	timeEvent.nTimerId = timerId;
+	timeEvent.nMilliSeconds = timeInMilliseconds;
 	g_pIEntitySystem->AddTimerEvent(timeEvent);
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::KillTimer(int nTimerId)
+void CEntity::KillTimer(ISimpleEntityEventListener* pListener, uint32 timerId)
 {
-	g_pIEntitySystem->RemoveTimerEvent(m_nID, nTimerId);
+	g_pIEntitySystem->RemoveTimerEvent(pListener, timerId);
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::Hide(bool bHide)
+void CEntity::KillAllTimers(ISimpleEntityEventListener* pListener)
 {
-	if ((bool)m_bHidden != bHide)
+	g_pIEntitySystem->RemoveAllTimerEvents(pListener);
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CEntity::Hide(bool hide, EEntityHideFlags hideFlags)
+{
+	if (IsHidden() != hide)
 	{
-		m_bHidden = (unsigned int)bHide;
+		SetInternalFlag(EInternalFlag::Hidden, hide);
 
 		// Update registered locations
 		OnRellocate(ENTITY_XFORM_POS);
 
-		if (bHide)
-		{
-			SEntityEvent e(ENTITY_EVENT_HIDE);
-			SendEvent(e);
-		}
-		else
-		{
-			SEntityEvent e(ENTITY_EVENT_UNHIDE);
-			SendEvent(e);
-		}
-
-		// Propagate Hide flag to the child entities.
-		for (int i = 0; i < (int)m_hierarchy.childs.size(); i++)
-		{
-			if (m_hierarchy.childs[i] != NULL)
-			{
-				m_hierarchy.childs[i]->Hide(bHide);
-			}
-		}
-
-		ActivateEntityIfNecessary();
+		SendHideEvent(hide, hideFlags);
 	}
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::Invisible(bool bInvisible)
+void CEntity::SendHideEvent(bool bHide, EEntityHideFlags hideFlags)
 {
-	if ((bool)m_bInvisible != bInvisible)
+	m_render.UpdateRenderNodes();
+	if (bHide)
 	{
-		m_bInvisible = (unsigned int)bInvisible;
+		m_physics.OnEntityHiddenOrMadeInvisible();
+	}
+	else
+	{
+		m_physics.OnEntityUnhiddenOrMadeVisible();
+		m_physics.OnEntityUnhidden();
+	}
 
-		if (bInvisible)
+	SEntityEvent e(bHide ? ENTITY_EVENT_HIDE : ENTITY_EVENT_UNHIDE);
+	e.nParam[0] = hideFlags;
+	SendEvent(e);
+
+	// Propagate Hide flag to the child entities.
+	for (int i = 0; i < (int)m_hierarchy.children.size(); i++)
+	{
+		if (m_hierarchy.children[i] != NULL)
 		{
-			SEntityEvent e(ENTITY_EVENT_INVISIBLE);
-			SendEvent(e);
+			m_hierarchy.children[i]->Hide(bHide, static_cast<EEntityHideFlags>(hideFlags | ENTITY_HIDE_PARENT));
+		}
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CEntity::Invisible(bool invisible)
+{
+	if (IsInvisible() != invisible)
+	{
+		SetInternalFlag(EInternalFlag::Invisible, invisible);
+
+		m_render.UpdateRenderNodes();
+		if (invisible)
+		{
+			m_physics.OnEntityHiddenOrMadeInvisible();
 		}
 		else
 		{
-			SEntityEvent e(ENTITY_EVENT_VISIBLE);
-			SendEvent(e);
+			m_physics.OnEntityUnhiddenOrMadeVisible();
 		}
+
+		SEntityEvent e(invisible ? ENTITY_EVENT_INVISIBLE : ENTITY_EVENT_VISIBLE);
+		SendEvent(e);
 
 		// Propagate invisible flag to the child entities.
-		for (int i = 0; i < (int)m_hierarchy.childs.size(); i++)
+		for (int i = 0; i < (int)m_hierarchy.children.size(); i++)
 		{
-			if (m_hierarchy.childs[i] != NULL)
+			if (m_hierarchy.children[i] != NULL)
 			{
-				m_hierarchy.childs[i]->Invisible(bInvisible);
+				m_hierarchy.children[i]->Invisible(invisible);
 			}
-
 		}
 	}
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::SetUpdatePolicy(EEntityUpdatePolicy eUpdatePolicy)
+ISerializableInfoPtr CEntity::GetSerializableNetworkSpawnInfo() const
 {
-	m_eUpdatePolicy = eUpdatePolicy;
+	// Helper to call IEntityComponent::NetReplicateSerialize when the network system is ready to read data that will be sent over the network
+	struct SSerializableContainer : public ISerializableInfo
+	{
+		SSerializableContainer(EntityId identifier) : id(identifier) {}
+		void SerializeWith(TSerialize ser)
+		{
+			if (CEntity* pEntity = g_pIEntitySystem->GetEntityFromID(id))
+			{
+				for(const CryGUID& componentInstanceGUID : componentInstanceGUIDs)
+				{
+					if (IEntityComponent* pComponent = pEntity->GetComponentByGUID(componentInstanceGUID))
+					{
+						pComponent->NetReplicateSerialize(ser);
+					}
+				}
+			}
+		}
+
+		EntityId id;
+		std::vector<CryGUID> componentInstanceGUIDs;
+	};
+
+	_smart_ptr<SSerializableContainer> pContainer = new SSerializableContainer(GetId());
+	pContainer->componentInstanceGUIDs.reserve(m_components.Size());
+
+	m_components.NonRecursiveForEach([&pContainer](const SEntityComponentRecord& record) -> EComponentIterationResult
+	{
+		const bool isNetworked = !record.pComponent->GetComponentFlags().CheckAny({ EEntityComponentFlags::ServerOnly, EEntityComponentFlags::ClientOnly, EEntityComponentFlags::NetNotReplicate });
+		if (isNetworked)
+		{
+			CRY_ASSERT(!record.pComponent->GetGUID().IsNull());
+			pContainer->componentInstanceGUIDs.emplace_back(record.pComponent->GetGUID());
+		}
+
+		return EComponentIterationResult::Continue;
+	});
+
+	return pContainer;
 }
 
 //////////////////////////////////////////////////////////////////////////
 string CEntity::GetEntityTextDescription() const
 {
-	return m_szName + " (" + m_pClass->GetName() + ")";
+	return m_name + " (" + m_pClass->GetName() + ")";
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CEntity::LoadComponent(Serialization::IArchive& archive, uint8*& pComponentBuffer)
+{
+	// Load component Type GUID
+	CryGUID typeGUID;
+
+	// Load class GUID
+	archive(typeGUID, "TypeGUID", "TypeGUID");
+
+	// Load component name attribute
+	string name;
+	archive(name, "Name", "Name");
+
+	const Schematyc::IEnvComponent* pEnvComponent = gEnv->pSchematyc->GetEnvRegistry().GetComponent(typeGUID);
+	if (!pEnvComponent)
+	{
+		char guidStr[128];
+		typeGUID.ToString(guidStr);
+		// Unknown Entity Component
+		EntityWarning("Attempting to load unknown Entity Component: %s {%s}", name.c_str(), guidStr);
+		return;
+	}
+
+	const CEntityComponentClassDesc& componentClassDesc = pEnvComponent->GetDesc();
+	EntityComponentFlags componentFlags = componentClassDesc.GetComponentFlags();
+	if ((componentFlags.Check(EEntityComponentFlags::ServerOnly) && !gEnv->bServer)
+	    || (componentFlags.Check(EEntityComponentFlags::ClientOnly) && !gEnv->IsClient()))
+	{
+		return;
+	}
+
+	// Load component unique GUID
+	CryGUID componentGUID;
+	archive(componentGUID, "GUID", "GUID");
+
+	std::shared_ptr<IEntityComponent> pComponent;
+	IEntityComponent* pParentComponent = nullptr;
+
+	bool bValidInstanceGUID = !componentGUID.IsNull() && (m_flags & ENTITY_FLAG_CLONED) == 0;
+	if (bValidInstanceGUID)
+	{
+		pComponent = m_components.FindComponent([componentGUID](const SEntityComponentRecord& record) -> bool
+		{
+			return record.pComponent->GetGUID() == componentGUID;
+		});
+	}
+	else
+	{
+		// We might parse components with no GUID, however this should not occur so we create one here.
+		componentGUID = CryGUID::Create();
+	}
+
+	// Try to find parent component
+	CryGUID parentGUID;
+	if (archive(parentGUID, "ParentGUID", "ParentGUID") && !parentGUID.IsNull())
+	{
+		pParentComponent = GetComponentByGUID(parentGUID);
+	}
+
+	// Load component transform
+	CryTransform::CTransformPtr pTransform;
+	CryTransform::CTransform transform;
+	if (archive(transform, "Transform", "Transform"))
+	{
+		pTransform = std::make_shared<CryTransform::CTransform>(transform);
+	}
+
+	// Load user attribute
+	bool bUserAdded = false;
+	if (archive(bUserAdded, "UserAdded", "UserAdded"))
+	{
+		if (bUserAdded)
+		{
+			componentFlags.Add(EEntityComponentFlags::UserAdded);
+		}
+	}
+
+	//Schematyc::CClassProperties classProperties;
+	//classProperties.Set(componentClassDesc);
+	//classProperties.SetOverridePolicy(Schematyc::EOverridePolicy::Override);
+	//archive(classProperties,"properties","properties");
+
+	IEntityComponent::SInitParams initParams(this, componentGUID, name, &componentClassDesc, componentFlags, pParentComponent, pTransform);
+
+	CRY_ASSERT(!HasInternalFlag(EInternalFlag::PreallocatedComponents) || pComponent == nullptr);
+
+	if (!pComponent)
+	{
+		if (HasInternalFlag(EInternalFlag::PreallocatedComponents))
+		{
+			pComponent = pEnvComponent->CreateFromBuffer(pComponentBuffer);
+
+			size_t componentSize = pEnvComponent->GetSize();
+
+			// Ensure alignment of component is consistent with CEntity (likely 16, very important due to the SIMD Matrix used for world transformation
+			uint32 remainder = componentSize % alignof(CEntity);
+			uint32 adjustedSize = remainder != 0 ? componentSize + alignof(CEntity) - remainder : componentSize;
+
+			pComponentBuffer += adjustedSize;
+		}
+		else
+		{
+			pComponent = pEnvComponent->CreateFromPool();
+		}
+
+		pComponent->PreInit(initParams);
+
+		// Apply loaded properties values on the members of the component
+		//classProperties.Apply(componentClassDesc, pComponent.get());
+		Schematyc::Utils::SerializeClass(archive, componentClassDesc, pComponent.get(), "properties", "properties");
+		
+		// Add the component to the entity
+		AddComponentInternal(pComponent, typeGUID, &initParams, &componentClassDesc);
+	}
+	else
+	{
+		if (&pComponent->GetClassDesc() != &componentClassDesc)
+		{
+			// Found by GUID component must have same class as ClassDesc from EnvComponent
+			char guidStr[128];
+			typeGUID.ToString(guidStr);
+			EntityWarning("Attempting to load Entity Component with the wrong ClassDesc: %s {%s}", name.c_str(), guidStr);
+			return;
+		}
+		pComponent->m_name = name;
+		if (pTransform != nullptr)
+		{
+			pComponent->SetTransformMatrix(transform.ToMatrix34());
+		}
+		pComponent->SetComponentFlags(componentFlags);
+
+		// Apply loaded properties values on the members of the component
+		//classProperties.Apply(componentClassDesc, pComponent.get());
+		Schematyc::Utils::SerializeClass(archive, componentClassDesc, pComponent.get(), "properties", "properties");
+	}
+
+	pComponent->Serialize(archive);
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CEntity::SaveComponent(Serialization::IArchive& archive, IEntityComponent& component)
+{
+	// Load component Type GUID
+	EntityComponentFlags componentFlags;
+	CryTransform::CTransformPtr pTransform;
+
+	// Load class GUID
+	archive(component.GetClassDesc().GetGUID(), "TypeGUID", "TypeGUID");
+
+	string typestr = component.GetClassDesc().GetName().c_str();
+	archive(typestr, "TypeName", "TypeName");
+
+	// Load component unique GUID
+	archive(component.GetGUID(), "GUID", "GUID");
+
+	if (component.GetParent())
+	{
+		archive(component.GetParent()->GetGUID(), "ParentGUID", "ParentGUID");
+	}
+
+	// Load component name attribute
+	string name = component.GetName();
+	archive(name, "Name", "Name");
+
+	// Load user attribute
+	bool bUserAdded = component.GetComponentFlags().Check(EEntityComponentFlags::UserAdded);
+	archive(bUserAdded, "UserAdded", "UserAdded");
+
+	// Load component transform
+	if (component.GetComponentFlags().Check(EEntityComponentFlags::Transform) && component.GetTransform())
+	{
+		archive(*component.GetTransform(), "Transform", "Transform");
+	}
+
+	//Schematyc::CClassProperties classProperties;
+	//classProperties.Set(classDesc);
+	//classProperties.SetOverridePolicy(Schematyc::EOverridePolicy::Override);
+	//classProperties.Read(comp)
+	//archive(classProperties, "properties", "properties");
+
+	// Save component members
+	Schematyc::Utils::SerializeClass(archive, component.GetClassDesc(), &component, "properties", "properties");
+
+	component.Serialize(archive);
 }
 
 static bool SerializePropertiesWrapper(void* rawPointer, yasli::Archive& ar)
@@ -1180,101 +1436,229 @@ static bool SerializePropertiesWrapper(void* rawPointer, yasli::Archive& ar)
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::SerializeXML(XmlNodeRef& node, bool bLoading, bool bIncludeScriptProxy)
+bool CEntity::LoadComponentLegacy(XmlNodeRef entityNode, XmlNodeRef componentNode)
+{
+	//////////////////////////////////////////////////////////////////////////
+	// Load component Type GUID
+	CryInterfaceID componentTypeId;
+	if (!componentNode->getAttr("typeId", componentTypeId))
+	{
+		return false;
+	}
+
+	IEntityComponent* pComponent = GetComponentByTypeId(componentTypeId);
+
+	if (pComponent == nullptr)
+	{
+		pComponent = m_components.FindComponent([componentTypeId](const SEntityComponentRecord& record) -> bool
+		{
+			return record.pComponent->GetClassDesc().GetGUID() == componentTypeId;
+		}).get();
+	}
+	if (pComponent && pComponent->GetComponentFlags().Check(EEntityComponentFlags::Schematyc))
+	{
+		// Do not load Schematyc components
+		return true;
+	}
+
+	if (!pComponent)
+	{
+		// Script proxy cannot be created from list of components.
+		bool bCanCreateComponent = componentTypeId != CEntityComponentLuaScript::GetCID() &&
+		                           componentTypeId != cryiidof<IEntityScriptComponent>() &&
+		                           componentTypeId != cryiidof<ICryUnknown>() &&
+		                           componentTypeId != cryiidof<IEntityComponent>();
+
+		if (bCanCreateComponent)
+		{
+			CryGUID instanceGUID;
+			if (!componentNode->getAttr("guid", instanceGUID) || instanceGUID.IsNull())
+			{
+				instanceGUID = CryGUID::Create();
+			}
+
+			// Only user created components, should create components, otherwise component should be created by entity class or Schematyc objects
+			IEntityComponent::SInitParams initParams(this, instanceGUID, "", nullptr, EEntityComponentFlags::None, nullptr, nullptr);
+			pComponent = CreateComponentByInterfaceID(componentTypeId, &initParams);
+		}
+	}
+
+	if (pComponent)
+	{
+		// Parse component properties, if any
+		IEntityPropertyGroup* pProperties = pComponent->GetPropertyGroup();
+		if (pProperties)
+		{
+			gEnv->pSystem->GetArchiveHost()->LoadXmlNode(Serialization::SStruct(yasli::TypeID::get<IEntityPropertyGroup>(), (void*)pProperties, sizeof(IEntityPropertyGroup), &SerializePropertiesWrapper), componentNode);
+		}
+		else
+		{
+			// No property group, also try legacy serialization
+			pComponent->LegacySerializeXML(entityNode, componentNode, true);
+		}
+	}
+
+	return true;
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CEntity::SaveComponentLegacy(CryGUID typeId, XmlNodeRef& entityNode, XmlNodeRef& componentNode, IEntityComponent& component, bool bIncludeScriptProxy)
+{
+	componentNode->setAttr("typeId", typeId);
+	if (!component.GetGUID().IsNull())
+	{
+		componentNode->setAttr("guid", component.GetGUID());
+	}
+
+	const char* szComponentName = component.GetName();
+
+	if (szComponentName != nullptr && szComponentName[0] != '\0')
+	{
+		componentNode->setAttr("name", szComponentName);
+	}
+
+	if (component.GetComponentFlags().Check(EEntityComponentFlags::UserAdded))
+	{
+		componentNode->setAttr("UserAdded", true);
+	}
+
+	// Legacy type of serialization
+	if (component.GetProxyType() != ENTITY_PROXY_SCRIPT || bIncludeScriptProxy)
+	{
+		component.LegacySerializeXML(entityNode, componentNode, false);
+	}
+
+	IEntityPropertyGroup* pProperties = component.GetPropertyGroup();
+	// Parse component properties, if any
+	if (pProperties)
+	{
+		gEnv->pSystem->GetArchiveHost()->SaveXmlNode(componentNode, Serialization::SStruct(yasli::TypeID::get<IEntityPropertyGroup>(), (void*)pProperties, sizeof(IEntityPropertyGroup), &SerializePropertiesWrapper));
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CEntity::SerializeXML(XmlNodeRef& node, bool bLoading, bool bIncludeScriptProxy, bool bExcludeSchematycProperties)
 {
 	m_physics.SerializeXML(node, bLoading);
 
 	if (bLoading)
 	{
-		if(XmlNodeRef componentsNode = node->findChild("Components"))
+		if (XmlNodeRef componentsNode = node->findChild("Components"))
 		{
+			m_components.Reserve(componentsNode->getChildCount());
+
+			uint8* pComponentAddress = reinterpret_cast<uint8*>(this) + sizeof(CEntity);
+
+			// Load components into the m_components vector (without initializing them!)
 			for (int i = 0, n = componentsNode->getChildCount(); i < n; ++i)
 			{
 				XmlNodeRef componentNode = componentsNode->getChild(i);
-				CryInterfaceID componentTypeId;
-				if (!componentNode->getAttr("typeId", componentTypeId))
-					continue;
-
-				IEntityComponent* pComponent = GetComponentByTypeId(componentTypeId);
-				if (pComponent == nullptr)
+				if (componentNode->haveAttr("typeId"))
 				{
-					pComponent = AddComponent(componentTypeId, std::shared_ptr<IEntityComponent>(), false);
-					if (pComponent == nullptr)
-						continue;
-				}
-
-				// Parse component properties, if any
-				if (IEntityPropertyGroup* pProperties = pComponent->GetPropertyGroup())
-				{
-					gEnv->pSystem->GetArchiveHost()->LoadXmlNode(Serialization::SStruct(yasli::TypeID::get<IEntityPropertyGroup>(), (void*)pProperties, sizeof(IEntityPropertyGroup), &SerializePropertiesWrapper), componentNode);
+					LoadComponentLegacy(node, componentNode);
 				}
 				else
 				{
-					// No property group, legacy serialization
-					pComponent->LegacySerializeXML(node, componentNode, bLoading);
+					struct SEntityComponentLoadHelper
+					{
+						CEntity& entity;
+						uint8*&  pComponentAddress;
+						void     Serialize(Serialization::IArchive& archive)
+						{
+							entity.LoadComponent(archive, pComponentAddress);
+						}
+					};
+
+					SEntityComponentLoadHelper loadHelper = SEntityComponentLoadHelper {
+						*this, pComponentAddress
+					};
+					Serialization::LoadXmlNode(loadHelper, componentNode);
 				}
 			}
+
+			// Now that all components are in place, initialize them (does not apply to legacy proxies).
+			m_components.ForEach([&](const SEntityComponentRecord& record) -> EComponentIterationResult
+			{
+				if (record.proxyType == ENTITY_PROXY_LAST)
+				{
+					record.pComponent->Initialize();
+				}
+
+				return EComponentIterationResult::Continue;
+			});
 		}
+		m_physics.SerializeXML(node, bLoading);
 	}
 	else
 	{
-		XmlNodeRef componentsNode = node->newChild("Components");
+		XmlNodeRef componentsNode;
 
-		m_components.ForEach([&node, &componentsNode, bIncludeScriptProxy, bLoading](const SEntityComponentRecord& record)
+		m_components.ForEach([&](const SEntityComponentRecord& record) -> EComponentIterationResult
 		{
-			XmlNodeRef componentNode = componentsNode->newChild("Component");
-			componentNode->setAttr("typeId", record.typeId);
+			IEntityComponent& component = *record.pComponent;
 
-			if (record.proxyType != ENTITY_PROXY_SCRIPT || bIncludeScriptProxy)
+			// Skip all components created by Schematyc
+			if (!component.GetComponentFlags().Check(EEntityComponentFlags::Schematyc) &&
+			    !component.GetComponentFlags().Check(EEntityComponentFlags::NoSave))
 			{
-				record.pComponent->LegacySerializeXML(node, componentNode, bLoading);
+				if (!component.GetClassDesc().GetName().IsEmpty())
+				{
+					if (!componentsNode)
+					{
+						// Create sub-node on first access
+						componentsNode = node->newChild("Components");
+					}
+					XmlNodeRef componentNode = componentsNode->newChild("Component");
+
+					struct SEntityComponentSaveHelper
+					{
+						CEntity& entity;
+						IEntityComponent* pComponent;
+						void Serialize(Serialization::IArchive& archive) { entity.SaveComponent(archive, *pComponent); }
+					};
+
+					SEntityComponentSaveHelper saveHelper{*this, &component};
+					Serialization::SaveXmlNode(componentNode, Serialization::SStruct(saveHelper));
+				}
+				else if (component.GetPropertyGroup() || component.GetComponentFlags().Check(EEntityComponentFlags::Legacy))
+				{
+					if (!componentsNode)
+					{
+						// Create sub-node on first access
+						componentsNode = node->newChild("Components");
+					}
+					XmlNodeRef componentNode = componentsNode->newChild("Component");
+					SaveComponentLegacy(record.typeId, node, componentNode, component, bIncludeScriptProxy);
+				}
 			}
 
-			// Parse component properties, if any
-			if (IEntityPropertyGroup* pProperties = record.pComponent->GetPropertyGroup())
-			{
-				gEnv->pSystem->GetArchiveHost()->SaveXmlNode(componentNode, Serialization::SStruct(yasli::TypeID::get<IEntityPropertyGroup>(), (void*)pProperties, sizeof(IEntityPropertyGroup), &SerializePropertiesWrapper));
-			}
+			return EComponentIterationResult::Continue;
 		});
-	}
-}
 
-//////////////////////////////////////////////////////////////////////////
-void CEntity::SerializeProperties(Serialization::IArchive& ar)
-{
-	m_components.ForEach([&ar](const SEntityComponentRecord& componentRecord)
-	{
-		// Parse component properties, if any
-		if (IEntityPropertyGroup* pProperties = componentRecord.pComponent->GetPropertyGroup())
+		if (m_pLegacySchematycData != nullptr && m_pLegacySchematycData->pSchematycProperties != nullptr && !bExcludeSchematycProperties)
 		{
-			if (ar.openBlock("Component", pProperties->GetLabel()))
-			{
-				pProperties->SerializeProperties(ar);
-
-				ar.closeBlock();
-			}
+			// Save Schematyc object properties from the Entity Node XML data
+			XmlNodeRef schematycPropsNode = node->newChild("SchematycProperties");
+			Serialization::SaveXmlNode(schematycPropsNode, *m_pLegacySchematycData->pSchematycProperties.get());
 		}
-	});
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////
 IEntityComponent* CEntity::GetProxy(EEntityProxy proxy) const
 {
-	for (const SEntityComponentRecord& componentRec : m_components.GetVector())
+	return m_components.FindComponent([proxy](const SEntityComponentRecord& record) -> bool
 	{
-		if (componentRec.proxyType == proxy)
-			return componentRec.pComponent.get();
-	}
-	return nullptr;
+		return record.proxyType == proxy;
+	}).get();
 }
 
 //////////////////////////////////////////////////////////////////////////
 IEntityComponent* CEntity::CreateProxy(EEntityProxy proxy)
 {
-	for (const SEntityComponentRecord& componentRec : m_components.GetVector())
+	if (IEntityComponent* pComponent = GetProxy(proxy))
 	{
-		if (componentRec.proxyType == proxy)
-			return componentRec.pComponent.get();
+		return pComponent;
 	}
 
 	switch (proxy)
@@ -1315,148 +1699,339 @@ IEntityComponent* CEntity::CreateProxy(EEntityProxy proxy)
 }
 
 //////////////////////////////////////////////////////////////////////////
-IEntityComponent* CEntity::AddComponent(CryInterfaceID typeId, std::shared_ptr<IEntityComponent> pComponent,bool bAllowDuplicate)
+IEntityComponent* CEntity::CreateComponentByInterfaceID(const CryInterfaceID& interfaceId, IEntityComponent::SInitParams* pInitParams)
 {
-	if (!pComponent)
+	const CEntityComponentClassDesc* pClassDescription = nullptr;
+	CryGUID componentTypeID;
+
+	// First look for a unified Schematyc / Entity component type
+	const Schematyc::IEnvComponent* pEnvComponent = gEnv->pSchematyc ? gEnv->pSchematyc->GetEnvRegistry().GetComponent(interfaceId) : nullptr;
+	ICryFactory* pLegacyComponentFactory = nullptr;
+	if (pEnvComponent != nullptr)
 	{
-		if (!CryCreateClassInstanceForInterface(typeId, pComponent))
+		// Resolve to implementation ID
+		componentTypeID = pEnvComponent->GetGUID();
+		pClassDescription = &pEnvComponent->GetDesc();
+	}
+	else
+	{
+		auto visitComponentsLambda = [interfaceId, &pEnvComponent, &pClassDescription](const Schematyc::IEnvComponent& component)
 		{
-			CRY_ASSERT_MESSAGE(0, "No component implementation class registered for the given component interface");
+			if (component.GetDesc().FindBaseByTypeID(interfaceId) != nullptr)
+			{
+				pEnvComponent = &component;
+				pClassDescription = &component.GetDesc();
+				return Schematyc::EVisitStatus::Stop;
+			}
+
+			return Schematyc::EVisitStatus::Continue;
+		};
+
+		gEnv->pSchematyc->GetEnvRegistry().VisitComponents(visitComponentsLambda);
+	}
+
+	// Fall back to legacy 5.3 creation
+	if (pEnvComponent == nullptr)
+	{
+		if (ICryFactoryRegistry* pFactoryRegistry = gEnv->pSystem->GetCryFactoryRegistry())
+		{
+			size_t numFactories = 1;
+			pFactoryRegistry->IterateFactories(interfaceId, &pLegacyComponentFactory, numFactories);
+			if (numFactories == 0 || pLegacyComponentFactory == nullptr)
+			{
+				// Nothing found by interface, check by implementation id
+				pLegacyComponentFactory = pFactoryRegistry->GetFactory(interfaceId);
+			}
+
+			if (pLegacyComponentFactory == nullptr || !pLegacyComponentFactory->ClassSupports(cryiidof<IEntityComponent>()))
+			{
+				CRY_ASSERT_MESSAGE(0, "No component implementation registered for the given component interface");
+				return nullptr;
+			}
+
+			// Resolve to implementation id, since we may have queried by interface
+			componentTypeID = pLegacyComponentFactory->GetClassID();
+		}
+		else
+		{
+			CRY_ASSERT_MESSAGE("Tried to create unregistered component with type id %s!", interfaceId.ToDebugString());
 			return nullptr;
 		}
 	}
 
-	bool bExist = false;
-	for (auto& componentRecord : m_components.GetVector())
+	// All pre-checks successful, we can now create the component
+	// There can never be any failures after this point, we must always add the component to storage
+	std::shared_ptr<IEntityComponent> pComponent = pEnvComponent != nullptr ? pEnvComponent->CreateFromPool() : cryinterface_cast<IEntityComponent>(pLegacyComponentFactory->CreateClassInstance());
+	CRY_ASSERT(pComponent != nullptr);
+
+	// Add the component to the entity, and initialize it manually immediately after
+	AddComponentInternal(pComponent, componentTypeID, pInitParams, pClassDescription);
+
+	pComponent->Initialize();
+
+	return pComponent.get();
+}
+
+//////////////////////////////////////////////////////////////////////////
+bool CEntity::AddComponent(std::shared_ptr<IEntityComponent> pComponent, IEntityComponent::SInitParams* pInitParams)
+{
+	const CEntityComponentClassDesc* pClassDescription = pInitParams != nullptr ? pInitParams->classDesc : nullptr;
+	if (pClassDescription != nullptr)
 	{
-		if (componentRecord.pComponent == pComponent)
-		{
-			CRY_ASSERT_MESSAGE(0, "AddComponent called twice with the same pointer");
-			return nullptr;
-		}
-		if (!bAllowDuplicate && componentRecord.typeId == typeId && typeId != cryiidof<ICryUnknown>())
-		{
-			CRY_ASSERT_MESSAGE(0, "AddComponent called twice with the same interface type");
-			return nullptr;
-		}
+		AddComponentInternal(pComponent, pClassDescription->GetGUID(), pInitParams, pClassDescription);
+		return true;
 	}
+	else if (ICryFactory* pFactory = pComponent->GetFactory())
+	{
+		AddComponentInternal(pComponent, pFactory->GetClassID(), pInitParams, nullptr);
+		return true;
+	}
+
+	AddComponentInternal(pComponent, CryGUID::Null(), pInitParams, nullptr);
+	return true;
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CEntity::AddComponentInternal(std::shared_ptr<IEntityComponent> pComponent, const CryGUID& componentTypeID, IEntityComponent::SInitParams* pInitParams, const CEntityComponentClassDesc* pClassDescription)
+{
+	CRY_ASSERT_MESSAGE(pClassDescription == nullptr || !(pClassDescription->GetComponentFlags().Check(EEntityComponentFlags::ClientOnly) && !gEnv->IsClient()), "Trying to add a client-only component on the server!");
+	CRY_ASSERT_MESSAGE(pClassDescription == nullptr || !(pClassDescription->GetComponentFlags().Check(EEntityComponentFlags::ServerOnly) && !gEnv->bServer), "Trying to add a server-only component on the client!");
+	CRY_ASSERT_MESSAGE(pInitParams == nullptr || !pInitParams->guid.IsNull(), "Components require a valid instance guid!");
+
+	// Initialize common component members
+	pComponent->PreInit(pInitParams != nullptr ? *pInitParams : IEntityComponent::SInitParams(this, CryGUID::Create(), "", pClassDescription, EEntityComponentFlags::None, nullptr, nullptr));
 
 	// Initialize component entity pointer
 	pComponent->m_pEntity = this;
 
+	// Sorted insertion, all elements of the m_components are sorted by their event priority.
 	SEntityComponentRecord componentRecord;
 	componentRecord.pComponent = pComponent;
-	componentRecord.typeId = typeId;
+	componentRecord.typeId = componentTypeID;
 	componentRecord.registeredEventsMask = pComponent->GetEventMask();
 	componentRecord.proxyType = (int)pComponent->GetProxyType();
 	componentRecord.eventPriority = pComponent->GetEventPriority();
-
-	if (componentRecord.registeredEventsMask & BIT64(ENTITY_EVENT_RENDER_VISIBILITY_CHANGE))
-	{
-		// If any component want to process ENTITY_EVENT_RENDER_VISIBILITY_CHANGE we have to enable ENTITY_FLAG_SEND_RENDER_EVENT flag on the entity
-		SetFlags(GetFlags()|ENTITY_FLAG_SEND_RENDER_EVENT);
-	}
+	componentRecord.creationOrder = m_componentChangeState;
 
 	// Proxy component must be last in the order of the event processing
 	if (componentRecord.proxyType == ENTITY_PROXY_SCRIPT)
 		componentRecord.eventPriority = 10000;
 
-	// Sorted insertion, all elements of the m_components are sorted by the proxyType
-	m_components.Add(componentRecord);
-	
-	// Call initialization of the component
-	pComponent->Initialize();
+	const SEntityComponentRecord& storedRecord = m_components.SortedEmplace(std::move(componentRecord));
 
-	if (componentRecord.registeredEventsMask & BIT64(ENTITY_EVENT_PREPHYSICSUPDATE))
+	// Automatically assign transformation if necessary
+	if (pComponent->GetComponentFlags().Check(EEntityComponentFlags::Transform) && pComponent->GetTransform() == nullptr)
 	{
-		// If component want to receive ENTITY_EVENT_PREPHYSICSUPDATE, we must mark this entity to be able to send it.
-		PrePhysicsActivate(true);
+		pComponent->m_pTransform = std::make_shared<CryTransform::CTransform>();
 	}
 
-	if (m_bRequiresComponentUpdate == 0 && componentRecord.registeredEventsMask & BIT64(ENTITY_EVENT_UPDATE))
+	if (pComponent->m_pTransform != nullptr)
 	{
-		m_bRequiresComponentUpdate = 1;
-
-		ActivateEntityIfNecessary();
+		UpdateSlotForComponent(pComponent.get(), false);
 	}
 
-	return pComponent.get();
+	if (!storedRecord.registeredEventsMask.IsEmpty())
+	{
+		OnComponentMaskChanged(storedRecord, {});
+	}
+
+	// Entity has changed so make the state dirty
+	m_componentChangeState++;
+
+	if (!IsInitialized() && m_pNetEntity != nullptr)
+	{
+		m_pNetEntity->OnComponentAddedDuringInitialization(pComponent.get());
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CEntity::RemoveComponent(IEntityComponent* pComponent)
 {
 	m_components.Remove(pComponent);
+}
 
-	// Check if the remaining components are still interested in updates
-	m_bRequiresComponentUpdate = 0;
+void CEntity::RemoveAllComponents()
+{
+	m_components.Clear();
 
-	for (auto& componentRecord : m_components.GetVector())
+	// Entity has changed so make the state dirty
+	m_componentChangeState++;
+}
+
+void CEntity::ReplaceComponent(IEntityComponent* pExistingComponent, std::shared_ptr<IEntityComponent> pNewComponent)
+{
+	TComponentsRecord::TRecordStorage::iterator it = m_components.FindExistingComponent(pExistingComponent);
+	CRY_ASSERT_MESSAGE(it != m_components.GetEnd(), "Tried to replace an non-existent component!");
+
+	SEntityComponentRecord& record = *it;
+
+	record.eventPriority = record.pComponent->GetEventPriority();
+
+	// If the existing record had registered event listeners, make sure to remove them
+	if (!record.registeredEventsMask.IsEmpty())
 	{
-		if (componentRecord.pComponent && componentRecord.registeredEventsMask & BIT64(ENTITY_EVENT_UPDATE))
-		{
-			m_bRequiresComponentUpdate = 1;
-
-			break;
-		}
+		// First remove all listeners that point to the old pointer (pExistingComponent)
+		const EntityEventMask prevMask = record.registeredEventsMask;
+		record.registeredEventsMask.Clear();
+		OnComponentMaskChanged(record, prevMask);
 	}
 
-	ActivateEntityIfNecessary();
+	record.pComponent = pNewComponent;
+	record.registeredEventsMask = record.pComponent->GetEventMask();
+
+	const int previousEventPriority = record.eventPriority;
+	record.eventPriority = record.pComponent->GetEventPriority();
+
+	if (record.eventPriority != previousEventPriority)
+	{
+		// Force sorting after replacing the component
+		m_components.ReSortComponent(it);
+	}
+
+	if (!record.registeredEventsMask.IsEmpty())
+	{
+		// Now add the new listeners specified by the new component
+		OnComponentMaskChanged(record, {});
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////
-IEntityComponent* CEntity::GetComponentByTypeId(const CryInterfaceID& interfaceID) const
+IEntityComponent* CEntity::GetComponentByTypeId(const CryInterfaceID& typeId) const
 {
-	for (auto& componentRecord : m_components.GetVector())
+	return m_components.FindComponent([typeId](const SEntityComponentRecord& record) -> bool
 	{
-		if (componentRecord.typeId == interfaceID)
-		{
-			return componentRecord.pComponent.get();
-		}
-	}
-	return nullptr;
+		return record.typeId == typeId;
+	}).get();
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::CloneComponentsFrom(IEntity& otherEntity)
+void CEntity::GetComponentsByTypeId(const CryInterfaceID& typeId, DynArray<IEntityComponent*>& components) const
 {
-	static_cast<CEntity&>(otherEntity).m_components.ForEach([this](const SEntityComponentRecord& componentRecord)
+	m_components.FindComponents([typeId](const SEntityComponentRecord& record) -> bool
 	{
-		auto* pComponent = GetComponentByTypeId(componentRecord.typeId);
-		if (pComponent == nullptr)
+		return record.typeId == typeId;
+	}, components);
+}
+
+//////////////////////////////////////////////////////////////////////////
+IEntityComponent* CEntity::GetComponentByGUID(const CryGUID& guid) const
+{
+	return m_components.FindComponent([guid](const SEntityComponentRecord& record) -> bool
+	{
+		return record.pComponent->GetGUID() == guid;
+	}).get();
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CEntity::QueryComponentsByInterfaceID(const CryInterfaceID& interfaceID, DynArray<IEntityComponent*>& components) const
+{
+	CRY_ASSERT(!interfaceID.IsNull());
+	CRY_ASSERT(interfaceID != cryiidof<ICryUnknown>());
+	CRY_ASSERT(interfaceID != cryiidof<IEntityComponent>());
+
+	m_components.FindComponents([interfaceID](const SEntityComponentRecord& record) -> bool
+	{
+		const bool isModernEntityType = record.pComponent->GetClassDesc().GetGUID() == interfaceID || record.pComponent->GetClassDesc().FindBaseByTypeID(interfaceID) != nullptr;
+		if (isModernEntityType)
 		{
-			pComponent = AddComponent(componentRecord.typeId, std::shared_ptr<IEntityComponent>(), false);
+			return true;
 		}
 
-		if (auto* pOtherProperties = componentRecord.pComponent->GetPropertyGroup())
-		{
-			DynArray<char> propertyBuffer;
-			gEnv->pSystem->GetArchiveHost()->SaveBinaryBuffer(propertyBuffer, Serialization::SStruct(yasli::TypeID::get<IEntityPropertyGroup>(), pOtherProperties, sizeof(IEntityPropertyGroup), &SerializePropertiesWrapper));
+		// Check legacy component class hierarchy
+		ICryFactory* pFactory = record.pComponent->GetFactory();
+		return pFactory != nullptr && (pFactory->GetClassID() == interfaceID || pFactory->ClassSupports(interfaceID));
+	}, components);
+}
 
-			gEnv->pSystem->GetArchiveHost()->LoadBinaryBuffer(Serialization::SStruct(yasli::TypeID::get<IEntityPropertyGroup>(), pComponent->GetPropertyGroup(), sizeof(IEntityPropertyGroup), &SerializePropertiesWrapper), propertyBuffer.data(), propertyBuffer.size());
+//////////////////////////////////////////////////////////////////////////
+IEntityComponent* CEntity::QueryComponentByInterfaceID(const CryInterfaceID& interfaceID) const
+{
+	CRY_ASSERT(!interfaceID.IsNull());
+
+	if (interfaceID == cryiidof<ICryUnknown>() || interfaceID == cryiidof<IEntityComponent>())
+	{
+		return nullptr;
+	}
+
+	return m_components.FindComponent([interfaceID](const SEntityComponentRecord& record) -> bool
+	{
+		const bool isModernSchematycEntity = record.pComponent->GetClassDesc().GetGUID() == interfaceID || record.pComponent->GetClassDesc().FindBaseByTypeID(interfaceID) != nullptr;
+		if (isModernSchematycEntity)
+		{
+			return true;
 		}
+
+		if (ICryFactory* pFactory = record.pComponent->GetFactory())
+		{
+			return pFactory->GetClassID() == interfaceID || pFactory->ClassSupports(interfaceID);
+		}
+
+		return false;
+	}).get();
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CEntity::GetComponents(DynArray<IEntityComponent*>& components) const
+{
+	components.resize(0);
+	components.reserve(m_components.Size());
+
+	m_components.FindComponents([](const SEntityComponentRecord& record) -> bool
+	{
+		return true;
+	}, components);
+}
+
+//////////////////////////////////////////////////////////////////////////
+uint32 CEntity::GetComponentsCount() const
+{
+	return m_components.Size();
+}
+
+//////////////////////////////////////////////////////////////////////////
+uint8 CEntity::GetComponentChangeState() const
+{
+	uint16 componentChangeState = m_componentChangeState;
+
+	while (componentChangeState > std::numeric_limits<uint8>::max())
+	{
+		componentChangeState -= std::numeric_limits<uint8>::max();
+	}
+
+	return static_cast<uint8>(componentChangeState);
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CEntity::VisitComponents(const ComponentsVisitor& visitor)
+{
+	m_components.ForEach([&visitor](const SEntityComponentRecord& componentRecord) -> EComponentIterationResult
+	{
+		// Call visitor callback on every component
+		visitor(componentRecord.pComponent.get());
+
+		return EComponentIterationResult::Continue;
 	});
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CEntity::Serialize(TSerialize ser, int nFlags)
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "Entity serialization");
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Other, 0, "%s", GetClass() ? GetClass()->GetName() : "<UNKNOWN>");
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "Entity serialization");
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, GetClass() ? GetClass()->GetName() : "<UNKNOWN>");
 	if (nFlags & ENTITY_SERIALIZE_POSITION)
 	{
-		ser.Value("position", m_vPos, 'wrld');
+		ser.Value("position", m_position, 'wrld');
 	}
 	if (nFlags & ENTITY_SERIALIZE_SCALE)
 	{
 		// TODO: check dimensions
 		// TODO: define an AC_WorldPos type
 		// TODO: check dimensions
-		ser.Value("scale", m_vScale);
+		ser.Value("scale", m_scale);
 	}
 	if (nFlags & ENTITY_SERIALIZE_ROTATION)
 	{
-		ser.Value("rotation", m_qRotation, 'ori3');
+		ser.Value("rotation", m_rotation, 'ori3');
 	}
 
 	if (nFlags & ENTITY_SERIALIZE_GEOMETRIES)
@@ -1524,10 +2099,12 @@ void CEntity::Serialize(TSerialize ser, int nFlags)
 					if (pPhysics && pPhysics->GetType() == PE_RIGID)
 						if (pSlot->GetStatObj()->GetFlags() & STATIC_OBJECT_COMPOUND)
 						{
-							IStatObj::SSubObject* pSubObj;
 							for (i = 0; i < pSlot->GetStatObj()->GetSubObjectCount(); i++)
+							{
+								IStatObj::SSubObject* pSubObj;
 								if ((pSubObj = pSlot->GetStatObj()->GetSubObject(i)) && pSubObj->pStatObj)
 									bHeavySer |= pSubObj->pStatObj->GetFlags() & STATIC_OBJECT_GENERATED;
+							}
 						}
 						else
 							bHeavySer = pSlot->GetStatObj()->GetFlags() & STATIC_OBJECT_GENERATED;
@@ -1558,9 +2135,9 @@ void CEntity::Serialize(TSerialize ser, int nFlags)
 			ser.Value("numslots", nSlots);
 			for (int iter = 0; iter < nSlots; iter++)
 			{
-				int nSlotId = -1;
 				if (ser.BeginOptionalGroup("Slot", true))
 				{
+					int nSlotId = -1;
 					ser.Value("id", nSlotId);
 
 					CEntitySlot* pSlot = m_render.AllocSlot(nSlotId);
@@ -1709,13 +2286,10 @@ void CEntity::Serialize(TSerialize ser, int nFlags)
 
 	if (nFlags & ENTITY_SERIALIZE_PROPERTIES)
 	{
-		CEntityComponentLuaScript* pScriptProxy = (CEntityComponentLuaScript*)GetProxy(ENTITY_PROXY_SCRIPT);
+		CEntityComponentLuaScript* pScriptProxy = static_cast<CEntityComponentLuaScript*>(GetProxy(ENTITY_PROXY_SCRIPT));
 		if (pScriptProxy)
 			pScriptProxy->SerializeProperties(ser);
 	}
-
-	m_bDirtyForwardDir = true;
-
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -1770,6 +2344,7 @@ void CEntity::SetMaterial(IMaterial* pMaterial)
 	m_pMaterial = pMaterial;
 
 	m_render.UpdateRenderNodes();
+	m_physics.OnGlobalEntityMaterialChanged(pMaterial);
 
 	SEntityEvent event;
 	event.event = ENTITY_EVENT_MATERIAL;
@@ -1828,6 +2403,9 @@ int CEntity::AllocateSlot()
 //////////////////////////////////////////////////////////////////////////
 void CEntity::FreeSlot(int nSlot)
 {
+	// Free any physical slot geometry that was added first, just in case
+	m_physics.RemoveSlotGeometry(nSlot);
+	// Now remove the render slot
 	m_render.FreeSlot(nSlot);
 }
 
@@ -1856,20 +2434,21 @@ bool CEntity::GetSlotInfo(int nSlot, SEntitySlotInfo& slotInfo) const
 }
 
 //////////////////////////////////////////////////////////////////////////
-const Matrix34& CEntity::GetSlotWorldTM(int nSlot) const
+Matrix34 CEntity::GetSlotWorldTM(int nSlot) const
 {
 	return m_render.GetSlotWorldTM(nSlot);
 }
 
 //////////////////////////////////////////////////////////////////////////
-const Matrix34& CEntity::GetSlotLocalTM(int nSlot, bool bRelativeToParent) const
+Matrix34 CEntity::GetSlotLocalTM(int nSlot, bool bRelativeToParent) const
 {
 	return m_render.GetSlotLocalTM(nSlot, bRelativeToParent);
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::SetSlotLocalTM(int nSlot, const Matrix34& localTM, int nWhyFlags)
+void CEntity::SetSlotLocalTM(int nSlot, const Matrix34& localTM, EntityTransformationFlagsMask transformReasons)
 {
+#if defined(USE_CRY_ASSERT)
 	Vec3 col0 = localTM.GetColumn(0);
 	Vec3 col1 = localTM.GetColumn(1);
 	Vec3 col2 = localTM.GetColumn(2);
@@ -1879,8 +2458,9 @@ void CEntity::SetSlotLocalTM(int nSlot, const Matrix34& localTM, int nWhyFlags)
 	CHECKQNAN_VEC(col1);
 	CHECKQNAN_VEC(col2);
 	CHECKQNAN_VEC(col3);
+#endif
 
-	m_render.SetSlotLocalTM(nSlot, localTM);
+	m_render.SetSlotLocalTM(nSlot, localTM, transformReasons);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -1925,6 +2505,57 @@ uint32 CEntity::GetSlotFlags(int nSlot) const
 }
 
 //////////////////////////////////////////////////////////////////////////
+int CEntity::SetSlotRenderNode(int nSlot, IRenderNode* pRenderNode)
+{
+	return m_render.SetSlotRenderNode(nSlot, pRenderNode);
+}
+
+//////////////////////////////////////////////////////////////////////////
+IRenderNode* CEntity::GetSlotRenderNode(int nSlot)
+{
+	CEntitySlot* pSlot = m_render.GetSlot(nSlot);
+	if (pSlot)
+	{
+		return pSlot->GetRenderNode();
+	}
+	return nullptr;
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CEntity::UpdateSlotForComponent(IEntityComponent* pComponent, bool callOnTransformChanged)
+{
+	int slotId = pComponent->GetEntitySlotId();
+	if (slotId == IEntityComponent::EmptySlotId)
+	{
+		slotId = AllocateSlot();
+		pComponent->SetEntitySlotId(slotId);
+
+	}
+	if (pComponent->GetParent() != nullptr)
+	{
+		if (pComponent->GetParent()->GetEntitySlotId() == IEntityComponent::EmptySlotId)
+		{
+			UpdateSlotForComponent(pComponent->GetParent());
+		}
+		m_render.SetParentSlot(pComponent->GetParent()->GetEntitySlotId(), pComponent->GetEntitySlotId());
+	}
+	if (pComponent->GetTransform() != nullptr)
+	{
+		m_render.SetSlotLocalTM(slotId, pComponent->GetTransform()->ToMatrix34());
+	}
+	else
+	{
+		m_render.SetSlotLocalTM(slotId, Matrix34::CreateIdentity());
+		pComponent->SetTransformMatrix(IDENTITY);
+	}
+
+	if (callOnTransformChanged)
+	{
+		pComponent->OnTransformChanged();
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
 bool CEntity::ShouldUpdateCharacter(int nSlot) const
 {
 	return false;
@@ -1937,12 +2568,13 @@ ICharacterInstance* CEntity::GetCharacter(int nSlot)
 }
 
 //////////////////////////////////////////////////////////////////////////
-int CEntity::SetCharacter(ICharacterInstance* pCharacter, int nSlot)
+int CEntity::SetCharacter(ICharacterInstance* pCharacter, int nSlot, bool bUpdatePhysics)
 {
-	int nUsedSlot = -1;
-
-	nUsedSlot = m_render.SetSlotCharacter(nSlot, pCharacter);
-	m_physics.UpdateSlotGeometry(nUsedSlot);
+	int nUsedSlot = m_render.SetSlotCharacter(nSlot, pCharacter);
+	if (bUpdatePhysics)
+	{
+		m_physics.UpdateSlotGeometry(nUsedSlot);
+	}
 
 	return nUsedSlot;
 }
@@ -1973,18 +2605,17 @@ IParticleEmitter* CEntity::GetParticleEmitter(int nSlot)
 }
 
 //////////////////////////////////////////////////////////////////////////
+#if defined(USE_GEOM_CACHES)
 IGeomCacheRenderNode* CEntity::GetGeomCacheRenderNode(int nSlot)
 {
-#if defined(USE_GEOM_CACHES)
 	if (m_render.IsSlotValid(nSlot))
 	{
 		return m_render.Slot(nSlot)->GetGeomCacheRenderNode();
 	}
-#endif
 
 	return NULL;
 }
-
+#endif
 //////////////////////////////////////////////////////////////////////////
 IRenderNode* CEntity::GetRenderNode(int nSlot) const
 {
@@ -1994,7 +2625,12 @@ IRenderNode* CEntity::GetRenderNode(int nSlot) const
 //////////////////////////////////////////////////////////////////////////
 void CEntity::MoveSlot(IEntity* targetIEnt, int nSlot)
 {
-	CEntity* targetEnt = (CEntity*)targetIEnt;
+	CEntity* targetEnt = static_cast<CEntity*>(targetIEnt);
+	if (targetIEnt == this)
+	{
+		assert(false);
+		return;
+	}
 
 	CEntitySlot* srcSlot = GetSlot(nSlot);
 	CEntitySlot* dstSlot = targetEnt->m_render.AllocSlot(nSlot);
@@ -2104,7 +2740,7 @@ int CEntity::LoadGeometry(int nSlot, const char* sFilename, const char* sGeomNam
 //////////////////////////////////////////////////////////////////////////
 int CEntity::LoadCharacter(int nSlot, const char* sFilename, int nLoadFlags)
 {
-	LOADING_TIME_PROFILE_SECTION_ARGS(sFilename);
+	CRY_PROFILE_FUNCTION_ARG(PROFILE_LOADING_ONLY, sFilename);
 
 	ICharacterInstance* pChar;
 
@@ -2164,24 +2800,24 @@ int CEntity::LoadParticleEmitter(int nSlot, IParticleEffect* pEffect, SpawnParam
 }
 
 //////////////////////////////////////////////////////////////////////////
-int CEntity::LoadLight(int nSlot, CDLight* pLight)
+int CEntity::LoadLight(int nSlot, SRenderLight* pLight)
 {
 	return LoadLightImpl(nSlot, pLight);
 }
 
-int CEntity::LoadLightImpl(int nSlot, CDLight* pLight)
+int CEntity::LoadLightImpl(int nSlot, SRenderLight* pLight)
 {
 	uint16 layerId = ~0;
 	return m_render.LoadLight(nSlot, pLight, layerId);
 }
 
 //////////////////////////////////////////////////////////////////////////
-bool CEntity::UpdateLightClipBounds(CDLight& light)
+bool CEntity::UpdateLightClipBounds(SRenderLight& light)
 {
 	bool bLightBoxValid = false;
 	for (IEntityLink* pLink = m_pEntityLinks; pLink; pLink = pLink->next)
 	{
-		if (IEntity* pLinkedEntity = gEnv->pEntitySystem->GetEntity(pLink->entityId))
+		if (CEntity* pLinkedEntity = g_pIEntitySystem->GetEntityFromID(pLink->entityId))
 		{
 			bool clipVolume = _stricmp(pLinkedEntity->GetClass()->GetName(), "ClipVolume") == 0;
 
@@ -2208,18 +2844,6 @@ bool CEntity::UpdateLightClipBounds(CDLight& light)
 }
 
 //////////////////////////////////////////////////////////////////////////
-int CEntity::LoadCloud(int nSlot, const char* sFilename)
-{
-	return m_render.LoadCloud(nSlot, sFilename);
-}
-
-//////////////////////////////////////////////////////////////////////////
-int CEntity::SetCloudMovementProperties(int nSlot, const SCloudMovementProperties& properties)
-{
-	return m_render.SetCloudMovementProperties(nSlot, properties);
-}
-
-//////////////////////////////////////////////////////////////////////////
 int CEntity::LoadCloudBlocker(int nSlot, const SCloudBlockerProperties& properties)
 {
 	return m_render.LoadCloudBlocker(nSlot, properties);
@@ -2235,84 +2859,6 @@ int CEntity::LoadFogVolume(int nSlot, const SFogVolumeProperties& properties)
 int CEntity::FadeGlobalDensity(int nSlot, float fadeTime, float newGlobalDensity)
 {
 	return m_render.FadeGlobalDensity(nSlot, fadeTime, newGlobalDensity);
-}
-
-//////////////////////////////////////////////////////////////////////////
-int CEntity::LoadVolumeObject(int nSlot, const char* sFilename)
-{
-	return m_render.LoadVolumeObject(nSlot, sFilename);
-}
-
-//////////////////////////////////////////////////////////////////////////
-int CEntity::SetVolumeObjectMovementProperties(int nSlot, const SVolumeObjectMovementProperties& properties)
-{
-	return m_render.SetVolumeObjectMovementProperties(nSlot, properties);
-}
-
-//////////////////////////////////////////////////////////////////////////
-bool CEntity::RegisterInAISystem(const AIObjectParams& params)
-{
-	m_flags &= ~ENTITY_FLAG_HAS_AI;
-
-	IAISystem* pAISystem = gEnv->pAISystem;
-	if (pAISystem)
-	{
-		IAIObjectManager* pAIObjMgr = pAISystem->GetAIObjectManager();
-		if (IAIObject* pAIObject = GetAIObject())
-		{
-			pAIObjMgr->RemoveObject(m_aiObjectID);
-			m_aiObjectID = INVALID_AIOBJECTID;
-			// The RemoveObject() call triggers immediate complete cleanup. Ideally the system would wait, as it does for internal removals. {2009/04/07}
-		}
-
-		if (params.type == 0)
-			return true;
-
-		AIObjectParams myparams(params);
-		myparams.entityID = m_nID;
-		myparams.name = GetName();
-
-		if (IAIObject* pAIObject = pAIObjMgr->CreateAIObject(myparams))
-		{
-			m_aiObjectID = pAIObject->GetAIObjectID();
-
-			m_flags |= ENTITY_FLAG_HAS_AI;
-
-			UpdateAIObject();
-
-			return true;
-		}
-	}
-	return false;
-}
-
-//////////////////////////////////////////////////////////////////////////
-// reflect changes in position or orientation to the AI object
-void CEntity::UpdateAIObject()
-{
-	IAIObject* pAIObject = GetAIObject();
-	if (pAIObject)
-		pAIObject->SetPos(GetWorldPos(), GetForwardDir());
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CEntity::ActivateForNumUpdates(int numUpdates)
-{
-	if (m_bActive)
-		return;
-
-	IAIObject* pAIObject = GetAIObject();
-	if (pAIObject && pAIObject->GetProxy())
-		return;
-
-	if (m_nUpdateCounter != 0)
-	{
-		m_nUpdateCounter = numUpdates;
-		return;
-	}
-
-	m_nUpdateCounter = numUpdates;
-	ActivateEntityIfNecessary();
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -2337,8 +2883,7 @@ void CEntity::SetPhysicsState(XmlNodeRef& physicsState)
 						if (GetSlot(i)->GetCharacter()->GetISkeletonPose()->GetCharacterPhysics() == physic)
 							GetSlot(i)->GetCharacter()->GetISkeletonPose()->SynchronizeWithPhysicalEntity(physic);
 						else if (GetSlot(i)->GetCharacter()->GetISkeletonPose()->GetCharacterPhysics(0) == physic)
-							GetSlot(i)->GetCharacter()->GetISkeletonPose()->SynchronizeWithPhysicalEntity(0, m_vPos, m_qRotation);
-				ActivateForNumUpdates(5);
+							GetSlot(i)->GetCharacter()->GetISkeletonPose()->SynchronizeWithPhysicalEntity(0, m_position, m_rotation);
 			}
 		}
 	}
@@ -2393,23 +2938,19 @@ void CEntity::PhysicsNetSerialize(TSerialize& ser)
 IEntityLink* CEntity::GetEntityLinks()
 {
 	return m_pEntityLinks;
-};
+}
 
 //////////////////////////////////////////////////////////////////////////
-IEntityLink* CEntity::AddEntityLink(const char* sLinkName, EntityId entityId, EntityGUID entityGuid)
+IEntityLink* CEntity::AddEntityLink(const char* szLinkName, EntityId entityId, EntityGUID entityGuid)
 {
-	assert(sLinkName);
-	if (sLinkName == NULL)
-		return NULL;
+	CRY_ASSERT_MESSAGE(entityId != INVALID_ENTITYID, "Can't create a link with an invalid EntityId");
+	CRY_ASSERT_MESSAGE(!entityGuid.IsNull(), "Can't create a link with an invalid EntityGUID");
+	CRY_ASSERT_MESSAGE(entityId != m_id, "Entity can't be linked with itself");
 
-	IEntity* pLinkedEntity = GetEntitySystem()->GetEntity(entityId);
+	if (szLinkName == nullptr)
+		return nullptr;
 
-	IEntityLink* pNewLink = new IEntityLink;
-	assert(strlen(sLinkName) <= ENTITY_LINK_NAME_MAX_LENGTH);
-	cry_strcpy(pNewLink->name, sLinkName);
-	pNewLink->entityId = entityId;
-	pNewLink->entityGuid = entityGuid;
-	pNewLink->next = 0;
+	IEntityLink* pNewLink = new IEntityLink { szLinkName, entityId, entityGuid, nullptr };
 
 	if (m_pEntityLinks)
 	{
@@ -2423,6 +2964,8 @@ IEntityLink* CEntity::AddEntityLink(const char* sLinkName, EntityId entityId, En
 		m_pEntityLinks = pNewLink;
 	}
 
+	m_render.TryInvalidateParticleEmitters();
+
 	// Send event.
 	SEntityEvent event(ENTITY_EVENT_LINK);
 	event.nParam[0] = (INT_PTR)pNewLink;
@@ -2432,10 +2975,21 @@ IEntityLink* CEntity::AddEntityLink(const char* sLinkName, EntityId entityId, En
 };
 
 //////////////////////////////////////////////////////////////////////////
+void CEntity::RenameEntityLink(IEntityLink* pLink, const char* szNewLinkName)
+{
+	if (m_pEntityLinks == nullptr || pLink == nullptr || szNewLinkName == nullptr)
+		return;
+
+	pLink->name = szNewLinkName;
+}
+
+//////////////////////////////////////////////////////////////////////////
 void CEntity::RemoveEntityLink(IEntityLink* pLink)
 {
 	if (!m_pEntityLinks || !pLink)
 		return;
+
+	m_render.TryInvalidateParticleEmitters();
 
 	// Send event.
 	SEntityEvent event(ENTITY_EVENT_DELINK);
@@ -2466,7 +3020,9 @@ void CEntity::RemoveAllEntityLinks()
 	IEntityLink* pLink = m_pEntityLinks;
 	while (pLink)
 	{
-		IEntityLink* pNext = pLink->next;
+		m_pEntityLinks = pLink->next;
+
+		m_render.TryInvalidateParticleEmitters();
 
 		// Send event.
 		SEntityEvent event(ENTITY_EVENT_DELINK);
@@ -2474,7 +3030,7 @@ void CEntity::RemoveAllEntityLinks()
 		SendEvent(event);
 
 		delete pLink;
-		pLink = pNext;
+		pLink = m_pEntityLinks;
 	}
 	m_pEntityLinks = 0;
 }
@@ -2484,110 +3040,111 @@ void CEntity::GetMemoryUsage(ICrySizer* pSizer) const
 {
 	pSizer->AddObject(this, sizeof(*this));
 	m_physics.GetMemoryUsage(pSizer);
-	for (auto& componentRecord : m_components.GetVector())
-	{
-		componentRecord.pComponent->GetMemoryUsage(pSizer);
-	}
+
+	m_components.GetMemoryStatistics(pSizer);
+
+	pSizer->AddContainer(m_simpleEventListeners);
 }
 
 //////////////////////////////////////////////////////////////////////////
-#define DEF_ENTITY_EVENT_NAME(x) { x, # x }
-struct SEventName
+IAIObject* CEntity::GetAIObject() const
 {
-	EEntityEvent event;
-	const char*  name;
-} s_eventsName[] =
-{
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_XFORM),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_TIMER),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_INIT),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_DONE),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_VISIBLITY),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_RESET),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_ATTACH),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_ATTACH_THIS),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_DETACH),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_DETACH_THIS),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_LINK),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_DELINK),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_HIDE),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_UNHIDE),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_ENABLE_PHYSICS),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_PHYSICS_CHANGE_STATE),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_SCRIPT_EVENT),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_ENTERAREA),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_LEAVEAREA),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_ENTERNEARAREA),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_LEAVENEARAREA),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_MOVEINSIDEAREA),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_MOVENEARAREA),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_PHYS_POSTSTEP),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_PHYS_BREAK),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_AI_DONE),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_SOUND_DONE),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_COLLISION),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_RENDER_VISIBILITY_CHANGE),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_PREPHYSICSUPDATE),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_LEVEL_LOADED),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_START_LEVEL),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_START_GAME),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_ENTER_SCRIPT_STATE),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_LEAVE_SCRIPT_STATE),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_PRE_SERIALIZE),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_POST_SERIALIZE),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_INVISIBLE),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_VISIBLE),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_MATERIAL),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_ONHIT),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_CROSS_AREA),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_ACTIVATED),
-	DEF_ENTITY_EVENT_NAME(ENTITY_EVENT_DEACTIVATED),
-};
+	if (gEnv->pAISystem == nullptr)
+		return nullptr;
+
+	return (m_aiObjectID ? gEnv->pAISystem->GetAIObjectManager()->GetAIObject(m_aiObjectID) : nullptr);
+}
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::LogEvent(SEntityEvent& event, CTimeValue dt)
+void CEntity::CreateSchematycObject(const SEntitySpawnParams& spawnParams)
 {
-	static int s_LastLoggedFrame = 0;
+	const CEntityClass* pClass = static_cast<const CEntityClass*>(spawnParams.pClass);
 
-	int nFrameId = gEnv->pRenderer->GetFrameID(false);
-	if (CVar::es_DebugEvents == 2 && s_LastLoggedFrame < nFrameId && s_LastLoggedFrame > nFrameId - 10)
+	Schematyc::IRuntimeClassConstPtr pRuntimeClass = pClass->GetSchematycRuntimeClass();
+	if (pRuntimeClass)
 	{
-		// On Next frame turn it off.
-		CVar::es_DebugEvents = 0;
-		return;
-	}
-
-	// Find event, quite slow but ok for logging.
-	char sNameId[32];
-	const char* sName = "";
-	for (int i = 0; i < CRY_ARRAY_COUNT(s_eventsName); i++)
-	{
-		if (s_eventsName[i].event == event.event)
+		if (m_pLegacySchematycData == nullptr)
 		{
-			sName = s_eventsName[i].name;
-			break;
+			m_pLegacySchematycData = stl::make_unique<SLegacySchematycData>();
+		}
+
+		if(m_pLegacySchematycData->pSchematycProperties == nullptr)
+		{
+			m_pLegacySchematycData->pSchematycProperties = pRuntimeClass->GetDefaultProperties().Clone();
+		}
+		if (spawnParams.entityNode)
+		{
+			XmlNodeRef schematycPropsNode = spawnParams.entityNode->findChild("SchematycProperties");
+			if (schematycPropsNode)
+			{
+				// Load Schematyc object properties from the Entity Node XML data
+				Serialization::LoadXmlNode(*m_pLegacySchematycData->pSchematycProperties.get(), schematycPropsNode);
+			}
+		}
+
+		Schematyc::SObjectParams objectParams;
+		objectParams.classGUID = pRuntimeClass->GetGUID();
+		objectParams.pProperties = m_pLegacySchematycData->pSchematycProperties;
+		objectParams.pEntity = this;
+
+		if (gEnv->pSchematyc->CreateObject(objectParams, m_pLegacySchematycData->pSchematycObject))
+		{
+			if (m_simulationMode != EEntitySimulationMode::Idle)
+			{
+				m_pLegacySchematycData->pSchematycObject->SetSimulationMode(m_simulationMode, Schematyc::EObjectSimulationUpdatePolicy::OnChangeOnly);
+			}
 		}
 	}
-	if (!*sName)
-	{
-		cry_sprintf(sNameId, "%d", (int)event.event);
-		sName = sNameId;
-	}
-	s_LastLoggedFrame = nFrameId;
-
-	float fTimeMs = dt.GetMilliSeconds();
-	CryLogAlways("<Frame:%d><EntityEvent> [%s](%X)\t[%.2fms]\t%s", nFrameId, sName, (int)event.nParam[0], fTimeMs, GetEntityTextDescription().c_str());
-}
-
-IAIObject* CEntity::GetAIObject()
-{
-	return (m_aiObjectID ? gEnv->pAISystem->GetAIObjectManager()->GetAIObject(m_aiObjectID) : NULL);
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntity::DebugDraw(const SGeometryDebugDrawInfo& info)
+void CEntity::SetSimulationMode(EEntitySimulationMode mode)
 {
-	m_render.DebugDraw(info);
+	m_simulationMode = mode;
+	if (m_pLegacySchematycData != nullptr && m_pLegacySchematycData->pSchematycObject != nullptr)
+	{
+		m_pLegacySchematycData->pSchematycObject->SetSimulationMode(m_simulationMode, Schematyc::EObjectSimulationUpdatePolicy::OnChangeOnly);
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CEntity::OnEditorGameModeChanged(bool bEnterGameMode)
+{
+	if (m_simulationMode != EEntitySimulationMode::Preview)
+	{
+		m_simulationMode = bEnterGameMode ? EEntitySimulationMode::Game : EEntitySimulationMode::Editor;
+	}
+
+	// Activate entity if was deactivated:
+	if (IsGarbage())
+	{
+		g_pIEntitySystem->ResurrectGarbageEntity(this);
+
+		// Re-add the component event listener which where removed
+		m_components.ForEach([this](SEntityComponentRecord& record) -> EComponentIterationResult
+		{
+			Cry::Entity::EventFlags prevMask = record.registeredEventsMask;
+			record.registeredEventsMask = record.pComponent->GetEventMask();
+
+			if (record.registeredEventsMask != prevMask)
+			{
+				OnComponentMaskChanged(record, prevMask);
+			}
+
+			return EComponentIterationResult::Continue;
+		});
+
+		// If entity was deleted in game, resurrect it.
+		SEntityEvent entevnt;
+		entevnt.event = ENTITY_EVENT_INIT;
+		SendEvent(entevnt);
+	}
+
+	// We only want to reset when we return from game mode to editor mode.
+	if (m_pLegacySchematycData != nullptr && m_pLegacySchematycData->pSchematycObject != nullptr)
+	{
+		m_pLegacySchematycData->pSchematycObject->SetSimulationMode(m_simulationMode, Schematyc::EObjectSimulationUpdatePolicy::OnChangeOnly);
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -2596,13 +3153,13 @@ Matrix34 CEntity::GetParentAttachPointWorldTM() const
 	if (m_hierarchy.parentBindingType == EBindingType::eBT_GeomCacheNode)
 	{
 #if defined(USE_GEOM_CACHES)
-		CGeomCacheAttachmentManager* pGeomCacheAttachmentManager = static_cast<CEntitySystem*>(GetEntitySystem())->GetGeomCacheAttachmentManager();
+		CGeomCacheAttachmentManager* pGeomCacheAttachmentManager = g_pIEntitySystem->GetGeomCacheAttachmentManager();
 		return pGeomCacheAttachmentManager->GetNodeWorldTM(this, m_hierarchy.pParent);
 #endif
 	}
 	else if (m_hierarchy.parentBindingType == EBindingType::eBT_CharacterBone)
 	{
-		CCharacterBoneAttachmentManager* pCharacterBoneAttachmentManager = static_cast<CEntitySystem*>(GetEntitySystem())->GetCharacterBoneAttachmentManager();
+		CCharacterBoneAttachmentManager* pCharacterBoneAttachmentManager = g_pIEntitySystem->GetCharacterBoneAttachmentManager();
 		return pCharacterBoneAttachmentManager->GetNodeWorldTM(this, m_hierarchy.pParent);
 	}
 
@@ -2623,17 +3180,26 @@ bool CEntity::IsParentAttachmentValid() const
 	if (m_hierarchy.parentBindingType == EBindingType::eBT_GeomCacheNode)
 	{
 #if defined(USE_GEOM_CACHES)
-		CGeomCacheAttachmentManager* pGeomCacheAttachmentManager = static_cast<CEntitySystem*>(GetEntitySystem())->GetGeomCacheAttachmentManager();
+		CGeomCacheAttachmentManager* pGeomCacheAttachmentManager = g_pIEntitySystem->GetGeomCacheAttachmentManager();
 		return pGeomCacheAttachmentManager->IsAttachmentValid(this, m_hierarchy.pParent);
 #endif
 	}
 	else if (m_hierarchy.parentBindingType == EBindingType::eBT_CharacterBone)
 	{
-		CCharacterBoneAttachmentManager* pCharacterBoneAttachmentManager = static_cast<CEntitySystem*>(GetEntitySystem())->GetCharacterBoneAttachmentManager();
+		CCharacterBoneAttachmentManager* pCharacterBoneAttachmentManager = g_pIEntitySystem->GetCharacterBoneAttachmentManager();
 		return pCharacterBoneAttachmentManager->IsAttachmentValid(this, m_hierarchy.pParent);
 	}
 
 	return true;
+}
+
+//////////////////////////////////////////////////////////////////////////
+IEntity* CEntity::GetAdam()
+{
+	for (CEntity* pAdam = static_cast<CEntity*>(GetParent()); pAdam; pAdam = static_cast<CEntity*>(pAdam->GetParent()))
+		if (!pAdam->GetParent() || pAdam->m_hierarchy.parentBindingType == EBindingType::eBT_LocalSim)
+			return pAdam;
+	return this;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -2652,18 +3218,11 @@ void CEntity::OnRenderNodeVisibilityChange(bool bBecomeVisible)
 	bNoReentrant = true;
 	if (GetFlags() & ENTITY_FLAG_SEND_RENDER_EVENT)
 	{
-		if (bBecomeVisible)
-		{
-			SEntityEvent entityEvent(ENTITY_EVENT_RENDER_VISIBILITY_CHANGE);
-			entityEvent.nParam[0] = 1;
-			SendEvent(entityEvent);
-		}
-		else
-		{
-			SEntityEvent entityEvent(ENTITY_EVENT_RENDER_VISIBILITY_CHANGE);
-			entityEvent.nParam[0] = 0;
-			SendEvent(entityEvent);
-		}
+		m_physics.AwakeOnRender(bBecomeVisible);
+
+		SEntityEvent entityEvent(ENTITY_EVENT_RENDER_VISIBILITY_CHANGE);
+		entityEvent.nParam[0] = bBecomeVisible ? 1 : 0;
+		SendEvent(entityEvent);
 	}
 	bNoReentrant = false;
 }
@@ -2674,50 +3233,34 @@ float CEntity::GetLastSeenTime() const
 	return m_render.GetLastSeenTime();
 }
 
-//////////////////////////////////////////////////////////////////////////
-void CEntity::ComputeForwardDir() const
+INetEntity* CEntity::AssignNetEntityLegacy(INetEntity* ptr)
 {
-	if (m_bDirtyForwardDir)
-	{
-		if (IsScaled())
-		{
-			Matrix34 auxTM = m_worldTM;
-			auxTM.OrthonormalizeFast();
+	auto ret = m_pNetEntity.get();
+	m_pNetEntity.release();
+	m_pNetEntity.reset(ptr);
+	return ret;
+}
 
-			// assuming (0, 1, 0) as the local forward direction
-			m_vForwardDir = auxTM.GetColumn1();
-		}
-		else
-		{
-			// assuming (0, 1, 0) as the local forward direction
-			m_vForwardDir = m_worldTM.GetColumn1();
-		}
-
-		m_bDirtyForwardDir = false;
-	}
+INetEntity* CEntity::GetNetEntity()
+{
+	return m_pNetEntity.get();
 }
 
 uint32 CEntity::GetEditorObjectID() const
 {
-	return m_objectID >> 8; 
+	return m_id;
 }
 
-void   CEntity::SetObjectID(uint32 ID)
+void CEntity::GetEditorObjectInfo(bool& selected, bool& highlighted) const
 {
-	m_objectID = (ID << 8) | (m_objectID & 0xFF); 
+	selected = HasInternalFlag(EInternalFlag::SelectedInEditor);
+	highlighted = HasInternalFlag(EInternalFlag::HighlightedInEditor);
 }
 
-void CEntity::GetEditorObjectInfo(bool& bSelected, bool& bHighlighted) const
+void CEntity::SetEditorObjectInfo(bool selected, bool highlighted)
 {
-	bSelected = (m_objectID & 1) != 0;
-	bHighlighted = (m_objectID & (1 << 1)) != 0;
-}
-
-void CEntity::SetEditorObjectInfo(bool bSelected, bool bHighlighted)
-{
-	uint32 flags = (bSelected * (1)) | (bHighlighted * (1 << 1));
-	m_objectID &= ~(0x3);
-	m_objectID |= flags;
+	SetInternalFlag(EInternalFlag::SelectedInEditor, selected);
+	SetInternalFlag(EInternalFlag::HighlightedInEditor, highlighted);
 
 	int nSlots = GetSlotCount();
 
@@ -2726,8 +3269,29 @@ void CEntity::SetEditorObjectInfo(bool bSelected, bool bHighlighted)
 		IRenderNode* pRenderNode = GetRenderNode(i);
 		if (pRenderNode)
 		{
-			pRenderNode->SetEditorObjectInfo(bSelected, bHighlighted);
+			pRenderNode->SetEditorObjectInfo(selected, highlighted);
 		}
 	}
 }
 
+void CEntity::ShutDownComponent(SEntityComponentRecord& componentRecord)
+{
+	if (!componentRecord.registeredEventsMask.IsEmpty())
+	{
+		const Cry::Entity::EventFlags prevMask = componentRecord.registeredEventsMask;
+		componentRecord.registeredEventsMask.Clear();
+		UpdateComponentEventListeners(componentRecord, prevMask);
+	}
+
+	componentRecord.pComponent->OnShutDown();
+
+	// Free entity slot used by the component
+	if (componentRecord.pComponent->GetEntitySlotId() != IEntityComponent::EmptySlotId)
+	{
+		componentRecord.pComponent->GetEntity()->FreeSlot(componentRecord.pComponent->GetEntitySlotId());
+		componentRecord.pComponent->SetEntitySlotId(IEntityComponent::EmptySlotId);
+	}
+
+	// Entity has changed so make the state dirty
+	m_componentChangeState++;
+}

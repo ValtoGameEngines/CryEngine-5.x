@@ -1,33 +1,36 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
+#include "../../DeviceManager/DeviceObjects.h" // CDeviceGraphicsPSOPtr, CDeviceGraphicsPSOWPtr
 
-const uint32 MAX_PIPELINE_SCENE_STAGES = 4;
-const uint32 MAX_PIPELINE_SCENE_STAGE_PASSES = 5;
+const uint32 MAX_PIPELINE_SCENE_STAGE_PASSES = 6;
 
 struct SGraphicsPipelineStateDescription
 {
-	SShaderItem        shaderItem;
-	EShaderTechniqueID technique;
-	int                _dummy;       // Just for packing so memcmp/hash works
-	uint64             objectFlags;
-	uint64             objectRuntimeMask;
-	uint32             objectFlags_MDV;
-	EVertexFormat      vertexFormat;
-	uint32             streamMask;
-	int                primitiveType;
+	SShaderItem          shaderItem;
+	uint64               objectRuntimeMask;
+	uint64               objectFlags;
+	EShaderTechniqueID   technique;
+	EVertexModifier      objectFlags_MDV;
+	EStreamMasks         streamMask;
+	ERenderPrimitiveType primitiveType;
+	InputLayoutHandle    vertexFormat;
+	uint8                renderState;
+
+	uint32               padding;
 
 	SGraphicsPipelineStateDescription()
-		: technique(TTYPE_Z)
+		: objectRuntimeMask(0)
 		, objectFlags(0)
-		, objectFlags_MDV(0)
-		, objectRuntimeMask(0)
-		, vertexFormat(eVF_Unknown)
-		, streamMask(0)
-		, primitiveType(0)
-		, _dummy(0)
-	{};
-	SGraphicsPipelineStateDescription(CRenderObject* pObj, CRenderElement* pRE, const SShaderItem& shaderItem, EShaderTechniqueID technique, EVertexFormat vertexFormat, uint32 streamMask, int primitiveType);
+		, technique(TTYPE_Z)
+		, objectFlags_MDV(MDV_NONE)
+		, streamMask(VSM_NONE)
+		, primitiveType(eptUnknown)
+		, vertexFormat(InputLayoutHandle::Unspecified)
+		, renderState(0)
+		, padding(0)
+	{}
+	SGraphicsPipelineStateDescription(CRenderObject* pObj, uint64 objFlags, ERenderElementFlags elmFlags, const SShaderItem& shaderItem, EShaderTechniqueID technique, InputLayoutHandle vertexFormat, EStreamMasks streamMask, ERenderPrimitiveType primitiveType);
 
 	bool operator==(const SGraphicsPipelineStateDescription& other) const
 	{
@@ -35,29 +38,19 @@ struct SGraphicsPipelineStateDescription
 	}
 };
 
-static_assert(sizeof(SGraphicsPipelineStateDescription) == sizeof(SShaderItem) + 6 * sizeof(uint32) + 2 * sizeof(uint64), "There may be no padding in SGraphicsPipelineStateDescription!");
-
-struct SComputePipelineStateDescription
-{
-	SShaderItem        shaderItem;
-	EShaderTechniqueID technique;
-	uint64             objectFlags;
-	uint64             objectRuntimeMask;
-	uint32             objectFlags_MDV;
-
-	SComputePipelineStateDescription()
-		: technique(TTYPE_Z)
-		, objectFlags(0)
-		, objectFlags_MDV(0)
-		, objectRuntimeMask(0)
-	{};
-	SComputePipelineStateDescription(CRenderObject* pObj, const SShaderItem& shaderItem, EShaderTechniqueID technique);
-
-	bool operator==(const SComputePipelineStateDescription& other) const
-	{
-		return 0 == memcmp(this, &other, sizeof(*this));
-	}
-};
+static_assert(
+	sizeof(SGraphicsPipelineStateDescription) ==
+	sizeof(SGraphicsPipelineStateDescription::shaderItem) +
+	sizeof(SGraphicsPipelineStateDescription::technique) + 
+	sizeof(SGraphicsPipelineStateDescription::objectRuntimeMask) +
+	sizeof(SGraphicsPipelineStateDescription::objectFlags) +
+	sizeof(SGraphicsPipelineStateDescription::objectFlags_MDV) +
+	sizeof(SGraphicsPipelineStateDescription::streamMask) +
+	sizeof(SGraphicsPipelineStateDescription::primitiveType) +
+	sizeof(SGraphicsPipelineStateDescription::renderState) +
+	sizeof(SGraphicsPipelineStateDescription::vertexFormat) +
+	sizeof(SGraphicsPipelineStateDescription::padding),
+	"There may be no padding in SGraphicsPipelineStateDescription! memcpy/hash might not work.");
 
 // Array of pass id and PipelineState
 typedef std::array<CDeviceGraphicsPSOPtr, MAX_PIPELINE_SCENE_STAGE_PASSES> DevicePipelineStatesArray;

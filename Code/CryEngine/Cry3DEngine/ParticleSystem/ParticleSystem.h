@@ -1,102 +1,120 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  Created:     06/04/2014 by Filipe amim
-//  Description:
-// -------------------------------------------------------------------------
-//
-////////////////////////////////////////////////////////////////////////////
-
-#ifndef PARTICLESYSTEM_H
-#define PARTICLESYSTEM_H
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <CryExtension/ClassWeaver.h>
 #include "ParticleCommon.h"
-#include "ParticleDebug.h"
 #include "ParticleJobManager.h"
 #include "ParticleProfiler.h"
-#include "ParticleEmitter.h"
+#include "ParticleEffect.h"
 
 namespace pfx2
 {
-class CParticleSystem : public Cry3DEngineBase, public IParticleSystem
+
+class CParticleEmitter;
+using TParticleEmitters = TDynArray<_smart_ptr<CParticleEmitter>>;
+
+class CParticleSystem : public Cry3DEngineBase, public IParticleSystem, ISyncMainWithRenderListener
 {
 	CRYINTERFACE_SIMPLE(IParticleSystem)
-	CRYGENERATE_SINGLETONCLASS(CParticleSystem, "CryEngine_ParticleSystem", 0xCD8D738D54B446F7, 0x82BA23BA999CF2AC)
+	CRYGENERATE_SINGLETONCLASS_GUID(CParticleSystem, "CryEngine_ParticleSystem", "cd8d738d-54b4-46f7-82ba-23ba999cf2ac"_cry_guid)
 
 	CParticleSystem();
-	virtual ~CParticleSystem() {}
+	~CParticleSystem();
 
 private:
-	typedef std::vector<_smart_ptr<CParticleEmitter>>                                                                     TParticleEmitters;
-	typedef std::unordered_map<string, _smart_ptr<CParticleEffect>, stl::hash_stricmp<string>, stl::hash_stricmp<string>> TEffectNameMap;
+	template<typename T> using TNameAssetMap =
+		std::unordered_map<string, _smart_ptr<T>, stl::hash_stricmp<string>, stl::hash_stricmp<string>>;
 
 public:
 	// IParticleSystem
 	PParticleEffect         CreateEffect() override;
 	PParticleEffect         ConvertEffect(const ::IParticleEffect* pOldEffect, bool bReplace) override;
 	void                    RenameEffect(PParticleEffect pEffect, cstr name) override;
-	PParticleEffect         FindEffect(cstr name) override;
+	PParticleEffect         FindEffect(cstr name, bool bAllowLoad = true) override;
 	PParticleEmitter        CreateEmitter(PParticleEffect pEffect) override;
-	uint                    GetNumFeatureParams() const override;
-	SParticleFeatureParams& GetFeatureParam(uint featureIdx) const override;
+	uint                    GetNumFeatureParams() const override { return uint(GetFeatureParams().size()); }
+	SParticleFeatureParams& GetFeatureParam(uint featureIdx) const override { return GetFeatureParams()[featureIdx]; }
+	TParticleAttributesPtr  CreateParticleAttributes() const override;
 
 	void                    OnFrameStart() override;
 	void                    Update() override;
 	void                    Reset() override;
+	void                    ClearRenderResources() override;
+	void                    FinishRenderTasks(const SRenderingPassInfo& passInfo) override;
 
 	void                    Serialize(TSerialize ser) override;
+	bool                    SerializeFeatures(IArchive& ar, TParticleFeatures& features, cstr name, cstr label) const override;
 
-	void                    GetCounts(SParticleCounts& counts) override;
+	void                    GetStats(SParticleStats& stats) override;
+	void                    DisplayStats(Vec2& location, float lineHeight) override;
 	void                    GetMemoryUsage(ICrySizer* pSizer) const override;
+	void                    SyncMainWithRender() override;
 	// ~IParticleSystem
 
-	PParticleEffect      LoadEffect(cstr effectName);
-	SParticleCounts&     GetCounts()                      { return m_counts; }
-	TParticleHeap&       GetMemHeap(uint32 threadId = ~0) { return m_memHeap[threadId + 1]; }
-	CParticleJobManager& GetJobManager()                  { return m_jobManager; }
-	CParticleProfiler&   GetProfiler()                    { return m_profiler; }
-	void                 SyncronizeUpdateKernels();
-	void                 DeferredRender();
-
-	void                 ClearRenderResources();
-
-	static float         GetMaxAngularDensity(const CCamera& camera)
+	struct SThreadData
 	{
-		return camera.GetAngularResolution() / max(GetCVars()->e_ParticlesMinDrawPixels, 0.125f) * 2.0f;
-	}
-	QuatT                GetCameraMotion() const { return m_cameraMotion; }
+		TParticleHeap        memHeap;
+		SParticleStats       statsCPU;
+		SParticleStats       statsGPU;
+		TElementCounts<uint> statsSync;
+
+		SThreadData()
+			: memHeap(stl::FHeap().PageSize(0x4000).StackAlloc(true).FreeWhenEmpty(false)) {}
+	};
+
+	PParticleEffect          LoadEffect(cstr effectName);
+
+	SThreadData&             GetThreadData() { return m_threadData[JobManager::GetWorkerThreadId() + 1]; }
+	SThreadData&             GetMainData()   { return m_threadData.front(); }
+	SThreadData&             GetSumData()    { return m_threadData.back(); }
+	CParticleJobManager&     GetJobManager() { return m_jobManager; }
+	CParticleProfiler&       GetProfiler()   { return m_profiler; }
+
+	bool                     IsRuntime() const;
+	void                     CheckFileAccess(cstr filename = 0) const;
+
+	static float             GetMaxAngularDensity(const CCamera& camera);
+	QuatT                    GetLastCameraPose() const        { return m_lastCameraPose; }
+	const TParticleEmitters& GetActiveEmitters() const        { return m_emitters; }
+	IMaterial*               GetTextureMaterial(cstr textureName, bool gpu, gpu_pfx2::EFacingMode facing);
+	uint                     GetParticleSpec() const;
+
+	typedef std::vector<SParticleFeatureParams> TFeatureParams;
+	
+	static TFeatureParams&               GetFeatureParams()                                    { static TFeatureParams params; return params; }
+	static bool                          RegisterFeature(const SParticleFeatureParams& params) { GetFeatureParams().push_back(params); return true; }
+	static const SParticleFeatureParams* FindFeatureParam(cstr groupName, cstr featureName);
+	static const SParticleFeatureParams* GetDefaultFeatureParam(EFeatureType);
 
 private:
-	void              UpdateGpuRuntimesForEmitter(CParticleEmitter* pEmitter);
-	void              TrimEmitters();
-	CParticleEffect*  CastEffect(const PParticleEffect& pEffect) const;
-	CParticleEmitter* CastEmitter(const PParticleEmitter& pEmitter) const;
+	void              TrimEmitters(bool finished_only);
 
 	// PFX1 to PFX2
 	string ConvertPfx1Name(cstr oldEffectName);
 	// ~PFX1 to PFX2
 
-	SParticleCounts            m_counts;
-
-	CParticleJobManager        m_jobManager;
-	CParticleProfiler          m_profiler;
-	TEffectNameMap             m_effects;
-	TParticleEmitters          m_emitters;
-	std::vector<TParticleHeap> m_memHeap;
-	QuatT                      m_lastCameraPose = ZERO;
-	QuatT                      m_cameraMotion = ZERO;
-	uint                       m_nextEmitterId;
+private:
+	CParticleJobManager            m_jobManager;
+	CParticleProfiler              m_profiler;
+	TNameAssetMap<CParticleEffect> m_effects;
+	TParticleEmitters              m_emitters;
+	TParticleEmitters              m_emittersPreUpdate;
+	TParticleEmitters              m_newEmitters;
+	std::vector<SThreadData>       m_threadData;
+	TNameAssetMap<IMaterial>       m_materials;
+	bool                           m_bResetEmitters = false;
+	QuatT                          m_lastCameraPose = IDENTITY;
+	uint                           m_numFrames      = 0;
+	uint                           m_numLevelLoads  = 0;
+	uint                           m_nextEmitterId  = 0;
+	ESystemConfigSpec              m_lastSysSpec    = END_CONFIG_SPEC_ENUM;
 };
 
-std::vector<SParticleFeatureParams>& GetFeatureParams();
-
-CParticleSystem*                     GetPSystem();
-
-uint                                 GetVersion(Serialization::IArchive& ar);
+ILINE CParticleSystem* GetPSystem()
+{
+	static std::shared_ptr<IParticleSystem> pSystem(GetIParticleSystem());
+	return static_cast<CParticleSystem*>(pSystem.get());
+};
 
 }
-
-#endif // PARTICLESYSTEM_H

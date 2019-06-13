@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __RECORDINGSYSTEM_H__
 #define __RECORDINGSYSTEM_H__
@@ -21,6 +21,7 @@
 #include "RecordingSystemClientSender.h"
 #include "RecordingSystemServerForwarder.h"
 #include "RecordingSystemDefines.h"
+#include "GameCVars.h"
 
 class CActor;
 class CBufferUtil;
@@ -130,11 +131,10 @@ public:
 	virtual void OnSpawn(IEntity *pEntity, SEntitySpawnParams &params);
 	virtual bool OnRemove(IEntity *pEntity);
 	virtual void OnReused(IEntity *pEntity, SEntitySpawnParams &params);
-	virtual void OnEvent(IEntity *pEntity, SEntityEvent &event);
 	//~IEntitySystemSink
 
 	// IEntityEventListener
-	virtual void OnEntityEvent(IEntity *pEntity, SEntityEvent &event);
+	virtual void OnEntityEvent(IEntity *pEntity, const SEntityEvent &event);
 	//~IEntityEventListener
 
 	// IParticleEffectListener

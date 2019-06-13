@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef _GAME_EFFECT_
 #define _GAME_EFFECT_
@@ -8,9 +8,13 @@
 #include "ItemString.h"
 #include "Effects/GameEffectsSystemDefines.h"
 #include "IViewSystem.h"
+#include <CryMemory/CrySizer.h>
 
 // Forward declares
 struct SGameEffectParams;
+struct IParticleEmitter;
+struct IMaterial;
+struct IParticleEffect;
 
 //==================================================================================================
 // Name: Flag macros

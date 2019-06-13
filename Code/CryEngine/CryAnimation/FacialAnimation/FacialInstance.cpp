@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "FacialInstance.h"
@@ -605,10 +605,14 @@ void CFacialInstance::UpdateCurrentSequence(IFacialAnimSequence* pPreviousSequen
 		if (m_layers[i].sequence)
 		{
 			m_currentLayer = i;
-			LayerInfo& layer = m_layers[m_currentLayer];
 
+#if !defined(EXCLUDE_NORMAL_LOG)
 			if (Console::GetInst().ca_DebugFacial)
+			{
+				LayerInfo& layer = m_layers[m_currentLayer];
 				CryLogAlways("CFacialInstance::UpdateCurrentSequence (this=%p) - activating layer %d (sequence = \"%s\")", this, i, (layer.sequence ? layer.sequence->GetName() : "NULL"));
+			}
+#endif
 
 			break;
 		}

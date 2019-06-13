@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 ////////////////////////////////////////////////////////////////////////////
 //
@@ -15,6 +15,7 @@
 
 #include "StdAfx.h"
 #include "ScriptBind_System.h"
+#include <Cry3DEngine/ISurfaceType.h>
 #include <CryAnimation/ICryAnimation.h>
 #include <CryFont/IFont.h>
 #include <CrySystem/ILog.h>
@@ -24,16 +25,16 @@
 #include <CryEntitySystem/IEntitySystem.h>
 #include <CrySystem/ITimer.h>
 #include <CrySystem/IConsole.h>
-#include <CryAISystem/IAISystem.h>
-#include <CryAISystem/IAgent.h>
 #include <CrySystem/File/ICryPak.h>
-#include <CrySystem/ITestSystem.h>
+#include <CrySystem/Testing/CryTest.h>
 #include <CryGame/IGameFramework.h>
 #include <CryMath/Cry_Camera.h>
 #include <CryMath/Cry_Geo.h>
+#include <CryPhysics/physinterface.h>
 #include <CryRenderer/IRenderAuxGeom.h>
 #include <CrySystem/IBudgetingSystem.h>
 #include <CrySystem/ILocalizationManager.h>
+#include <CrySystem/ConsoleRegistration.h>
 #include <time.h>
 
 //////////////////////////////////////////////////////////////////////
@@ -113,6 +114,15 @@ static unsigned int sGetBlendState(int nMode)
 /////////////////////////////////////////////////////////////////////////////////
 CScriptBind_System::~CScriptBind_System()
 {
+	IConsole* pConsole = gEnv->pConsole;
+	for (const string& command : m_registeredCommands)
+	{
+#if (defined(_LAUNCHER) && defined(CRY_IS_MONOLITHIC_BUILD)) || !defined(_LIB)
+		// Manually remove commands from g_moduleCommands - strings were allocated dynamically.
+		stl::find_and_erase(g_moduleCommands, command.c_str());
+#endif
+		pConsole->RemoveCommand(command.c_str());
+	}
 }
 
 /////////////////////////////////////////////////////////////////////////////////
@@ -207,7 +217,6 @@ CScriptBind_System::CScriptBind_System(IScriptSystem* pScriptSystem, ISystem* pS
 
 	// CW: added for script based system analysis
 	SCRIPT_REG_FUNC(GetSystemMem);
-	SCRIPT_REG_FUNC(IsPS20Supported);
 	SCRIPT_REG_FUNC(IsHDRSupported);
 
 	SCRIPT_REG_FUNC(SetBudget);
@@ -244,9 +253,6 @@ CScriptBind_System::CScriptBind_System(IScriptSystem* pScriptSystem, ISystem* pS
 	SCRIPT_REG_FUNC(EnableHeatVision);
 	SCRIPT_REG_FUNC(ShowDebugger);
 	SCRIPT_REG_FUNC(DumpMemStats);
-	SCRIPT_REG_FUNC(DumpMemoryCoverage);
-	SCRIPT_REG_FUNC(ApplicationTest);
-	SCRIPT_REG_FUNC(QuitInNSeconds);
 	SCRIPT_REG_FUNC(DumpWinHeaps);
 	SCRIPT_REG_FUNC(Break);
 	SCRIPT_REG_TEMPLFUNC(SetViewCameraFov, "fov");
@@ -293,41 +299,6 @@ int CScriptBind_System::DumpMemStats(IFunctionHandler* pH)
 		pH->GetParam(1, bUseKB);
 
 	m_pSystem->DumpMemoryUsageStatistics(bUseKB);
-	return pH->EndFunction();
-}
-
-/////////////////////////////////////////////////////////////////////////////////
-int CScriptBind_System::DumpMemoryCoverage(IFunctionHandler* pH)
-{
-	// useful to investigate memory fragmentation
-	// every time you call this from the console: #System.DumpMemoryCoverage()
-	// it adds a line to "MemoryCoverage.bmp" (generated the first time, there is a max line count)
-	m_pSystem->DumpMemoryCoverage();
-	return pH->EndFunction();
-}
-
-/////////////////////////////////////////////////////////////////////////////////
-int CScriptBind_System::ApplicationTest(IFunctionHandler* pH)
-{
-	SCRIPT_CHECK_PARAMETERS(1);
-	const char* pszParam;
-	pH->GetParam(1, pszParam);
-
-	m_pSystem->ApplicationTest(pszParam);
-
-	return pH->EndFunction();
-}
-
-/////////////////////////////////////////////////////////////////////////////////
-int CScriptBind_System::QuitInNSeconds(IFunctionHandler* pH)
-{
-	SCRIPT_CHECK_PARAMETERS(1);
-	float fInNSeconds;
-	pH->GetParam(1, fInNSeconds);
-
-	if (m_pSystem->GetITestSystem())
-		m_pSystem->GetITestSystem()->QuitInNSeconds(fInNSeconds);
-
 	return pH->EndFunction();
 }
 
@@ -500,8 +471,6 @@ int CScriptBind_System::Log(IFunctionHandler* pH)
 void CScriptBind_System::LogString(IFunctionHandler* pH, bool bToConsoleOnly)
 {
 	const char* sParam = NULL;
-	string szText;
-
 	pH->GetParam(1, sParam);
 
 	if (sParam)
@@ -513,12 +482,12 @@ void CScriptBind_System::LogString(IFunctionHandler* pH, bool bToConsoleOnly)
 		if (sParam[0] <= 5 && sParam[0] != 0)
 		{
 			sLogMessage[0] = sParam[0];
-			cry_strcpy(&sLogMessage[1], sizeof(sLogMessage) - 1, "<Lua> ");
+			cry_strcpy(&sLogMessage[1], sizeof(sLogMessage) - 1, "<Lua> ", sizeof("<Lua> ") + 1);
 			cry_strcat(sLogMessage, &sParam[1]);
 		}
 		else
 		{
-			cry_strcpy(sLogMessage, "<Lua> ");
+			cry_fixed_size_strcpy(sLogMessage, "<Lua> ");
 			cry_strcat(sLogMessage, sParam);
 		}
 
@@ -1169,7 +1138,7 @@ int CScriptBind_System::DeformTerrainUsingMat(IFunctionHandler* pH)
 int CScriptBind_System::ScreenToTexture(IFunctionHandler* pH)
 {
 	SCRIPT_CHECK_PARAMETERS(0);
-	m_pRenderer->ScreenToTexture(0);
+	//m_pRenderer->ScreenToTexture(0);
 	return pH->EndFunction();
 }
 
@@ -1487,13 +1456,17 @@ int CScriptBind_System::GetCVar(IFunctionHandler* pH)
 		ScriptWarning("Script.GetCVar('%s') console variable not found", sCVarName);
 	else
 	{
-		if (pCVar->GetType() == CVAR_FLOAT || pCVar->GetType() == CVAR_INT)
+		if (pCVar->GetType() == ECVarType::Float || pCVar->GetType() == ECVarType::Int)
 		{
 			return pH->EndFunction(pCVar->GetFVal());
 		}
-		else if (pCVar->GetType() == CVAR_STRING)
+		else if (pCVar->GetType() == ECVarType::String)
 		{
 			return pH->EndFunction(pCVar->GetString());
+		}
+		else if (pCVar->GetType() == ECVarType::Int64)
+		{
+			CRY_ASSERT_MESSAGE(false, "CScriptBind_System::GetCVar int64 cvar not implemented");
 		}
 	}
 
@@ -1516,7 +1489,10 @@ int CScriptBind_System::AddCCommand(IFunctionHandler* pH)
 	pH->GetParam(3, sHelp);
 	assert(sHelp);
 
-	REGISTER_COMMAND(sCCommandName, sCommand, 0, sHelp);
+	// sCCommandName is deallocated by lua afterwards - hold string copy in m_registeredCommands
+	string name = sCCommandName;
+	REGISTER_COMMAND(name.c_str(), sCommand, 0, sHelp);
+	m_registeredCommands.insert(name);
 
 	return pH->EndFunction();
 }
@@ -1533,11 +1509,11 @@ int CScriptBind_System::SetScissor(IFunctionHandler* pH)
 	pH->GetParam(3, w);
 	pH->GetParam(4, h);
 
-	gEnv->pRenderer->SetScissor(
-	  (int)gEnv->pRenderer->ScaleCoordX(x),
-	  (int)gEnv->pRenderer->ScaleCoordY(y),
-	  (int)gEnv->pRenderer->ScaleCoordX(w),
-	  (int)gEnv->pRenderer->ScaleCoordY(h));
+//	gEnv->pRenderer->SetScissor(
+//	  (int)gEnv->pRenderer->ScaleCoordX(x),
+//	  (int)gEnv->pRenderer->ScaleCoordY(y),
+//	  (int)gEnv->pRenderer->ScaleCoordX(w),
+//	  (int)gEnv->pRenderer->ScaleCoordY(h));
 
 	return pH->EndFunction();
 }
@@ -1859,27 +1835,6 @@ int CScriptBind_System::EnumAAFormats(IFunctionHandler* pH)
 	SCRIPT_CHECK_PARAMETERS(3);
 	m_pLog->Log("Enumerating MSAA modes...");
 	SmartScriptTable pAAArray(m_pSS);
-	int numFormats = m_pRenderer->EnumAAFormats(NULL);
-	if (numFormats)
-	{
-		SAAFormat* AAFormats = new SAAFormat[numFormats];
-		m_pRenderer->EnumAAFormats(AAFormats);
-
-		for (int i = 0; i < numFormats; i++)
-		{
-			SAAFormat* pAAForm = &AAFormats[i];
-			SmartScriptTable pAA(m_pSS);
-
-			pAA->SetValue("desc", pAAForm->szDescr);
-			pAA->SetValue("samples", pAAForm->nSamples);
-			pAA->SetValue("quality", pAAForm->nQuality);
-
-			pAAArray->SetAt(pAAArray->Count() + 1, pAA);
-		}
-
-		delete[]AAFormats;
-	}
-
 	return pH->EndFunction(pAAArray);
 }
 
@@ -1968,36 +1923,38 @@ int CScriptBind_System::SetWaterVolumeOffset(IFunctionHandler* pH)
 /////////////////////////////////////////////////////////////////////////////////
 int CScriptBind_System::SetViewCameraFov(IFunctionHandler* pH, float fov)
 {
-	CCamera& Camera = m_pSystem->GetViewCamera();
+	CCamera Camera = m_pSystem->GetViewCamera();
 	Camera.SetFrustum(Camera.GetViewSurfaceX(), Camera.GetViewSurfaceZ(), fov, DEFAULT_NEAR, DEFAULT_FAR, Camera.GetPixelAspectRatio());
+	m_pSystem->SetViewCamera(Camera);
+
 	return pH->EndFunction();
 }
 
 /////////////////////////////////////////////////////////////////////////////////
 int CScriptBind_System::GetViewCameraFov(IFunctionHandler* pH)
 {
-	CCamera& Camera = m_pSystem->GetViewCamera();
+	const CCamera& Camera = m_pSystem->GetViewCamera();
 	return pH->EndFunction(Camera.GetFov());
 }
 
 /////////////////////////////////////////////////////////////////////////////////
 int CScriptBind_System::IsPointVisible(IFunctionHandler* pH, Vec3 point)
 {
-	CCamera& Camera = m_pSystem->GetViewCamera();
+	const CCamera& Camera = m_pSystem->GetViewCamera();
 	return pH->EndFunction(Camera.IsPointVisible(point));
 }
 
 /////////////////////////////////////////////////////////////////////////////////
 int CScriptBind_System::GetViewCameraPos(IFunctionHandler* pH)
 {
-	CCamera& Camera = m_pSystem->GetViewCamera();
+	const CCamera& Camera = m_pSystem->GetViewCamera();
 	return pH->EndFunction(Script::SetCachedVector(Camera.GetPosition(), pH, 1));
 }
 
 /////////////////////////////////////////////////////////////////////////////////
 int CScriptBind_System::GetViewCameraDir(IFunctionHandler* pH)
 {
-	CCamera& Camera = m_pSystem->GetViewCamera();
+	const CCamera& Camera = m_pSystem->GetViewCamera();
 	Matrix34 cameraMatrix = Camera.GetMatrix();
 	return pH->EndFunction(Script::SetCachedVector(cameraMatrix.GetColumn(1), pH, 1));
 }
@@ -2005,7 +1962,7 @@ int CScriptBind_System::GetViewCameraDir(IFunctionHandler* pH)
 /////////////////////////////////////////////////////////////////////////////////
 int CScriptBind_System::GetViewCameraUpDir(IFunctionHandler* pH)
 {
-	CCamera& Camera = m_pSystem->GetViewCamera();
+	const CCamera& Camera = m_pSystem->GetViewCamera();
 	Matrix34 cameraMatrix = Camera.GetMatrix();
 	return pH->EndFunction(Script::SetCachedVector(cameraMatrix.GetColumn(2), pH, 1));
 }
@@ -2014,7 +1971,7 @@ int CScriptBind_System::GetViewCameraUpDir(IFunctionHandler* pH)
 int CScriptBind_System::GetViewCameraAngles(IFunctionHandler* pH)
 {
 	SCRIPT_CHECK_PARAMETERS(0);
-	CCamera& Camera = m_pSystem->GetViewCamera();
+	const CCamera& Camera = m_pSystem->GetViewCamera();
 	return pH->EndFunction(Vec3(RAD2DEG(Ang3::GetAnglesXYZ(Matrix33(Camera.GetMatrix())))));
 }
 
@@ -2108,14 +2065,6 @@ int CScriptBind_System::RayTraceCheck(IFunctionHandler* pH)
 	int nHits = m_pSystem->GetIPhysicalWorld()->RayWorldIntersection(src, dst - src, ent_static | ent_terrain, rwi_ignore_noncolliding | rwi_stop_at_pierceable, &RayHit, 1, skipPhys, 2);
 
 	return pH->EndFunction((bool)(nHits == 0));
-}
-
-/////////////////////////////////////////////////////////////////////////////////
-int CScriptBind_System::IsPS20Supported(IFunctionHandler* pH)
-{
-	SCRIPT_CHECK_PARAMETERS(0);
-	bool bPS20(0 != (gEnv->pRenderer->GetFeatures() & RFT_HW_SM20));
-	return pH->EndFunction(false != bPS20 ? 1 : 0);
 }
 
 /////////////////////////////////////////////////////////////////////////////////

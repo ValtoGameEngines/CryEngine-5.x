@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "AISignal.h"
@@ -15,14 +15,14 @@ void AISignalExtraData::CleanupPool()
 }
 
 AISignalExtraData::AISignalExtraData()
+	: point(ZERO)
+	, point2(ZERO)
+	, fValue(0.0f)
+	, nID(0)
+	, iValue(0)
+	, iValue2(0)
+	, sObjectName(nullptr)
 {
-	point.zero();
-	point2.zero();
-	fValue = 0.0f;
-	nID = 0;
-	iValue = 0;
-	iValue2 = 0;
-	sObjectName = NULL;
 }
 
 AISignalExtraData::~AISignalExtraData()

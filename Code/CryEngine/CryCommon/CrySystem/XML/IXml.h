@@ -1,15 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   ixml.h
-//  Version:     v1.00
-//  Created:     16/7/2002 by Timur.
-//  Compilers:   Visual Studio.NET
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -61,16 +50,17 @@ struct ISerialize;
 class XmlString : public string
 {
 public:
-	XmlString() {};
-	XmlString(const char* str) : string(str) {};
+	XmlString() {}
+	XmlString(const char* str) : string(str) {}
 #ifdef  _AFX
-	XmlString(const CString& str) : string((const char*)str) {};
+	XmlString(const CString& str) : string((const char*)str) {}
 #endif
 
 	operator const char*() const { return c_str(); }
 
 };
 
+//! \cond INTERNAL
 //! XML string data.
 struct IXmlStringData
 {
@@ -82,6 +72,7 @@ struct IXmlStringData
 	virtual size_t      GetStringLength() = 0;
 	// </interfuscator:shuffle>
 };
+//! \endcond
 
 class IXmlNode;
 
@@ -94,9 +85,11 @@ public:
 	XmlNodeRef() : p(NULL) {}
 	XmlNodeRef(IXmlNode* p_);
 	XmlNodeRef(const XmlNodeRef& p_);
+	XmlNodeRef(XmlNodeRef&& other);
 
 	~XmlNodeRef();
-
+	
+	bool     isValid() const   { return p != nullptr; }
 	operator IXmlNode*() const { return p; }
 
 	IXmlNode&   operator*() const      { return *p; }
@@ -104,6 +97,8 @@ public:
 
 	XmlNodeRef& operator=(IXmlNode* newp);
 	XmlNodeRef& operator=(const XmlNodeRef& newp);
+
+	XmlNodeRef& operator=(XmlNodeRef&& other);
 
 #if !defined(RESOURCE_COMPILER)
 	template<typename Sizer>
@@ -123,7 +118,7 @@ protected:
 protected:
 	// <interfuscator:shuffle>
 	virtual void DeleteThis() = 0;
-	virtual ~IXmlNode() {};
+	virtual ~IXmlNode() {}
 	// </interfuscator:shuffle>
 
 public:
@@ -135,11 +130,11 @@ public:
 	// AddRef/Release need to be virtual to permit overloading from CXMLNodePool.
 
 	//! Reference counting.
-	virtual void AddRef() { m_nRefCount++; };
+	virtual void AddRef() { m_nRefCount++; }
 
 	//! When ref count reaches zero, the XML node dies.
-	virtual void Release()           { if (--m_nRefCount <= 0) DeleteThis(); };
-	virtual int  GetRefCount() const { return m_nRefCount; };
+	virtual void Release()           { if (--m_nRefCount <= 0) DeleteThis(); }
+	virtual int  GetRefCount() const { return m_nRefCount; }
 
 	//! Get XML node tag.
 	virtual const char* getTag() const = 0;
@@ -189,9 +184,13 @@ public:
 	virtual void removeAllChilds() = 0;
 
 	//! Get number of child XML nodes.
+	//! \par Example
+	//! \include CrySystem/Examples/XmlParsing.cpp
 	virtual int getChildCount() const = 0;
 
 	//! Get XML Node child nodes.
+	//! \par Example
+	//! \include CrySystem/Examples/XmlParsing.cpp
 	virtual XmlNodeRef getChild(int i) const = 0;
 
 	//! Find node with specified tag.
@@ -225,6 +224,9 @@ public:
 
 	//! Returns XML of this node and sub nodes.
 	virtual XmlString getXML(int level = 0) const = 0;
+	//! Saves the XML node to disk
+	//! \par Example
+	//! \include CrySystem/Examples/XmlWriting.cpp
 	virtual bool      saveToFile(const char* fileName) = 0;
 
 	//! Set new XML Node attribute (or override attribute with same key).
@@ -243,7 +245,7 @@ public:
 	virtual void setAttr(const char* key, const Vec4& value) = 0;
 	virtual void setAttr(const char* key, const Vec3d& value) = 0;
 	virtual void setAttr(const char* key, const Quat& value) = 0;
-#if (CRY_PLATFORM_LINUX && CRY_PLATFORM_64BIT) || CRY_PLATFORM_APPLE
+#if CRY_PLATFORM_LINUX || CRY_PLATFORM_APPLE
 	//! Compatability functions, on Linux and Mac long int is the default int64_t.
 	ILINE void setAttr(const char* key, unsigned long int value, bool useHexFormat = true)
 	{
@@ -282,7 +284,7 @@ public:
 	virtual bool getAttr(const char* key, XmlString& value) const = 0;
 	virtual bool getAttr(const char* key, ColorB& value) const = 0;
 
-#if (CRY_PLATFORM_LINUX && CRY_PLATFORM_64BIT) || CRY_PLATFORM_APPLE
+#if CRY_PLATFORM_LINUX || CRY_PLATFORM_APPLE
 	//! Compatability functions, on Linux and Mac long int is the default int64_t.
 	ILINE bool getAttr(const char* key, unsigned long int& value, bool useHexFormat = true) const
 	{
@@ -321,11 +323,11 @@ public:
 
 	//! Inline Helpers.
 	//! @{
-#if !(CRY_PLATFORM_LINUX && CRY_PLATFORM_64BIT) && !CRY_PLATFORM_APPLE
+#if !CRY_PLATFORM_LINUX && !CRY_PLATFORM_APPLE
 	bool getAttr(const char* key, long& value) const           { int v; if (getAttr(key, v)) { value = v; return true; } else return false; }
 	bool getAttr(const char* key, unsigned long& value) const  { unsigned int v; if (getAttr(key, v)) { value = v; return true; } else return false; }
-	void setAttr(const char* key, unsigned long value)         { setAttr(key, (unsigned int)value); };
-	void setAttr(const char* key, long value)                  { setAttr(key, (int)value); };
+	void setAttr(const char* key, unsigned long value)         { setAttr(key, (unsigned int)value); }
+	void setAttr(const char* key, long value)                  { setAttr(key, (int)value); }
 #endif
 	bool getAttr(const char* key, unsigned short& value) const { unsigned int v; if (getAttr(key, v)) { value = v; return true; } else return false; }
 	bool getAttr(const char* key, unsigned char& value) const  { unsigned int v; if (getAttr(key, v)) { value = v; return true; } else return false; }
@@ -413,9 +415,30 @@ inline XmlNodeRef::XmlNodeRef(const XmlNodeRef& p_) : p(p_.p)
 	if (p) p->AddRef();
 }
 
+// Move constructor
+inline XmlNodeRef::XmlNodeRef(XmlNodeRef&& other)
+{
+	if (this != &other)
+	{
+		p = other.p;
+		other.p = nullptr;
+	}
+}
+
 inline XmlNodeRef::~XmlNodeRef()
 {
 	if (p) p->Release();
+}
+
+inline XmlNodeRef& XmlNodeRef::operator=(XmlNodeRef&& other)
+{
+	if (this != &other)
+	{
+		if (p) p->Release();
+		p = other.p;
+		other.p = nullptr;
+	}
+	return *this;
 }
 
 inline XmlNodeRef& XmlNodeRef::operator=(IXmlNode* newp)
@@ -453,6 +476,7 @@ struct IXmlSerializer
 #if !defined(RESOURCE_COMPILER)
 //////////////////////////////////////////////////////////////////////////
 //! XML Parser interface.
+//! \cond INTERNAL
 struct IXmlParser
 {
 	// <interfuscator:shuffle>
@@ -511,7 +535,21 @@ struct IXmlTableReader
 	virtual bool ReadCell(int& columnIndex, const char*& pContent, size_t& contentSize) = 0;
 	// </interfuscator:shuffle>
 };
+//! \endcond
 #endif
+
+
+namespace XMLBinary
+{
+	//! Binary XML writer interface. Serves as a sink for saving binary XML files.
+	class IDataWriter
+	{
+	public:
+		virtual ~IDataWriter() {}
+		//! Write (append) binary xml data chunk to the end of the file
+		virtual void Write(const void* pData, size_t size) = 0;
+	};
+}
 
 //////////////////////////////////////////////////////////////////////////
 //! IXmlUtils structure.
@@ -546,6 +584,9 @@ struct IXmlUtils
 
 	//! Create XML to file in the binary form.
 	virtual bool SaveBinaryXmlFile(const char* sFilename, XmlNodeRef root) = 0;
+
+	//! Write XML in the binary form using custom writer object.
+	virtual bool SaveBinaryXmlWithWriter(XMLBinary::IDataWriter& writer, XmlNodeRef root) = 0;
 
 	//! Read XML data from file in the binary form.
 	virtual XmlNodeRef LoadBinaryXmlFile(const char* sFilename, bool bEnablePatching = true) = 0;

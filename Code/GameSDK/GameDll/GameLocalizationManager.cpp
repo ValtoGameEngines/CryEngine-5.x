@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 
@@ -14,6 +14,7 @@ Also as a special case credits are dynamically loaded
 #include "StdAfx.h"
 #include "GameLocalizationManager.h"
 #include "Network/Lobby/GameLobby.h"
+#include <CrySystem/ConsoleRegistration.h>
 
 CGameLocalizationManager::CGameLocalizationManager()
 {

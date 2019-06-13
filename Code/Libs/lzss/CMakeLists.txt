@@ -6,12 +6,12 @@ start_sources()
 sources_platform(ALL)
 add_sources("NoUberFile"
 	SOURCE_GROUP "Root"
-		"../../SDKs/lzss/lzss.cpp"
-		"../../SDKs/lzss/LZSS.H"
+		"${SDK_DIR}/lzss/lzss.cpp"
+		"${SDK_DIR}/lzss/LZSS.H"
 )
 
 end_sources()
 #END-FILE-LIST
 
 CryEngineStaticModule(lzss SOLUTION_FOLDER "Libs")
-target_include_directories(${THIS_PROJECT} INTERFACE ${SDK_DIR})
+target_include_directories(${THIS_PROJECT} INTERFACE "${SDK_DIR}")

@@ -1,10 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // Various class and types that are shared between the various hazard module classes.
 
 #include "StdAfx.h"
 
 #include "HazardShared.h"
+#include <CryNetwork/ISerialize.h>
 
 
 using namespace HazardSystem;

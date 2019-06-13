@@ -1,8 +1,8 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "Tile.h"
-#include <CryCore/TypeInfo_impl.h>
+#include "MNM_Type_info.h"
 #include "DebugDrawContext.h"
 
 STRUCT_INFO_BEGIN(MNM::Tile::STriangle)
@@ -42,9 +42,6 @@ STile::STile()
 	, nodeCount(0)
 	, linkCount(0)
 	, hashValue(0)
-#if MNM_USE_EXPORT_INFORMATION
-	, connectivity()
-#endif
 {
 }
 
@@ -119,10 +116,6 @@ void CopyTileData(const TData* pNewData, const TCount newCount, TData*& pOutData
 
 void STile::CopyTriangles(const Tile::STriangle* _triangles, uint16 count)
 {
-#if MNM_USE_EXPORT_INFORMATION
-	InitConnectivity(triangleCount, count);
-#endif
-
 	CopyTileData(_triangles, count, triangles, triangleCount);
 }
 
@@ -155,8 +148,7 @@ void STile::AddOffMeshLink(const TriangleID triangleID, const uint16 offMeshInde
 		//Off-mesh link is always the first if exists
 		Tile::STriangle& triangle = triangles[triangleIdx];
 
-		const size_t MaxLinkCount = 1024 * 6;
-		Tile::SLink tempLinks[MaxLinkCount];
+		Tile::SLink tempLinks[MNM::Constants::TileLinksMaxCount];
 
 		bool hasOffMeshLink = links && (triangle.linkCount > 0) && (triangle.firstLink < linkCount) && (links[triangle.firstLink].side == Tile::SLink::OffMesh);
 
@@ -249,8 +241,7 @@ void STile::RemoveOffMeshLink(const TriangleID triangleID)
 	{
 		assert(linkCount > 1);
 
-		const size_t MaxLinkCount = 1024 * 6;
-		Tile::SLink tempLinks[MaxLinkCount];
+		Tile::SLink tempLinks[MNM::Constants::TileLinksMaxCount];
 
 		if (linkToRemoveIdx)
 			memcpy(tempLinks, links, sizeof(Tile::SLink) * linkToRemoveIdx);
@@ -281,11 +272,6 @@ void STile::Swap(STile& other)
 	std::swap(vertices, other.vertices);
 	std::swap(nodes, other.nodes);
 	std::swap(links, other.links);
-
-#if MNM_USE_EXPORT_INFORMATION
-	InitConnectivity(triangleCount, other.triangleCount);
-#endif
-
 	std::swap(triangleCount, other.triangleCount);
 	std::swap(vertexCount, other.vertexCount);
 	std::swap(nodeCount, other.nodeCount);
@@ -309,11 +295,6 @@ void STile::Destroy()
 	delete[] links;
 	links = 0;
 
-#if MNM_USE_EXPORT_INFORMATION
-	SAFE_DELETE_ARRAY(connectivity.trianglesAccessible);
-	connectivity.tileAccessible = 0;
-#endif
-
 	triangleCount = 0;
 	vertexCount = 0;
 	nodeCount = 0;
@@ -321,12 +302,12 @@ void STile::Destroy()
 	hashValue = 0;
 }
 
-ColorF CalculateColorForIsland(StaticIslandID islandID, uint16 totalIslands)
+ColorF CalculateColorFromMultipleItems(uint32 itemIdx, uint32 itemsCount)
 {
-	if (totalIslands == 0)
+	if (itemsCount == 0)
 		return Col_White;
 
-	const float hueValue = islandID / (float) totalIslands;
+	const float hueValue = itemIdx / (float)itemsCount;
 
 	ColorF color;
 	color.fromHSV(hueValue, 1.0f, 1.0f);
@@ -334,18 +315,22 @@ ColorF CalculateColorForIsland(StaticIslandID islandID, uint16 totalIslands)
 	return color;
 }
 
-void STile::Draw(size_t drawFlags, vector3_t origin, TileID tileID, const std::vector<float>& islandAreas) const
+void STile::Draw(size_t drawFlags, vector3_t origin, TileID tileID, const std::vector<float>& islandAreas, const ITriangleColorSelector& colorSelector) const
 {
-	IRenderAuxGeom* renderAuxGeom = gEnv->pRenderer->GetIRenderAuxGeom();
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
+
+	const size_t expectedMaxTriCount = 64;
+	const size_t expectedMaxOffmeshTriCount = 8;
 
 	const ColorB triangleColorConnected(Col_Azure, 0.65f);
-	const ColorB triangleColorExternalMesh(Col_LimeGreen, 0.5f);
 	const ColorB triangleColorBackface(Col_Gray, 0.65f);
 	const ColorB triangleColorDisconnected(Col_Red, 0.65f);
 	const ColorB boundaryColor(Col_Black);
 
 	const Vec3 offset = origin.GetVec3() + Vec3(0.0f, 0.0f, 0.05f);
 	const Vec3 loffset(offset + Vec3(0.0f, 0.0f, 0.0005f));
+
+	IRenderAuxGeom* renderAuxGeom = gEnv->pRenderer->GetIRenderAuxGeom();
 
 	SAuxGeomRenderFlags oldFlags = renderAuxGeom->GetRenderFlags();
 
@@ -361,42 +346,58 @@ void STile::Draw(size_t drawFlags, vector3_t origin, TileID tileID, const std::v
 
 	if (drawFlags & DrawTriangles)
 	{
+		ColorB currentColor = Col_Black;
+		std::vector<Vec3> triVertices;
+		triVertices.reserve(3 * expectedMaxTriCount);
+		std::vector<Vec3> backfaceTriVertices;
+		if (drawFlags & DrawTriangleBackfaces)
+		{
+			backfaceTriVertices.reserve(3 * expectedMaxTriCount);
+		}
+
 		for (size_t i = 0; i < triangleCount; ++i)
 		{
 			const Tile::STriangle& triangle = triangles[i];
+			
+			// Getting triangle color
+			ColorB triangleColor = triangleColorConnected;
+
+			if (drawFlags & DrawIslandsId)
+			{
+				triangleColor = CalculateColorFromMultipleItems(triangle.islandID, static_cast<uint32>(islandAreas.size()));
+			}
+			else
+			{
+				triangleColor = colorSelector.GetAnnotationColor(triangle.areaAnnotation);
+			}
+
+			if (triangleColor != currentColor)
+			{
+				if (triVertices.size())
+				{
+					renderAuxGeom->DrawTriangles(triVertices.data(), triVertices.size(), currentColor);
+					triVertices.clear();
+				}
+				currentColor = triangleColor;
+			}
 
 			const Vec3 v0 = vertices[triangle.vertex[0]].GetVec3() + offset;
 			const Vec3 v1 = vertices[triangle.vertex[1]].GetVec3() + offset;
 			const Vec3 v2 = vertices[triangle.vertex[2]].GetVec3() + offset;
 
-#if MNM_USE_EXPORT_INFORMATION
-			ColorB triangleColor = ((drawFlags & DrawAccessibility) && (connectivity.trianglesAccessible != NULL) && !connectivity.trianglesAccessible[i]) ? triangleColorDisconnected : triangleColorConnected;
-#else
-			ColorB triangleColor = triangleColorConnected;
-#endif
+			triVertices.push_back(v0);
+			triVertices.push_back(v1);
+			triVertices.push_back(v2);
 
-			if (!(drawFlags & DrawAccessibility))
+			if (drawFlags & DrawTriangleBackfaces)
 			{
-				// #MNM_TODO pavloi 2016.07.21: implement flag to color table lookup, which can be set from outside of the system.
-				if (triangle.triangleFlags & Tile::STriangle::eFlags_ExternalMesh)
-				{
-					triangleColor = triangleColorExternalMesh;
-				}
+				backfaceTriVertices.push_back(v1);
+				backfaceTriVertices.push_back(v0);
+				backfaceTriVertices.push_back(v2);
 			}
 
 			// Islands
 			bool drawIslandData = ((drawFlags & DrawIslandsId) && triangle.islandID > MNM::Constants::eStaticIsland_InvalidIslandID && triangle.islandID < islandAreas.size());
-			if (drawFlags & DrawIslandsId)
-			{
-				triangleColor = CalculateColorForIsland(triangle.islandID, static_cast<uint16>(islandAreas.size()));
-			}
-			renderAuxGeom->DrawTriangle(v0, triangleColor, v1, triangleColor, v2, triangleColor);
-
-			if (drawFlags & DrawTriangleBackfaces)
-			{
-				renderAuxGeom->DrawTriangle(v1, triangleColorBackface, v0, triangleColorBackface, v2, triangleColorBackface);
-			}
-
 			if ((drawFlags & DrawTrianglesId) || drawIslandData)
 			{
 				const Vec3 triCenter = ((v0 + v1 + v2) / 3.0f) + Vec3(.0f, .0f, .1f);
@@ -419,70 +420,134 @@ void STile::Draw(size_t drawFlags, vector3_t origin, TileID tileID, const std::v
 				dc->Draw3dLabelEx(triCenter, 1.2f, ColorB(255, 255, 255), true, true, true, false, "%s", text.c_str());
 			}
 		}
+
+		if (triVertices.size())
+		{
+			renderAuxGeom->DrawTriangles(triVertices.data(), triVertices.size(), currentColor);
+		}
+		if (backfaceTriVertices.size())
+		{
+			renderAuxGeom->DrawTriangles(backfaceTriVertices.data(), backfaceTriVertices.size(), triangleColorBackface);
+		}
 	}
 
 	renderAuxGeom->SetRenderFlags(oldFlags);
 
-	for (size_t i = 0; i < triangleCount; ++i)
 	{
-		const Tile::STriangle& triangle = triangles[i];
-		size_t linkedEdges = 0;
-
-		for (size_t l = 0; l < triangle.linkCount; ++l)
+		std::vector<Vec3> internalLinkLines;
+		std::vector<Vec3> externalLinkLines;
+		std::vector<Vec3> offmeshLinkLines;
+		std::vector<Vec3> boundaryLines;
+		if (drawFlags & DrawInternalLinks)
 		{
-			const Tile::SLink& link = links[triangle.firstLink + l];
-			const size_t edge = link.edge;
-			linkedEdges |= static_cast<size_t>((size_t)1 << edge);
+			internalLinkLines.reserve(6 * expectedMaxTriCount);
+		}
+		if (drawFlags & DrawExternalLinks)
+		{
+			externalLinkLines.reserve(6 * expectedMaxTriCount);
+		}
+		if (drawFlags & DrawOffMeshLinks)
+		{
+			offmeshLinkLines.reserve(6 * expectedMaxOffmeshTriCount);
+		}
+		if (drawFlags & DrawMeshBoundaries)
+		{
+			boundaryLines.reserve(2 * expectedMaxTriCount);
+		}
 
-			const uint16 vi0 = link.edge;
-			const uint16 vi1 = (link.edge + 1) % 3;
+		for (size_t i = 0; i < triangleCount; ++i)
+		{
+			const Tile::STriangle& triangle = triangles[i];
+			
+			Vec3 triVertices[3];
+			triVertices[0] = vertices[triangle.vertex[0]].GetVec3();
+			triVertices[1] = vertices[triangle.vertex[1]].GetVec3();
+			triVertices[2] = vertices[triangle.vertex[2]].GetVec3();
+			
+			size_t linkedEdges = 0;
 
-			assert(vi0 < 3);
-			assert(vi1 < 3);
-
-			const Vec3 v0 = vertices[triangle.vertex[vi0]].GetVec3() + loffset;
-			const Vec3 v1 = vertices[triangle.vertex[vi1]].GetVec3() + loffset;
-
-			if (link.side == Tile::SLink::OffMesh)
+			for (size_t l = 0; l < triangle.linkCount; ++l)
 			{
-				if (drawFlags & DrawOffMeshLinks)
+				const Tile::SLink& link = links[triangle.firstLink + l];
+
+				if (link.side == Tile::SLink::OffMesh)
 				{
-					const Vec3 a = vertices[triangle.vertex[0]].GetVec3() + offset;
-					const Vec3 b = vertices[triangle.vertex[1]].GetVec3() + offset;
-					const Vec3 c = vertices[triangle.vertex[2]].GetVec3() + offset;
+					if (drawFlags & DrawOffMeshLinks)
+					{
+						const Vec3 a = triVertices[0] + offset;
+						const Vec3 b = triVertices[1] + offset;
+						const Vec3 c = triVertices[2] + offset;
 
-					renderAuxGeom->DrawLine(a, Col_Red, b, Col_Red, 8.0f);
-					renderAuxGeom->DrawLine(b, Col_Red, c, Col_Red, 8.0f);
-					renderAuxGeom->DrawLine(c, Col_Red, a, Col_Red, 8.0f);
+						offmeshLinkLines.push_back(a);
+						offmeshLinkLines.push_back(b);
+						offmeshLinkLines.push_back(b);
+						offmeshLinkLines.push_back(c);
+						offmeshLinkLines.push_back(c);
+						offmeshLinkLines.push_back(a);
+					}
 				}
-			}
-			else if (link.side != Tile::SLink::Internal)
-			{
-				if (drawFlags & DrawExternalLinks)
+				else
 				{
-					// TODO: compute clipped edge
-					renderAuxGeom->DrawLine(v0, Col_White, v1, Col_White, 4.0f);
-				}
+					const size_t edge = link.edge;
+					linkedEdges |= static_cast<size_t>((size_t)1 << edge);
+					
+					const uint16 vi0 = link.edge;
+					const uint16 vi1 = (link.edge + 1) % 3;
+
+					assert(vi0 < 3);
+					assert(vi1 < 3);
+
+					const Vec3 v0 = triVertices[vi0] + loffset;
+					const Vec3 v1 = triVertices[vi1] + loffset;
+
+					if (link.side != Tile::SLink::Internal)
+					{
+						if (drawFlags & DrawExternalLinks)
+						{
+							// TODO: compute clipped edge
+							externalLinkLines.push_back(v0);
+							externalLinkLines.push_back(v1);
+						}
+					}
+					else
+					{
+						if (drawFlags & DrawInternalLinks)
+						{
+							internalLinkLines.push_back(v0);
+							internalLinkLines.push_back(v1);
+						}
+					}
+				}				
 			}
-			else
+
+			if (drawFlags & DrawMeshBoundaries)
 			{
-				if (drawFlags & DrawInternalLinks)
-					renderAuxGeom->DrawLine(v0, Col_White, v1, Col_White);
+				for (size_t e = 0; e < 3; ++e)
+				{
+					if ((linkedEdges & static_cast<size_t>((size_t)1 << e)) == 0)
+					{
+						boundaryLines.push_back(triVertices[e] + loffset);
+						boundaryLines.push_back(triVertices[(e + 1) % 3] + loffset);
+					}
+				}
 			}
 		}
 
-		if (drawFlags & DrawMeshBoundaries)
+		if (internalLinkLines.size())
 		{
-			for (size_t e = 0; e < 3; ++e)
-			{
-				if ((linkedEdges & static_cast<size_t>((size_t)1 << e)) == 0)
-				{
-					const Vec3 a = vertices[triangle.vertex[e]].GetVec3() + loffset;
-					const Vec3 b = vertices[triangle.vertex[(e + 1) % 3]].GetVec3() + loffset;
-
-					renderAuxGeom->DrawLine(a, Col_Black, b, Col_Black, 8.0f);
-				}
-			}
+			renderAuxGeom->DrawLines(internalLinkLines.data(), internalLinkLines.size(), Col_White);
+		}
+		if (externalLinkLines.size())
+		{
+			renderAuxGeom->DrawLines(externalLinkLines.data(), externalLinkLines.size(), Col_White, 4.0f);
+		}
+		if (offmeshLinkLines.size())
+		{
+			renderAuxGeom->DrawLines(offmeshLinkLines.data(), offmeshLinkLines.size(), Col_Red, 8.0f);
+		}
+		if (boundaryLines.size())
+		{
+			renderAuxGeom->DrawLines(boundaryLines.data(), boundaryLines.size(), Col_Black, 8.0f);
 		}
 	}
 }
@@ -534,7 +599,11 @@ void STile::ValidateTriangles() const
 vector3_t::value_type STile::GetTriangleArea(const TriangleID triangleID) const
 {
 	const Tile::STriangle& triangle = triangles[ComputeTriangleIndex(triangleID)];
+	return GetTriangleArea(triangle);
+}
 
+vector3_t::value_type STile::GetTriangleArea(const Tile::STriangle& triangle) const
+{
 	const vector3_t v0 = vector3_t(vertices[triangle.vertex[0]]);
 	const vector3_t v1 = vector3_t(vertices[triangle.vertex[1]]);
 	const vector3_t v2 = vector3_t(vertices[triangle.vertex[2]]);
@@ -548,54 +617,4 @@ vector3_t::value_type STile::GetTriangleArea(const TriangleID triangleID) const
 	return sqrtf(s * (s - len0) * (s - len1) * (s - len2));
 }
 
-//////////////////////////////////////////////////////////////////////////
-
-#if MNM_USE_EXPORT_INFORMATION
-
-bool STile::ConsiderExportInformation() const
-{
-	// TODO FrancescoR: Remove if it's not necessary anymore or refactor it.
-	return true;
-}
-
-void STile::InitConnectivity(uint16 oldTriangleCount, uint16 newTriangleCount)
-{
-	if (ConsiderExportInformation())
-	{
-		// By default all is accessible
-		connectivity.tileAccessible = 1;
-		if (oldTriangleCount != newTriangleCount)
-		{
-			SAFE_DELETE_ARRAY(connectivity.trianglesAccessible);
-
-			if (newTriangleCount)
-			{
-				connectivity.trianglesAccessible = new uint8[newTriangleCount];
-			}
-		}
-
-		if (newTriangleCount)
-		{
-			memset(connectivity.trianglesAccessible, 1, sizeof(uint8) * newTriangleCount);
-		}
-		connectivity.triangleCount = newTriangleCount;
-	}
-}
-
-void STile::ResetConnectivity(uint8 accessible)
-{
-	if (ConsiderExportInformation())
-	{
-		assert(connectivity.triangleCount == triangleCount);
-
-		connectivity.tileAccessible = accessible;
-
-		if (connectivity.trianglesAccessible != NULL)
-		{
-			memset(connectivity.trianglesAccessible, accessible, sizeof(uint8) * connectivity.triangleCount);
-		}
-	}
-}
-
-#endif
 }

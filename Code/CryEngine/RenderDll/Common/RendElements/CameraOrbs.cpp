@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -50,23 +50,28 @@ void CameraOrbs::InitEditorParamGroups(DynArray<FuncVariableGroup>& groups)
 
 CameraOrbs::CameraOrbs(const char* name, const int numOrbs)
 	: COpticsElement(name, 0.19f)
-	, m_fSizeNoise(0.8f)
-	, m_fBrightnessNoise(0.4f)
-	, m_fRotNoise(0.8f)
-	, m_fClrNoise(0.5f)
-	, m_fIllumRadius(1.f)
 	, m_bUseLensTex(0)
 	, m_bOrbDetailShading(0)
 	, m_bLensDetailShading(0)
+
 	, m_fLensTexStrength(1.f)
 	, m_fLensDetailShadingStrength(0.157f)
 	, m_fLensDetailBumpiness(0.073f)
+
 	, m_bAdvancedShading(false)
 	, m_cAmbientDiffuse(LensOpConst::_LO_DEF_CLR_BLK)
 	, m_fAbsorptance(4.0f)
 	, m_fTransparency(0.37f)
 	, m_fScatteringStrength(1.0f)
+
+	, m_fIllumRadius(1.f)
+	
 	, m_iNoiseSeed(0)
+	, m_fSizeNoise(0.8f)
+	, m_fBrightnessNoise(0.4f)
+	, m_fRotNoise(0.8f)
+	, m_fClrNoise(0.5f)
+
 	, m_spriteAspectRatio(1.0f)
 {
 	m_Color.a = 1.f;
@@ -75,12 +80,12 @@ CameraOrbs::CameraOrbs(const char* name, const int numOrbs)
 	SetNumOrbs(numOrbs);
 	m_meshDirty = true;
 
-	m_samplerPointClamp = CTexture::GetTexState(STexState(FILTER_POINT, true));
-
 	// share one constant buffer between both primitives
 	CConstantBufferPtr pSharedCB = gcpRendD3D->m_DevBufMan.CreateConstantBuffer(sizeof(SShaderParams), true, true);
-	m_GlowPrimitive.SetInlineConstantBuffer(eConstantBufferShaderSlot_PerBatch,       pSharedCB, EShaderStage_Vertex | EShaderStage_Pixel);
-	m_CameraLensPrimitive.SetInlineConstantBuffer(eConstantBufferShaderSlot_PerBatch, pSharedCB, EShaderStage_Vertex | EShaderStage_Pixel);
+	if (pSharedCB) pSharedCB->SetDebugName("CameraOrbs Per-Primitive CB");
+
+	m_GlowPrimitive.SetInlineConstantBuffer(eConstantBufferShaderSlot_PerPrimitive,       pSharedCB, EShaderStage_Vertex | EShaderStage_Pixel);
+	m_CameraLensPrimitive.SetInlineConstantBuffer(eConstantBufferShaderSlot_PerPrimitive, pSharedCB, EShaderStage_Vertex | EShaderStage_Pixel);
 }
 
 void CameraOrbs::Load(IXmlNode* pNode)
@@ -229,7 +234,7 @@ CTexture* CameraOrbs::GetOrbTex()
 {
 	if (!m_pOrbTex)
 	{
-		m_pOrbTex = std::move(CTexture::ForName("EngineAssets/Textures/flares/default-orb.tif", FT_DONT_STREAM, eTF_Unknown));
+		m_pOrbTex = std::move(CTexture::ForName("%ENGINE%/EngineAssets/Textures/flares/default-orb.tif", FT_DONT_STREAM, eTF_Unknown));
 	}
 
 	return m_pOrbTex;
@@ -239,7 +244,7 @@ CTexture* CameraOrbs::GetLensTex()
 {
 	if (!m_pLensTex)
 	{
-		m_pLensTex = std::move(CTexture::ForName("EngineAssets/Textures/flares/Smudgy.tif", FT_DONT_STREAM, eTF_Unknown));
+		m_pLensTex = std::move(CTexture::ForName("%ENGINE%/EngineAssets/Textures/flares/Smudgy.tif", FT_DONT_STREAM, eTF_Unknown));
 	}
 
 	return m_pLensTex;
@@ -257,14 +262,14 @@ void CameraOrbs::ApplyAdvancedShadingFlag(uint64& rtFlags) const
 		rtFlags |= g_HWSR_MaskBit[HWSR_SAMPLE2];
 }
 
-void CameraOrbs::ApplyAdvancedShadingParams(SShaderParams& shaderParams, CRenderPrimitive& primitive, const ColorF& ambDiffuseRGBK, float absorptance, float transparency, float scattering) const
+void CameraOrbs::ApplyAdvancedShadingParams(CGraphicsPipeline* pGraphicsPipeline, SShaderParams& shaderParams, CRenderPrimitive& primitive, const ColorF& ambDiffuseRGBK, float absorptance, float transparency, float scattering) const
 {
-	CTexture* pAmbTex = CTexture::s_ptexSceneTarget;
+	CTexture* pAmbTex = pGraphicsPipeline->GetPipelineResources().m_pTexSceneTarget;
 
 	shaderParams.ambientDiffuseRGBK = Vec4(ambDiffuseRGBK.r, ambDiffuseRGBK.g, ambDiffuseRGBK.b, ambDiffuseRGBK.a);
 	shaderParams.advShadingParams = Vec4(absorptance, transparency, scattering, 0);
 	primitive.SetTexture(1, pAmbTex);
-	primitive.SetSampler(1, m_samplerPointClamp);
+	primitive.SetSampler(1, EDefaultSamplerStates::PointClamp);
 }
 
 bool CameraOrbs::PreparePrimitives(const SPreparePrimitivesContext& context)
@@ -280,20 +285,20 @@ bool CameraOrbs::PreparePrimitives(const SPreparePrimitivesContext& context)
 	ApplyAdvancedShadingFlag(rtFlags);
 	ApplyOcclusionBokehFlag(rtFlags);
 	ApplyOrbFlags(rtFlags, m_bOrbDetailShading);
-
+	
 	m_GlowPrimitive.SetTechnique(CShaderMan::s_ShaderLensOptics, techCameraOrbs, rtFlags);
 	m_GlowPrimitive.SetRenderState(GS_NODEPTHTEST | GS_BLSRC_ONE | GS_BLDST_ONE);
 
 	CTexture* pOrbTex = GetOrbTex();
-	m_GlowPrimitive.SetTexture(0, pOrbTex ? pOrbTex : CTexture::s_ptexBlack);
-	m_GlowPrimitive.SetSampler(0, m_samplerBilinearBorderBlack);
+	m_GlowPrimitive.SetTexture(0, pOrbTex ? pOrbTex : CRendererResources::s_ptexBlack);
+	m_GlowPrimitive.SetSampler(0, EDefaultSamplerStates::LinearBorder_Black);
 
 	if (!m_globalOcclusionBokeh)
-		m_GlowPrimitive.SetTexture(5, CTexture::s_ptexBlack);
+		m_GlowPrimitive.SetTexture(5, CRendererResources::s_ptexBlack);
 
-	// udpate constants
+	// update constants
 	{
-		auto constants = m_GlowPrimitive.GetConstantManager().BeginTypedConstantUpdate<SShaderParams>(eConstantBufferShaderSlot_PerBatch, EShaderStage_Vertex | EShaderStage_Pixel);
+		auto constants = m_GlowPrimitive.GetConstantManager().BeginTypedConstantUpdate<SShaderParams>(eConstantBufferShaderSlot_PerPrimitive, EShaderStage_Vertex | EShaderStage_Pixel);
 
 		ApplyCommonParams(constants, context.pViewInfo->viewport, context.lightScreenPos[0], Vec2(m_globalSize));
 		constants->lensDetailParams = Vec4(1, 1, GetLensDetailBumpiness(), 0);
@@ -303,9 +308,8 @@ bool CameraOrbs::PreparePrimitives(const SPreparePrimitivesContext& context)
 
 		if (m_globalOcclusionBokeh)
 			ApplyOcclusionPattern(constants, m_GlowPrimitive);
-
 		if (m_bAdvancedShading)
-			ApplyAdvancedShadingParams(constants, m_GlowPrimitive, GetAmbientDiffuseRGBK(), GetAbsorptance(), GetTransparency(), GetScatteringStrength());
+			ApplyAdvancedShadingParams(context.pGraphicsPipeline, constants, m_GlowPrimitive, GetAmbientDiffuseRGBK(), GetAbsorptance(), GetTransparency(), GetScatteringStrength());
 
 		const ColorF lightColor = m_globalFlareBrightness * m_globalColor * m_globalColor.a;
 		constants->lightColorInfo[0] = lightColor.r;
@@ -330,15 +334,16 @@ bool CameraOrbs::PreparePrimitives(const SPreparePrimitivesContext& context)
 
 	// geometry
 	{
-		m_spriteAspectRatio = context.pViewInfo[0].viewport.nWidth / float(context.pViewInfo[0].viewport.nHeight);
+		m_spriteAspectRatio = context.pViewInfo[0].viewport.width / float(context.pViewInfo[0].viewport.height);
 
 		ValidateMesh();
 
-		m_GlowPrimitive.SetCustomVertexStream(m_vertexBuffer, eVF_P3F_C4B_T2F, sizeof(SVF_P3F_C4B_T2F));
+		m_GlowPrimitive.SetCustomVertexStream(m_vertexBuffer, EDefaultInputLayouts::P3F_C4B_T2F, sizeof(SVF_P3F_C4B_T2F));
 		m_GlowPrimitive.SetCustomIndexStream(m_indexBuffer, Index16);
 		m_GlowPrimitive.SetDrawInfo(eptTriangleList, 0, 0, GetIndexCount());
 	}
 
+	m_GlowPrimitive.Compile(context.pass);
 	context.pass.AddPrimitive(&m_GlowPrimitive);
 
 	if (m_bUseLensTex)
@@ -351,9 +356,10 @@ bool CameraOrbs::PreparePrimitives(const SPreparePrimitivesContext& context)
 		m_CameraLensPrimitive.SetPrimitiveType(CRenderPrimitive::ePrim_FullscreenQuadTess);
 
 		CTexture* pLensTex = GetLensTex();
-		m_CameraLensPrimitive.SetTexture(0, pOrbTex ? pOrbTex : CTexture::s_ptexBlack);
-		m_CameraLensPrimitive.SetTexture(2, pLensTex ? pLensTex : CTexture::s_ptexBlack);
-		m_CameraLensPrimitive.SetSampler(0, m_samplerBilinearBorderBlack);
+		m_CameraLensPrimitive.SetTexture(0, pOrbTex ? pOrbTex : CRendererResources::s_ptexBlack);
+		m_CameraLensPrimitive.SetTexture(2, pLensTex ? pLensTex : CRendererResources::s_ptexBlack);
+		m_CameraLensPrimitive.SetSampler(0, EDefaultSamplerStates::LinearBorder_Black);
+		m_CameraLensPrimitive.Compile(context.pass);
 
 		context.pass.AddPrimitive(&m_CameraLensPrimitive);
 	}

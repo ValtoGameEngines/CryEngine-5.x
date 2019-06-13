@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "SkeletonAnim.h"
@@ -81,7 +81,7 @@ void CSkeletonAnim::FinishAnimationComputations()
 	}
 }
 
-CryGUID GUID_AnimationPoseModifier_TransformationPin = CryGUID::Construct(0xcc34ddea972e47daULL, 0x93f9cdcb98c28c8eULL);
+constexpr CryGUID GUID_AnimationPoseModifier_TransformationPin = "cc34ddea-972e-47da-93f9-cdcb98c28c8e"_cry_guid;
 bool CSkeletonAnim::PushPoseModifier(uint32 layer, IAnimationPoseModifierPtr poseModifier, const char* name)
 {
 	if (poseModifier)
@@ -113,6 +113,8 @@ bool CSkeletonAnim::PushPoseModifier(uint32 layer, IAnimationPoseModifierPtr pos
 
 void CSkeletonAnim::PoseModifiersPrepare(const QuatTS& location)
 {
+	DEFINE_PROFILER_FUNCTION();
+
 	Skeleton::CPoseData* pPoseData = m_pSkeletonPose->GetPoseDataWriteable();
 
 	if (m_pSkeletonPose->m_bFullSkeletonUpdate && !m_pSkeletonPose->m_physics.m_bPhysicsRelinquished)
@@ -243,8 +245,6 @@ void CSkeletonAnim::ProcessAnimations(const QuatTS& rAnimLocationCurr)
 		m_pSkeletonPose->m_bSetDefaultPoseExecute = false;
 	}
 
-	Skeleton::CPoseData& poseData = m_pSkeletonPose->GetPoseDataExplicitWriteable();
-
 	if (m_pInstance->m_CharEditMode == 0)
 	{
 		int nCurrentFrameID = g_pCharacterManager->m_nUpdateCounter;
@@ -269,8 +269,6 @@ void CSkeletonAnim::ProcessAnimations(const QuatTS& rAnimLocationCurr)
 void CSkeletonAnim::ProcessAnimationUpdate(const QuatTS rAnimLocationCurr)
 {
 	DEFINE_PROFILER_FUNCTION();
-
-	CSkeletonPose* const __restrict pSkeletonPose = m_pSkeletonPose;
 
 	CPoseBlenderAim* pPBAim = static_cast<CPoseBlenderAim*>(m_pSkeletonPose->m_PoseBlenderAim.get());
 	if (pPBAim)
@@ -479,7 +477,7 @@ void CSkeletonAnim::GetMemoryUsage(ICrySizer* pSizer) const
 
 Vec3 CSkeletonAnim::GetCurrentVelocity() const
 {
-	float fColDebug[4] = { 1, 1, 0, 1 };
+	//float fColDebug[4] = { 1, 1, 0, 1 };
 	f32 fDT = m_pInstance->m_fDeltaTime;
 	if (fDT == 0)
 	{

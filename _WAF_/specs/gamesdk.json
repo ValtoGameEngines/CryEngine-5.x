@@ -1,12 +1,15 @@
 {
 	"description"                           : "Configuration to build the Engine and the GameSDK Project",
-	"valid_platforms"                       : [ "win", "durango", "orbis", "linux", "darwin", "android" ],
+	"valid_platforms"                       : [ "win", "durango", "orbis", "android" ],
 	"valid_configuration"                   : [ "debug", "profile", "performance", "release" ],
 	"visual_studio_name"                    : "GameSDK",
 
-	"game_projects"                         : "GameSDK",
+  "game_projects": "GameSDK",
 
-	"win_module_extensions"                 : ["audio_fmod", "brofiler", "eyex", "mono"],
+	"win_module_extensions"                 : ["audio_fmod", "brofiler", "eyex"],
+	"android_module_extensions"             : ["sdl2"],
+
+  "defines"                               : [ "UQS_SCHEMATYC_SUPPORT=1", "SUPPORT_UNSIGNED_PAKS", "USE_SCHEMATYC", "USE_SCHEMATYC_EXPERIMENTAL" ],
 
 	"modules" :
 	[
@@ -19,7 +22,6 @@
 		"CryEntitySystem",
 		"CryFont",
 		"CryInput",
-		"CryLobby",
 		"CryMovie",
 		"CryNetwork",
 		"CryParticleSystem",
@@ -31,9 +33,22 @@
 		"CrySystem",
 		"CryScaleformHelper",
 		"CryAction",
-		"CrySchematycCore",
-		"CrySchematycSTDEnv",
+		"CrySchematyc",
+		"CryGamePlatform",
+		"CryPerceptionSystem",
+		"CrySensorSystem",
+		"CryUDR",
+		
+		"CryFlowGraph",
+		"CryReflection",
 		"HWScripts",
+		
+		"CryUQS_Core",
+		"CryUQS_Client",
+		"CryUQS_DataSource_XML",
+		"CryUQS_Shared",
+		"CryUQS_StdLib",
+		"CryUQS_Interfaces",
 		
 		"CryDefaultEntities",
 
@@ -50,7 +65,10 @@
 		"jsmn",
 		"png16",
 		"jpeg",
+		"tiff",
 		"curl",
+		"spirv-cross",
+		"mikkelsen",
 
 		"CryGameSDK"
 	],
@@ -62,9 +80,10 @@
 		"CryAudioImplFmod",
 		"CryAudioImplPortAudio",
 		
-		"CryRenderOpenGL",
+		
 		"CryRenderD3D11",
 		"CryRenderD3D12",
+		"CryRenderVulkan",
 
 		"CryScaleformHelper"
 	],
@@ -77,11 +96,15 @@
 	"win_modules": [
 		"WindowsLauncher",
 		"CryRenderD3D11",
-		"CryRenderD3D12",
-		"CryRenderOpenGL",
 		"CryAudioImplSDLMixer",
 		"CryAudioImplFmod",
 		"CryAudioImplPortAudio",
+		"CryLobby",
+		"CrySchematyc2",
+		
+		"CryRenderD3D11",
+		"CryRenderD3D12",
+		"CryRenderVulkan",
 
 		"oculus",
 		"flac",
@@ -96,7 +119,6 @@
 
 		"CryOculusVR",
 		"CryOpenVR",
-		"CryMonoBridge",
 		"CryUserAnalytics"
 	],
 		
@@ -110,7 +132,9 @@
 	"win_release_defines"                   : "PURE_CLIENT",
 	"win_release_monolithic_build"          : "True",
 
-	"durango_modules"                       : [ "DurangoLauncher", "CryRenderD3D11" ],
+	"durango_modules"                       : [ "DurangoLauncher", "CryRenderD3D11", "CryLobby" ],
+	"durango_debug_modules"                 : [ "CryRenderD3D12" ],
+	"durango_profile_modules"               : [ "CryRenderD3D12" ],
 	"durango_performance_monolithic_build"  : "True",
 	"durango_release_monolithic_build"      : "True",
 
@@ -125,6 +149,7 @@
 		"CryRenderOpenGL",
 		"CryAudioImplSDLMixer",
 		"CryAudioImplFmod",
+		"CryLobby",
 		"assert_term",
 
 		"libmodplug",
@@ -139,23 +164,12 @@
 		"timidity"
 	],
 
-	"darwin_modules"                        : [ "MacLauncher", "CryRenderOpenGL" ],
+	"darwin_modules"                        : [ "MacLauncher", "CryRenderOpenGL", "CryLobby" ],
 	
 	"android_modules":
 	[
 		"AndroidLauncher",
-		"CryRenderOpenGL",
-		"CryAudioImplSDLMixer",
-
-		"libmodplug",
-		"flac",
-		"libmikmod",
-		"libogg",
-		"libvorbis",
-		"libvorbisfile",
-		"native_midi",
-		"sdl_mixer",
-		"smpeg",
-		"timidity"
-	]
+		"CryRenderVulkan"
+	],
+	"android_monolithic_build" : "True"
 }

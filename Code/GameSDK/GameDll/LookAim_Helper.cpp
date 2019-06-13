@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   LookAim_Helper.h
@@ -126,7 +126,7 @@ void CLookAim_Helper::Init(CPlayer* pPlayer, ICharacterInstance* pCharacter)
 	if (m_canUseLookAtSimple)
 	{
 		if (!m_lookAtSimple.get())
-			CryCreateClassInstance<AnimPoseModifier::CLookAtSimple>("AnimationPoseModifier_LookAtSimple", m_lookAtSimple);
+			CryCreateClassInstance<AnimPoseModifier::CLookAtSimple>(AnimPoseModifier::CLookAtSimple::GetCID(), m_lookAtSimple);
 
 		m_lookAtWeight = 1.0;
 		m_lookAtFadeInSpeed = 2.0f; // fade in in 0.5 second(s)
@@ -162,8 +162,6 @@ void CLookAim_Helper::UpdateDynamicAimPoses(CPlayer* pPlayer, ICharacterInstance
 	const float AIM_BLEND_IN_TIME = 0.3f;
 	const float AIM_BLEND_OVER_TIME = 0.4f;
 	const float AIM_BLEND_OUT_TIME = 0.4f;
-
-	const float frameTime = gEnv->pTimer->GetFrameTime();
 
 	ISkeletonPose* pISkeletonPose = pCharacter->GetISkeletonPose();
 	IAnimationPoseBlenderDir* pIPoseBlenderAim = pISkeletonPose->GetIPoseBlenderAim();

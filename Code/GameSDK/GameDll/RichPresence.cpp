@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "RichPresence.h"
@@ -9,6 +9,7 @@
 #include "Network/GameNetworkUtils.h"
 #include "Network/Squad/SquadManager.h"
 #include "GameRules.h"
+#include "GameCVars.h"
 
 CRichPresence::CRichPresence() :
 	REGISTER_GAME_MECHANISM(CRichPresence),

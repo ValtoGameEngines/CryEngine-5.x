@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -6,6 +6,9 @@
 #define AISquadManager_h
 
 #include <CryAISystem/IClusterDetector.h>
+#include <CryEntitySystem/IEntityBasicTypes.h>
+#include <CryCore/CryCrc32.h>
+#include <CryMath/Cry_Color.h>
 
 typedef ClusterId SquadId;
 #define UnknownSquadId SquadId(~0)

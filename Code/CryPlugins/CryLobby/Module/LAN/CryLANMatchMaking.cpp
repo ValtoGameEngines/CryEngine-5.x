@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "CryLANLobby.h"
@@ -1021,7 +1021,6 @@ ECryLobbyError CCryLANMatchMaking::SessionDelete(CrySessionHandle gh, CryLobbyTa
 
 	if ((h < MAX_MATCHMAKING_SESSIONS) && (m_sessions[h].localFlags & CRYSESSION_LOCAL_FLAG_USED))
 	{
-		SSession* pSession = &m_sessions[h];
 		CryMatchMakingTaskID tid;
 
 		error = StartTask(eT_SessionDelete, &tid, taskID, h, (void*)cb, cbArg);
@@ -1031,6 +1030,8 @@ ECryLobbyError CCryLANMatchMaking::SessionDelete(CrySessionHandle gh, CryLobbyTa
 			FROM_GAME_TO_LOBBY(&CCryLANMatchMaking::StartTaskRunning, this, tid);
 
 	#if NETWORK_HOST_MIGRATION
+			SSession* pSession = &m_sessions[h];
+
 			// Since we're deleting this session, terminate any host migration
 			if (pSession->hostMigrationInfo.m_state != eHMS_Idle)
 			{
@@ -1396,7 +1397,6 @@ void CCryLANMatchMaking::TickSessionJoin(CryMatchMakingTaskID mmTaskID)
 void CCryLANMatchMaking::ProcessSessionRequestJoin(const TNetAddress& addr, CCrySharedLobbyPacket* pPacket)
 {
 	ECryLobbyError error = eCLE_Success;
-	uint32 bufferPos = 0;
 	CryLobbySessionHandle h;
 	CryLobbyConnectionID c;
 	CryMatchMakingTaskID returnTaskID;
@@ -1709,7 +1709,6 @@ void CCryLANMatchMaking::ProcessSessionRequestJoinResult(const TNetAddress& addr
 
 void CCryLANMatchMaking::ProcessSessionAddRemoteConnections(const TNetAddress& addr, CCrySharedLobbyPacket* pPacket)
 {
-	uint32 bufferPos = 0;
 	CryLobbySessionHandle h;
 
 	pPacket->StartRead();
@@ -2775,7 +2774,7 @@ bool CCryLANMatchMaking::GetNewHostAddress(char* address, SHostMigrationInfo* pI
 	if (success)
 	{
 		// Decode the address into an ip string
-		if (boost::get<TLocalNetAddress>(&pSession->hostMigrationInfo.m_newHostAddress))
+		if (stl::get_if<TLocalNetAddress>(&pSession->hostMigrationInfo.m_newHostAddress))
 		{
 			pSession->hostMigrationInfo.SetIsNewHost(true);
 			NetLog("[Host Migration]: " PRFORMAT_SH " becoming the new host...", PRARG_SH(sessionIndex));
@@ -2788,7 +2787,7 @@ bool CCryLANMatchMaking::GetNewHostAddress(char* address, SHostMigrationInfo* pI
 		{
 			pSession->hostMigrationInfo.SetIsNewHost(false);
 			NetLog("[Host Migration]: " PRFORMAT_SH " new host is " PRFORMAT_UID, PRARG_SH(sessionIndex), PRARG_UID(pSession->newHostUID));
-			SIPv4Addr* pAddr = boost::get<SIPv4Addr>(&pSession->hostMigrationInfo.m_newHostAddress);
+			SIPv4Addr* pAddr = stl::get_if<SIPv4Addr>(&pSession->hostMigrationInfo.m_newHostAddress);
 			if (pAddr)
 			{
 				pSession->id.m_ip = ntohl(pAddr->addr);

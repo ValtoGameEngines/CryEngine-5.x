@@ -1,22 +1,14 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// -------------------------------------------------------------------------
-//  File name:   ProximityTriggerSystem.h
-//  Version:     v1.00
-//  Created:     5/12/2005 by Timur.
-//  Compilers:   Visual Studio.NET 2003
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
-
-#ifndef __ProximityTriggerSystem_h__
-#define __ProximityTriggerSystem_h__
 #pragma once
 
+#include "RadixSort.h"
+#include <CryEntitySystem/IEntityBasicTypes.h>
+#include <CryMath/Cry_Geo.h>
+#include <CryMemory/PoolAllocator.h>
+
 class CEntityComponentTriggerBounds;
-class RadixSort;
+struct SProximityElement;
 
 //////////////////////////////////////////////////////////////////////////
 struct SProximityElement
@@ -112,8 +104,8 @@ private:
 
 	std::vector<SProximityEvent>    m_events;
 
-	RadixSort*                      m_pTriggerSorter;
-	RadixSort*                      m_pEntitySorter;
+	RadixSort                       m_triggerSorter;
+	RadixSort                       m_entitySorter;
 
 	std::vector<float>              m_minPosList0;
 	std::vector<float>              m_minPosList1;
@@ -139,5 +131,3 @@ inline void SProximityElement::operator delete(void* ptr)
 	if (ptr)
 		CProximityTriggerSystem::g_pProximityElement_PoolAlloc->Deallocate(ptr);
 }
-
-#endif // __ProximityTriggerSystem_h__

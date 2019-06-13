@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 //////////////////////////////////////////////////////////////////////////
 // NOTE: INTERNAL HEADER NOT FOR PUBLIC USE
@@ -12,11 +12,12 @@
 #include <CryCore/Platform/CryWindows.h>
 #include <WinSock2.h>
 #include <ws2tcpip.h>
+#include <CrySystem/ISystem.h>
 
 #define CRY_INVALID_SOCKET INVALID_SOCKET
 #define CRY_SOCKET_ERROR   SOCKET_ERROR
 
-#include <string.h>
+#include <cstring>
 
 ///////////////////////////////////////////////////////////////////////////////
 

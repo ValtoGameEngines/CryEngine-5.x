@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   StreamEngine.h
@@ -15,6 +15,7 @@
 #include <CrySystem/IStreamEngine.h>
 #include <CrySystem/ISystem.h>
 #include <CrySystem/TimeValue.h>
+#include <CryInput/IInput.h>
 
 #include "StreamIOThread.h"
 #include "StreamReadStream.h"

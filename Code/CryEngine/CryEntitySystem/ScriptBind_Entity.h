@@ -1,27 +1,18 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// -------------------------------------------------------------------------
-//  File name:   ScriptBind_Entity.h
-//  Version:     v1.00
-//  Created:     28/7/2004 by Timur.
-//  Compilers:   Visual Studio.NET 2003
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
-
-#ifndef __ScriptBind_Entity_h__
-#define __ScriptBind_Entity_h__
 #pragma once
 
 #include <CryScriptSystem/IScriptSystem.h>
-
-struct IEntity;
-struct ISystem;
-
 #include <CryPhysics/IPhysics.h>
 #include <CryParticleSystem/ParticleParams.h>
+#include <CryEntitySystem/IEntity.h>
+
+struct IFunctionHandler;
+struct ISystem;
+struct SEntityPhysicalizeParams;
+struct SFogVolumeProperties;
+
+class CEntity;
 
 #define ENTITYPROP_CASTSHADOWS   0x00000001
 #define ENTITYPROP_DONOTCHECKVIS 0x00000002
@@ -35,8 +26,7 @@ struct GoalParams;
 class CScriptBind_Entity : public CScriptableBase
 {
 public:
-	CScriptBind_Entity(IScriptSystem* pSS, ISystem* pSystem, IEntitySystem* pEntitySystem);
-	virtual ~CScriptBind_Entity();
+	CScriptBind_Entity(IScriptSystem* pSS, ISystem* pSystem);
 
 	void         DelegateCalls(IScriptTable* pInstanceTable);
 
@@ -118,18 +108,6 @@ protected:
 	//!		<param name="nLightSlot">Slot where our light is loaded.</param>
 	int SetSelfAsLightCasterException(IFunctionHandler* pH, int nLightSlot);
 
-	//! <code>Entity.LoadCloud( nSlot, sFilename )</code>
-	//! <description>Loads the cloud XML file into the entity slot.</description>
-	//!		<param name="nSlot">Slot identifier.</param>
-	//!		<param name="sFilename">Filename.</param>
-	int LoadCloud(IFunctionHandler* pH, int nSlot, const char* sFilename);
-
-	//! <code>Entity.SetCloudMovementProperties( nSlot, table )</code>
-	//! <description>Sets the cloud movement properties.</description>
-	//!		<param name="nSlot">Slot identifier.</param>
-	//!		<param name="table">Table property for the cloud movement.</param>
-	int SetCloudMovementProperties(IFunctionHandler* pH, int nSlot, SmartScriptTable table);
-
 	//! <code>Entity.LoadCloudBlocker( nSlot, table )</code>
 	//! <description>Loads the properties of cloud blocker into the entity slot.</description>
 	//!		<param name="nSlot">Slot identifier.</param>
@@ -148,18 +126,6 @@ protected:
 	//!		<param name="fadeTime">.</param>
 	//!		<param name="newGlobalDensity">.</param>
 	int FadeGlobalDensity(IFunctionHandler* pH, int nSlot, float fadeTime, float newGlobalDensity);
-
-	//! <code>Entity.LoadVolumeObject( nSlot, sFilename )</code>
-	//!		<param name="nSlot">Slot identifier.</param>
-	//!		<param name="sFilename">File name of the volume object.</param>
-	//! <description>Loads volume object.</description>
-	int LoadVolumeObject(IFunctionHandler* pH, int nSlot, const char* sFilename);
-
-	//! <code>Entity.SetVolumeObjectMovementProperties( nSlot, table )</code>
-	//!		<param name="nSlot">Slot identifier.</param>
-	//!		<param name="table">Table with volume object properties.</param>
-	//! <description>Sets the properties of the volume object movement.</description>
-	int SetVolumeObjectMovementProperties(IFunctionHandler* pH, int nSlot, SmartScriptTable table);
 
 	//! <code>Entity.LoadParticleEffect( nSlot, sEffectName, fPulsePeriod, bPrime, fScale )</code>
 	//! <description>Loads CGF geometry into the entity slot.</description>
@@ -437,9 +403,9 @@ protected:
 	//!          PE_STATIC           Static physical entity.
 	//!          PE_LIVING           Live physical entity (Players,Monsters).
 	//!          PE_RIGID            Rigid body physical entity.
-	//!          PE_WHEELEDVEHICLE   Physical vechicle with wheels.
+	//!          PE_WHEELEDVEHICLE   Physical vehicle with wheels.
 	//!          PE_PARTICLE         Particle physical entity, it only have mass and radius.
-	//!          PE_ARTICULATED      Ragdolls or other articulated physical enttiies.
+	//!          PE_ARTICULATED      Ragdolls or other articulated physical entities.
 	//!          PE_ROPE             Physical representation of the rope.
 	//!          PE_SOFT             Soft body physics, cloth simulation.
 	//!          PE_AREA             Physical Area (Sphere,Box,Geometry or Shape).
@@ -833,16 +799,18 @@ protected:
 	//! <returns>nil</returns>
 	int SetAudioSwitchState(IFunctionHandler* pH, ScriptHandle const hSwitchID, ScriptHandle const hSwitchStateID, ScriptHandle const hAudioProxyLocalID);
 
-	//! <code>Entity.SetAudioObstructionCalcType( nObstructionCalcType, hAudioProxyLocalID )</code>
-	//! <description>Set the Audio Obstruction/Occlusion calculation type on the underlying GameAudioObject.</description>
-	//!		<param name="nObstructionCalcType">Obstruction/Occlusion calculation type;
+	//! <code>Entity.SetAudioOcclusionType( occlusionType, hAudioProxyLocalID )</code>
+	//! <description>Set the audio occlusion type on the audio object.</description>
+	//!		<param name="occlusionType">occlusion type;
 	//!				Possible values:
-	//!				0 - ignore Obstruction/Occlusion
-	//!				1 - use single physics ray
-	//!				2 - use multiple physics rays (currently 5 per object)</param>
+	//!				1 - ignore
+	//!				2 - adaptive
+	//!				3 - low
+	//!				4 - medium
+	//!				5 - high</param>
 	//!		<param name="hAudioProxyLocalID">ID of the AuxAudioProxy local to the EntityAudioProxy (to address the default AuxAudioProxy pass 1 to address all AuxAudioProxies pass 0)</param>
 	//! <returns>nil</returns>
-	int SetAudioObstructionCalcType(IFunctionHandler* pH, int const nObstructionCalcType, ScriptHandle const hAudioProxyLocalID);
+	int SetAudioOcclusionType(IFunctionHandler* pH, int const occlusionType, ScriptHandle const hAudioProxyLocalID);
 
 	//! <code>Entity.SetFadeDistance( fFadeDistance )</code>
 	//! <description>Sets the distance in which this entity will execute fade calculations.</description>
@@ -1428,23 +1396,18 @@ protected:
 	int CreateDRSProxy(IFunctionHandler* pH);
 
 private: // -------------------------------------------------------------------------------
+	friend class CEntityComponentLuaScript;
 
 	// Helper function to get IEntity pointer from IFunctionHandler
-	IEntity* GetEntity(IFunctionHandler* pH);
+	CEntity* GetEntity(IFunctionHandler* pH);
 	Vec3     GetGlobalGravity() const { return Vec3(0, 0, -9.81f); }
-	int      SetEntityPhysicParams(IFunctionHandler* pH, IPhysicalEntity* pe, int type, IScriptTable* pTable, ICharacterInstance* pIChar = 0);
+	int      SetEntityPhysicParams(IFunctionHandler* pH, IPhysicalEntity* pe, int type, IScriptTable* pTable, ICharacterInstance* pIChar = nullptr);
 	EntityId GetEntityID(IScriptTable* pEntityTable);
 
-	IEntitySystem* m_pEntitySystem;
-	ISystem*       m_pISystem;
+	ISystem* m_pISystem;
 
-	// copy of function from ScriptObjectParticle
-	bool ReadParticleTable(IScriptTable* pITable, struct ParticleParams& sParamOut);
-
-	bool ParseLightParams(IScriptTable* pLightTable, CDLight& light);
-	bool ParseFogVolumesParams(IScriptTable* pTable, IEntity* pEntity, SFogVolumeProperties& properties);
-	bool ParseCloudMovementProperties(IScriptTable* pTable, IEntity* pEntity, SCloudMovementProperties& properties);
-	bool ParseVolumeObjectMovementProperties(IScriptTable* pTable, IEntity* pEntity, SVolumeObjectMovementProperties& properties);
+	bool ParseLightParams(IScriptTable* pLightTable, SRenderLight& light);
+	bool ParseFogVolumesParams(IScriptTable* pTable, CEntity* pEntity, SFogVolumeProperties& properties);
 
 	// Parse script table to the entity physical params table.
 	bool ParsePhysicsParams(IScriptTable* pTable, SEntityPhysicalizeParams& params);
@@ -1462,7 +1425,6 @@ private: // --------------------------------------------------------------------
 	} SIntersectionResult;
 
 	static int __cdecl cmpIntersectionResult(const void* v1, const void* v2);
-	static void        OnAudioTriggerFinishedEvent(CryAudio::SRequestInfo const* const pAudioRequestInfo);
 	int                IStatObjRayIntersect(IStatObj* pStatObj, const Vec3& rayOrigin, const Vec3& rayDir, float maxDistance, SIntersectionResult* pOutResult, unsigned int maxResults);
 
 	//////////////////////////////////////////////////////////////////////////
@@ -1479,8 +1441,4 @@ private: // --------------------------------------------------------------------
 
 	//temp table used by GetPhysicalStats
 	SmartScriptTable m_pStats;
-
-	bool             m_bIsAudioEventListener;
 };
-
-#endif // __ScriptBind_Entity_h__

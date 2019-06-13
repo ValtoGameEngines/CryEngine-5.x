@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "TransitionQueue.h"
@@ -185,9 +185,6 @@ void CTransitionQueue::UnloadAnimationAssets(int index)
 	{
 		if (pAnim->m_nAssetType == CAF_File)
 		{
-#ifdef _DEBUG
-			const char* pname = pAnim->GetAnimName();
-#endif
 			GlobalAnimationHeaderCAF& rGAH = g_AnimationManager.m_arrGlobalCAF[nGlobalID];
 
 			if (rGAH.m_nRef_at_Runtime)
@@ -205,9 +202,6 @@ void CTransitionQueue::UnloadAnimationAssets(int index)
 			const ModelAnimationHeader* pSamplerAnim = m_pAnimationSet->GetModelAnimationHeader(nAnimID);
 			if (pSamplerAnim && pSamplerAnim->m_nAssetType == CAF_File)
 			{
-#ifdef _DEBUG
-				const char* pname = pSamplerAnim->GetAnimName();
-#endif
 				int32 nGlobalIDByAnimID = m_pAnimationSet->GetGlobalIDByAnimID_Fast(nAnimID);
 				GlobalAnimationHeaderCAF& rGAH = g_AnimationManager.m_arrGlobalCAF[nGlobalIDByAnimID];
 
@@ -342,15 +336,7 @@ void CTransitionQueue::ManualSeekAnimation(uint index, float time2, bool bTrigge
 void CTransitionQueue::SetFirstLayer()
 {
 	m_fLayerTransitionWeight = 1.0f;
-	// if this is the first layer, the blending multiplier should not be accessed
-	m_fLayerBlendWeight = 0;
-	union
-	{
-		uint32* pU;
-		float*  pF;
-	} u;
-	u.pF = &m_fLayerBlendWeight;
-	*u.pU = F32NAN;
+	SetInvalid(m_fLayerBlendWeight);
 }
 
 void CTransitionQueue::ApplyManualMixingWeight(uint numAnims)

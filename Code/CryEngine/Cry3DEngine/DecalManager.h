@@ -1,21 +1,9 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// -------------------------------------------------------------------------
-//  File name:   decalmanager.h
-//  Version:     v1.00
-//  Created:     28/5/2001 by Vladimir Kajalin
-//  Compilers:   Visual Studio.NET
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
-
-#ifndef DECAL_MANAGER
-#define DECAL_MANAGER
+#pragma once
+#include <Cry3DEngine/CryEngineDecalInfo.h>
 
 #define DECAL_COUNT              (512) // must be pow2
-#define ENTITY_DECAL_DIST_FACTOR (200)
 #define DIST_FADING_FACTOR       (6.f)
 
 class C3DEngine;
@@ -161,5 +149,3 @@ public: // ---------------------------------------------------------------
 private:
 	IMaterial* GetMaterialForDecalTexture(const char* pTextureName);
 };
-
-#endif // DECAL_MANAGER

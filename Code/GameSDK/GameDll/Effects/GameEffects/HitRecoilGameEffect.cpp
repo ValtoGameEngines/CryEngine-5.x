@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -175,8 +175,6 @@ void CHitRecoilGameEffect::AddHit(CPlayer* pPlayer, IEntityClass *pProjectileCla
 	}
 	else
 	{
-		CGameRules *pGameRules = g_pGame->GetGameRules();
-		
 		if(damageTypeId != 0)
 		{
 			THitTypeToRecoilMap::iterator it = m_hitTypeToRecoil.find(damageTypeId);

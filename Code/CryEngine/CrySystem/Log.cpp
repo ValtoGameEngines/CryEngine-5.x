@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 //
 //	File:Log.cpp
@@ -21,10 +21,16 @@
 #include <CryString/CryPath.h>          // PathUtil::ReplaceExtension()
 #include <CryGame/IGameFramework.h>
 #include <CryString/UnicodeFunctions.h>
+#include <CryString/StringUtils.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 #if CRY_PLATFORM_WINDOWS
 	#include <time.h>
 #endif
+
+#if !defined(CRY_PLATFORM_ORBIS) && !defined(CRY_PLATFORM_ANDROID)
+#include <sys/timeb.h>
+#endif //!defined(CRY_PLATFORM_ORBIS) && !defined(CRY_PLATFORM_ANDROID)
 
 #if CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID || CRY_PLATFORM_APPLE
 	#include <syslog.h>
@@ -108,16 +114,83 @@ ILINE void UnlockExclusiveAccess(SExclusiveThreadAccessLock* pExclusiveLock)
 }
 
 #undef LOG_EXCLUSIVE_ACCESS_SINGLE_WRITER_LOCK_VALUE
+//////////////////////////////////////////////////////////////////////
+ILINE void CryOutputDebugString(const string& str)
+{
+	// Note: OutputDebugStringW will not actually output Unicode unless the attached debugger has explicitly opted in to this behavior.
+	// This is only possible on Windows 10; on older operating systems the W variant internally converts the input to the local codepage (ANSI) and calls the A variant.
+	// Both VS2015 and VS2017 do opt-in to this behavior on Windows 10, so we use the W variant despite the slight overhead on older Windows versions.
+#if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_DURANGO
+	OutputDebugStringW(CryStringUtils::UTF8ToWStr(str));
+#else
+	OutputDebugString(str);
+#endif
+}
 
 //////////////////////////////////////////////////////////////////////
 namespace LogCVars
 {
-float s_log_tick = 0;
+	float s_log_tick = 0;
+	int s_log_UseLogThread = 0;
 };
 
 #ifndef _RELEASE
 static CLog::LogStringType indentString("    ");
 #endif
+
+//////////////////////////////////////////////////////////////////////
+CLogThread::CLogThread(concqueue::mpsc_queue_t<string>& logQueue)
+	: m_logQueue(logQueue)
+	, m_bIsRunning(false)
+{
+}
+
+//////////////////////////////////////////////////////////////////////
+CLogThread::~CLogThread()
+{
+	SignalStopWork();
+}
+
+//////////////////////////////////////////////////////////////////////
+void CLogThread::SignalStartWork()
+{
+	if (!m_bIsRunning)
+	{
+		m_bIsRunning = true;
+		if (!gEnv->pThreadManager->SpawnThread(this, "LogThread"))
+		{
+			m_bIsRunning = false;
+			CryFatalError(R"(Error spawning "LogThread" thread.)");
+		}
+	}
+}
+
+//////////////////////////////////////////////////////////////////////
+void CLogThread::SignalStopWork()
+{
+	if (m_bIsRunning)
+	{
+		m_bIsRunning = false;
+		gEnv->pThreadManager->JoinThread(this, eJM_Join);
+	}
+}
+
+//////////////////////////////////////////////////////////////////////
+void CLogThread::ThreadEntry()
+{
+	while (m_bIsRunning)
+	{
+		string log;
+		if (m_logQueue.dequeue(log))
+		{
+			CryOutputDebugString(log);
+		}
+		else
+		{
+			CrySleep(2);
+		}
+	}
+}
 
 //////////////////////////////////////////////////////////////////////
 CLog::CLog(ISystem* pSystem)
@@ -131,6 +204,7 @@ CLog::CLog(ISystem* pSystem)
 	, m_topIndenter(nullptr)
 #endif
 	, m_pLogIncludeTime(nullptr)
+	, m_bIsPostSystemInit(false)
 	, m_pConsole(nullptr)
 	, m_iLastHistoryItem(0)
 #if KEEP_LOG_FILE_OPEN
@@ -143,11 +217,12 @@ CLog::CLog(ISystem* pSystem)
 	, m_pLogSpamDelay(nullptr)
 	, m_pLogModule(nullptr)
 	, m_eLogMode(eLogMode_Normal)
+	, m_logFormat("%Y-%m-%dT%H:%M:%S:fffzzz")
 {
-	memset(m_szFilename, 0, MAX_FILENAME_SIZE);
-	memset(m_sBackupFilename, 0, MAX_FILENAME_SIZE);
+	gEnv->pSystem->GetISystemEventDispatcher()->RegisterListener(this, "CLog");
 
 	m_nMainThreadId = CryGetCurrentThreadId();
+	m_pLogThread = new CLogThread(m_logQueue);
 }
 
 void CLog::RegisterConsoleVariables()
@@ -164,6 +239,12 @@ void CLog::RegisterConsoleVariables()
 	#endif
 #else
 	#define DEFAULT_VERBOSITY 3
+#endif
+
+#if defined(DEDICATED_SERVER) && defined(CRY_PLATFORM_LINUX)
+	#define DEFAULT_LOG_INCLUDE_TIME (0)
+#else
+	#define DEFAULT_LOG_INCLUDE_TIME (1)
 #endif
 
 	if (console)
@@ -191,8 +272,18 @@ void CLog::RegisterConsoleVariables()
 		                                          "4=additional comments");
 		m_pLogVerbosityOverridesWriteToFile = REGISTER_INT("log_VerbosityOverridesWriteToFile", 1, VF_DUMPTODISK, "when enabled, setting log_verbosity to 0 will stop all logging including writing to file");
 
+#if CRY_PLATFORM_CONSOLE
+		const int defaultUseLogThreadVal = 1;
+#else
+		const int defaultUseLogThreadVal = 0;
+#endif
+		m_pUseLogThread = REGISTER_CVAR3_CB("log_UseLogThread", LogCVars::s_log_UseLogThread, defaultUseLogThreadVal, VF_NULL,
+		                                    "When enabled, OutputDebugString will be done on a seperate thread to \n"
+			                                "reduce main thread time on platforms where logging is expensive", 
+		                                    OnUseLogThreadChange);
+
 		// put time into begin of the string if requested by cvar
-		m_pLogIncludeTime = REGISTER_INT("log_IncludeTime", 1, 0,
+		m_pLogIncludeTime = REGISTER_INT("log_IncludeTime", DEFAULT_LOG_INCLUDE_TIME, 0,
 		                                 "Toggles time stamping of log entries.\n"
 		                                 "Usage: log_IncludeTime [0/1/2/3/4/5]\n"
 		                                 "  0=off (default)\n"
@@ -200,7 +291,8 @@ void CLog::RegisterConsoleVariables()
 		                                 "  2=relative time\n"
 		                                 "  3=current+relative time\n"
 		                                 "  4=absolute time in seconds since this mode was started\n"
-		                                 "  5=current time+server time");
+		                                 "  5=current time+server time\n"
+		                                 "  6=ISO8601 time formatting");
 
 		m_pLogSpamDelay = REGISTER_FLOAT("log_SpamDelay", 0.0f, 0, "Sets the minimum time interval between messages classified as spam");
 
@@ -256,6 +348,11 @@ CLog::~CLog()
 	assert(m_indentation == 0);
 #endif
 
+	if (gEnv->pSystem->GetISystemEventDispatcher())
+	  gEnv->pSystem->GetISystemEventDispatcher()->RemoveListener(this);
+
+	SAFE_DELETE(m_pLogThread);
+
 	CreateBackupFile();
 
 	UnregisterConsoleVariables();
@@ -273,6 +370,34 @@ void CLog::UnregisterConsoleVariables()
 	m_pLogSpamDelay = 0;
 }
 
+//////////////////////////////////////////////////////////////////////
+void CLog::OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR lparam)
+{
+	switch (event)
+	{
+	case ESYSTEM_EVENT_CRYSYSTEM_INIT_DONE:
+		m_bIsPostSystemInit = true;
+		if (LogCVars::s_log_UseLogThread)
+		{
+			m_pLogThread->SignalStartWork();
+		}
+	}
+}
+
+//////////////////////////////////////////////////////////////////////
+void CLog::OnUseLogThreadChange(ICVar* var)
+{
+	CLog* pCLog = static_cast<CLog*>(gEnv->pLog);
+	if (pCLog->m_bIsPostSystemInit && var->GetIVal())
+	{
+		pCLog->m_pLogThread->SignalStartWork();
+	}
+	else
+	{
+		pCLog->m_pLogThread->SignalStopWork();
+	}
+}
+
 //////////////////////////////////////////////////////////////////////////
 void CLog::CloseLogFile(bool forceClose)
 {
@@ -288,7 +413,7 @@ void CLog::CloseLogFile(bool forceClose)
 //////////////////////////////////////////////////////////////////////////
 FILE* CLog::OpenLogFile(const char* filename, const char* mode)
 {
-	CDebugAllowFileAccess ignoreInvalidFileAccess;
+	SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
 
 #if CRY_PLATFORM_IOS
 	char buffer[1024];
@@ -432,8 +557,7 @@ void CLog::LogV(const ELogType type, int flags, const char* szFormat, va_list ar
 		}
 	}
 
-	FUNCTION_PROFILER(GetISystem(), PROFILE_SYSTEM);
-	//LOADING_TIME_PROFILE_SECTION(GetISystem());
+	CRY_PROFILE_FUNCTION(PROFILE_SYSTEM);
 
 	bool bfile = false, bconsole = false;
 	const char* szCommand = szFormat;
@@ -619,7 +743,7 @@ void CLog::LogPlus(const char* szFormat, ...)
 		return;
 	}
 
-	LOADING_TIME_PROFILE_SECTION(GetISystem());
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	if (!szFormat)
 		return;
@@ -875,13 +999,67 @@ const char* CLog::GetAssetScopeString()
 };
 #endif
 
+void CLog::SetLogFormat(const char* format)
+{
+	m_logFormat.clear();
+	m_logFormat.assign(format);
+}
+
+void CLog::FormatTimestampInternal(stack_string& timeStr, const string& logFormat)
+{
+#if !defined(CRY_PLATFORM_ORBIS) && !defined(CRY_PLATFORM_ANDROID)
+	bool isUtC = logFormat.find("Z") != string::npos;
+
+	char sTime[128];
+	stack_string tmpStr;
+	stack_string formatStr;
+	struct timeb now;
+
+	ftime(&now);
+
+	time_t ltime = now.time;
+	struct tm* today = isUtC ? gmtime(&ltime) : localtime(&ltime);
+	strftime(sTime, 128, logFormat.c_str(), today);
+
+	timeStr.Format("%s", sTime);
+
+	int pos = timeStr.find("f");
+	if (pos != string::npos)
+	{
+		int count = strspn(&(timeStr.c_str()[pos]), "f");
+
+		formatStr.Format("%%0%iu", count);
+		tmpStr.Format(formatStr.c_str(), now.millitm);
+		timeStr.replace(pos, count, tmpStr.c_str());
+	}
+
+	if (!isUtC)
+	{
+		tmpStr.clear();
+		formatStr.clear();
+
+		int pos = timeStr.find("z");
+		if (pos != string::npos)
+		{
+			int count = strspn(&(timeStr.c_str()[pos]), "z");
+
+			short timezone = -(now.timezone / 60) + now.dstflag;
+
+			formatStr.Format(now.timezone > 0 ? "-%%0%ii" : "+%%0%ii", count - 1);
+			tmpStr.Format(formatStr.c_str(), timezone);
+			timeStr.replace(pos, count, tmpStr.c_str());
+		}
+	}
+#endif //!defined(CRY_PLATFORM_ORBIS) && !defined(CRY_PLATFORM_ANDROID)
+}
+
 //////////////////////////////////////////////////////////////////////
 #if !defined(EXCLUDE_NORMAL_LOG)
 void CLog::LogStringToFile(const char* szString, bool bAdd, bool bError)
 {
-	#if defined(_RELEASE) && defined(EXCLUDE_NORMAL_LOG) // no file logging in release
+#if defined(_RELEASE) && defined(EXCLUDE_NORMAL_LOG) // no file logging in release
 	return;
-	#endif
+#endif
 
 	if (!szString)
 	{
@@ -924,18 +1102,27 @@ void CLog::LogStringToFile(const char* szString, bool bAdd, bool bError)
 
 	RemoveColorCodeInPlace(tempString);
 
-	#if defined(SUPPORT_LOG_IDENTER)
+#if defined(SUPPORT_LOG_IDENTER)
 	if (m_topIndenter)
 	{
 		m_topIndenter->DisplaySectionText();
 	}
 
 	tempString = m_indentWithString + tempString;
-	#endif
+#endif
 
 	if (m_pLogIncludeTime && gEnv->pTimer)
 	{
 		uint32 dwCVarState = m_pLogIncludeTime->GetIVal();
+		if (dwCVarState == 6)
+		{
+			// ISO8601 date/time formatting
+			stack_string timeStr, formattedTimeStr;
+			FormatTimestampInternal(timeStr, m_logFormat);
+			formattedTimeStr.Format("<%s> ", timeStr.c_str());
+			tempString = LogStringType(formattedTimeStr.c_str()) + tempString;
+		}
+
 		char sTime[21];
 		if (dwCVarState == 5) // Log_IncludeTime
 		{
@@ -990,13 +1177,13 @@ void CLog::LogStringToFile(const char* szString, bool bAdd, bool bError)
 		}
 	}
 
-	#if !KEEP_LOG_FILE_OPEN
+#if !KEEP_LOG_FILE_OPEN
 	// add \n at end.
 	if (tempString.empty() || tempString[tempString.length() - 1] != '\n')
 	{
 		tempString += '\n';
 	}
-	#endif
+#endif
 
 	//////////////////////////////////////////////////////////////////////////
 	// Call callback function (on invoke if we are not in application crash)
@@ -1016,12 +1203,12 @@ void CLog::LogStringToFile(const char* szString, bool bAdd, bool bError)
 
 	if (logToFile)
 	{
-		CDebugAllowFileAccess dafa;
+		SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
 
-	#if KEEP_LOG_FILE_OPEN
+#if KEEP_LOG_FILE_OPEN
 		if (!m_pLogFile)
 		{
-			OpenLogFile(m_szFilename, "at");
+			OpenLogFile(m_filePath, "at");
 		}
 
 		if (m_pLogFile)
@@ -1039,11 +1226,16 @@ void CLog::LogStringToFile(const char* szString, bool bAdd, bool bError)
 			}
 
 			fputs(tempString.c_str(), m_pLogFile);
+
+			if (m_pLogFile)
+			{
+				fflush(m_pLogFile); // Flush or the changes will only show up on shutdown.
+			}
 		}
-	#else
+#else
 		if (bAdd)
 		{
-			FILE* fp = OpenLogFile(m_szFilename, "r+t");
+			FILE* fp = OpenLogFile(m_filePath, "r+t");
 			if (fp)
 			{
 				int nRes;
@@ -1060,25 +1252,26 @@ void CLog::LogStringToFile(const char* szString, bool bAdd, bool bError)
 		{
 			// comment on bug by TN: Log file misses the last lines of output
 			// Temporally forcing the Log to flush before closing the file, so all lines will show up
-			if (FILE* fp = OpenLogFile(m_szFilename, "at")) // change to option "atc"
+			if (FILE* fp = OpenLogFile(m_filePath, "at")) // change to option "atc"
 			{
 				fputs(tempString.c_str(), fp);
 				// fflush(fp);  // enable to flush the file
 				CloseLogFile();
 			}
 		}
-	#endif
+#endif
 	}
 
-	#if !defined(_RELEASE)
-	// Note: OutputDebugString(A) only accepts current ANSI code-page, and the W variant will call the A variant internally.
-	// Here we replace non-ASCII characters with '?', which is the same as OutputDebugStringW will do for non-ANSI.
-	// Thus, we discard slightly more characters (ie, those inside the current ANSI code-page, but outside ASCII).
-	// In exchange, we save double-converting that would have happened otherwise (UTF-8 -> UTF-16 -> ANSI).
-	string asciiString;
-	Unicode::Convert<Unicode::eEncoding_ASCII, Unicode::eEncoding_UTF8>(asciiString, tempString);
-	OutputDebugString(asciiString.c_str());
-	#endif
+#if !defined(_RELEASE)
+	if (LogCVars::s_log_UseLogThread)
+	{
+		m_logQueue.enqueue(tempString);
+	}
+	else
+	{
+		CryOutputDebugString(tempString);
+	}
+#endif // !defined(_RELEASE)
 }
 
 //same as above but to a file
@@ -1090,7 +1283,7 @@ void CLog::LogToFilePlus(const char* szFormat, ...)
 		return;
 	}
 
-	if (!m_szFilename[0] || !szFormat)
+	if (m_filePath.empty() || !szFormat)
 	{
 		return;
 	}
@@ -1118,7 +1311,7 @@ void CLog::LogToFile(const char* szFormat, ...)
 		return;
 	}
 
-	if (!m_szFilename[0] || !szFormat)
+	if (m_filePath.empty() || !szFormat)
 	{
 		return;
 	}
@@ -1141,64 +1334,32 @@ void CLog::LogToFile(const char* szFormat, ...)
 //////////////////////////////////////////////////////////////////////
 void CLog::CreateBackupFile() const
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 #if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID || CRY_PLATFORM_APPLE || CRY_PLATFORM_DURANGO
-	// simple:
-	//		string bakpath = PathUtil::ReplaceExtension(m_szFilename,"bak");
-	//		CopyFile(m_szFilename,bakpath.c_str(),false);
-
-	// advanced: to backup directory
-	char temppath[_MAX_PATH];
-	char szPath[MAX_FILENAME_SIZE];
-
-	string sExt = PathUtil::GetExt(m_szFilename);
-	string sFileWithoutExt = PathUtil::GetFileName(m_szFilename);
-
-	{
-		assert(::strstr(sFileWithoutExt, ":") == 0);
-		assert(::strstr(sFileWithoutExt, "\\") == 0);
-	}
-
-	PathUtil::RemoveExtension(sFileWithoutExt);
-
-	#define LOG_BACKUP_PATH "LogBackups"
-
-	const char* path = LOG_BACKUP_PATH;
-
-	string szBackupPath;
-	string sLogFilename;
-
-	string temp = m_pSystem->GetRootFolder();
-	temp += path;
-	if (temp.size() < sizeof(szPath))
-		cry_strcpy(szPath, temp.c_str());
-	else
-		cry_strcpy(szPath, path);
 
 	if (!gEnv->pCryPak)
 	{
 		return;
 	}
-	szBackupPath = gEnv->pCryPak->AdjustFileName(szPath, temppath, ICryPak::FLAGS_FOR_WRITING | ICryPak::FLAGS_PATH_REAL);
-	gEnv->pCryPak->MakeDir(szBackupPath);
-	sLogFilename = gEnv->pCryPak->AdjustFileName(m_szFilename, temppath, ICryPak::FLAGS_FOR_WRITING | ICryPak::FLAGS_PATH_REAL);
 
 	LockNoneExclusiveAccess(&m_exclusiveLogFileThreadAccessLock);
-	FILE* in = fxopen(sLogFilename, "rb");
+	FILE* src = fxopen(m_filePath, "rb");
 	UnlockNoneExclusiveAccess(&m_exclusiveLogFileThreadAccessLock);
+
+	const string dstFileDir = PathUtil::GetParentDirectory(m_backupFilePath);
 
 	string sBackupNameAttachment;
 
 	// parse backup name attachment
 	// e.g. BackupNameAttachment="attachment name"
-	if (in)
+	if (src)
 	{
 		bool bKeyFound = false;
 		string sName;
 
-		while (!feof(in))
+		while (!feof(src))
 		{
-			uint8 c = fgetc(in);
+			uint8 c = fgetc(src);
 
 			if (c == '\"')
 			{
@@ -1231,108 +1392,81 @@ void CLog::CreateBackupFile() const
 				break;
 		}
 		LockNoneExclusiveAccess(&m_exclusiveLogFileThreadAccessLock);
-		fclose(in);
+		fclose(src);
 		UnlockNoneExclusiveAccess(&m_exclusiveLogFileThreadAccessLock);
+
+		gEnv->pCryPak->MakeDir(dstFileDir);
+	}
+	else
+	{
+		return;
 	}
 
-	#if CRY_PLATFORM_DURANGO
+	const string dstFileStr = m_backupFilePath;
+	const string dstFileName = PathUtil::GetFileName(dstFileStr) + sBackupNameAttachment;
+	const string dstFileExt = PathUtil::GetExt(dstFileStr);
+	const string dstFilePath = PathUtil::Make(dstFileDir, dstFileName, dstFileExt);
+	
+	CryPathString adjustedSrcFilePath;
+	gEnv->pCryPak->AdjustFileName(m_filePath, adjustedSrcFilePath, ICryPak::FLAGS_FOR_WRITING | ICryPak::FLAGS_PATH_REAL);
+	CryPathString adjustedDstFilePath;
+	gEnv->pCryPak->AdjustFileName(dstFilePath, adjustedDstFilePath, ICryPak::FLAGS_FOR_WRITING | ICryPak::FLAGS_PATH_REAL);
 
+#if CRY_PLATFORM_DURANGO
 	// Xbox has some limitation in file names. No spaces in file name are allowed. The full path is limited by MAX_PATH, etc.
 	// I change spaces with underscores here for valid name and cut it if it exceed a limit.
-	string bakdest = PathUtil::Make(szBackupPath, sFileWithoutExt + sBackupNameAttachment + "." + sExt);
-	if (bakdest.size() > MAX_PATH)
-		bakdest.resize(MAX_PATH);
-	sLogFilename = PathUtil::ToDosPath(sLogFilename);
-	bakdest = PathUtil::ToDosPath(bakdest);
-	bakdest.replace(' ', '_');
-
-	cry_strcpy(m_sBackupFilename, bakdest.c_str());
-
-	// Durango XDK does not provide CopyFile or CopyFileEx
-	const int BUFFER_SIZE = 1024;
-	const char* pBuffer[BUFFER_SIZE];
-	FILE* pSrcFile = 0;
-	FILE* pDstFile = 0;
-	int numr, numw;
-
-	// Open files
-	if (!(pSrcFile = fopen(sLogFilename, "rb")) || !(pDstFile = fopen(bakdest, "wb")))
+	auto processDurangoPath = [](const string& path)
 	{
-		DWORD errCode = GetLastError();
-		char tmp[128];
-		cry_sprintf(tmp, "Error backup log file:%u", errCode);
-		OutputDebugString(tmp);
-	}
-
-	// Copy file
-	if (pSrcFile && pDstFile)
-	{
-		while (!feof(pSrcFile))
-		{
-			numr = fread(pBuffer, sizeof(char), BUFFER_SIZE, pSrcFile); // Read
-			if (numr != BUFFER_SIZE && ferror(pSrcFile))
-			{
-				DWORD errCode = GetLastError();
-				char tmp[128];
-				cry_sprintf(tmp, "Error backup log file:%u", errCode);
-				OutputDebugString(tmp);
-				break;
-			}
-
-			numw = fwrite(pBuffer, sizeof(char), numr, pDstFile); // Write
-			if (numw != numr && ferror(pDstFile))
-			{
-				DWORD errCode = GetLastError();
-				char tmp[128];
-				cry_sprintf(tmp, "Error backup log file:%u", errCode);
-				OutputDebugString(tmp);
-				break;
-			}
-		}
-	}
-
-	// Close files
-	if (pSrcFile)
-	{
-		LockNoneExclusiveAccess(&m_exclusiveLogFileThreadAccessLock);
-		fclose(pSrcFile);
-		UnlockNoneExclusiveAccess(&m_exclusiveLogFileThreadAccessLock);
-	}
-
-	if (pDstFile)
-	{
-		LockNoneExclusiveAccess(&m_exclusiveLogFileThreadAccessLock);
-		fclose(pDstFile);
-		UnlockNoneExclusiveAccess(&m_exclusiveLogFileThreadAccessLock);
-	}
-
-	#else
-	string bakdest = PathUtil::Make(szBackupPath, sFileWithoutExt + sBackupNameAttachment + "." + sExt);
-	cry_strcpy(m_sBackupFilename, bakdest.c_str());
-	CopyFile(sLogFilename, bakdest, false);
-	#endif
+		string durangoPath = PathUtil::ToDosPath(path);
+		durangoPath.replace(' ', '_');
+		CRY_ASSERT_MESSAGE(durangoPath.size() <= MAX_PATH, "Log backup path is larger than MAX_PATH");
+		return CryStringUtils::UTF8ToWStrSafe(durangoPath);
+	};
+	const wstring durangoSrcFilePath = processDurangoPath(adjustedSrcFilePath);
+	const wstring durangosDstFilePath = processDurangoPath(adjustedDstFilePath);
+	CRY_VERIFY_WITH_MESSAGE(CopyFile2(durangoSrcFilePath, durangosDstFilePath, nullptr) == S_OK, "Error copying log backup file");
+#else
+	CRY_ASSERT_MESSAGE(adjustedSrcFilePath[0] != '%' && adjustedDstFilePath[0] != '%', "Invalid %ALIAS% in CLog::CreateBackupFile()");
+	CopyFile(adjustedSrcFilePath, adjustedDstFilePath, false);
+#endif
 
 #endif
 }
 
 //set the file used to log to disk
 //////////////////////////////////////////////////////////////////////
-bool CLog::SetFileName(const char* filename)
+bool CLog::SetFileName(const char* szFileName)
 {
-	if (!filename)
+	CRY_ASSERT(PathUtil::IsStrValid(szFileName));
+	if (!PathUtil::IsStrValid(szFileName))
+		return false;
+
+	m_filename = szFileName;
+
+	static const string BACKUP_FOLDER = "LogBackups";
+	string directory = PathUtil::GetParentDirectory(szFileName);
+
+#if defined(CRY_PLATFORM_CONSOLE)
+	CRY_ASSERT_MESSAGE(PathUtil::IsRelativePath(szFileName), "Cannot use an absolute file path for .log files on consoles");
+	// On console we just put the LogBackups folder in the root (of the application)
+	string backupDirectory = PathUtil::Make(BACKUP_FOLDER, directory);
+#else
+	//
+	string backupDirectory = PathUtil::Make(directory, BACKUP_FOLDER);
+	if (PathUtil::IsRelativePath(szFileName) && szFileName[0] != '%') // %Alias% could expand to absolute path as well
 	{
-		return false;
+		backupDirectory = PathUtil::Make(PathUtil::GetProjectFolder(), backupDirectory);
+		directory = PathUtil::Make(PathUtil::GetProjectFolder(), directory);
 	}
+#endif
 
-	string temp = PathUtil::Make(m_pSystem->GetRootFolder(), PathUtil::GetFile(filename));
-	if (temp.empty() || temp.size() >= sizeof(m_szFilename))
-		return false;
-
-	cry_strcpy(m_szFilename, temp.c_str());
+	const string fileName = PathUtil::GetFile(szFileName);
+	m_filePath = PathUtil::Make(directory, fileName);
+	m_backupFilePath = PathUtil::Make(backupDirectory, fileName);
 
 	CreateBackupFile();
 
-	FILE* fp = OpenLogFile(m_szFilename, "wt");
+	FILE* fp = OpenLogFile(m_filePath, "wt");
 	if (fp)
 	{
 		CloseLogFile(true);
@@ -1345,12 +1479,17 @@ bool CLog::SetFileName(const char* filename)
 //////////////////////////////////////////////////////////////////////////
 const char* CLog::GetFileName() const
 {
-	return m_szFilename;
+	return m_filename.c_str();
+}
+
+const char* CLog::GetFilePath() const
+{
+	return m_filePath.c_str();
 }
 
 const char* CLog::GetBackupFileName() const
 {
-	return m_sBackupFilename;
+	return m_backupFilePath.c_str();
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -1396,6 +1535,17 @@ int CLog::GetVerbosityLevel() const
 	}
 
 	return 0;
+}
+
+void CLog::GetMemoryUsage(ICrySizer* pSizer) const
+{
+	pSizer->AddObject(this, sizeof(*this));
+	pSizer->AddObject(m_pLogVerbosity);
+	pSizer->AddObject(m_pLogWriteToFile);
+	pSizer->AddObject(m_pLogWriteToFileVerbosity);
+	pSizer->AddObject(m_pLogVerbosityOverridesWriteToFile);
+	pSizer->AddObject(m_pLogSpamDelay);
+	pSizer->AddObject(m_threadSafeMsgQueue);
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1444,7 +1594,7 @@ void CLog::RemoveCallback(ILogCallback* pCallback)
 //////////////////////////////////////////////////////////////////////////
 void CLog::Update()
 {
-	FUNCTION_PROFILER(m_pSystem, PROFILE_SYSTEM);
+	CRY_PROFILE_FUNCTION(PROFILE_SYSTEM);
 
 	if (CryGetCurrentThreadId() == m_nMainThreadId)
 	{

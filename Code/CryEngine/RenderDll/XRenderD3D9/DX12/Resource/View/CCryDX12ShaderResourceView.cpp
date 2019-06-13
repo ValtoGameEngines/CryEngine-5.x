@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "CCryDX12ShaderResourceView.hpp"
@@ -14,7 +14,7 @@ CCryDX12ShaderResourceView* CCryDX12ShaderResourceView::Create(CCryDX12Device* p
 	// Special case: NullResource is valid when only the D3D12 resource is null
 	if (!pResource11 && !pResource12)
 	{
-		DX12_ASSERT(0, "Unknown resource type!");
+		DX12_ERROR("Unknown resource type!");
 		return NULL;
 	}
 
@@ -131,11 +131,6 @@ CCryDX12ShaderResourceView::CCryDX12ShaderResourceView(ID3D11Resource* pResource
 	, m_Desc11(desc11)
 {
 	m_DX12View.GetSRVDesc() = desc12;
-}
-
-CCryDX12ShaderResourceView::~CCryDX12ShaderResourceView()
-{
-
 }
 
 /* ID3D11ShaderResourceView implementation */

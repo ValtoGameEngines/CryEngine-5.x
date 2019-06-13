@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   ChunkFile.h
@@ -10,14 +10,6 @@
 #include "ChunkFile.h"
 #include "ChunkFileReaders.h"
 #include "ChunkFileWriters.h"
-
-#if !defined(FUNCTION_PROFILER_3DENGINE)
-	#define FUNCTION_PROFILER_3DENGINE
-#endif
-
-#if !defined(LOADING_TIME_PROFILE_SECTION)
-	#define LOADING_TIME_PROFILE_SECTION
-#endif
 
 namespace
 {
@@ -340,7 +332,7 @@ void CChunkFile::ReleaseMemoryBuffer()
 //////////////////////////////////////////////////////////////////////////
 bool CChunkFile::Read(const char* filename)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	ReleaseChunks();
 

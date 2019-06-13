@@ -10,7 +10,6 @@
 %import <CryDynamicResponseSystem.i>
 %import <CryEntitySystem.i>
 %import <CryFont.i>
-%import <CryGame.i>
 %import <CryInput.i>
 %import <CryMonoBridge.i>
 %import <CryLobby.i>
@@ -23,7 +22,6 @@
 %{
 #include <CrySystem/File/IFileChangeMonitor.h>
 #include <CrySystem/Profilers/IStatoscope.h>
-#include <CrySystem/Profilers/ProfileLog.h>
 #include <CrySystem/Profilers/IPerfHud.h>
 #include <CryMemory/ILocalMemoryUsage.h>
 #include <CrySystem/ICodeCheckpointMgr.h>
@@ -41,44 +39,64 @@
 #include <CrySystem/ZLib/ILZ4Decompressor.h>
 #include <CryNetwork/INotificationNetwork.h>
 #include <CrySystem/XML/IReadWriteXMLSink.h>
-#include <CrySystem/ITestSystem.h>
 #include <CrySystem/ITextModeConsole.h>
 #include <CrySystem/IValidator.h>
 #include <CrySystem/ZLib/IZLibCompressor.h>
 #include <CrySystem/ZLib/IZlibDecompressor.h>
 #include <CrySystem/ICryMiniGUI.h>
+#include <CrySystem/ICmdLine.h>
 #include <CryThreading/IThreadManager.h>
 #include <CryThreading/IJobManager.h>
-// CryOnlineDummy
-struct IOnline
-{
-public:
-	IOnline() {}
-	~IOnline() {}
-};
 
 namespace minigui { class CDrawContext{ public: virtual ~CDrawContext() {} }; }
 
-using JobManager::SJobStateBase;
+using JobManager::SJobState;
 %}
+
+%typemap(csbase) ICryPak::EPathResolutionRules "uint"
+%typemap(csbase) ICryPak::EFOpenFlags "uint"
+%typemap(csbase) ICryArchive::EPakFlags "uint"
+%typemap(csbase) ELoadConfigurationFlags "uint"
+%typemap(csbase) EVRComponent "uint"
+%typemap(csbase) ELogMode "ushort"
+%typemap(csbase) ESystemUpdateFlags "ushort"
+%typemap(csbase) EVarFlags "uint"
+%typemap(csbase) IHmdController::ECaps "uint"
+%typemap(csbase) IPlatformOS::ECreateFlags "uint"
+%typemap(csbase) minigui::EMiniCtrlStatus "uint"
+%typemap(csbase) minigui::EMiniCtrlEvent "uint"
+
 %feature("director") ILogCallback;
 %include "../../../../CryEngine/CryCommon/CrySystem/ILog.h"
 %feature("director") ISystemEventListener;
 %feature("director") ILoadingProgressListener;
 %ignore CreateSystemInterface;
 %include "../../../../CryEngine/CryCommon/CrySystem/ISystem.h"
-%typemap(csbase) ICryPak::EPathResolutionRules "long"
+
 %include "../../../../CryEngine/CryCommon/CrySystem/File/ICryPak.h"
 %include "../../../../CryEngine/CryCommon/CrySystem/ICmdLine.h"
-%typemap(csbase) EVarFlags "uint"
+
 %feature("director") IRemoteConsoleListener;
+%typemap(cscode) ICVar %{
+	public static System.IntPtr GetIntPtr(ICVar icvar)
+	{
+		return getCPtr(icvar).Handle;
+	}
+%}
+// ensures ICVar can only be unregistered through CryEngine.ConsoleVariable.UnRegister in C#
+%ignore ICVar::Release();
+
+// hides methods that cannot be accessed in C#
+%ignore ICVar::AddOnChange(const CallbackFunction &);
+%ignore ICVar::SetOnChangeCallback(ConsoleVarFunc);
+%ignore ICVar::GetOnChangeCallback() const;
 %include "../../../../CryEngine/CryCommon/CrySystem/IConsole.h"
+
 %include "../../../../CryEngine/CryCommon/CrySystem/ITimer.h"
 %include "../../../../CryEngine/CryCommon/CrySystem/File/IFileChangeMonitor.h"
 %include "../../../../CryEngine/CryCommon/CrySystem/Profilers/IStatoscope.h"
-%include "../../../../CryEngine/CryCommon/CrySystem/Profilers/ProfileLog.h"
 %include "../../../../CryEngine/CryCommon/CrySystem/Profilers/IPerfHud.h"
-%include "../../../../CryEngine/CryCommon/CrySystem/Profilers/FrameProfiler/FrameProfiler.h"
+%include "../../../../CryEngine/CryCommon/CrySystem/Profilers/ICryProfilingSystem.h"
 %include "../../../../CryEngine/CryCommon/CryMemory/ILocalMemoryUsage.h"
 %include "../../../../CryEngine/CryCommon/CrySystem/ICodeCheckpointMgr.h"
 %ignore JobManager::SInfoBlock;
@@ -102,7 +120,6 @@ using JobManager::SJobStateBase;
 %include "../../../../CryEngine/CryCommon/CrySystem/ZLib/ILZ4Decompressor.h"
 %include "../../../../CryEngine/CryCommon/CryNetwork/INotificationNetwork.h"
 %include "../../../../CryEngine/CryCommon/CrySystem/XML/IReadWriteXMLSink.h"
-%include "../../../../CryEngine/CryCommon/CrySystem/ITestSystem.h"
 %include "../../../../CryEngine/CryCommon/CrySystem/ITextModeConsole.h"
 %include "../../../../CryEngine/CryCommon/CryThreading/IThreadManager.h"
 %include "../../../../CryEngine/CryCommon/CrySystem/IValidator.h"
@@ -111,12 +128,32 @@ using JobManager::SJobStateBase;
 %include "../../../../CryEngine/CryCommon/CrySystem/ZLib/IZlibDecompressor.h"
 %include "../../../../CryEngine/CryCommon/CrySystem/ICryMiniGUI.h"
 
-// CryOnlineDummy
-struct IOnline
+%extend ICryPak
 {
-public:
-	IOnline() {}
-	~IOnline() {}
-};
+	_finddata_t* FindAllocateData()
+	{
+		return new _finddata_t();
+	}
+
+	void FindFreeData(_finddata_t* fd)
+	{
+		delete fd;
+	}
+
+	bool FindIsResultValid(intptr_t result)
+	{
+		return result != -1;
+	}
+
+	char* FindDataGetPath(_finddata_t* fd)
+	{
+		if (fd == nullptr)
+		{
+			return nullptr;
+		}
+
+		return fd->name;
+	}
+}
 
 namespace minigui { class CDrawContext{}; }

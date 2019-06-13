@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -9,12 +9,14 @@
 #include <CryMovie/IMovieSystem.h>
 #include <Cry3DEngine/IIndexedMesh.h>
 #include <CryCore/BitFiddling.h>                              // IntegerLog2()
-#include <Cry3DEngine/ImageExtensionHelper.h>                     // CImageExtensionHelper
+#include <Cry3DEngine/ImageExtensionHelper.h>                 // CImageExtensionHelper
+#include <CryFont/IFont.h>
 #include "Textures/Image/CImage.h"
 #include "Textures/TextureManager.h"
 #include "Textures/TextureStreamPool.h"
 #include "Textures/TextureCompiler.h"                 // CTextureCompiler
-#include <CryRenderer/branchmask.h>
+#include "GraphicsPipeline/ShadowMap.h"
+
 #include "PostProcess/PostEffects.h"
 #include "RendElements/CRELensOptics.h"
 
@@ -31,20 +33,21 @@
 #include "CompiledRenderObject.h"
 #include "../Scaleform/ScaleformRender.h"
 
-#if CRY_PLATFORM_WINDOWS && CRY_PLATFORM_64BIT
-#pragma warning(disable: 4244)
-#endif
+#include "Shaders/ShaderPublicParams.h"
+
+#define PROCESS_TEXTURES_IN_PARALLEL
 
 #if CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID
-#include <CrySystem/ILog.h>
+	#include <CrySystem/ILog.h>
 #endif
 #include <CryRenderer/IShader.h>
 
-#if !CRY_PLATFORM_ORBIS && !CRY_PLATFORM_DURANGO && !defined(OPENGL)
-#ifdef ENABLE_FRAME_PROFILER_LABELS
-// This is need for D3DPERF_ functions
-LINK_SYSTEM_LIBRARY("d3d9.lib")
-#endif
+// TODO: replace by ID3DUserDefinedAnnotation https://msdn.microsoft.com/en-us/library/hh446881.aspx
+#if !CRY_RENDERER_GNM && !CRY_RENDERER_OPENGL && !CRY_RENDERER_VULKAN && (CRY_RENDERER_DIRECT3D < 120) && !CRY_PLATFORM_DURANGO && CRY_PLATFORM_WINDOWS
+	#ifdef ENABLE_FRAME_PROFILER_LABELS
+		// This is need for D3DPERF_ functions
+		LINK_SYSTEM_LIBRARY("d3d9.lib")
+	#endif
 #endif
 
 namespace
@@ -62,11 +65,44 @@ namespace
 	};
 }
 
-bool QueryIsFullscreen();
-
-#if defined(SUPPORT_D3D_DEBUG_RUNTIME)
+#if defined(DX11_ALLOW_D3D_DEBUG_RUNTIME)
 string D3DDebug_GetLastMessage();
 #endif
+
+// Enum -> Bitmask lookup table
+uint32 ColorMasks[(GS_NOCOLMASK_COUNT >> GS_COLMASK_SHIFT)][4] =
+{
+	{ 0x0, 0x0, 0x0, 0x0 }, // GS_NOCOLMASK_NONE
+	{ 0x1, 0x1, 0x1, 0x1 }, // GS_NOCOLMASK_R
+	{ 0x2, 0x2, 0x2, 0x2 }, // GS_NOCOLMASK_G
+	{ 0x4, 0x4, 0x4, 0x4 }, // GS_NOCOLMASK_B
+	{ 0x8, 0x8, 0x8, 0x8 }, // GS_NOCOLMASK_A
+	{ 0xE, 0xE, 0xE, 0xE }, // GS_NOCOLMASK__GBA
+	{ 0xD, 0xD, 0xD, 0xD }, // GS_NOCOLMASK_R_BA
+	{ 0xB, 0xB, 0xB, 0xB }, // GS_NOCOLMASK_RG_A
+	{ 0x7, 0x7, 0x7, 0x7 }, // GS_NOCOLMASK_RGB_
+	{ 0xF, 0xF, 0xF, 0xF }, // GS_NOCOLMASK_RGBA
+	{ 0x8, 0x8, 0xC, 0x8 }, // GS_NOCOLMASK_GBUFFER_OVERLAY
+};
+
+// Bitmask -> Enum lookup table
+std::array<uint32, (GS_NOCOLMASK_COUNT >> GS_COLMASK_SHIFT)> AvailableColorMasks =
+{
+	{
+		0x0, // GS_NOCOLMASK_NONE
+		0x1, // GS_NOCOLMASK_R
+		0x2, // GS_NOCOLMASK_G
+		0x4, // GS_NOCOLMASK_B
+		0x8, // GS_NOCOLMASK_A
+		0xE, // GS_NOCOLMASK__GBA
+		0xD, // GS_NOCOLMASK_R_BA
+		0xB, // GS_NOCOLMASK_RG_A
+		0x7, // GS_NOCOLMASK_RGB_
+		0xF, // GS_NOCOLMASK_RGBA
+		0xC  // GS_NOCOLMASK_GBUFFER_OVERLAY
+	}
+};
+
 
 //////////////////////////////////////////////////////////////////////////
 // Globals.
@@ -74,6 +110,9 @@ string D3DDebug_GetLastMessage();
 CRenderer* gRenDev = NULL;
 
 int CRenderer::m_iGeomInstancingThreshold = 0;      // 0 means not set yet
+
+SRenderStatistics* SRenderStatistics::s_pCurrentOutput = nullptr;
+SRenderStatistics* SRenderStatistics::s_pPreviousOutput = nullptr;
 
 #define RENDERER_DEFAULT_FONT "Fonts/default.xml"
 
@@ -89,27 +128,13 @@ SDynTexture_PoolAlloc* g_pSDynTexture_PoolAlloc = 0;
 //#include "FrameProfilers-list.h"
 //#undef PROFILER
 
-/// Used to delete none pre-allocated RenderObject pool elements
-struct SDeleteNonePoolRenderObjs
-{
-	SDeleteNonePoolRenderObjs(CRenderObject* pPoolStart, CRenderObject* pPoolEnd) : m_pPoolStart(pPoolStart), m_pPoolEnd(pPoolEnd) {}
-
-	void operator()(CRenderObject** pData) const
-	{
-		// Delete elements outside of pool range
-		if (*pData && (*pData < m_pPoolStart || *pData > m_pPoolEnd))
-			delete *pData;
-	}
-
-	CRenderObject* m_pPoolStart;
-	CRenderObject* m_pPoolEnd;
-};
-
 CRenderer::CRenderer()
-	: m_bEditor(false)
+	: m_bStopRendererAtFrameEnd(false)
+	, m_bEditor(false)
 	, m_beginFrameCount(0)
-	, m_bStopRendererAtFrameEnd(false)
-{}
+{
+	InitRenderViewPool();
+}
 
 void CRenderer::InitRenderer()
 {
@@ -123,7 +148,6 @@ void CRenderer::InitRenderer()
 	m_bSystemResourcesInit = 0;
 
 	m_bSystemTargetsInit = 0;
-	m_bIsWindowActive    = true;
 
 	m_bShadowsEnabled      = true;
 	m_bCloudShadowsEnabled = true;
@@ -135,29 +159,22 @@ void CRenderer::InitRenderer()
 	m_bVolumetricFogEnabled = false;
 	m_bVolumetricCloudsEnabled = false;
 	m_bDeferredRainEnabled = false;
+	m_bDeferredRainOcclusionEnabled = false;
+	m_bDeferredSnowEnabled = false;
 
+	m_bAllowTerrainLayerBlending = 0;
 	m_nDisableTemporalEffects = 0;
-
-	m_nPoolIndex   = 0;
-	m_nPoolIndexRT = 0;
 
 	m_ReqViewportScale = m_CurViewportScale = m_PrevViewportScale = Vec2(1, 1);
 
 	m_nCurMinAniso        = 1;
 	m_nCurMaxAniso        = 16;
+	m_fCurMipLodBias      = 0.0f;
 	m_wireframe_mode      = R_SOLID_MODE;
 	m_wireframe_mode_prev = R_SOLID_MODE;
-	m_RP.m_StateOr        = 0;
-	m_RP.m_StateAnd       = -1;
 
 	m_pSpriteVerts = NULL;
 	m_pSpriteInds  = NULL;
-
-	m_nativeWidth      = 0;
-	m_nativeHeight     = 0;
-	m_backbufferWidth  = 0;
-	m_backbufferHeight = 0;
-	m_numSSAASamples   = 1;
 
 	CRendererCVars::InitCVars();
 #if RENDERER_SUPPORT_SCALEFORM
@@ -167,7 +184,9 @@ void CRenderer::InitRenderer()
 	// need to do this because the registering process can modify the default value (getting it from the .cfg) and will not notify the call back
 	SetShadowJittering(CV_r_shadow_jittering);
 
+#if !CRY_PLATFORM_DURANGO
 	m_DevMan.Init();
+#endif
 
 	m_nGPU = 1;
 
@@ -185,12 +204,6 @@ void CRenderer::InitRenderer()
 	m_nGraphicsPipeline     = CV_r_GraphicsPipeline;
 	//init_math();
 
-	for (uint32 id = 0; id < RT_COMMAND_BUF_COUNT; ++id)
-	{
-		// Initialize frame id to value different from 0, so that comparasion with frameid initialized to 0, in functions that check cache give nagtive result on first frame.
-		m_RP.m_TI[id].m_nFrameID = 1;
-	}
-
 	m_bPauseTimer = 0;
 	m_fPrevTime   = -1.0f;
 
@@ -202,8 +215,6 @@ void CRenderer::InitRenderer()
 	m_bWaterCaustics = CV_r_watercaustics != 0;
 
 	m_bSwapBuffers = true;
-	for (uint32 id = 0; id < RT_COMMAND_BUF_COUNT; ++id)
-		m_RP.m_TI[id].m_FS.m_bEnable = true;
 
 #if defined(_DEBUG) && CRY_PLATFORM_WINDOWS
 	if (CV_r_printmemoryleaks)
@@ -212,7 +223,7 @@ void CRenderer::InitRenderer()
 	}
 #endif
 
-	m_nUseZpass = CV_r_usezpass;
+	m_nUseZpass = CV_r_UseZPass;
 
 	m_nShadowPoolHeight = m_nShadowPoolWidth = 0;
 
@@ -223,15 +234,13 @@ void CRenderer::InitRenderer()
 	m_cloudShadowBrightness = 1;
 
 	m_volumetricCloudTexId = 0;
+	m_volumetricCloudNoiseTexId = 0;
+	m_volumetricCloudEdgeNoiseTexId = 0;
 
 	m_nGPUs = 1;
 
 	//assert(!(FOB_MASK_AFFECTS_MERGING & 0xffff));
 	//assert(sizeof(CRenderObject) == 256);
-#if !CRY_PLATFORM_64BIT && !CRY_PLATFORM_ANDROID
-	// Disabled this check for ShaderCache Gen, it is only a performacne thingy for last gen consoles anyway
-	//STATIC_CHECK(sizeof(CRenderObject) == 128, CRenderObject);
-#endif
 	STATIC_CHECK(!(FOB_MASK_AFFECTS_MERGING & 0xffff), FOB_MASK_AFFECTS_MERGING);
 
 	if (!g_pSDynTexture_PoolAlloc)
@@ -243,49 +252,7 @@ void CRenderer::InitRenderer()
 	m_pDefaultMaterial        = NULL;
 	m_pTerrainDefaultMaterial = NULL;
 
-	m_ViewMatrix.SetIdentity();
-	m_CameraMatrix.SetIdentity();
-	m_CameraZeroMatrix.SetIdentity();
-
-	for (int i = 0; i < MAX_NUM_VIEWPORTS; ++i)
-	{
-		m_CameraMatrixPrev[i][0].SetIdentity();
-		m_CameraMatrixPrev[i][1].SetIdentity();
-	}
-
-	m_CameraProjMatrixPrev.SetIdentity();
-	m_CameraProjMatrixPrevAvg.SetIdentity();
-	m_CameraMatrixNearest.SetIdentity();
-
-	m_ProjMatrix.SetIdentity();
-	m_TranspOrigCameraProjMatrix.SetIdentity();
-	m_CameraProjMatrix.SetIdentity();
-	m_CameraProjZeroMatrix.SetIdentity();
-	m_InvCameraProjMatrix.SetIdentity();
 	m_IdentityMatrix.SetIdentity();
-
-	m_vProjMatrixSubPixoffset = Vec2(0.0f, 0.0f);
-	m_vSegmentedWorldOffset   = Vec3(ZERO);
-
-	m_RP.m_newOcclusionCameraProj.SetIdentity();
-	m_RP.m_newOcclusionCameraView.SetIdentity();
-
-	for (int i = 0; i < CULLER_MAX_CAMS; i++)
-	{
-		m_RP.m_OcclusionCameraBuffer[i].SetIdentity();
-
-#ifdef CULLER_DEBUG
-		m_RP.m_OcclusionCameraBufferID[i] = -1;
-#endif
-	}
-
-	m_RP.m_nZOcclusionBufferID = -1;
-
-	m_RP.m_nCurrResolveBounds[0] = m_RP.m_nCurrResolveBounds[1] = m_RP.m_nCurrResolveBounds[2] = m_RP.m_nCurrResolveBounds[3] = 0;
-
-	for (int i = 0; i < CRY_ARRAY_COUNT(m_TempMatrices); i++)
-		for (int j = 0; j < CRY_ARRAY_COUNT(m_TempMatrices[0]); j++)
-			m_TempMatrices[i][j].SetIdentity();
 
 	CParserBin::m_bParseFX = true;
 	//CParserBin::m_bEmbeddedSearchInfo = false;
@@ -308,25 +275,6 @@ void CRenderer::InitRenderer()
 
 	m_pTextureManager = new CTextureManager;
 
-	// Init Thread Safe Worker Containers
-	threadID nThreadId = CryGetCurrentThreadId();
-	for (int i = 0; i < RT_COMMAND_BUF_COUNT; ++i)
-	{
-		m_RP.m_TempObjects[i].Init();
-		m_RP.m_TempObjects[i].SetNoneWorkerThreadID(nThreadId);
-	}
-
-	const char *cc_RenderViewName[IRenderView::eViewType_Count] = { "Normal View", "Recursive View", "Shadow View", "BillboardGen View" };
-	for (int i = 0; i < RT_COMMAND_BUF_COUNT; i++)
-	{
-		for (int type = 0; type < IRenderView::eViewType_Count; type++)
-		{
-			string name; name.Format("%s %d", cc_RenderViewName[type], i);
-
-			m_RP.m_pRenderViews[i][type].reset(new CRenderView(name, IRenderView::EViewType(type)));
-		}
-	}
-
 	m_pRT = new SRenderThread;
 	m_pRT->StartRenderThread();
 
@@ -336,6 +284,12 @@ void CRenderer::InitRenderer()
 	// on console some float values in vertex formats can be 16 bit
 	iLog->Log("CRenderer sizeof(Vec2f16)=%" PRISIZE_T " sizeof(Vec3f16)=%" PRISIZE_T, sizeof(Vec2f16), sizeof(Vec3f16));
 	CRenderMesh::Initialize();
+
+	ZeroArray(m_streamZonesRoundId);
+
+	SRenderStatistics::s_pCurrentOutput = &m_frameRenderStats[0];
+	SRenderStatistics::s_pPreviousOutput = &m_frameRenderStats[1];
+	memset(SRenderStatistics::s_pCurrentOutput, 0, sizeof(m_frameRenderStats));
 }
 
 CRenderer::~CRenderer()
@@ -346,7 +300,8 @@ CRenderer::~CRenderer()
 //////////////////////////////////////////////////////////////////////////
 void CRenderer::PostInit()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
+
 	//////////////////////////////////////////////////////////////////////////
 	// Initialize the shader system
 	//////////////////////////////////////////////////////////////////////////
@@ -364,7 +319,14 @@ void CRenderer::PostInit()
 
 	// load all default textures
 	if (!m_bShaderCacheGen && m_pTextureManager)
+	{
+		if (ISystemUserCallback* pUserCallback = gEnv->pSystem->GetUserCallback())
+		{
+			pUserCallback->OnInitProgress("Preloading default textures...");
+		}
+
 		m_pTextureManager->PreloadDefaultTextures();
+	}
 
 	if (!m_bShaderCacheGen)
 	{
@@ -373,9 +335,15 @@ void CRenderer::PostInit()
 
 		// Create system resources while in fast load phase
 		if (bIntroMoviesDuringInit == false)    // don't create resources here when we have a movies during init, else we get concurrent device context access
-			gEnv->pRenderer->InitSystemResources(FRR_SYSTEM_RESOURCES);
-	}
+		{
+			if (ISystemUserCallback* pUserCallback = gEnv->pSystem->GetUserCallback())
+			{
+				pUserCallback->OnInitProgress("Compiling default renderer resources...");
+			}
 
+			gEnv->pRenderer->InitSystemResources(FRR_SYSTEM_RESOURCES);
+		}
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -385,13 +353,14 @@ void CRenderer::PostInit()
 
 void CRenderer::StartRenderIntroMovies()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "Staer Render Intro Movie");
 	assert(m_pIntroMovieRenderer == 0);
 
 #if USE_INTRO_MOVIES
 	// Make sure intro pak is valid and excistion else don't bother rendering them
 	if (!gEnv->pCryPak->OpenPack(PathUtil::GetGameFolder(), INTRO_MOVIES_PAK,
-	  ICryPak::FLAGS_PAK_IN_MEMORY))
+	                             ICryPak::FLAGS_PAK_IN_MEMORY))
 		return;
 
 	gEnv->pCryPak->LoadPakToMemory(INTRO_MOVIES_PAK, ICryPak::eInMemoryPakLocale_GPU);
@@ -433,14 +402,6 @@ void CRenderer::Release()
 	// Reminder for Andrey/AntonKap: this needs to be properly handled
 	//SAFE_DELETE(g_pSDynTexture_PoolAlloc)
 	//g_pSDynTexture_PoolAlloc = NULL;
-
-	for (int i = 0; i < RT_COMMAND_BUF_COUNT; i++)
-	{
-		for (int recursion = 0; recursion < MAX_REND_RECURSION_LEVELS; recursion++)
-		{
-			m_RP.m_pRenderViews[i][recursion].reset();
-		}
-	}
 
 	RemoveSyncWithMainListener(&m_ShadowFrustumMGPUCache);
 	m_ShadowFrustumMGPUCache.Release();
@@ -517,35 +478,26 @@ void CRenderer::RemoveListener(IRendererEventListener* pRendererEventListener)
     iConsole->Help("ShowFps");
    } */
 
-
 //////////////////////////////////////////////////////////////////////////
-
-const bool CRenderer::IsEditorMode() const
-{
-#if CRY_PLATFORM_DESKTOP
-	return (m_bEditor != 0);
-#else
-	return false;
-#endif
-}
-
-const bool CRenderer::IsShaderCacheGenMode() const
-{
-#if CRY_PLATFORM_DESKTOP
-	return (m_bShaderCacheGen != 0);
-#else
-	return false;
-#endif
-}
 
 int CRenderer::GetFrameID(bool bIncludeRecursiveCalls /*=true*/)
 {
-	int nThreadID = m_pRT ? m_pRT->GetThreadList() : 0;
-	if (bIncludeRecursiveCalls)
-		return m_RP.m_TI[nThreadID].m_nFrameID;
-	return m_RP.m_TI[nThreadID].m_nFrameUpdateID;
+	return gEnv->nMainFrameID;
 }
 
+//////////////////////////////////////////////////////////////////////////
+void CRenderer::OnEntityDeleted(IRenderNode* pRenderNode)
+{
+	ExecuteRenderThreadCommand([=]
+	{
+		for (auto& it : m_graphicsPipelines)
+		{
+		  CShadowMapStage* pShadowStage = it.second->GetStage<CShadowMapStage>();
+		  if (pShadowStage)
+				pShadowStage->OnEntityDeleted(pRenderNode);
+		}
+	}, ERenderCommandFlags::LevelLoadingThread_defer);
+}
 
 #pragma pack (push)
 #pragma pack (1)
@@ -559,6 +511,7 @@ typedef struct
 } __PACKED TargaHeader_t;
 #pragma pack (pop)
 
+//////////////////////////////////////////////////////////////////////////
 bool CRenderer::SaveTga(unsigned char* sourcedata, int sourceformat, int w, int h, const char* filename, bool flip) const
 {
 	//assert(0);
@@ -706,31 +659,385 @@ void CRenderer::ResumeDevice()
 	m_pRT->RC_ResumeDevice();
 }
 #endif
-void CRenderer::ForceSwapBuffers()
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+static CryCriticalSection gs_RenderViewLock;
+static const char* cc_RenderViewName[IRenderView::eViewType_Count] = { "Normal View", "Recursive View", "Shadow View", "BillboardGen View" };
+
+void CRenderView::DeleteThis() const
 {
-	m_pRT->RC_ForceSwapBuffers();
-	ForceFlushRTCommands();
+	// const_cast required here because ReturnRenderView needs to perform some cleanup on this.
+	// Ideally we should separate cleanup and actual deletion via some interface on CMultiThreadRefCount
+	gEnv->pRenderer->ReturnRenderView(const_cast<CRenderView*>(this));
 }
 
-void CRenderer::SetState(int State, int AlphaRef /*=-1*/)
+CRenderView* CRenderer::GetOrCreateRenderView(IRenderView::EViewType Type)
 {
-	m_pRT->RC_SetState(State, AlphaRef);
+	return m_pRenderViewPool[Type].GetOrCreateOneElement();
 }
 
-void CRenderer::PushWireframeMode(int mode)
+void CRenderer::ReturnRenderView(CRenderView* pRenderView)
 {
-	m_pRT->RC_PushWireframeMode(mode);
+	pRenderView->Clear();
+	m_pRenderViewPool[pRenderView->GetType()].ReturnToPool(pRenderView);
 }
 
-void CRenderer::PopWireframeMode()
+void CRenderer::DeleteRenderViews()
 {
-	m_pRT->RC_PopWireframeMode();
+	for (int type = 0; type < IRenderView::eViewType_Count; ++type)
+		m_pRenderViewPool[type].ShutDown();
 }
+
+//////////////////////////////////////////////////////////////////////////
+
+static CryCriticalSection gs_contextLock;
+
+CRenderDisplayContext* CRenderer::FindDisplayContext(const SDisplayContextKey& key) threadsafe const
+{
+	if (key == SDisplayContextKey{})
+		return GetBaseDisplayContext();
+
+	AUTO_LOCK(gs_contextLock); // Not thread safe without this
+
+	auto it = m_displayContexts.find(key);
+	if (it != m_displayContexts.end())
+		return it->second.get();
+
+	return nullptr;
+}
+
+std::shared_ptr<CGraphicsPipeline> CRenderer::FindGraphicsPipeline(const SGraphicsPipelineKey& key) threadsafe const
+{
+	CRY_ASSERT(key != SGraphicsPipelineKey::InvalidGraphicsPipelineKey);
+
+	if (key.key == SGraphicsPipelineKey::BaseGraphicsPipelineKey)
+		return m_pBaseGraphicsPipeline;
+
+	AUTO_LOCK(gs_contextLock); // Not thread safe without this
+
+	auto it = m_graphicsPipelines.find(key);
+	if (it != m_graphicsPipelines.end())
+		return it->second;
+
+	return nullptr;
+}
+
+void CRenderer::ResetActiveGraphicsPipeline()
+{
+	m_pActiveGraphicsPipeline = nullptr;
+}
+
+std::shared_ptr<CGraphicsPipeline> CRenderer::SetCurrentGraphicsPipeline(const SGraphicsPipelineKey& key) threadsafe
+{
+	m_pActiveGraphicsPipeline = FindGraphicsPipeline(key);
+	return m_pActiveGraphicsPipeline;
+}
+
+std::pair<bool, SDisplayContextKey> CRenderer::SetCurrentContext(const SDisplayContextKey& key) threadsafe
+{
+	const auto prevKey = m_activeContextKey;
+
+	if (key == SDisplayContextKey{})
+	{
+		SetActiveContext(m_pBaseDisplayContext, {});
+		return {
+						 true, prevKey
+		};
+	}
+
+	AUTO_LOCK(gs_contextLock); // Not thread safe without this
+
+	auto it = m_displayContexts.find(key);
+	if (it == m_displayContexts.end())
+		return {
+						 false, prevKey
+		};
+
+	SetActiveContext(it->second, key);
+	return {
+					 true, prevKey
+	};
+}
+
+SDisplayContextKey CRenderer::AddCustomContext(const CRenderDisplayContextPtr& context) threadsafe
+{
+	SDisplayContextKey key;
+	key.key.emplace<uint32_t>(context->m_uniqueId);
+
+	{
+		AUTO_LOCK(gs_contextLock); // Not thread safe without this
+		m_displayContexts.emplace(std::make_pair(key, context));
+	}
+
+	return key;
+}
+
+SDisplayContextKey CRenderer::CreateSwapChainBackedContext(const SDisplayContextDescription& desc) threadsafe
+{
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
+
+	const int width  = desc.screenResolution.x;
+	const int height = desc.screenResolution.y;
+	const std::string name = desc.type == IRenderer::eViewportType_Default ? "MainView-SwapChain" : "SecView-SwapChain";
+	const bool bMainViewport = desc.type == IRenderer::eViewportType_Default;
+
+	auto pDC = std::make_shared<CSwapChainBackedRenderDisplayContext>(desc, name, m_uniqueDisplayContextId++);
+
+	pDC->m_bMainViewport = bMainViewport;
+	pDC->m_desc.renderFlags |= pDC->m_bMainViewport ? FRT_OVERLAY_DEPTH | FRT_OVERLAY_STENCIL : 0;
+	pDC->m_desc.superSamplingFactor.x = std::max<int>(1, desc.superSamplingFactor.x);
+	pDC->m_desc.superSamplingFactor.y = std::max<int>(1, desc.superSamplingFactor.y);
+	pDC->m_desc.screenResolution.x = width;
+	pDC->m_desc.screenResolution.y = height;
+
+	pDC->CreateSwapChain(desc.handle, gcpRendD3D->IsFullscreen(), desc.vsync);
+
+	SDisplayContextKey key;
+	if (desc.handle)
+		key.key.emplace<CRY_HWND>(desc.handle);
+	else
+		key.key.emplace<uint32_t>(pDC->m_uniqueId);
+
+	if (width * height)
+	{
+		gRenDev->ExecuteRenderThreadCommand([=]
+		{
+			if (pDC->GetDisplayResolution() == Vec2i(width, height))
+				return;
+
+#ifdef _DEBUG
+			CryLog("CreateSwapChainBackedContext(%d, %d) from [%d, %d]", width, height, pDC->GetDisplayResolution()[0], pDC->GetDisplayResolution()[1]);
+#endif
+
+			pDC->ChangeDisplayResolution(width, height);
+		}, ERenderCommandFlags::FlushAndWait);
+	}
+
+	{
+		AUTO_LOCK(gs_contextLock); // Not thread safe without this
+		m_displayContexts.emplace(std::make_pair(key, std::move(pDC)));
+	}
+	SetCurrentContext(key);
+
+	return key;
+}
+
+SGraphicsPipelineKey CRenderer::CreateGraphicsPipeline(const SGraphicsPipelineDescription& desc)
+{
+	SGraphicsPipelineKey key;
+
+	gRenDev->ExecuteRenderThreadCommand([=, &key]
+	{
+		key = RT_CreateGraphicsPipeline(desc);
+	}, ERenderCommandFlags::FlushAndWait);
+
+	return key;
+}
+
+SGraphicsPipelineKey CRenderer::RT_CreateGraphicsPipeline(const SGraphicsPipelineDescription& desc)
+{
+	CRY_ASSERT(desc.type != EGraphicsPipelineType::Invalid);
+
+	std::shared_ptr<CGraphicsPipeline> pNewGraphicsPipeline;
+	SGraphicsPipelineKey key = m_uniquePipelineCounter;
+	std::string uniqueCtrStr = std::to_string(m_uniquePipelineCounter);
+
+	switch (desc.type)
+	{
+	case EGraphicsPipelineType::Standard:
+		pNewGraphicsPipeline = std::make_shared<CStandardGraphicsPipeline>(desc, "Standard_" + uniqueCtrStr, key);
+		break;
+	case EGraphicsPipelineType::Minimum:
+		pNewGraphicsPipeline = std::make_shared<CMinimumGraphicsPipeline>(desc, "Minimum_" + uniqueCtrStr, key);
+		break;
+	case EGraphicsPipelineType::Billboard:
+		pNewGraphicsPipeline = std::make_shared<CBillboardGraphicsPipeline>(desc, "Billboard_" + uniqueCtrStr, key);
+		break;
+	case EGraphicsPipelineType::Mobile:
+		pNewGraphicsPipeline = std::make_shared<CMobileGraphicsPipeline>(desc, "Mobile_" + uniqueCtrStr, key);
+		break;
+	case EGraphicsPipelineType::CharacterTool:
+		pNewGraphicsPipeline = std::make_shared<CCharacterToolGraphicsPipeline>(desc, "CharacterTool_" + uniqueCtrStr, key);
+		break;
+	}
+
+	pNewGraphicsPipeline->Init();
+	if (!pNewGraphicsPipeline->IsInitialized())
+	{
+		return SGraphicsPipelineKey::InvalidGraphicsPipelineKey;
+	}
+
+	m_graphicsPipelines.emplace(std::make_pair(key, std::move(pNewGraphicsPipeline)));
+	m_uniquePipelineCounter++;
+
+	return key;
+}
+
+void CRenderer::ResizeContext(CRenderDisplayContext* pDC, int width, int height) threadsafe
+{
+	if (pDC->GetDisplayResolution() != Vec2i(width, height))
+	{
+		gcpRendD3D->ChangeViewport(pDC, 0, 0, width, height);
+
+		// Must be deferred to Render Thread
+		ExecuteRenderThreadCommand([=] { EF_DisableTemporalEffects(); },
+		                           ERenderCommandFlags::None
+		                           );
+	}
+}
+
+void CRenderer::ResizeContext(const SDisplayContextKey& key, int width, int height) threadsafe
+{
+	CRenderDisplayContext* pDC = FindDisplayContext(key);
+	if (pDC)
+		ResizeContext(pDC, width, height);
+}
+
+void CRenderer::ResizePipelineAndContext(const SGraphicsPipelineKey& graphicsPipelineKey, const SDisplayContextKey& displayContextKey, int width, int height) threadsafe
+{
+	ResizeContext(displayContextKey, width, height);
+	ResizeGraphicsPipeline(graphicsPipelineKey, width, height);
+}
+
+void CRenderer::ResizeGraphicsPipeline(const SGraphicsPipelineKey& key, int width, int height) threadsafe
+{
+	std::shared_ptr<CGraphicsPipeline> pGP = FindGraphicsPipeline(key);
+	if (pGP)
+		ResizeGraphicsPipeline(pGP, width, height);
+}
+
+void CRenderer::ResizeGraphicsPipeline(std::shared_ptr<CGraphicsPipeline> graphicsPipeline, int width, int height) threadsafe
+{
+	// Must be deferred to Render Thread
+	ExecuteRenderThreadCommand([=]
+	{
+		Vec2i resolution = graphicsPipeline->GetRenderResolution();
+		if (resolution.x != width || resolution.y != height)
+		{
+		  graphicsPipeline->Resize(width, height);
+		}
+	}, ERenderCommandFlags::None);
+}
+
+bool CRenderer::DeleteContext(const SDisplayContextKey& key) threadsafe
+{
+	// Make sure there are no outstanding render commands which use the current viewport
+	FlushRTCommands(true, true, true);
+
+	AUTO_LOCK(gs_contextLock); // Not thread safe without this
+
+	auto it = m_displayContexts.find(key);
+	if (it == m_displayContexts.end())
+		return false;
+
+	auto deletedContext = std::move(it->second);
+	m_displayContexts.erase(it);
+
+	// If deleting active context, set active context to some other context
+	if (m_pActiveContext == deletedContext)
+	{
+		const auto* pair = m_displayContexts.size() ? &*m_displayContexts.begin() : nullptr;
+		SetActiveContext(pair->second, pair->first);
+	}
+
+	return true;
+}
+
+bool CRenderer::RT_DeleteGraphicsPipeline(const SGraphicsPipelineKey& key)
+{
+	auto it = m_graphicsPipelines.find(key);
+	if (it == m_graphicsPipelines.end())
+		return false;
+
+	auto deletedPipeline = std::move(it->second);
+	m_graphicsPipelines.erase(it);
+
+	return true;
+}
+
+bool CRenderer::DeleteGraphicsPipeline(const SGraphicsPipelineKey& key) threadsafe
+{
+	bool res;
+
+	gRenDev->ExecuteRenderThreadCommand([=, &res]
+	{
+		res = RT_DeleteGraphicsPipeline(key);
+	}, ERenderCommandFlags::FlushAndWait);
+
+	return res;
+}
+
+void CRenderer::SetActiveContext(const std::shared_ptr<CRenderDisplayContext>& ctx, const SDisplayContextKey& key)
+{
+	m_pActiveContext = ctx;
+	m_activeContextKey = key;
+}
+
+CRenderDisplayContext* CRenderer::GetActiveDisplayContext() const
+{
+	return m_pActiveContext ? m_pActiveContext.get() : m_pBaseDisplayContext.get();
+}
+
+CSwapChainBackedRenderDisplayContext* CRenderer::GetBaseDisplayContext() const
+{
+	return m_pBaseDisplayContext.get();
+}
+
+const std::shared_ptr<CGraphicsPipeline>& CRenderer::GetActiveGraphicsPipeline() const
+{
+	ASSERT_IS_RENDER_THREAD(m_pRT);
+	return m_pActiveGraphicsPipeline;
+}
+
+CRY_HWND CRenderer::GetCurrentContextHWND()
+{
+	return m_pActiveContext && m_pActiveContext->IsSwapChainBacked() ?
+	       static_cast<CSwapChainBackedRenderDisplayContext*>(m_pActiveContext.get())->GetWindowHandle() :
+	       GetHWND();
+}
+
+#ifdef CRY_PLATFORM_WINDOWS
+RectI CRenderer::GetDefaultContextWindowCoordinates()
+{
+	HWND hWnd = (HWND)m_pBaseDisplayContext->GetWindowHandle();
+	{
+		AUTO_LOCK(gs_contextLock); // Not thread safe without this
+
+		for (const auto& pair : m_displayContexts)
+		{
+			if (pair.second->IsMainViewport() && stl::holds_alternative<CRY_HWND>(pair.first.key))
+				hWnd = (HWND)stl::get<CRY_HWND>(pair.first.key);
+		}
+	}
+
+	RECT rcClient;
+	::GetClientRect(hWnd, &rcClient);
+	::ClientToScreen(hWnd, (LPPOINT)&rcClient.left);
+	::ClientToScreen(hWnd, (LPPOINT)&rcClient.right);
+
+	return RectI
+				 {
+					 rcClient.left,
+					 rcClient.top,
+					 static_cast<int>(m_pBaseDisplayContext->GetDisplayResolution().x),
+					 static_cast<int>(m_pBaseDisplayContext->GetDisplayResolution().y) };
+}
+#endif
+
+bool CRenderer::IsCurrentContextMainVP()
+{
+	return m_pActiveContext ? m_pActiveContext->IsMainViewport() : true;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void CRenderer::InitSystemResources(int nFlags)
 {
-	LOADING_TIME_PROFILE_SECTION;
-	if (!m_bSystemResourcesInit || m_bDeviceLost == 2)
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "Init System Resources");
+
+	if (!m_bSystemResourcesInit)
 	{
 		iLog->Log("*** Init system render resources ***");
 
@@ -738,16 +1045,22 @@ void CRenderer::InitSystemResources(int nFlags)
 		CTexture::s_bPrecachePhase = false;
 
 		ForceFlushRTCommands();
+
 		m_cEF.mfPreloadBinaryShaders();
 		m_cEF.mfLoadBasicSystemShaders();
 		m_cEF.mfLoadDefaultSystemShaders();
 
-		CTexture::LoadScaleformSystemTextures();
-		CTexture::LoadDefaultSystemTextures();
-		m_pRT->RC_CreateRenderResources();
-		m_pRT->RC_PrecacheDefaultShaders();
-		m_pRT->RC_CreateSystemTargets();
-		ForceFlushRTCommands();
+		//	if (nFlags & FRR_SYSTEM_RESOURCES)
+		{
+			ExecuteRenderThreadCommand([]
+			{
+#if CRY_RENDERER_GNM
+				gGnmDevice->GnmCreateBuiltinPrograms();
+#endif
+				gRenDev->RT_CreateRenderResources();
+				gRenDev->RT_PrecacheDefaultShaders();
+			}, ERenderCommandFlags::FlushAndWait);
+		}
 
 		/*m_pRT->RC_BeginFrame();
 		   SetState(GS_BLSRC_SRCALPHA|GS_BLDST_ONEMINUSSRCALPHA|GS_NODEPTHTEST);
@@ -759,24 +1072,23 @@ void CRenderer::InitSystemResources(int nFlags)
 
 		CTexture::s_bPrecachePhase = bPrecache;
 
-		if (m_bDeviceLost == 2)
-			m_bDeviceLost = 0;
 		m_bSystemResourcesInit = 1;
 	}
 }
 
-void CRenderer::FreeResources(int nFlags)
+void CRenderer::FreeSystemResources(int nFlags)
 {
 	iLog->Log("*** Start clearing render resources ***");
 
-	if (nFlags == FRR_PERMANENT_RENDER_OBJECTS)
-	{
-		m_pRT->RC_ReleaseRenderResources(nFlags);
-		return;
-	}
-
-	if (m_bEditor)
-		return;
+	// validate flag combinations
+#if defined(USE_CRY_ASSERT)
+	constexpr int requiredForSystem          = (FRR_SYSTEM | FRR_OBJECTS);
+	constexpr int requiredForSystemResources = (FRR_SYSTEM_RESOURCES | FRR_DELETED_MESHES | FRR_FLUSH_TEXTURESTREAMING | FRR_RP_BUFFERS | FRR_POST_EFFECTS | FRR_OBJECTS | FRR_PERMANENT_RENDER_OBJECTS);
+	constexpr int requiredForTextures        = (FRR_SYSTEM_RESOURCES | FRR_DELETED_MESHES | FRR_FLUSH_TEXTURESTREAMING | FRR_RP_BUFFERS | FRR_POST_EFFECTS | FRR_OBJECTS | FRR_PERMANENT_RENDER_OBJECTS | FRR_TEXTURES);
+	CRY_ASSERT((nFlags & FRR_SYSTEM) == 0 || ((nFlags & requiredForSystem) == requiredForSystem));
+	CRY_ASSERT((nFlags & FRR_SYSTEM_RESOURCES) == 0 || ((nFlags & requiredForSystemResources) == requiredForSystemResources));
+	CRY_ASSERT((nFlags & FRR_TEXTURES) == 0 || ((nFlags & requiredForTextures) == requiredForTextures));
+#endif
 
 	CTimeValue tBegin = gEnv->pTimer->GetAsyncTime();
 
@@ -787,107 +1099,27 @@ void CRenderer::FreeResources(int nFlags)
 #endif
 	CHWShader::mfFlushPendedShadersWait(-1);
 
-	EF_ReleaseDeferredData();
-
-	if (nFlags & FRR_FLUSH_TEXTURESTREAMING)
-	{
-		m_pRT->RC_FlushTextureStreaming(true);
-	}
-
-	if (nFlags & FRR_DELETED_MESHES)
-	{
-		for (size_t i = 0; i < MAX_RELEASED_MESH_FRAMES; ++i)
-			m_pRT->RC_ForceMeshGC(true, true);
-		ForceFlushRTCommands();
-	}
-
-	if (nFlags & FRR_SHADERS)
-		gRenDev->m_cEF.ShutDown();
-
 	if (nFlags & FRR_RP_BUFFERS)
 	{
+		ExecuteRenderThreadCommand([=]
+		{
+			EF_ReleaseDeferredData(m_pActiveGraphicsPipeline.get());
+		}, ERenderCommandFlags::FlushAndWait);
+
 		ForceFlushRTCommands();
+		DeleteRenderViews();
+	}
 
-		for (int i = 0; i < RT_COMMAND_BUF_COUNT; ++i)
-		{
-			m_RP.m_fogVolumeContibutions[i].clear();
-		}
-
-		for (int i = 0; i < sizeof(m_RP.m_RIs) / sizeof(m_RP.m_RIs[0]); ++i)
-			m_RP.m_RIs[i].Free();
-
-		// Reset render views
-		for (int i = 0; i < RT_COMMAND_BUF_COUNT; i++)
-		{
-			for (int recursion = 0; recursion < MAX_REND_RECURSION_LEVELS; recursion++)
-			{
-				m_RP.m_pRenderViews[i][recursion]->Clear();
-			}
-		}
-
-		for (ShadowFrustumListsCache::iterator it = m_FrustumsCache.begin();
-		  it != m_FrustumsCache.end(); ++it)
-			SAFE_DELETE(it->second);
-		}
-
-	if (nFlags & (FRR_SYSTEM | FRR_OBJECTS))
+	if (nFlags & FRR_OBJECTS)
 	{
 		CMotionBlur::FreeData();
 
 		for (int i = 0; i < 3; ++i)
 			m_SkinningDataPool[i].FreePoolMemory();
-
-		ForceFlushRTCommands();
-
-		// Get object pool range
-		CRenderObject* pObjPoolStart = &m_RP.m_ObjectsPool[0];
-		CRenderObject* pObjPoolEnd   = &m_RP.m_ObjectsPool[m_RP.m_nNumObjectsInPool * RT_COMMAND_BUF_COUNT];
-
-		// Delete all items that have not been allocated from the object pool
-		for (int i = 0; i < RT_COMMAND_BUF_COUNT; i++)
-		{
-			m_RP.m_TempObjects[i].clear(SDeleteNonePoolRenderObjs(pObjPoolStart, pObjPoolEnd));
-		}
-	}
-
-	if (nFlags & (FRR_TEXTURES | FRR_SYSTEM))
-	{
-		m_pRT->RC_ReleaseGraphicsPipeline();
-		ForceFlushRTCommands();
-
-		if (nFlags & FRR_TEXTURES)
-		{
-			ForceFlushRTCommands();
-			CTexture::ShutDown();
-		}
-
-		if (nFlags & FRR_SYSTEM)
-		{
-			for (uint32 j = 0; j < RT_COMMAND_BUF_COUNT; j++)
-			{
-				m_RP.m_TempObjects[j].clear();
-			}
-			if (m_RP.m_ObjectsPool)
-			{
-				CryModuleMemalignFree(m_RP.m_ObjectsPool);
-				m_RP.m_ObjectsPool = NULL;
-				SAFE_DELETE(m_RP.m_pIdendityRenderObject);
-			}
-			FX_PipelineShutdown();
-		}
-	}
-
-	if (nFlags & FRR_POST_EFFECTS)
-	{
-		m_pRT->RC_ReleasePostEffects();
-		ForceFlushRTCommands();
 	}
 
 	if (nFlags & FRR_SYSTEM_RESOURCES)
 	{
-		m_pRT->RC_ReleaseGraphicsPipeline();
-		ForceFlushRTCommands();
-
 		CRenderMesh::ClearJobResources();
 
 		// Free sprite vertices (indices are packed into the same buffer so no need to free them explicitly);
@@ -895,79 +1127,59 @@ void CRenderer::FreeResources(int nFlags)
 		m_pSpriteVerts = NULL;
 		m_pSpriteInds  = NULL;
 
-		m_p3DEngineCommon.m_RainOccluders.Release(true);
-		m_p3DEngineCommon.m_CausticInfo.Release();
-
-		m_pRT->RC_UnbindResources();
-		ForceFlushRTCommands();
-
-		m_pRT->RC_ResetGlass();
-		ForceFlushRTCommands();
-
-		m_pRT->RC_ForceMeshGC(true, true);
-		ForceFlushRTCommands();
-
-		m_cEF.mfReleaseSystemShaders();
-		ForceFlushRTCommands();
-
-		m_pRT->RC_ReleaseRenderResources(nFlags);
-		ForceFlushRTCommands();
-
-		if (m_pPostProcessMgr)
-			m_pPostProcessMgr->ReleaseResources();
-		ForceFlushRTCommands();
-
-		m_pRT->RC_FlushTextureStreaming(true);
-		ForceFlushRTCommands();
-
-		m_pRT->RC_ReleaseSystemTextures();
-		ForceFlushRTCommands();
-
-		m_pRT->RC_UnbindTMUs();
-		ForceFlushRTCommands();
-		CTexture::ResetTMUs();
-
-		CRenderElement::Cleanup();
-		ForceFlushRTCommands();
-
-		// sync dev buffer only once per frame, to prevent syncing to the currently rendered frame
-		// which would result in a deadlock
-		if (nFlags & (FRR_SYSTEM_RESOURCES | FRR_DELETED_MESHES))
+		for (int i = 0; i < RT_COMMAND_BUF_COUNT; ++i)
 		{
-			m_pRT->RC_DevBufferSync();
-			ForceFlushRTCommands();
+			m_p3DEngineCommon[i].m_RainOccluders.Release();
+			m_p3DEngineCommon[i].m_CausticInfo.Release();
+		}
+
+		for (uint i = 0; i < CLightStyle::s_LStyles.Num(); i++)
+		{
+			delete CLightStyle::s_LStyles[i];
+		}
+		CLightStyle::s_LStyles.Free();
+	}
+
+	if (nFlags & FRR_SYSTEM_RESOURCES)
+	{
+		if (m_bSystemResourcesInit)
+		{
+			// Now pass control to render thread and release render thread resources
+			ExecuteRenderThreadCommand([=]
+			{
+				gRenDev->RT_ReleaseRenderResources(nFlags);
+			}, ERenderCommandFlags::FlushAndWait);
+
+			m_bSystemResourcesInit = 0;
 		}
 
 		PrintResourcesLeaks();
-
-		if (!m_bDeviceLost)
-			m_bDeviceLost = 2;
-		m_bSystemResourcesInit = 0;
-
+	}
+	else if (nFlags & (FRR_FLUSH_TEXTURESTREAMING | FRR_PERMANENT_RENDER_OBJECTS))
+	{
+		// Now pass control to render thread and release render thread resources
+		ExecuteRenderThreadCommand([=]
+		{
+			gRenDev->RT_ReleaseRenderResources(nFlags);
+		}, ERenderCommandFlags::FlushAndWait);
 	}
 
 	if (nFlags == FRR_ALL)
 	{
-		ForceFlushRTCommands();
 		CRenderElement::ShutDown();
 	}
-	else if (nFlags & FRR_RENDERELEMENTS)
-	{
-		CRenderElement::Cleanup();
-	}
-
-	if ((nFlags & FRR_RESTORE) && !(nFlags & FRR_SYSTEM))
-		m_cEF.mfInit();
 
 	CTimeValue tDeltaTime = gEnv->pTimer->GetAsyncTime() - tBegin;
 	iLog->Log("*** Clearing render resources took %.1f msec ***", tDeltaTime.GetMilliSeconds());
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 Vec2 CRenderer::SetViewportDownscale(float xscale, float yscale)
 {
 #if CRY_PLATFORM_WINDOWS
 	// refuse to downscale in editor or if MSAA is enabled
-	if (gEnv->IsEditor() || m_RP.IsMSAAEnabled())
+	if (gEnv->IsEditor() || IsMSAAEnabled())
 	{
 		m_ReqViewportScale = Vec2(1, 1);
 		return m_ReqViewportScale;
@@ -982,15 +1194,15 @@ Vec2 CRenderer::SetViewportDownscale(float xscale, float yscale)
 	}
 #endif
 
-	float fWidth  = float(GetWidth());
-	float fHeight = float(GetHeight());
+	float fWidth  = float(CRendererResources::s_renderWidth);
+	float fHeight = float(CRendererResources::s_renderHeight);
 
-	int xres = int(fWidth * xscale);
+	int xres = int(fWidth  * xscale);
 	int yres = int(fHeight * yscale);
 
 	// clamp to valid value
-	xres = CLAMP(xres, 128, GetWidth());
-	yres = CLAMP(yres, 128, GetHeight());
+	xres = CLAMP(xres, 128, CRendererResources::s_renderWidth);
+	yres = CLAMP(yres, 128, CRendererResources::s_renderHeight);
 
 	// round down to multiple of 8
 	xres &= ~0x7;
@@ -1023,12 +1235,12 @@ EScreenAspectRatio CRenderer::GetScreenAspect(int nWidth, int nHeight)
 	return eSA;
 }
 
-bool CRenderer::WriteTGA(byte* dat, int wdt, int hgt, const char* name, int src_bits_per_pixel, int dest_bits_per_pixel)
+bool CRenderer::WriteTGA(const byte* dat, int wdt, int hgt, const char* name, int src_bits_per_pixel, int dest_bits_per_pixel)
 {
 	return ::WriteTGA((byte*)dat, wdt, hgt, name, src_bits_per_pixel, dest_bits_per_pixel);
 }
 
-bool CRenderer::WriteDDS(byte* dat, int wdt, int hgt, int Size, const char* nam, ETEX_Format eFDst, int NumMips)
+bool CRenderer::WriteDDS(const byte* dat, int wdt, int hgt, int Size, const char* nam, ETEX_Format eFDst, int NumMips)
 {
 #if CRY_PLATFORM_WINDOWS
 	bool bRet = true;
@@ -1046,17 +1258,18 @@ bool CRenderer::WriteDDS(byte* dat, int wdt, int hgt, int Size, const char* nam,
 		}
 		dat = data;
 	}
-	char name[256];
-	fpStripExtension(nam, name);
-	cry_strcat(name, ".dds");
 
 	bool bMips = false;
 	if (NumMips != 1)
 		bMips = true;
-	int nDxtSize;
-	byte* dst = CTexture::Convert(dat, wdt, hgt, NumMips, eTF_R8G8B8A8, eFDst, NumMips, nDxtSize, true);
+	uint32 nDxtSize;
+	const byte* dst = CTexture::Convert(dat, wdt, hgt, NumMips, eTF_R8G8B8A8, eFDst, NumMips, nDxtSize, true);
 	if (dst)
 	{
+		char name[256];
+		cry_strcpy(name, nam);
+		PathUtil::ReplaceExtension(name, "dds");
+
 		::WriteDDS(dst, wdt, hgt, 1, name, eFDst, NumMips, eTT_2D);
 		delete[] dst;
 	}
@@ -1085,14 +1298,14 @@ string* CRenderer::EF_GetShaderNames(int& nNumShaders)
 	return nNumShaders ? &m_cEF.m_ShaderNames[0] : NULL;
 }
 
-IShader* CRenderer::EF_LoadShader (const char* name, int flags, uint64 nMaskGen)
+IShader* CRenderer::EF_LoadShader(const char* name, int flags, uint64 nMaskGen)
 {
 	return m_cEF.mfForName(name, flags, NULL, nMaskGen);
 }
 
 void CRenderer::EF_SetShaderQuality(EShaderType eST, EShaderQuality eSQ)
 {
-	m_pRT->RC_SetShaderQuality(eST, eSQ);
+	ExecuteRenderThreadCommand([=] { this->m_cEF.RT_SetShaderQuality(eST, eSQ); }, ERenderCommandFlags::FlushAndWait);
 
 	if (gEnv->p3DEngine)
 		gEnv->p3DEngine->GetMaterialManager()->RefreshMaterialRuntime();
@@ -1120,24 +1333,24 @@ const char* CRenderer::EF_GetStringFromShaderGlobalMaskGen(const char* szShaderN
 	return m_cEF.mfGetShaderBitNamesFromGlobalMaskGen(nMaskGen);
 }
 
-SShaderItem CRenderer::EF_LoadShaderItem (const char* szName, bool bShare, int flags, SInputShaderResources* Res, uint64 nMaskGen, const SLoadShaderItemArgs* pArgs)
+SShaderItem CRenderer::EF_LoadShaderItem(const char* szName, bool bShare, int flags, SInputShaderResources* Res, uint64 nMaskGen, const SLoadShaderItemArgs* pArgs)
 {
-	LOADING_TIME_PROFILE_SECTION_ARGS(szName);
+	CRY_PROFILE_FUNCTION_ARG(PROFILE_LOADING_ONLY, szName);
 
 	return m_cEF.mfShaderItemForName(szName, bShare, flags, Res, nMaskGen, pArgs);
 }
 
 //////////////////////////////////////////////////////////////////////////
-bool CRenderer::EF_ReloadFile_Request (const char* szFileName)
+bool CRenderer::EF_ReloadFile_Request(const char* szFileName)
 {
 	// Replace .tif extensions with .dds extensions.
 	char realName[MAX_PATH + 1];
 	int  nameLength = __min(strlen(szFileName), size_t(MAX_PATH));
 	memcpy(realName, szFileName, nameLength);
 	realName[nameLength] = 0;
-	static const char* tifExtension    = "tif";
-	static const char* ddsExtension    = "dds";
-	static const int   extensionLength = 3;
+	static const char* tifExtension    = ".tif"; // Must start with "." to distinguish from ".*tif"
+	static const char* ddsExtension    = ".dds";
+	static const int   extensionLength = 4;
 
 	if (nameLength >= extensionLength && memcmp(realName + nameLength - extensionLength, tifExtension, extensionLength) == 0)
 		memcpy(realName + nameLength - extensionLength, ddsExtension, extensionLength);
@@ -1157,77 +1370,20 @@ bool CRenderer::EF_ReloadFile_Request (const char* szFileName)
 	//TODO replace this with a single function get file type
 	//function should return and enum and the following code replaced with a switch statement
 	if (!stricmp(extn, ".dds"))
-	{
-		return CTexture::ReloadFile_Request(realName);
-	}
-	return false;
+		CTexture::ReloadFile_Request(realName);
+
+	return true; // Still, it can fail later, check FT_FAILED
 }
 
-bool CRenderer::EF_ReloadFile (const char* szFileName)
+bool CRenderer::EF_ReloadFile(const char* szFileName)
 {
-	// Replace .tif extensions with .dds extensions.
-	char realName[MAX_PATH + 1];
-	int  nameLength = __min(strlen(szFileName), size_t(MAX_PATH));
-	memcpy(realName, szFileName, nameLength);
-	realName[nameLength] = 0;
-	static const char* tifExtension    = "tif";
-	static const char* ddsExtension    = "dds";
-	static const int   extensionLength = 3;
-
-#if defined(CRY_ENABLE_RC_HELPER)
-	if (nameLength >= extensionLength && (memcmp(realName + nameLength - extensionLength, tifExtension, extensionLength) == 0 ||
-	  memcmp(realName + nameLength - extensionLength, ddsExtension, extensionLength) == 0))
-	{
-		// Usually reloading a dds will automatically trigger the resource compiler if necessary to
-		// compile the .tif into a .dds. However, this does not happen if texture streaming is
-		// enabled, so we explicitly run the resource compiler here.
-		memcpy(realName + nameLength - extensionLength, tifExtension, extensionLength);
-
-		char unixNameBuffer[MAX_PATH + 1];
-		fpConvertDOSToUnixName(unixNameBuffer, realName);
-
-		char gameFolderPath[256];
-		cry_strcpy(gameFolderPath, PathUtil::GetGameFolder());
-		int gameFolderPathLength = strlen(gameFolderPath);
-		if (gameFolderPathLength > 0 && gameFolderPath[gameFolderPathLength - 1] == '\\')
-		{
-			gameFolderPath[gameFolderPathLength - 1] = '/';
-		}
-		else if (gameFolderPathLength > 0 && gameFolderPath[gameFolderPathLength - 1] != '/')
-		{
-			gameFolderPath[gameFolderPathLength++] = '/';
-			gameFolderPath[gameFolderPathLength]   = 0;
-		}
-
-		char* gameRelativePath = unixNameBuffer;
-		if (strlen(gameRelativePath) >= (uint32)gameFolderPathLength && memcmp(gameRelativePath, gameFolderPath, gameFolderPathLength) == 0)
-			gameRelativePath += gameFolderPathLength;
-
-		char buffer[512];
-		return CTextureCompiler::GetInstance().ProcessTextureIfNeeded(gameRelativePath, buffer, sizeof(buffer));
-	}
-#endif //defined(CRY_ENABLE_RC_HELPER)
-
-	if (nameLength >= extensionLength && memcmp(realName + nameLength - extensionLength, tifExtension, extensionLength) == 0)
-		memcpy(realName + nameLength - extensionLength, ddsExtension, extensionLength);
-
-	char nmf[512];
-	char drn[512];
-	char drv[16];
-	char dirn[512];
-	char fln[128];
-	char extn[16];
-	_splitpath(realName, drv, dirn, fln, extn);
-	cry_strcpy(drn, drv);
-	cry_strcat(drn, dirn);
-	cry_strcpy(nmf, fln);
-	cry_strcat(nmf, extn);
+	const char* szExtension = PathUtil::GetExt(szFileName);
 
 	//TODO replace this with a single function get file type
 	//function should return and enum and the following code replaced with a switch statement
-	if (stricmp(extn, ".cgf") == 0)
+	if (!stricmp(szExtension, "cgf"))
 	{
-		IStatObj* pStatObjectToReload = gEnv->p3DEngine->FindStatObjectByFilename(realName);
+		IStatObj* pStatObjectToReload = gEnv->p3DEngine->FindStatObjectByFilename(szFileName);
 		if (pStatObjectToReload)
 		{
 			pStatObjectToReload->Refresh(FRO_GEOMETRY | FRO_SHADERS | FRO_TEXTURES);
@@ -1235,24 +1391,42 @@ bool CRenderer::EF_ReloadFile (const char* szFileName)
 		}
 		return false;
 	}
-	else if (!stricmp(extn, ".cfx") || (!CV_r_shadersignoreincludeschanging && !stricmp(extn, ".cfi")))
+	else if (!stricmp(szExtension, "cfx") || (!CV_r_shadersignoreincludeschanging && !stricmp(szExtension, "cfi")))
 	{
 		gRenDev->m_cEF.m_Bin.InvalidateCache();
 		// This is a temporary fix so that shaders would reload during hot update.
-		bool bRet = gRenDev->m_cEF.mfReloadAllShaders(FRO_SHADERS, 0);
+		bool bRet = gRenDev->m_cEF.mfReloadAllShaders(FRO_SHADERS, 0, gRenDev->GetMainFrameID());
 		if (gEnv && gEnv->p3DEngine)
 			gEnv->p3DEngine->UpdateShaderItems();
 		return bRet;
 		//    return gRenDev->m_cEF.mfReloadFile(drn, nmf, FRO_SHADERS);
 	}
-	else if (!stricmp(extn, ".tif") || !stricmp(extn, ".hdr") || !stricmp(extn, ".tga") || !stricmp(extn, ".pcx") || !stricmp(extn, ".dds") || !stricmp(extn, ".jpg") || !stricmp(extn, ".gif") || !stricmp(extn, ".bmp"))
+	else if (!stricmp(szExtension, "tif") || !stricmp(szExtension, "hdr") || !stricmp(szExtension, "tga") || !stricmp(szExtension, "pcx")
+	         || !stricmp(szExtension, "dds") || !stricmp(szExtension, "jpg") || !stricmp(szExtension, "gif") || !stricmp(szExtension, "bmp"))
 	{
-		return CTexture::ReloadFile(realName);
+		string correctedName = PathUtil::ReplaceExtension(szFileName, "dds");
+
+#if !defined(CRY_ENABLE_RC_HELPER)
+		CTexture::ReloadFile(correctedName);
+		return true; // Still, it can fail later, check FT_FAILED
+#else
+		if (ITexture* pTexture = gcpRendD3D->EF_GetTextureByName(correctedName))
+		{
+			CTexture::ReloadFile(correctedName);
+			return true; // Still, it can fail later, check FT_FAILED
+		}
+		else
+		{
+			char buffer[512];
+			return CTextureCompiler::GetInstance().ProcessTextureIfNeeded(szFileName, buffer, sizeof(buffer), false) != CTextureCompiler::EResult::Failed;
+		}
+#endif //defined(CRY_ENABLE_RC_HELPER)
+
 	}
 #if defined(USE_GEOM_CACHES)
-	else if (!stricmp(extn, ".cax"))
+	else if (!stricmp(szExtension, "cax"))
 	{
-		IGeomCache* pGeomCache = gEnv->p3DEngine->FindGeomCacheByFilename(realName);
+		IGeomCache* pGeomCache = gEnv->p3DEngine->FindGeomCacheByFilename(szFileName);
 		if (pGeomCache)
 		{
 			pGeomCache->Reload();
@@ -1262,12 +1436,12 @@ bool CRenderer::EF_ReloadFile (const char* szFileName)
 	return false;
 }
 
-void CRenderer::EF_ReloadShaderFiles (int nCategory)
+void CRenderer::EF_ReloadShaderFiles(int nCategory)
 {
 	//gRenDev->m_cEF.mfLoadFromFiles(nCategory);
 }
 
-void CRenderer::EF_ReloadTextures ()
+void CRenderer::EF_ReloadTextures()
 {
 	CTexture::ReloadTextures();
 }
@@ -1277,12 +1451,17 @@ _smart_ptr<IImageFile> CRenderer::EF_LoadImage(const char* szFileName, uint32 nF
 	return CImageFile::mfLoad_file(szFileName, nFlags);
 }
 
-bool CRenderer::EF_RenderEnvironmentCubeHDR (int size, Vec3& Pos, TArray<unsigned short>& vecData)
+DynArray<uint16_t> CRenderer::EF_RenderEnvironmentCubeHDR(int size, const Vec3& Pos)
 {
-	return CTexture::RenderEnvironmentCMHDR(size, Pos, vecData);
+	return CTexture::RenderEnvironmentCMHDR(size, Pos);
 }
 
-int CRenderer::EF_LoadLightmap (const char* name)
+bool CRenderer::WriteTIFToDisk(const void* pData, int width, int height, int bytesPerChannel, int numChannels, bool bFloat, const char* szPreset, const char* szFileName)
+{
+	return WriteTIF(pData, width, height, bytesPerChannel, numChannels, bFloat, szPreset, szFileName);
+}
+
+int CRenderer::EF_LoadLightmap(const char* name)
 {
 	CTexture* tp = (CTexture*)EF_LoadTexture(name, FT_DONT_STREAM | FT_STATE_CLAMP | FT_NOMIPS);
 	if (tp->IsTextureLoaded())
@@ -1308,12 +1487,13 @@ ITexture* CRenderer::EF_GetTextureByName(const char* nameTex, uint32 flags)
 	{
 		INDENT_LOG_DURING_SCOPE(true, "While trying to find texture '%s' flags=0x%x...", nameTex, flags);
 
-		const char* ext = fpGetExtension(nameTex);
-		if (ext != 0 && (stricmp(ext, ".tif") == 0 || stricmp(ext, ".hdr") == 0))
+		const char* ext = PathUtil::GetExt(nameTex);
+		if (ext != 0 && (stricmp(ext, "tif") == 0 || stricmp(ext, "hdr") == 0))
 		{
 			// for compilable files, register by the dds file name (to not load it twice)
 			char nameDDS[256];
-			fpStripExtension(nameTex, nameDDS);
+			cry_strcpy(nameDDS, nameTex);
+			PathUtil::RemoveExtension(nameDDS);
 			cry_strcat(nameDDS, ".dds");
 
 			return CTexture::GetByName(nameDDS, flags);
@@ -1325,24 +1505,19 @@ ITexture* CRenderer::EF_GetTextureByName(const char* nameTex, uint32 flags)
 	return NULL;
 }
 
-ITexture* CRenderer::EF_LoadTexture(const char* nameTex, const uint32 flags)
+ITexture* CRenderer::EF_LoadTexture(const char* szName, const uint32 flags)
 {
-	if (nameTex)
+	if (szName)
 	{
 		INDENT_LOG_DURING_SCOPE(true, "While trying to load texture '%s' flags=0x%x...", nameTex, flags);
 
-		const char* ext = fpGetExtension(nameTex);
-		if (ext != 0 && (stricmp(ext, ".tif") == 0 || stricmp(ext, ".hdr") == 0))
+		const char* szExtension = PathUtil::GetExt(szName);
+		if (szExtension != nullptr && (!stricmp(szExtension, "tif") || !stricmp(szExtension, "hdr")))
 		{
 			// for compilable files, register by the dds file name (to not load it twice)
-			char nameDDS[256];
-			fpStripExtension(nameTex, nameDDS);
-			cry_strcat(nameDDS, ".dds");
-
-			return CTexture::ForName(nameDDS, flags, eTF_Unknown);
+			return CTexture::ForName(PathUtil::ReplaceExtension(szName, "dds"), flags, eTF_Unknown);
 		}
-		else
-			return CTexture::ForName(nameTex, flags, eTF_Unknown);
+		return CTexture::ForName(szName, flags, eTF_Unknown);
 	}
 
 	return NULL;
@@ -1358,7 +1533,7 @@ IDynTextureSource* CRenderer::EF_LoadDynTexture(const char* dynsourceName, bool 
 
 bool SShaderItem::Update()
 {
-	if (!(m_pShader->GetFlags() & EF_LOADED))
+	if (!m_pShader || !(m_pShader->GetFlags() & EF_LOADED))
 		return false;
 	if ((uint32)m_nTechnique > 1000 && m_nTechnique != -1) // HACK HACK HACK
 	{
@@ -1382,43 +1557,29 @@ bool SShaderItem::RefreshResourceConstants()
 	return gRenDev->m_cEF.mfRefreshResourceConstants(*this);
 }
 
-void CRenderer::EF_StartEf (const SRenderingPassInfo& passInfo)
+void CRenderer::EF_StartEf(const SRenderingPassInfo& passInfo)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_RENDERER);
+	FUNCTION_PROFILER_RENDERER();
+	CRenderView* pRenderView = passInfo.GetRenderView();
 
 	m_beginFrameCount++;
 
 	// Prepare for writing into the view, render items can be added after this
-	passInfo.GetRenderView()->SetFrameId(passInfo.GetFrameID());
-	passInfo.GetRenderView()->SwitchUsageMode(CRenderView::eUsageModeWriting);
-	passInfo.GetRenderView()->Clear();
+	pRenderView->SetFrameId(passInfo.GetFrameID());
+	pRenderView->SwitchUsageMode(CRenderView::eUsageModeWriting);
 
 	ASSERT_IS_MAIN_THREAD(m_pRT)
-	int nThreadID = passInfo.ThreadID();
-	assert(nThreadID == SRenderThread::GetLocalThreadCommandBufferId());
+#if defined(USE_CRY_ASSERT) || !defined(_RELEASE)
 	int nR = passInfo.GetRecursiveLevel();
-	assert(nR < 2);
+	CRY_VERIFY(nR < 2);
+#endif
+
 	if (!passInfo.IsRecursivePass())
 	{
-		m_RP.m_TempObjects[nThreadID].resize(0);
-		m_nShadowGenId[nThreadID] = 0;
-
-		//SG frustums
-		//SRendItem::m_ShadowGenRecurLevel[nThreadID] = 0;
-
-		// Clear all cached lists of shadow frustums
-		for (ShadowFrustumListsCache::iterator it = m_FrustumsCache.begin(); it != m_FrustumsCache.end(); ++it)
-		{
-			if (it->second)
-				it->second->Clear();
-		}
-
-		m_RP.m_fogVolumeContibutions[nThreadID].resize(0);
-
-		m_pRT->RC_SetStereoEye(0);
-
 		ClearSkinningDataPool();
 	}
+
+	pRenderView->SetSkinningDataPools(GetSkinningDataPools());
 
 #ifndef _RELEASE
 	if (nR >= MAX_REND_RECURSION_LEVELS)
@@ -1428,15 +1589,7 @@ void CRenderer::EF_StartEf (const SRenderingPassInfo& passInfo)
 	}
 #endif
 
-#if REFRACTION_PARTIAL_RESOLVE_DEBUG_VIEWS
-	// Refraction Partial Resolves debug views
-	if (CRenderer::CV_r_RefractionPartialResolvesDebug == eRPR_DEBUG_VIEW_3D_BOUNDS)
-	{
-		gEnv->pParticleManager->RenderDebugInfo();
-	}
-#endif
-
-	passInfo.GetRenderView()->PrepareForWriting();
+	pRenderView->PrepareForWriting();
 	//EF_PushObjectsList(nID);
 
 	CPostEffectsMgr* pPostEffectMgr = PostEffectMgr();
@@ -1448,32 +1601,26 @@ void CRenderer::EF_StartEf (const SRenderingPassInfo& passInfo)
 	ClearPerFrameData(passInfo);
 }
 
-void CRenderer::RT_PrepareLevelTexStreaming()
-{
-}
-
-void CRenderer::RT_PostLevelLoading()
-{
-	LOADING_TIME_PROFILE_SECTION;
-	int nThreadID = m_pRT->GetThreadList();
-	m_RP.m_fogVolumeContibutions[nThreadID].reserve(2048);
-}
-
-void CRenderer::RT_DisableTemporalEffects()
-{
-	m_nDisableTemporalEffects = GetActiveGPUCount();
-}
-
 void CRenderer::EF_SubmitWind(const SWindGrid* pWind)
 {
-	FUNCTION_PROFILER_RENDERER
+	auto lambdaCallback = [=]
+	{
+		CRY_PROFILE_SECTION(PROFILE_RENDERER, "CRenderer::EF_SubmitWind::lambda");
 
-	m_pRT->RC_SubmitWind(pWind);
-}
+		m_pCurWindGrid = pWind;
+		if (!CTexture::IsTextureExist(CRendererResources::s_ptexWindGrid))
+		{
+			CRendererResources::s_ptexWindGrid->Create2DTexture(pWind->m_nWidth, pWind->m_nHeight, 1, FT_DONT_RELEASE | FT_DONT_STREAM, nullptr, eTF_R16G16F);
+		}
+		CDeviceTexture* pDevTex = CRendererResources::s_ptexWindGrid->GetDevTexture();
+		pDevTex->UploadFromStagingResource(0, [=](void* pData, uint32 rowPitch, uint32 slicePitch)
+		{
+			cryMemcpy(pData, pWind->m_pData, CTexture::TextureDataSize(pWind->m_nWidth, pWind->m_nHeight, 1, 1, 1, eTF_R16G16F, eTM_None));
+			return true;
+		});
+	};
+	ExecuteRenderThreadCommand( lambdaCallback, ERenderCommandFlags::None );
 
-void CRenderer::RT_CreateREPostProcess(CRenderElement** re)
-{
-	*re = new CREPostProcess;
 }
 
 CRenderElement* CRenderer::EF_CreateRE(EDataType edt)
@@ -1484,17 +1631,6 @@ CRenderElement* CRenderer::EF_CreateRE(EDataType edt)
 	case eDATA_Mesh:
 		re = new CREMeshImpl;
 		break;
-	case eDATA_Imposter:
-		re = new CREImposter;
-		break;
-	case eDATA_HDRProcess:
-		re = new CREHDRProcess;
-		break;
-
-	case eDATA_DeferredShading:
-		re = new CREDeferredShading;
-		break;
-
 	case eDATA_OcclusionQuery:
 		re = new CREOcclusionQuery;
 		break;
@@ -1505,28 +1641,6 @@ CRenderElement* CRenderer::EF_CreateRE(EDataType edt)
 
 	case eDATA_LensOptics:
 		re = new CRELensOptics;
-		break;
-	case eDATA_Cloud:
-		re = new CRECloud;
-		break;
-	case eDATA_Sky:
-		re = new CRESky;
-		break;
-
-	case eDATA_HDRSky:
-		re = new CREHDRSky;
-		break;
-
-	case eDATA_Beam:
-		re = new CREBeam;
-		break;
-
-	case eDATA_FarTreeSprites:
-		re = new CREFarTreeSprites;
-		break;
-
-	case eDATA_PostProcess:
-		re = new CREPostProcess;
 		break;
 
 	case eDATA_FogVolume:
@@ -1539,9 +1653,6 @@ CRenderElement* CRenderer::EF_CreateRE(EDataType edt)
 
 	case eDATA_WaterOcean:
 		re = new CREWaterOcean;
-		break;
-	case eDATA_VolumeObject:
-		re = new CREVolumeObject;
 		break;
 
 	case eDATA_GameEffect:
@@ -1568,162 +1679,36 @@ float CRenderer::EF_GetWaterZElevation(float fX, float fY)
 	return eng->GetWaterLevel();
 }
 
-void CRenderer::FX_StartMerging()
-{
-	if (m_RP.m_FrameMerge != m_RP.m_Frame)
-	{
-		m_RP.m_FrameMerge = m_RP.m_Frame;
-		SBufInfoTable* pOffs = &CRenderMesh::m_cBufInfoTable[m_RP.m_CurVFormat];
-		int Size             = CRenderMesh::m_cSizeVF[m_RP.m_CurVFormat];
-		m_RP.m_StreamStride      = Size;
-		m_RP.m_StreamOffsetColor = pOffs->OffsColor;
-		m_RP.m_StreamOffsetTC    = pOffs->OffsTC;
-		m_RP.m_NextStreamPtr     = m_RP.m_StreamPtr;
-		m_RP.m_NextStreamPtrTang = m_RP.m_StreamPtrTang;
-	}
-}
-
-void CRenderer::EF_PushFog()
-{
-	assert(m_pRT->IsRenderThread());
-	int nLevel = m_nCurFSStackLevel;
-	if (nLevel >= 8)
-		return;
-	memcpy(&m_FSStack[nLevel], &m_RP.m_TI[m_RP.m_nProcessThreadID].m_FS, sizeof(SFogState));
-	m_nCurFSStackLevel++;
-}
-
-void CRenderer::EF_PopFog()
-{
-	assert(m_pRT->IsRenderThread());
-	int nLevel = m_nCurFSStackLevel;
-	if (nLevel <= 0)
-		return;
-	nLevel--;
-	bool bFog = m_RP.m_TI[m_RP.m_nProcessThreadID].m_FS.m_bEnable;
-	if (m_RP.m_TI[m_RP.m_nProcessThreadID].m_FS != m_FSStack[nLevel])
-	{
-		memcpy(&m_RP.m_TI[m_RP.m_nProcessThreadID].m_FS, &m_FSStack[nLevel], sizeof(SFogState));
-		SetFogColor(m_RP.m_TI[m_RP.m_nProcessThreadID].m_FS.m_FogColor);
-	}
-	else
-		m_RP.m_TI[m_RP.m_nProcessThreadID].m_FS.m_bEnable = m_FSStack[nLevel].m_bEnable;
-	bool bNewFog = m_RP.m_TI[m_RP.m_nProcessThreadID].m_FS.m_bEnable;
-	m_RP.m_TI[m_RP.m_nProcessThreadID].m_FS.m_bEnable = bFog;
-	EnableFog(bNewFog);
-	m_nCurFSStackLevel--;
-}
-
-void CRenderer::FX_PushVP()
-{
-	int nLevel = m_nCurVPStackLevel;
-	if (nLevel >= 8)
-		return;
-	memcpy(&m_VPStack[nLevel], &m_NewViewport, sizeof(SViewport));
-	m_nCurVPStackLevel++;
-}
-
-void CRenderer::FX_PopVP()
-{
-	int nLevel = m_nCurVPStackLevel;
-	if (nLevel <= 0)
-		return;
-	nLevel--;
-	if (m_NewViewport != m_VPStack[nLevel])
-	{
-		memcpy(&m_NewViewport, &m_VPStack[nLevel], sizeof(SViewport));
-		m_bViewportDirty = true;
-	}
-	m_nCurVPStackLevel--;
-}
-
-eAntialiasingType CRenderer::FX_GetAntialiasingType() const
-{
-	return (eAntialiasingType)((uint32)1 << min(CV_r_AntialiasingMode, eAT_AAMODES_COUNT - 1));
-}
-
-uint32 CRenderer::FX_GetMSAAMode() const
-{
-#ifdef SUPPORTS_MSAA
-	return m_RP.m_MSAAData.Type ? CV_r_msaa_debug + 1 : 0;
-#else
-	return 0;
-#endif
-}
-
-void CRenderer::FX_ResetMSAAFlagsRT()
-{
-#ifdef SUPPORTS_MSAA
-	m_RP.m_FlagsShader_RT &= ~(g_HWSR_MaskBit[HWSR_MSAA_QUALITY] | g_HWSR_MaskBit[HWSR_MSAA_QUALITY1] | g_HWSR_MaskBit[HWSR_MSAA_SAMPLEFREQ_PASS]);
-#endif
-}
-
-void CRenderer::FX_SetMSAAFlagsRT()
-{
-#ifdef SUPPORTS_MSAA
-	const uint32& nMSAAType   = m_RP.m_MSAAData.Type;
-	const uint32& nPerfsFlag2 = m_RP.m_PersFlags2;
-	if (nMSAAType)
-	{
-		FX_ResetMSAAFlagsRT();
-		if ((m_RP.m_PersFlags2 & RBPF2_MSAA_SAMPLEFREQ_PASS) && CV_r_msaa_debug != 1)
-			m_RP.m_FlagsShader_RT |= g_HWSR_MaskBit[HWSR_MSAA_SAMPLEFREQ_PASS];
-
-		if (nMSAAType == 8)
-			m_RP.m_FlagsShader_RT |= (g_HWSR_MaskBit[HWSR_MSAA_QUALITY] | g_HWSR_MaskBit[HWSR_MSAA_QUALITY1]);
-		else if (nMSAAType == 4)
-			m_RP.m_FlagsShader_RT |= g_HWSR_MaskBit[HWSR_MSAA_QUALITY];
-		else if (nMSAAType == 2)
-			m_RP.m_FlagsShader_RT |= g_HWSR_MaskBit[HWSR_MSAA_QUALITY1];
-	}
-#endif
-}
-
 void CRenderer::Logv(const char* format, ...)
 {
 	va_list argptr;
-	int RecLevel = IsRecursiveRenderView() ? 1 : 0;
 
 	if (m_LogFile)
 	{
-		for (int i = 0; i < RecLevel; i++)
-		{
-			fprintf(m_LogFile, "  ");
-		}
 		va_start(argptr, format);
 		vfprintf(m_LogFile, format, argptr);
 		va_end(argptr);
 	}
 }
 
-void CRenderer::LogStrv(char* format, ...)
+void CRenderer::LogStrv(const char* format, ...)
 {
-	int RecLevel = IsRecursiveRenderView() ? 1 : 0;
 	va_list argptr;
 
 	if (m_LogFileStr)
 	{
-		for (int i = 0; i < RecLevel; i++)
-		{
-			fprintf(m_LogFileStr, "  ");
-		}
 		va_start(argptr, format);
 		vfprintf(m_LogFileStr, format, argptr);
 		va_end(argptr);
 	}
 }
 
-void CRenderer::LogShv(char* format, ...)
+void CRenderer::LogShv(const char* format, ...)
 {
-	int RecLevel = IsRecursiveRenderView() ? 1 : 0;
 	va_list argptr;
 
 	if (m_LogFileSh)
 	{
-		for (int i = 0; i < RecLevel; i++)
-		{
-			fprintf(m_LogFileSh, "  ");
-		}
 		va_start(argptr, format);
 		vfprintf(m_LogFileSh, format, argptr);
 		va_end(argptr);
@@ -1731,7 +1716,7 @@ void CRenderer::LogShv(char* format, ...)
 	}
 }
 
-void CRenderer::Log(char* str)
+void CRenderer::Log(const char* str)
 {
 	if (m_LogFile)
 	{
@@ -1739,8 +1724,11 @@ void CRenderer::Log(char* str)
 	}
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 // Dynamic lights
-bool CRenderer::EF_IsFakeDLight(const CDLight* Source)
+bool CRenderer::EF_IsFakeDLight(const SRenderLight* Source) const
 {
 	if (!Source)
 	{
@@ -1755,21 +1743,19 @@ bool CRenderer::EF_IsFakeDLight(const CDLight* Source)
 	return bIgnore;
 }
 
-void CRenderer::EF_CheckLightMaterial(CDLight* pLight, uint16 nRenderLightID, const SRenderingPassInfo& passInfo)
+void CRenderer::EF_CheckLightMaterial(SRenderLight* pLight, uint16 nRenderLightID, const SRenderingPassInfo& passInfo)
 {
 	ASSERT_IS_MAIN_THREAD(m_pRT);
-	const int32 nThreadID = m_RP.m_nFillThreadID;
 
-	if (!(m_RP.m_TI[nThreadID].m_PersFlags & RBPF_IMPOSTERGEN))
 	{
 		// Add render element if light has mtl bound
 		IShader* pShader = pLight->m_Shader.m_pShader;
 		TArray<CRenderElement*>* pRendElemBase = pShader ? pLight->m_Shader.m_pShader->GetREs(pLight->m_Shader.m_nTechnique) : 0;
 		if (pRendElemBase && !pRendElemBase->empty())
 		{
-			CRenderObject* pRO = EF_GetObject_Temp(passInfo.ThreadID());
+			CRenderObject* pRO = passInfo.GetIRenderView()->AllocateTemporaryRenderObject();
 			pRO->m_fAlpha        = 1.0f;
-			pRO->m_II.m_AmbColor = Vec3(0, 0, 0);
+			pRO->SetAmbientColor(Vec3(0, 0, 0), passInfo);
 
 			SRenderObjData* pOD = pRO->GetObjData();
 
@@ -1778,28 +1764,28 @@ void CRenderer::EF_CheckLightMaterial(CDLight* pLight, uint16 nRenderLightID, co
 			pOD->m_fTempVars[3] = pLight->m_fRadius;
 			pOD->m_nLightID     = nRenderLightID;
 
-			pRO->m_II.m_AmbColor = pLight->m_Color;
-			pRO->m_II.m_Matrix   = pLight->m_ObjMatrix;
+			pRO->SetAmbientColor(pLight->m_Color, passInfo);
+			pRO->SetMatrix(pLight->m_ObjMatrix, passInfo);
 			pRO->m_ObjFlags     |= FOB_TRANS_MASK;
 
 			CRenderElement* pRE = pRendElemBase->Get(0);
-			const int32 nList     = (pRE->mfGetType() != eDATA_LensOptics) ? EFSLIST_TRANSP : EFSLIST_LENSOPTICS;
-
-			if (pRE->mfGetType() == eDATA_Beam)
-			{
-				pLight->m_Flags |= DLF_LIGHT_BEAM;
-			}
+			const int32 nList     = (pRE->mfGetType() != eDATA_LensOptics) ? EFSLIST_TRANSP_AW : EFSLIST_LENSOPTICS;
 
 			const float fWaterLevel = gEnv->p3DEngine->GetWaterLevel();
-			const float fCamZ       = m_RP.m_TI[nThreadID].m_cam.GetPosition().z;
+			const float fCamZ       = passInfo.GetCamera().GetPosition().z;
 			const int32 nAW         = ((fCamZ - fWaterLevel) * (pLight->m_Origin.z - fWaterLevel) > 0) ? 1 : 0;
 
-			EF_AddEf(pRE, pLight->m_Shader, pRO, passInfo, nList, nAW);
+			// TODO: set bbox/center on light-render-element
+			// pRE->m_center     = pLight->m_Origin;
+			// pRE->m_WSBBox.min = pLight->m_Origin;
+			// pRE->m_WSBBox.max = pLight->m_Origin;
+
+			passInfo.GetRenderView()->AddRenderObject(pRE, pLight->m_Shader, pRO, passInfo, nList, nAW);
 		}
 	}
 }
 
-void CRenderer::EF_ADDDlight(CDLight* Source, const SRenderingPassInfo& passInfo)
+void CRenderer::EF_ADDDlight(SRenderLight* Source, const SRenderingPassInfo& passInfo)
 {
 	if (!Source)
 	{
@@ -1807,20 +1793,33 @@ void CRenderer::EF_ADDDlight(CDLight* Source, const SRenderingPassInfo& passInfo
 		return;
 	}
 
-	passInfo.GetRenderView()->AddDynamicLight(*Source);
+	RenderLightIndex nLightID = passInfo.GetRenderView()->AddDynamicLight(*Source);
 
-	EF_PrecacheResource(Source, (passInfo.GetCamera().GetPosition() - Source->m_Origin).GetLengthSquared() / max(0.001f, Source->m_fRadius * Source->m_fRadius), 0.1f, 0, 0);
+	//EF_CheckLightMaterial(Source, nLightID, passInfo);
 
-	//EF_CheckLightMaterial(Source, pNew, passInfo);
+	Source->m_Id = nLightID;
 }
+
+int CRenderer::EF_AddDeferredLight(const SRenderLight& pLight, float fMult, const SRenderingPassInfo& passInfo)
+{
+	RenderLightIndex nLightID = passInfo.GetRenderView()->AddDeferredLight(pLight, fMult, passInfo);
+
+	EF_CheckLightMaterial(const_cast<SRenderLight*>(&pLight), nLightID, passInfo);
+
+	return nLightID;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 bool CRenderer::EF_AddDeferredDecal(const SDeferredDecal& rDecal, const SRenderingPassInfo& passInfo)
 {
 	ASSERT_IS_MAIN_THREAD(m_pRT)
+	CRenderView* pRenderView = passInfo.GetRenderView();
 
-	if (passInfo.GetRenderView()->GetDeferredDecalsCount() < 1024)
+	if (pRenderView->GetDeferredDecalsCount() < 1024)
 	{
-		SDeferredDecal& rDecalCopy = *passInfo.GetRenderView()->AddDeferredDecal(rDecal);
+		SDeferredDecal& rDecalCopy = *pRenderView->AddDeferredDecal(rDecal);
 
 		//////////////////////////////////////////////////////////////////////////
 		IMaterial* pDecalMaterial = rDecalCopy.pMaterial;
@@ -1842,7 +1841,7 @@ bool CRenderer::EF_AddDeferredDecal(const SDeferredDecal& rDecal, const SRenderi
 			if (pNormalRes0->m_Sampler.m_pITex)
 			{
 				rDecalCopy.nFlags |= DECAL_HAS_NORMAL_MAP;
-				passInfo.GetRenderView()->SetDeferredNormalDecals(true);
+				pRenderView->SetDeferredNormalDecals(true);
 			}
 			else
 			{
@@ -1892,7 +1891,7 @@ inline Matrix44 ToLightMatrix(const Ang3& angle)
 	return Matrix44(ViewMatX * ViewMatY * ViewMatZ).GetTransposed();
 }
 
-bool CRenderer::EF_UpdateDLight(SRenderLight* dl)
+bool CRenderer::EF_UpdateDLight(SRenderLight* dl) const
 {
 	if (!dl)
 		return false;
@@ -1925,39 +1924,35 @@ bool CRenderer::EF_UpdateDLight(SRenderLight* dl)
 		IAnimTrack* pSpecMultTrack = pLightAnimNode->GetTrackForParameter(eAnimParamType_LightSpecularMult);
 		IAnimTrack* pHDRDynamicTrack = pLightAnimNode->GetTrackForParameter(eAnimParamType_LightHDRDynamic);
 
-		TRange<SAnimTime> timeRange = const_cast<IAnimNode*>(pLightAnimNode)->GetSequence()->GetTimeRange();
 		float time = (dl->m_Flags & DLF_TRACKVIEW_TIMESCRUBBING) ? dl->m_fTimeScrubbed : fTime;
 		float phase = static_cast<float>(dl->m_nLightPhase) / 100.0f;
 
 		if (pPosTrack && pPosTrack->GetNumKeys() > 0 &&
-			!(pPosTrack->GetFlags() & IAnimTrack::eAnimTrackFlags_Disabled))
+		    !(pPosTrack->GetFlags() & IAnimTrack::eAnimTrackFlags_Disabled))
 		{
-			Vec3 vOffset(0, 0, 0);
 			float duration = max(pPosTrack->GetKeyTime(pPosTrack->GetNumKeys() - 1).ToFloat(), 0.001f);
-			float timeNormalized = static_cast<float>(fmod(time + phase*duration, duration));
-			vOffset = stl::get<Vec3>(pPosTrack->GetValue(timeNormalized));
+			float timeNormalized = static_cast<float>(fmod(time + phase * duration, duration));
+			Vec3 vOffset = stl::get<Vec3>(pPosTrack->GetValue(timeNormalized));
 			dl->m_Origin = dl->m_BaseOrigin + vOffset;
 		}
 
 		if (pRotTrack && pRotTrack->GetNumKeys() > 0 &&
-			!(pRotTrack->GetFlags() & IAnimTrack::eAnimTrackFlags_Disabled))
+		    !(pRotTrack->GetFlags() & IAnimTrack::eAnimTrackFlags_Disabled))
 		{
-			Vec3 vRot(0, 0, 0);
 			float duration = max(pRotTrack->GetKeyTime(pRotTrack->GetNumKeys() - 1).ToFloat(), 0.001f);
-			float timeNormalized = static_cast<float>(fmod(time + phase*duration, duration));
-			vRot = stl::get<Vec3>(pRotTrack->GetValue(timeNormalized));
-			static_cast<CDLight*>(dl)->SetMatrix(
+			float timeNormalized = static_cast<float>(fmod(time + phase * duration, duration));
+			Vec3 vRot = stl::get<Vec3>(pRotTrack->GetValue(timeNormalized));
+			static_cast<SRenderLight*>(dl)->SetMatrix(
 				dl->m_BaseObjMatrix * Matrix34::CreateRotationXYZ(Ang3(DEG2RAD(vRot.x), DEG2RAD(vRot.y), DEG2RAD(vRot.z))),
 				false);
 		}
 
 		if (pColorTrack && pColorTrack->GetNumKeys() > 0 &&
-			!(pColorTrack->GetFlags() & IAnimTrack::eAnimTrackFlags_Disabled))
+		    !(pColorTrack->GetFlags() & IAnimTrack::eAnimTrackFlags_Disabled))
 		{
-			Vec3 vColor(dl->m_Color.r, dl->m_Color.g, dl->m_Color.b);
 			float duration = max(pColorTrack->GetKeyTime(pColorTrack->GetNumKeys() - 1).ToFloat(), 0.001f);
-			float timeNormalized = static_cast<float>(fmod(time + phase*duration, duration));
-			vColor = stl::get<Vec3>(pColorTrack->GetValue(timeNormalized));
+			float timeNormalized = static_cast<float>(fmod(time + phase * duration, duration));
+			Vec3 vColor = stl::get<Vec3>(pColorTrack->GetValue(timeNormalized));
 			dl->m_Color = ColorF(vColor.x / 255.0f, vColor.y / 255.0f, vColor.z / 255.0f);
 		}
 		else
@@ -1966,46 +1961,42 @@ bool CRenderer::EF_UpdateDLight(SRenderLight* dl)
 		}
 
 		if (pDiffMultTrack && pDiffMultTrack->GetNumKeys() > 0 &&
-			!(pDiffMultTrack->GetFlags() & IAnimTrack::eAnimTrackFlags_Disabled))
+		    !(pDiffMultTrack->GetFlags() & IAnimTrack::eAnimTrackFlags_Disabled))
 		{
-			float diffMult = 1.0;
 			float duration = max(pDiffMultTrack->GetKeyTime(pDiffMultTrack->GetNumKeys() - 1).ToFloat(), 0.001f);
-			float timeNormalized = static_cast<float>(fmod(time + phase*duration, duration));
-			diffMult = stl::get<float>(pDiffMultTrack->GetValue(timeNormalized));
-			dl->m_Color *= diffMult;
+			float timeNormalized = static_cast<float>(fmod(time + phase * duration, duration));
+			float diffMult = stl::get<float>(pDiffMultTrack->GetValue(timeNormalized));
+			dl->m_Color = dl->m_BaseColor * diffMult;
 		}
 
 		if (pRadiusTrack && pRadiusTrack->GetNumKeys() > 0 &&
-			!(pRadiusTrack->GetFlags() & IAnimTrack::eAnimTrackFlags_Disabled))
+		    !(pRadiusTrack->GetFlags() & IAnimTrack::eAnimTrackFlags_Disabled))
 		{
-			float radius = dl->m_fRadius;
 			float duration = max(pRadiusTrack->GetKeyTime(pRadiusTrack->GetNumKeys() - 1).ToFloat(), 0.001f);
-			float timeNormalized = static_cast<float>(fmod(time + phase*duration, duration));
-			radius = stl::get<float>(pRadiusTrack->GetValue(timeNormalized));
-			dl->m_fRadius = radius;
+			float timeNormalized = static_cast<float>(fmod(time + phase * duration, duration));
+			float radius = stl::get<float>(pRadiusTrack->GetValue(timeNormalized));
+			dl->SetRadius(radius);
 		}
 
 		if (pSpecMultTrack && pSpecMultTrack->GetNumKeys() > 0 &&
-			!(pSpecMultTrack->GetFlags() & IAnimTrack::eAnimTrackFlags_Disabled))
+		    !(pSpecMultTrack->GetFlags() & IAnimTrack::eAnimTrackFlags_Disabled))
 		{
-			float specMult = dl->m_SpecMult;
 			float duration = max(pSpecMultTrack->GetKeyTime(pSpecMultTrack->GetNumKeys() - 1).ToFloat(), 0.001f);
-			float timeNormalized = static_cast<float>(fmod(time + phase*duration, duration));
-			specMult = stl::get<float>(pSpecMultTrack->GetValue(timeNormalized));
+			float timeNormalized = static_cast<float>(fmod(time + phase * duration, duration));
+			float specMult = stl::get<float>(pSpecMultTrack->GetValue(timeNormalized));
 			dl->m_SpecMult = specMult;
 		}
 
 		if (pHDRDynamicTrack && pHDRDynamicTrack->GetNumKeys() > 0 &&
-			!(pHDRDynamicTrack->GetFlags() & IAnimTrack::eAnimTrackFlags_Disabled))
+		    !(pHDRDynamicTrack->GetFlags() & IAnimTrack::eAnimTrackFlags_Disabled))
 		{
-			float hdrDynamic = dl->m_fHDRDynamic;
 			float duration = max(pHDRDynamicTrack->GetKeyTime(pHDRDynamicTrack->GetNumKeys() - 1).ToFloat(), 0.001f);
-			float timeNormalized = static_cast<float>(fmod(time + phase*duration, duration));
-			hdrDynamic = stl::get<float>(pHDRDynamicTrack->GetValue(timeNormalized));
+			float timeNormalized = static_cast<float>(fmod(time + phase * duration, duration));
+			float hdrDynamic = stl::get<float>(pHDRDynamicTrack->GetValue(timeNormalized));
 			dl->m_fHDRDynamic = hdrDynamic;
 		}
 	}
-	else if(nStyle > 0 && nStyle < CLightStyle::s_LStyles.Num() && CLightStyle::s_LStyles[nStyle])
+	else if (nStyle > 0 && nStyle < CLightStyle::s_LStyles.Num() && CLightStyle::s_LStyles[nStyle])
 	{
 		CLightStyle* ls = CLightStyle::s_LStyles[nStyle];
 
@@ -2036,28 +2027,6 @@ bool CRenderer::EF_UpdateDLight(SRenderLight* dl)
 	return false;
 }
 
-void CRenderer::FX_ApplyShaderQuality(const EShaderType eST)
-{
-	SShaderProfile* const pSP = &m_cEF.m_ShaderProfiles[eST];
-	const uint64 quality      = g_HWSR_MaskBit[HWSR_QUALITY];
-	const uint64 quality1     = g_HWSR_MaskBit[HWSR_QUALITY1];
-	m_RP.m_FlagsShader_RT &= ~(quality | quality1);
-	int nQuality = (int)pSP->GetShaderQuality();
-	m_RP.m_nShaderQuality = nQuality;
-	switch (nQuality)
-	{
-	case eSQ_Medium:
-		m_RP.m_FlagsShader_RT |= quality;
-		break;
-	case eSQ_High:
-		m_RP.m_FlagsShader_RT |= quality1;
-		break;
-	case eSQ_VeryHigh:
-		m_RP.m_FlagsShader_RT |= (quality | quality1);
-		break;
-	}
-}
-
 EShaderQuality CRenderer::EF_GetShaderQuality(EShaderType eST)
 {
 	SShaderProfile* pSP = &m_cEF.m_ShaderProfiles[eST];
@@ -2078,17 +2047,12 @@ EShaderQuality CRenderer::EF_GetShaderQuality(EShaderType eST)
 	return eSQ_Low;
 }
 
-ERenderQuality CRenderer::EF_GetRenderQuality() const
-{
-	return (ERenderQuality) m_RP.m_eQuality;
-}
-
-#if CRY_PLATFORM_WINDOWS && CRY_PLATFORM_64BIT
+#if CRY_PLATFORM_WINDOWS
 #pragma warning( push )             //AMD Port
 #pragma warning( disable : 4312 )   // 'type cast' : conversion from 'int' to 'void *' of greater size
 #endif
 
-int CRenderer::RT_CurThreadList()
+int CRenderer::CurThreadList()
 {
 	return m_pRT->GetThreadList();
 }
@@ -2126,543 +2090,604 @@ void CRenderer::EF_QueryImpl(ERenderQueryTypes eQuery, void* pInOut0, uint32 nIn
 	switch (eQuery)
 	{
 	case EFQ_DeleteMemoryArrayPtr:
-	{
-		char* pPtr = ReadQueryParameter<char*>(pInOut0, nInOutSize0);
-		delete[] pPtr;
-	}
-	break;
+		{
+			char* pPtr = ReadQueryParameter<char*>(pInOut0, nInOutSize0);
+			delete[] pPtr;
+		}
+		break;
 
 	case EFQ_DeleteMemoryPtr:
-	{
-		char* pPtr = ReadQueryParameter<char*>(pInOut0, nInOutSize0);
-		delete pPtr;
-	}
-	break;
+		{
+			char* pPtr = ReadQueryParameter<char*>(pInOut0, nInOutSize0);
+			delete pPtr;
+		}
+		break;
 
 	case EFQ_MainThreadList:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, m_RP.m_nFillThreadID);
-	}
-	break;
+		{
+			threadID id = gRenDev->GetMainThreadID();
+			WriteQueryResult(pInOut0, nInOutSize0, id);
+		}
+		break;
 
 	case EFQ_RenderThreadList:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, m_RP.m_nProcessThreadID);
-	}
-	break;
+		{
+			threadID id = gRenDev->GetRenderThreadID();
+			WriteQueryResult(pInOut0, nInOutSize0, id);
+		}
+		break;
 
 	case EFQ_RenderMultithreaded:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, static_cast<bool>(m_pRT->IsMultithreaded()));
-	}
-	break;
+		{
+			WriteQueryResult(pInOut0, nInOutSize0, static_cast<bool>(m_pRT->IsMultithreaded()));
+		}
+		break;
 
 	case EFQ_IncrementFrameID:
-	{
-		m_RP.m_TI[m_pRT->GetThreadList()].m_nFrameID += 1;
-	}
-	break;
+		{
+			gEnv->nMainFrameID++;
+		}
+		break;
 
 	case EFQ_DeviceLost:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, static_cast<bool>(m_bDeviceLost != 0));
-	}
-	break;
+		{
+			WriteQueryResult(pInOut0, nInOutSize0, static_cast<bool>(false));
+		}
+		break;
 
 	case EFQ_RecurseLevel:
-	{
-		int recursion = IsRecursiveRenderView() ? 1 : 0;
-		WriteQueryResult(pInOut0, nInOutSize0, recursion);
-	}
-	break;
+		{
+			int recursion = 0;
+			WriteQueryResult(pInOut0, nInOutSize0, recursion);
+		}
+		break;
+
+	case EFQ_Alloc_APITargets:
+		{
+			CryAutoReadLock<CryRWLock> lock(CBaseResource::s_cResLock);
+
+			int nSize = 0;
+			SResourceContainer* pRL = CBaseResource::GetResourcesForClass(CTexture::mfGetClassName());
+			if (pRL)
+			{
+				ResourcesMapItor itor;
+				for (itor = pRL->m_RMap.begin(); itor != pRL->m_RMap.end(); itor++)
+				{
+					CTexture* tp = (CTexture*)itor->second;
+					if (!tp || tp->IsNoTexture())
+						continue;
+
+					if (!(tp->GetFlags() & (FT_USAGE_DEPTHSTENCIL | FT_USAGE_UNORDERED_ACCESS)))
+					{
+						nSize += tp->GetDeviceDataSize();
+
+						if (!(tp->GetFlags() & (FT_USAGE_RENDERTARGET)))
+						{
+							nSize -= tp->GetDeviceDataSize();
+						}						
+					}					
+				}
+			}
+			WriteQueryResult(pInOut0, nInOutSize0, nSize);
+		}
+		break;
 
 	case EFQ_Alloc_APITextures:
-	{
-		int nSize               = 0;
-		SResourceContainer* pRL = CBaseResource::GetResourcesForClass(CTexture::mfGetClassName());
-		if (pRL)
 		{
-			ResourcesMapItor itor;
-			for (itor = pRL->m_RMap.begin(); itor != pRL->m_RMap.end(); itor++)
+			CryAutoReadLock<CryRWLock> lock(CBaseResource::s_cResLock);
+
+			int nSize = 0;
+			SResourceContainer* pRL = CBaseResource::GetResourcesForClass(CTexture::mfGetClassName());
+			if (pRL)
 			{
-				CTexture* tp = (CTexture*)itor->second;
-				if (!tp || tp->IsNoTexture())
-					continue;
-				if (!(tp->GetFlags() & (FT_USAGE_DYNAMIC | FT_USAGE_RENDERTARGET)))
-					nSize += tp->GetDeviceDataSize();
+				ResourcesMapItor itor;
+				for (itor = pRL->m_RMap.begin(); itor != pRL->m_RMap.end(); itor++)
+				{
+					CTexture* tp = (CTexture*)itor->second;
+					if (!tp || tp->IsNoTexture())
+						continue;
+					if (!(tp->GetFlags() & (FT_USAGE_RENDERTARGET | FT_USAGE_DEPTHSTENCIL | FT_USAGE_UNORDERED_ACCESS)))
+						nSize += tp->GetDeviceDataSize();
+				}
 			}
+			WriteQueryResult(pInOut0, nInOutSize0, nSize);
 		}
-		WriteQueryResult(pInOut0, nInOutSize0, nSize);
-	}
-	break;
+		break;
 
 	case EFQ_Alloc_APIMesh:
-	{
-		uint32 nSize = 0;
-		for (util::list<CRenderMesh>* iter = CRenderMesh::m_MeshList.next; iter != &CRenderMesh::m_MeshList; iter = iter->next)
 		{
-			CRenderMesh* pRM = iter->item<& CRenderMesh::m_Chain>();
-			nSize += static_cast<uint32>(pRM->Size(CRenderMesh::SIZE_VB));
-			nSize += static_cast<uint32>(pRM->Size(CRenderMesh::SIZE_IB));
+			uint32 nSize = 0;
+			AUTO_LOCK(CRenderMesh::m_sLinkLock);
+			for (util::list<CRenderMesh>* iter = CRenderMesh::s_MeshList.next; iter != &CRenderMesh::s_MeshList; iter = iter->next)
+			{
+				CRenderMesh* pRM = iter->item<&CRenderMesh::m_Chain>();
+				nSize += static_cast<uint32>(pRM->Size(CRenderMesh::SIZE_VB));
+				nSize += static_cast<uint32>(pRM->Size(CRenderMesh::SIZE_IB));
+			}
+			WriteQueryResult(pInOut0, nInOutSize0, nSize);
 		}
-		WriteQueryResult(pInOut0, nInOutSize0, nSize);
-	}
-	break;
+		break;
 
 	case EFQ_Alloc_Mesh_SysMem:
-	{
-		uint32 nSize = 0;
-		for (util::list<CRenderMesh>* iter = CRenderMesh::m_MeshList.next; iter != &CRenderMesh::m_MeshList; iter = iter->next)
 		{
-			CRenderMesh* pRM = iter->item<& CRenderMesh::m_Chain>();
-			nSize += static_cast<uint32>(pRM->Size(CRenderMesh::SIZE_ONLY_SYSTEM));
+			uint32 nSize = 0;
+			AUTO_LOCK(CRenderMesh::m_sLinkLock);
+			for (util::list<CRenderMesh>* iter = CRenderMesh::s_MeshList.next; iter != &CRenderMesh::s_MeshList; iter = iter->next)
+			{
+				CRenderMesh* pRM = iter->item<&CRenderMesh::m_Chain>();
+				nSize += static_cast<uint32>(pRM->Size(CRenderMesh::SIZE_ONLY_SYSTEM));
+			}
+			WriteQueryResult(pInOut0, nInOutSize0, nSize);
 		}
-		WriteQueryResult(pInOut0, nInOutSize0, nSize);
-	}
-	break;
+		break;
 
 	case EFQ_Mesh_Count:
-	{
-		uint32 nCount = 0;
-		AUTO_LOCK(CRenderMesh::m_sLinkLock);
-		for (util::list<CRenderMesh>* iter = CRenderMesh::m_MeshList.next; iter != &CRenderMesh::m_MeshList; iter = iter->next)
 		{
-			++nCount;
+			uint32 nCount = 0;
+			AUTO_LOCK(CRenderMesh::m_sLinkLock);
+			for (util::list<CRenderMesh>* iter = CRenderMesh::s_MeshList.next; iter != &CRenderMesh::s_MeshList; iter = iter->next)
+			{
+				++nCount;
+			}
+			WriteQueryResult(pInOut0, nInOutSize0, nCount);
 		}
-		WriteQueryResult(pInOut0, nInOutSize0, nCount);
-	}
-	break;
+		break;
+
+	case EFQ_GetDeviceBufferMaxCounts:
+		{
+			if (nInOutSize0 == sizeof(SDeviceBufferIndices))
+			{
+				SDeviceBufferIndices* pIndexes = reinterpret_cast<SDeviceBufferIndices*>(pInOut0);
+				pIndexes->nBufferUsage = BUFFER_USAGE::BU_MAX;
+				pIndexes->nBufferBindType = BUFFER_BIND_TYPE::BBT_MAX;
+			}
+		}
+		break;
+
+	case EFQ_GetDeviceBufferPoolStats:
+		{
+			if (nInOutSize0 == sizeof(SDeviceBufferIndices) && nInOutSize1 == sizeof(SDeviceBufferPoolStats))
+			{
+				SDeviceBufferIndices* pIndexes = reinterpret_cast<SDeviceBufferIndices*>(pInOut0);
+				SDeviceBufferPoolStats* pStats = reinterpret_cast<SDeviceBufferPoolStats*>(pInOut1);
+				m_DevBufMan.GetStats((BUFFER_BIND_TYPE)pIndexes->nBufferBindType, (BUFFER_USAGE)pIndexes->nBufferUsage, *pStats);
+			}
+		}
+		break;
 
 	case EFQ_GetAllMeshes:
-	{
-		//Get render mesh lock, to ensure that the mesh list doesn't change while we're copying
-		AUTO_LOCK(CRenderMesh::m_sLinkLock);
-		IRenderMesh** ppMeshes = NULL;
-		uint32 nSize           = 0;
-		for (util::list<CRenderMesh>* iter = CRenderMesh::m_MeshList.next; iter != &CRenderMesh::m_MeshList; iter = iter->next)
 		{
-			++nSize;
-		}
-		if (pInOut0 && nSize)
-		{
-			//allocate the array. The calling function is responsible for cleaning it up.
-			ppMeshes = new IRenderMesh*[nSize];
-			nSize    = 0;
-			for (util::list<CRenderMesh>* iter = CRenderMesh::m_MeshList.next; iter != &CRenderMesh::m_MeshList; iter = iter->next)
+			//Get render mesh lock, to ensure that the mesh list doesn't change while we're copying
+			IRenderMesh** ppMeshes = NULL;
+			uint32 nSize = 0;
+			AUTO_LOCK(CRenderMesh::m_sLinkLock);
+			for (util::list<CRenderMesh>* iter = CRenderMesh::s_MeshList.next; iter != &CRenderMesh::s_MeshList; iter = iter->next)
 			{
-				ppMeshes[nSize] = iter->item<& CRenderMesh::m_Chain>();
-				;
+				ppMeshes[nSize] = iter->item<&CRenderMesh::m_Chain>();
 				nSize++;
 			}
+			WriteQueryResult(pInOut0, nInOutSize0, ppMeshes);
+			WriteQueryResult(pInOut1, nInOutSize1, nSize);
 		}
-		WriteQueryResult(pInOut0, nInOutSize0, ppMeshes);
-		WriteQueryResult(pInOut1, nInOutSize1, nSize);
-	}
-	break;
+		break;
 
 	case EFQ_GetAllTextures:
-	{
-		AUTO_LOCK(CBaseResource::s_cResLock);
-
-		SRendererQueryGetAllTexturesParam* pParam = (SRendererQueryGetAllTexturesParam*)(pInOut0);
-		pParam->pTextures   = NULL;
-		pParam->numTextures = 0;
-
-		SResourceContainer* pRL = CBaseResource::GetResourcesForClass(CTexture::mfGetClassName());
-		if (pRL)
 		{
-			for (ResourcesMapItor itor = pRL->m_RMap.begin(); itor != pRL->m_RMap.end(); itor++)
-			{
-				CTexture* tp = (CTexture*)itor->second;
-				if (!tp || tp->IsNoTexture())
-					continue;
-				++pParam->numTextures;
-			}
+			CryAutoReadLock<CryRWLock> lock(CBaseResource::s_cResLock);
 
-			if (pParam->numTextures > 0)
-			{
-				pParam->pTextures = new _smart_ptr<ITexture>[pParam->numTextures];
+			SRendererQueryGetAllTexturesParam* pParam = (SRendererQueryGetAllTexturesParam*)(pInOut0);
+			pParam->pTextures = NULL;
+			pParam->numTextures = 0;
 
-				uint32 texIdx = 0;
+			SResourceContainer* pRL = CBaseResource::GetResourcesForClass(CTexture::mfGetClassName());
+			if (pRL)
+			{
 				for (ResourcesMapItor itor = pRL->m_RMap.begin(); itor != pRL->m_RMap.end(); itor++)
 				{
 					CTexture* tp = (CTexture*)itor->second;
 					if (!tp || tp->IsNoTexture())
 						continue;
-					pParam->pTextures[texIdx++] = tp;
+					++pParam->numTextures;
+				}
+
+				if (pParam->numTextures > 0)
+				{
+					pParam->pTextures = new _smart_ptr<ITexture>[pParam->numTextures];
+
+					uint32 texIdx = 0;
+					for (ResourcesMapItor itor = pRL->m_RMap.begin(); itor != pRL->m_RMap.end(); itor++)
+					{
+						CTexture* tp = (CTexture*)itor->second;
+						if (!tp || tp->IsNoTexture())
+							continue;
+						pParam->pTextures[texIdx++] = tp;
+					}
 				}
 			}
 		}
-	}
-	break;
+		break;
 
 	case EFQ_GetAllTexturesRelease:
-	{
-		SRendererQueryGetAllTexturesParam* pParam = (SRendererQueryGetAllTexturesParam*)(pInOut0);
-		SAFE_DELETE_ARRAY(pParam->pTextures);
-	}
-	break;
+		{
+			SRendererQueryGetAllTexturesParam* pParam = (SRendererQueryGetAllTexturesParam*)(pInOut0);
+			SAFE_DELETE_ARRAY(pParam->pTextures);
+		}
+		break;
 
 	case EFQ_TexturesPoolSize:
-	{
-		uint32 streamPoolSize = (uint32)(CRenderer::GetTexturesStreamPoolSize() * 1024 * 1024);
-		WriteQueryResult(pInOut0, nInOutSize0, streamPoolSize);
-	}
-	break;
+		{
+			size_t streamPoolSize = CRenderer::GetTexturesStreamPoolSize() * 1024 * 1024;
+			WriteQueryResult(pInOut0, nInOutSize0, streamPoolSize);
+		}
+		break;
 
 	case EFQ_RenderTargetPoolSize:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, (CRenderer::CV_r_rendertargetpoolsize + 2) * 1024 * 1024);
-	}
-	break;
+		{
+			WriteQueryResult(pInOut0, nInOutSize0, (CRenderer::CV_r_rendertargetpoolsize + 2) * 1024 * 1024);
+		}
+		break;
 
 	case EFQ_HDRModeEnabled:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, static_cast<bool>(IsHDRModeEnabled() ? 1 : 0));
-	}
-	break;
+		{
+			WriteQueryResult(pInOut0, nInOutSize0, true);
+		}
+		break;
 
 	case EFQ_ParticlesTessellation:
-	{
+		{
 #if defined(PARTICLES_TESSELLATION_RENDERER)
-		WriteQueryResult<bool>(pInOut0, nInOutSize0, m_bDeviceSupportsTessellation && CV_r_ParticlesTessellation != 0);
+			WriteQueryResult<bool>(pInOut0, nInOutSize0, m_bDeviceSupportsTessellation && CV_r_ParticlesTessellation != 0);
 #else
-		WriteQueryResult<bool>(pInOut0, nInOutSize0, false);
+			WriteQueryResult<bool>(pInOut0, nInOutSize0, false);
 #endif
-	}
-	break;
+		}
+		break;
 
 	case EFQ_WaterTessellation:
-	{
+		{
 #if defined(WATER_TESSELLATION_RENDERER)
-		WriteQueryResult<bool>(pInOut0, nInOutSize0, m_bDeviceSupportsTessellation && CV_r_WaterTessellationHW != 0);
+			WriteQueryResult<bool>(pInOut0, nInOutSize0, m_bDeviceSupportsTessellation && CV_r_WaterTessellationHW != 0);
 #else
-		WriteQueryResult<bool>(pInOut0, nInOutSize0, false);
+			WriteQueryResult<bool>(pInOut0, nInOutSize0, false);
 #endif
-	}
-	break;
+		}
+		break;
 
 	case EFQ_MeshTessellation:
-	{
+		{
 #if defined(MESH_TESSELLATION_RENDERER)
-		WriteQueryResult<bool>(pInOut0, nInOutSize0, m_bDeviceSupportsTessellation);
+			WriteQueryResult<bool>(pInOut0, nInOutSize0, m_bDeviceSupportsTessellation);
 #else
-		WriteQueryResult<bool>(pInOut0, nInOutSize0, false);
+			WriteQueryResult<bool>(pInOut0, nInOutSize0, false);
 #endif
-	}
-	break;
+		}
+		break;
 
 #ifndef _RELEASE
 	case EFQ_GetShadowPoolFrustumsNum:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, m_RP.m_PS[m_RP.m_nFillThreadID].m_NumShadowPoolFrustums);
-	}
-	break;
+		{
+			WriteQueryResult(pInOut0, nInOutSize0, m_frameRenderStats[m_nFillThreadID].m_NumShadowPoolFrustums);
+		}
+		break;
 
 	case EFQ_GetShadowPoolAllocThisFrameNum:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, m_RP.m_PS[m_RP.m_nFillThreadID].m_NumShadowPoolAllocsThisFrame);
-	}
-	break;
+		{
+			WriteQueryResult(pInOut0, nInOutSize0, m_frameRenderStats[m_nFillThreadID].m_NumShadowPoolAllocsThisFrame);
+		}
+		break;
 
 	case EFQ_GetShadowMaskChannelsNum:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, m_RP.m_PS[m_RP.m_nFillThreadID].m_NumShadowMaskChannels);
-	}
-	break;
+		{
+			WriteQueryResult(pInOut0, nInOutSize0, m_frameRenderStats[m_nFillThreadID].m_NumShadowMaskChannels);
+		}
+		break;
 
 	case EFQ_GetTiledShadingSkippedLightsNum:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, m_RP.m_PS[m_RP.m_nFillThreadID].m_NumTiledShadingSkippedLights);
-	}
-	break;
+		{
+			WriteQueryResult(pInOut0, nInOutSize0, m_frameRenderStats[m_nFillThreadID].m_NumTiledShadingSkippedLights);
+		}
+		break;
 #endif
 
 	case EFQ_MultiGPUEnabled:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, static_cast<bool>(GetActiveGPUCount() > 1 ? 1 : 0));
-	}
-	break;
+		{
+			WriteQueryResult(pInOut0, nInOutSize0, static_cast<bool>(GetActiveGPUCount() > 1 ? 1 : 0));
+		}
+		break;
 
 	// deprecated, always enabled
 	case EFQ_sLinearSpaceShadingEnabled:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, static_cast<bool>(1));
-	}
-	break;
+		{
+			WriteQueryResult(pInOut0, nInOutSize0, static_cast<bool>(1));
+		}
+		break;
 
 	case EFQ_SetDrawNearFov:
-	{
-		CV_r_drawnearfov = ReadQueryParameter<float>(pInOut0, nInOutSize0);
-	}
-	break;
+		{
+			CV_r_drawnearfov = ReadQueryParameter<float>(pInOut0, nInOutSize0);
+		}
+		break;
 
 	case EFQ_GetDrawNearFov:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, CV_r_drawnearfov);
-	}
-	break;
+		{
+			WriteQueryResult(pInOut0, nInOutSize0, CV_r_drawnearfov);
+		}
+		break;
 
 	case EFQ_TextureStreamingEnabled:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, static_cast<bool>(CRenderer::CV_r_texturesstreaming ? 1 : 0));
-	}
-	break;
+		{
+			WriteQueryResult(pInOut0, nInOutSize0, static_cast<bool>(CRenderer::CV_r_texturesstreaming ? 1 : 0));
+		}
+		break;
 
 	case EFQ_MSAAEnabled:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, static_cast<bool>(m_RP.IsMSAAEnabled() ? 1 : 0));
-	}
-	break;
+		{
+			WriteQueryResult(pInOut0, nInOutSize0, static_cast<bool>(gRenDev->IsMSAAEnabled() ? 1 : 0));
+		}
+		break;
 
 	case EFQ_AAMode:
-	{
-		const uint32 nMode = CRenderer::CV_r_AntialiasingMode;
-		WriteQueryResult(pInOut0, nInOutSize0, s_pszAAModes[nMode]);
-	}
-	break;
+		{
+			const uint32 nMode = CRenderer::CV_r_AntialiasingMode;
+			WriteQueryResult(pInOut0, nInOutSize0, s_pszAAModes[nMode]);
+		}
+		break;
 
 	case EFQ_GetShaderCombinations:
 	case EFQ_SetShaderCombinations:
 	case EFQ_CloseShaderCombinations:
-	{
-		// no longer used, can be ignored
-	}
-	break;
+		{
+			// no longer used, can be ignored
+		}
+		break;
 
 	case EFQ_Fullscreen:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, static_cast<bool>(QueryIsFullscreen() ? 1 : 0));
-	}
-	break;
+		{
+			bool bFullScreen = gcpRendD3D.IsFullscreen();
+			WriteQueryResult(pInOut0, nInOutSize0, static_cast<bool>(bFullScreen ? 1 : 0));
+		}
+		break;
 
 	case EFQ_GetTexStreamingInfo:
-	{
-		STextureStreamingStats* stats = (STextureStreamingStats*)(pInOut0);
-		// Guard CrashHandler for nullptr access if texture streaming is turned off
-		if (stats && gRenDev && CTexture::s_pTextureStreamer && CTexture::s_pPoolMgr)
 		{
-#if CRY_PLATFORM_DURANGO
-			IDefragAllocatorStats allocStats = m_DevMan.GetTexturePoolStats();
-			stats->nCurrentPoolSize = allocStats.nInUseSize;
+			STextureStreamingStats* stats = (STextureStreamingStats*)(pInOut0);
+			// Guard CrashHandler for nullptr access if texture streaming is turned off
+			if (stats && gRenDev && CTexture::s_pTextureStreamer && CTexture::s_pPoolMgr)
+			{
+#if CRY_PLATFORM_DURANGO && (CRY_RENDERER_DIRECT3D >= 110) && (CRY_RENDERER_DIRECT3D < 120)
+				IDefragAllocatorStats allocStats = GetDeviceObjectFactory().GetTexturePoolStats();
+				stats->nCurrentPoolSize = allocStats.nInUseSize;
+				stats->nOverflowAllocationSize = GetDeviceObjectFactory().m_texturePool.GetPoolOverflowAllocated();
+				stats->nOverflowAllocationCount = GetDeviceObjectFactory().m_texturePool.GetPoolOverflowAllocationCount();
 #else
-			stats->nCurrentPoolSize = CTexture::s_pPoolMgr->GetReservedSize();      // s_nStatsStreamPoolInUseMem;
+				stats->nCurrentPoolSize = CTexture::s_pPoolMgr->GetReservedSize();            // s_nStatsStreamPoolInUseMem;
 #endif
-			stats->nStreamedTexturesSize = CTexture::s_nStatsStreamPoolInUseMem;
+				stats->nStreamedTexturesSize = CTexture::s_nStatsStreamPoolInUseMem;
 
-			stats->nStaticTexturesSize      = CTexture::s_nStatsCurManagedNonStreamedTexMem;
-			stats->nNumStreamingRequests    = CTexture::s_nNumStreamingRequests;
-			stats->bPoolOverflow            = CTexture::s_pTextureStreamer->IsOverflowing();
-			stats->bPoolOverflowTotally     = CTexture::s_bOutOfMemoryTotally;
-			CTexture::s_bOutOfMemoryTotally = false;
-			stats->nMaxPoolSize             = CRenderer::GetTexturesStreamPoolSize() * 1024 * 1024;
-			stats->nThroughput              = (CTexture::s_nStreamingTotalTime > 0.f) ? size_t((double)CTexture::s_nStreamingThroughput / CTexture::s_nStreamingTotalTime) : 0;
+				stats->nStaticTexturesSize = CTexture::s_nStatsCurManagedNonStreamedTexMem;
+				stats->nNumStreamingRequests = CTexture::s_nNumStreamingRequests;
+				stats->bPoolOverflow = CTexture::s_pTextureStreamer->IsOverflowing();
+				stats->bPoolOverflowTotally = CTexture::s_bOutOfMemoryTotally;
+				CTexture::s_bOutOfMemoryTotally = false;
+				stats->nMaxPoolSize = CRenderer::GetTexturesStreamPoolSize() * 1024 * 1024;
+				stats->nThroughput = (CTexture::s_nStreamingTotalTime > 0.f) ? size_t((double)CTexture::s_nStreamingThroughput / CTexture::s_nStreamingTotalTime) : 0;
 
 #ifndef _RELEASE
-			stats->nNumTexturesPerFrame = gRenDev->m_RP.m_PS[gRenDev->m_RP.m_nProcessThreadID].m_NumTextures;
+				stats->nNumTexturesPerFrame = m_frameRenderStats[m_nProcessThreadID].m_NumTextures;
 #endif
 
-#if CRY_PLATFORM_DURANGO
-			stats->fPoolFragmentation = (allocStats.nCapacity > 0)
-			  ? (allocStats.nCapacity - allocStats.nInUseSize - allocStats.nLargestFreeBlockSize) / (float)allocStats.nCapacity
-			  : 0.0f;
+#if CRY_PLATFORM_DURANGO && (CRY_RENDERER_DIRECT3D >= 110) && (CRY_RENDERER_DIRECT3D < 120)
+				stats->fPoolFragmentation = (allocStats.nCapacity > 0)
+				                            ? (allocStats.nCapacity - allocStats.nInUseSize - allocStats.nLargestFreeBlockSize) / (float)allocStats.nCapacity
+				                            : 0.0f;
 #endif
 
-			if (stats->bComputeReuquiredTexturesPerFrame)
-			{
-				stats->nRequiredStreamedTexturesCount = 0;
-				stats->nRequiredStreamedTexturesSize  = 0;
-
-				AUTO_LOCK(CBaseResource::s_cResLock);
-
-				// compute all sizes
-				SResourceContainer* pRL = CBaseResource::GetResourcesForClass(CTexture::mfGetClassName());
-				if (pRL)
+				if (stats->bComputeRequiredTexturesPerFrame)
 				{
-					ResourcesMapItor itor;
-					for (itor = pRL->m_RMap.begin(); itor != pRL->m_RMap.end(); itor++)
+					stats->nRequiredStreamedTexturesCount = 0;
+					stats->nRequiredStreamedTexturesSize = 0;
+
+					CryAutoReadLock<CryRWLock> lock(CBaseResource::s_cResLock);
+
+					// compute all sizes
+					SResourceContainer* pRL = CBaseResource::GetResourcesForClass(CTexture::mfGetClassName());
+					if (pRL)
 					{
-						CTexture* tp = (CTexture*)itor->second;
-						if (!tp || tp->IsNoTexture() || !tp->IsStreamed())
-							continue;
+						ResourcesMapItor itor;
+						for (itor = pRL->m_RMap.begin(); itor != pRL->m_RMap.end(); itor++)
+						{
+							CTexture* tp = (CTexture*)itor->second;
+							if (!tp || tp->IsNoTexture() || !tp->IsStreamed())
+								continue;
 
-						const STexStreamingInfo* pTSI = tp->GetStreamingInfo();
-						if (!pTSI)
-							continue;
+							const STexStreamingInfo* pTSI = tp->GetStreamingInfo();
+							if (!pTSI)
+								continue;
 
-						int  nPersMip = tp->GetNumMipsNonVirtual() - tp->GetNumPersistentMips();
-						bool bStale   = CTexture::s_pTextureStreamer->StatsWouldUnload(tp);
-						int  nCurMip  = bStale ? nPersMip : tp->GetRequiredMipNonVirtual();
-						if (tp->IsForceStreamHighRes())
-							nCurMip = 0;
-						int nMips = tp->GetNumMipsNonVirtual();
-						nCurMip = min(nCurMip, nPersMip);
+							int8 nPersMip = tp->GetNumMips() - tp->GetNumPersistentMips();
+							bool bStale = CTexture::s_pTextureStreamer->StatsWouldUnload(tp);
+							int8 nCurMip = bStale ? nPersMip : tp->GetRequiredMip();
+							if (tp->IsForceStreamHighRes())
+								nCurMip = 0;
+							nCurMip = min(nCurMip, nPersMip);
 
-						int nTexSize = tp->StreamComputeDevDataSize(nCurMip);
+							uint32 nTexSize = tp->StreamComputeSysDataSize(nCurMip);
 
-						stats->nRequiredStreamedTexturesSize += nTexSize;
-						++stats->nRequiredStreamedTexturesCount;
+							stats->nRequiredStreamedTexturesSize += nTexSize;
+							++stats->nRequiredStreamedTexturesCount;
+						}
 					}
 				}
+
+				stats->bPoolOverflow = CTexture::s_pTextureStreamer->IsOverflowing();
+				stats->bPoolOverflowTotally = CTexture::s_bOutOfMemoryTotally;
+
+				CTexture::s_bOutOfMemoryTotally = 0;
 			}
 
-			stats->bPoolOverflow            = CTexture::s_pTextureStreamer->IsOverflowing();
-			stats->bPoolOverflowTotally     = CTexture::s_bOutOfMemoryTotally;
-			CTexture::s_bOutOfMemoryTotally = 0;
+			if (pInOut1)
+				WriteQueryResult(pInOut1, nInOutSize1, static_cast<bool>(CTexture::s_nStreamingTotalTime > 0.f && stats != NULL));
 		}
-		if (pInOut1)
-			WriteQueryResult(pInOut1, nInOutSize1, static_cast<bool>(CTexture::s_nStreamingTotalTime > 0.f && stats != NULL));
-	}
-	break;
+		break;
 
 	case EFQ_GetShaderCacheInfo:
-	{
-		SShaderCacheStatistics* pStats = (SShaderCacheStatistics*)(pInOut0);
-		if (pStats)
 		{
-			memcpy(pStats, &m_cEF.m_ShaderCacheStats, sizeof(SShaderCacheStatistics));
-			pStats->m_bShaderCompileActive = CV_r_shadersAllowCompilation != 0;
+			SShaderCacheStatistics* pStats = (SShaderCacheStatistics*)(pInOut0);
+			if (pStats)
+			{
+				memcpy(pStats, &m_cEF.m_ShaderCacheStats, sizeof(SShaderCacheStatistics));
+				pStats->m_bShaderCompileActive = CV_r_shadersAllowCompilation != 0;
+			}
 		}
-	}
-	break;
+		break;
 
 	case EFQ_OverscanBorders:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, s_overscanBorders);
-	}
-	break;
+		{
+			WriteQueryResult(pInOut0, nInOutSize0, s_overscanBorders);
+		}
+		break;
 
 	case EFQ_NumActivePostEffects:
-	{
-		int nSize = 0;
-		if (CV_r_PostProcess && PostEffectMgr())
 		{
-			//assume query is from main thread
-			nSize = PostEffectMgr()->GetActiveEffects(m_RP.m_nFillThreadID).size();
-		}
+			int nSize = 0;
+			if (CV_r_PostProcess && PostEffectMgr())
+			{
+				//assume query is from main thread
+				nSize = PostEffectMgr()->GetActiveEffects(gRenDev->GetMainThreadID()).size();
+			}
 
-		WriteQueryResult(pInOut0, nInOutSize0, nSize);
-	}
-	break;
+			WriteQueryResult(pInOut0, nInOutSize0, nSize);
+		}
+		break;
 
 	case EFQ_GetFogCullDistance:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, m_fogCullDistance);
-	}
-	break;
+		{
+			WriteQueryResult(pInOut0, nInOutSize0, m_fogCullDistance);
+		}
+		break;
 
 	case EFQ_GetMaxRenderObjectsNum:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, MAX_REND_OBJECTS);
-	}
-	break;
+		{
+			WriteQueryResult(pInOut0, nInOutSize0, -1);
+		}
+		break;
 
 	case EFQ_IsRenderLoadingThreadActive:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, static_cast<bool>(m_pRT && m_pRT->m_pThreadLoading ? 1 : 0));
-	}
-	break;
+		{
+			WriteQueryResult(pInOut0, nInOutSize0, static_cast<bool>(m_pRT && m_pRT->m_pThreadLoading ? 1 : 0));
+		}
+		break;
 
 	case EFQ_GetParticleVertexBufferSize:
-	{
-		uint32 nParticleVerticePoolSize = CV_r_ParticleVerticePoolSize * sizeof(SVF_P3F_C4B_T4B_N3F2);
-		WriteQueryResult(pInOut0, nInOutSize0, nParticleVerticePoolSize);
-	}
-	break;
+		{
+			uint32 nParticleVerticePoolSize = CV_r_ParticleVerticePoolSize * sizeof(SVF_P3F_C4B_T4B_N3F2);
+			WriteQueryResult(pInOut0, nInOutSize0, nParticleVerticePoolSize);
+		}
+		break;
 
 	case EFQ_GetParticleIndexBufferSize:
-	{
-		uint32 nParticleVerticePoolSize = CV_r_ParticleVerticePoolSize * 3 * sizeof(uint16);
-		WriteQueryResult(pInOut0, nInOutSize0, nParticleVerticePoolSize);
-	}
-	break;
+		{
+			uint32 nParticleVerticePoolSize = CV_r_ParticleVerticePoolSize * 3 * sizeof(uint16);
+			WriteQueryResult(pInOut0, nInOutSize0, nParticleVerticePoolSize);
+		}
+		break;
 
 	case EFQ_GetMaxParticleContainer:
-	{
-		uint32 nMaxPartCon = nMaxParticleContainer;
-		WriteQueryResult(pInOut0, nInOutSize0, nMaxPartCon);
-	}
-	break;
+		{
+			uint32 nMaxPartCon = nMaxParticleContainer;
+			WriteQueryResult(pInOut0, nInOutSize0, nMaxPartCon);
+		}
+		break;
 
 	case EFQ_GetSkinningDataPoolSize:
-	{
-		int nSkinningPoolSize = 0;
-		for (int i = 0; i < 3; ++i)
-			nSkinningPoolSize += m_SkinningDataPool[i].AllocatedMemory();
-		WriteQueryResult(pInOut0, nInOutSize0, nSkinningPoolSize);
-	}
-	break;
+		{
+			int nSkinningPoolSize = 0;
+			for (int i = 0; i < 3; ++i)
+				nSkinningPoolSize += m_SkinningDataPool[i].AllocatedMemory();
+			WriteQueryResult(pInOut0, nInOutSize0, nSkinningPoolSize);
+		}
+		break;
 
 	case EFQ_GetMeshPoolInfo:
-	{
-		if (SMeshPoolStatistics* stats = (SMeshPoolStatistics*)(pInOut0))
 		{
-			CRenderMesh::GetPoolStats(stats);
+			if (SMeshPoolStatistics* stats = (SMeshPoolStatistics*)(pInOut0))
+			{
+				CRenderMesh::GetPoolStats(stats);
+			}
 		}
-	}
-	break;
+		break;
 
 	case EFQ_SetDynTexSourceLayerInfo:
-	{
-		CDynTextureSourceLayerActivator::LoadLevelInfo();
-	}
-	break;
+		{
+			CDynTextureSourceLayerActivator::LoadLevelInfo();
+		}
+		break;
 
 	case EFQ_SetDynTexSourceSharedRTDim:
-	{
-		if (pInOut0)
 		{
-			int p0 = ReadQueryParameter<int>(pInOut0, nInOutSize0);
-			int p1 = ReadQueryParameter<int>(pInOut1, nInOutSize1);
-			CFlashTextureSourceSharedRT::SetSharedRTDim(p0, p1);
+			if (pInOut0)
+			{
+				int p0 = ReadQueryParameter<int>(pInOut0, nInOutSize0);
+				int p1 = ReadQueryParameter<int>(pInOut1, nInOutSize1);
+				CFlashTextureSourceSharedRT::SetSharedRTDim(p0, p1);
+			}
 		}
-	}
-	break;
+		break;
 
 	case EFQ_GetViewportDownscaleFactor:
-	{
-		WriteQueryResult(pInOut0, nInOutSize0, m_CurViewportScale);
-	}
-	break;
-	case EFQ_ReverseDepthEnabled:
-	{
-		const uint32 nThreadID = m_pRT->GetThreadList();
-		uint32 nReverseDepth   = gRenDev->m_RP.m_TI[nThreadID].m_PersFlags & RBPF_REVERSE_DEPTH;
-
-		WriteQueryResult(pInOut0, nInOutSize0, nReverseDepth);
-	}
-	break;
-	case EFQ_GetLastD3DDebugMessage:
-	{
-#if defined(SUPPORT_D3D_DEBUG_RUNTIME)
-		class D3DDebugMessage:public ID3DDebugMessage
 		{
-		public:
-			D3DDebugMessage(const char* pMsg) : m_msg(pMsg) {}
-
-			virtual void        Release() override      { delete this; }
-			virtual const char* GetMsg() const override { return m_msg.c_str(); }
-
-		protected:
-			string m_msg;
-		};
-
-		if (pInOut0)
-			*((ID3DDebugMessage**) pInOut0) = new D3DDebugMessage(D3DDebug_GetLastMessage());
-#endif
+			WriteQueryResult(pInOut0, nInOutSize0, m_CurViewportScale);
+		}
 		break;
-	}
+	case EFQ_ReverseDepthEnabled:
+		{
+			uint32 nReverseDepth = 1;
+
+			WriteQueryResult(pInOut0, nInOutSize0, nReverseDepth);
+		}
+		break;
+	case EFQ_GetLastD3DDebugMessage:
+		{
+#if defined(DX11_ALLOW_D3D_DEBUG_RUNTIME)
+			class D3DDebugMessage : public ID3DDebugMessage
+			{
+			public:
+				D3DDebugMessage(const char* pMsg) : m_msg(pMsg) {}
+
+				virtual void        Release() override      { delete this; }
+				virtual const char* GetMsg() const override { return m_msg.c_str(); }
+
+			protected:
+				string m_msg;
+			};
+
+			if (pInOut0)
+				*((ID3DDebugMessage**) pInOut0) = new D3DDebugMessage(D3DDebug_GetLastMessage());
+#endif
+			break;
+		}
 
 	default:
 		assert(0);
 	}
 }
 
-#if CRY_PLATFORM_WINDOWS && CRY_PLATFORM_64BIT
+#if CRY_PLATFORM_WINDOWS
 #pragma warning( pop )              //AMD Port
 #endif
 
-void CRenderer::ForceGC(){gRenDev->m_pRT->RC_ForceMeshGC(false); }
+void CRenderer::ForceGC()
+{
+	ExecuteRenderThreadCommand( 
+		[=]{
+			if (m_pRT->m_eVideoThreadMode == SRenderThread::eVTM_Disabled)
+			{
+				CRenderMesh::Tick(MAX_RELEASED_MESH_FRAMES);
+			};
+		},
+		ERenderCommandFlags::None
+	);
+}
 
 //================================================================================================================
 
@@ -2671,11 +2696,11 @@ _smart_ptr<IRenderMesh> CRenderer::CreateRenderMesh(const char* szType, const ch
 	if (pInitParams)
 	{
 		return CreateRenderMeshInitialized(pInitParams->pVertBuffer, pInitParams->nVertexCount, pInitParams->eVertexFormat, pInitParams->pIndices, pInitParams->nIndexCount, pInitParams->nPrimetiveType, szType, szSourceName,
-				 pInitParams->eType, pInitParams->nRenderChunkCount, pInitParams->nClientTextureBindID, 0, 0, pInitParams->bOnlyVideoBuffer, pInitParams->bPrecache, pInitParams->pTangents, pInitParams->bLockForThreadAccess, pInitParams->pNormals);
+		                                   pInitParams->eType, pInitParams->nRenderChunkCount, pInitParams->nClientTextureBindID, 0, 0, pInitParams->bOnlyVideoBuffer, pInitParams->bPrecache, pInitParams->pTangents, pInitParams->bLockForThreadAccess, pInitParams->pNormals);
 	}
 
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_RenderMeshType, 0, szType);
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_RenderMesh, 0, szSourceName);
+	MEMSTAT_CONTEXT(EMemStatContextType::RenderMeshType, szType);
+	MEMSTAT_CONTEXT(EMemStatContextType::RenderMesh, szSourceName);
 
 	// make material table with clean elements
 	_smart_ptr<CRenderMesh> pRenderMesh = new CRenderMesh(szType, szSourceName);
@@ -2689,18 +2714,18 @@ _smart_ptr<IRenderMesh> CRenderer::CreateRenderMesh(const char* szType, const ch
 // NOTE: if the pVertBuffer is NULL, the system buffer doesn't get initialized with any values
 // (trash may be in it)
 _smart_ptr<IRenderMesh> CRenderer::CreateRenderMeshInitialized(
-	const void* pVertBuffer, int nVertCount, EVertexFormat eVF,
+	const void* pVertBuffer, int nVertCount, InputLayoutHandle eVF,
 	const vtx_idx* pIndices, int nIndices,
 	const PublicRenderPrimitiveType nPrimetiveType, const char* szType, const char* szSourceName, ERenderMeshType eBufType,
 	int nMatInfoCount, int nClientTextureBindID,
-	bool (* PrepareBufferCallback)(IRenderMesh*, bool),
+	bool (*PrepareBufferCallback)(IRenderMesh*, bool),
 	void* CustomData, bool bOnlyVideoBuffer, bool bPrecache,
 	const SPipTangents* pTangents, bool bLockForThreadAcc, Vec3* pNormals)
 {
-	FUNCTION_PROFILER_RENDERER;
+	FUNCTION_PROFILER_RENDERER();
 
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_RenderMeshType, 0, szType);
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_RenderMesh, 0, szSourceName);
+	MEMSTAT_CONTEXT(EMemStatContextType::RenderMeshType, szType);
+	MEMSTAT_CONTEXT(EMemStatContextType::RenderMesh, szSourceName);
 
 	_smart_ptr<CRenderMesh> pRenderMesh = new CRenderMesh(szType, szSourceName, bLockForThreadAcc);
 	pRenderMesh->_SetRenderMeshType(eBufType);
@@ -2735,9 +2760,9 @@ _smart_ptr<IRenderMesh> CRenderer::CreateRenderMeshInitialized(
 	pRenderMesh->m_nClientTextureBindID = nClientTextureBindID;
 
 	// Precache for static buffers
-	if (CV_r_meshprecache && pRenderMesh->_GetNumVerts() && bPrecache && !m_bDeviceLost && m_pRT->IsRenderThread())
+	if (CV_r_meshprecache && pRenderMesh->_GetNumVerts() && bPrecache && m_pRT->IsRenderThread())
 	{
-		pRenderMesh->CheckUpdate(eVF, -1);
+		//pRenderMesh->CheckUpdate(eVF, -1);
 	}
 
 	pRenderMesh->UnLockForThreadAccess();
@@ -2746,20 +2771,39 @@ _smart_ptr<IRenderMesh> CRenderer::CreateRenderMeshInitialized(
 
 //=======================================================================
 
-void CRenderer::SetWhiteTexture()
-{
-	m_pRT->RC_SetTexture(CTexture::s_ptexWhite->GetID(), 0);
-}
-
 int CRenderer::GetWhiteTextureId() const
 {
-	const int textureId = (CTexture::s_ptexWhite) ? CTexture::s_ptexWhite->GetID() : -1;
+	const int textureId = (CRendererResources::s_ptexWhite) ? CRendererResources::s_ptexWhite->GetID() : -1;
 	return textureId;
 }
 
-void CRenderer::SetTexture(int tnum)
+float CRenderer::ScaleCoordX(float value) const
 {
-	m_pRT->RC_SetTexture(tnum, 0);
+	return ScaleCoordXInternal(value, SRenderViewport(0, 0, CRendererResources::s_displayWidth, CRendererResources::s_displayHeight));
+}
+
+float CRenderer::ScaleCoordY(float value) const
+{
+	return ScaleCoordYInternal(value, SRenderViewport(0, 0, CRendererResources::s_displayWidth, CRendererResources::s_displayHeight));
+}
+
+void CRenderer::ScaleCoord(float& x, float& y) const
+{
+	ScaleCoordInternal(x, y, SRenderViewport(0, 0, CRendererResources::s_displayWidth, CRendererResources::s_displayHeight));
+}
+
+int CRenderer::GetOverlayWidth() const
+{
+	if (GetIStereoRenderer()->GetStereoEnabled() && !GetIStereoRenderer()->IsMenuModeEnabled())
+		return GetIStereoRenderer()->GetOverlayResolution().x;
+	return CRendererResources::s_displayWidth;
+}
+
+int CRenderer::GetOverlayHeight() const
+{
+	if (GetIStereoRenderer()->GetStereoEnabled() && !GetIStereoRenderer()->IsMenuModeEnabled())
+		return GetIStereoRenderer()->GetOverlayResolution().y;
+	return CRendererResources::s_displayHeight;
 }
 
 // used for sprite generation
@@ -2771,8 +2815,8 @@ void CRenderer::SetTextureAlphaChannelFromRGB(byte* pMemBuffer, int nTexSize)
 		{
 			int t = (x + nTexSize * y) * 4;
 			if (abs(pMemBuffer[t + 0] - pMemBuffer[0 + 0]) < 2 &&
-			  abs(pMemBuffer[t + 1] - pMemBuffer[0 + 1]) < 2 &&
-			  abs(pMemBuffer[t + 2] - pMemBuffer[0 + 2]) < 2)
+			    abs(pMemBuffer[t + 1] - pMemBuffer[0 + 1]) < 2 &&
+			    abs(pMemBuffer[t + 2] - pMemBuffer[0 + 2]) < 2)
 				pMemBuffer[t + 3] = 0;
 			else
 				pMemBuffer[t + 3] = 255;
@@ -2781,85 +2825,183 @@ void CRenderer::SetTextureAlphaChannelFromRGB(byte* pMemBuffer, int nTexSize)
 			if (x == 0 || y == 0 || x == nTexSize - 1 || y == nTexSize - 1)
 				pMemBuffer[t + 3] = 0;
 		}
-	}
+}
 
 //=============================================================================
 // Precaching
-bool CRenderer::EF_PrecacheResource(IRenderMesh* _pPB, IMaterial* pMaterial, float fMipFactor, float fTimeToReady, int nFlags, int nUpdateId)
-{
-	int i;
-	if (!CRenderer::CV_r_texturesstreaming)
-		return true;
-
-	CRenderMesh* pPB = (CRenderMesh*)_pPB;
-
-	for (i = 0; i < pPB->m_Chunks.size(); i++)
-	{
-		CRenderChunk* pChunk = &pPB->m_Chunks[i];
-		assert(!"do pre-cache with real materials");
-
-		assert(0);
-
-		//@TODO: Timur
-		assert(pMaterial && "RenderMesh must have material");
-		CShaderResources* pSR = (CShaderResources*)pMaterial->GetShaderItem(pChunk->m_nMatID).m_pShaderResources;
-		if (!pSR)
-			continue;
-		if (pSR->m_nFrameLoad != m_RP.m_TI[m_RP.m_nProcessThreadID].m_nFrameID)
-		{
-			pSR->m_nFrameLoad        = m_RP.m_TI[m_RP.m_nProcessThreadID].m_nFrameID;
-			pSR->m_fMinMipFactorLoad = 999999.0f;
-		}
-		else if (fMipFactor >= pSR->m_fMinMipFactorLoad)
-			continue;
-		pSR->m_fMinMipFactorLoad = fMipFactor;
-		for (int j = 0; j <= pSR->m_nLastTexture; j++)
-		{
-			if (!pSR->m_Textures[j])
-				continue;
-			CTexture* tp = pSR->m_Textures[j]->m_Sampler.m_pTex;
-			if (!tp)
-				continue;
-			fMipFactor *= pSR->m_Textures[j]->GetTiling(0) * pSR->m_Textures[j]->GetTiling(1);
-
-			m_pRT->RC_PrecacheResource(tp, fMipFactor, 0, nFlags, nUpdateId);
-		}
-	}
-	return true;
-}
-
-bool CRenderer::EF_PrecacheResource(CDLight* pLS, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId)
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_RENDERER);
-
-	if (!CRenderer::CV_r_texturesstreaming)
-		return true;
-
-	ITexture* pLightTexture = pLS->m_pLightImage ? pLS->m_pLightImage : pLS->m_pLightDynTexSource ? pLS->m_pLightDynTexSource->GetTexture() : NULL;
-	if (pLightTexture)
-		m_pRT->RC_PrecacheResource(pLightTexture, fMipFactor, 0, Flags, nUpdateId);
-	if (pLS->GetDiffuseCubemap())
-		m_pRT->RC_PrecacheResource(pLS->GetDiffuseCubemap(), fMipFactor, 0, Flags, nUpdateId);
-	if (pLS->GetSpecularCubemap())
-		m_pRT->RC_PrecacheResource(pLS->GetSpecularCubemap(), fMipFactor, 0, Flags, nUpdateId);
-	return true;
-}
-
-void CRenderer::PrecacheTexture(ITexture* pTP, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId, int nCounter)
+void CRenderer::PrecacheTexture(ITexture* pTP, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId)
 {
 	if (!CRenderer::CV_r_texturesstreaming)
 		return;
 
-	assert(m_pRT->IsRenderThread());
+	CRY_ASSERT_MESSAGE(pTP, "Invalid parameter given to EF_PrecacheResource");
+	CTexture* pTexture = (CTexture*)pTP;
 
-	if (pTP)
-		((CTexture*)pTP)->CTexture::PrecacheAsynchronously(fMipFactor, Flags, nUpdateId, nCounter);
+	pTexture->PrecacheAsynchronously(fMipFactor, Flags, nUpdateId);
 }
 
-bool CRenderer::EF_PrecacheResource(IShader* pSH, float fMipFactor, float fTimeToReady, int Flags)
+bool CRenderer::EF_PrecacheResource(ITexture* pTP, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId)
 {
-	if (!CRenderer::CV_r_texturesstreaming)
-		return true;
+	m_pRT->RC_PrecacheResource(pTP, fMipFactor, fTimeToReady, Flags, nUpdateId);
+
+	return true;
+}
+
+bool CRenderer::EF_PrecacheResource(SRenderLight* pLS, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId)
+{
+	CRY_ASSERT_MESSAGE(pLS, "Invalid parameter given to EF_PrecacheResource");
+	ITexture* pLightTexture = pLS->m_pLightImage ? pLS->m_pLightImage : pLS->m_pLightDynTexSource ? pLS->m_pLightDynTexSource->GetTexture() : NULL;
+
+	if (pLightTexture)
+		CRenderer::EF_PrecacheResource(pLightTexture, fMipFactor, 0, Flags, nUpdateId);
+	if (pLS->GetDiffuseCubemap())
+		CRenderer::EF_PrecacheResource(pLS->GetDiffuseCubemap(), fMipFactor, 0, Flags, nUpdateId);
+	if (pLS->GetSpecularCubemap())
+		CRenderer::EF_PrecacheResource(pLS->GetSpecularCubemap(), fMipFactor, 0, Flags, nUpdateId);
+
+	return true;
+}
+
+bool CRenderer::EF_PrecacheResource(IRenderShaderResources* pShaderResources, float fMipFactorSI, float fTimeToReady, int nFlags, int nUpdateId)
+{
+	CRY_ASSERT_MESSAGE(pShaderResources, "Invalid parameter given to EF_PrecacheResource");
+	CShaderResources* pSR = (CShaderResources*)pShaderResources;
+
+	// Optimizations: 1) Virtual calls removed. 2) Prefetch next iteration's SEfResTexture
+	SEfResTexture* pNextResTex = NULL;
+	EEfResTextures iSlot;
+	for (iSlot = EEfResTextures(0); iSlot < EFTT_MAX; iSlot = EEfResTextures(iSlot + 1))
+	{
+		pNextResTex = pSR->m_Textures[iSlot];
+		if (pNextResTex)
+		{
+			PrefetchLine(pNextResTex, offsetof(SEfResTexture, m_Sampler.m_pITex));
+			iSlot = EEfResTextures(iSlot + 1);
+			break;
+		}
+	}
+
+	while (pNextResTex)
+	{
+		SEfResTexture* pResTex = pNextResTex;
+		pNextResTex = NULL;
+		for (; iSlot < EFTT_MAX; iSlot = EEfResTextures(iSlot + 1))
+		{
+			pNextResTex = pSR->m_Textures[iSlot];
+			if (pNextResTex)
+			{
+				PrefetchLine(pNextResTex, offsetof(SEfResTexture, m_Sampler.m_pITex));
+				iSlot = EEfResTextures(iSlot + 1);
+				break;
+			}
+		}
+
+		if (CTexture* pTexture = pResTex->m_Sampler.m_pTex)
+		{
+			float fMipFactor = fMipFactorSI * min(fabsf(pResTex->GetTiling(0)), fabsf(pResTex->GetTiling(1)));
+			CRenderer::EF_PrecacheResource(pTexture, fMipFactor, 0, nFlags, nUpdateId);
+		}
+	}
+
+	return true;
+}
+
+bool CRenderer::EF_PrecacheResource(IRenderShaderResources* pShaderResources, int iScreenTexels, float fTimeToReady, int Flags, int nUpdateId)
+{
+	CRY_ASSERT_MESSAGE(pShaderResources, "Invalid parameter given to EF_PrecacheResource");
+	CShaderResources* pSR = (CShaderResources*)pShaderResources;
+
+	// Optimizations: 1) Virtual calls removed. 2) Prefetch next iteration's SEfResTexture
+	SEfResTexture* pNextResTex = NULL;
+	EEfResTextures iSlot;
+	for (iSlot = EEfResTextures(0); iSlot < EFTT_MAX; iSlot = EEfResTextures(iSlot + 1))
+	{
+		pNextResTex = pSR->m_Textures[iSlot];
+		if (pNextResTex)
+		{
+			PrefetchLine(pNextResTex, offsetof(SEfResTexture, m_Sampler.m_pITex));
+			iSlot = EEfResTextures(iSlot + 1);
+			break;
+		}
+	}
+
+	while (pNextResTex)
+	{
+		SEfResTexture* pResTex = pNextResTex;
+		pNextResTex = NULL;
+		for (; iSlot < EFTT_MAX; iSlot = EEfResTextures(iSlot + 1))
+		{
+			pNextResTex = pSR->m_Textures[iSlot];
+			if (pNextResTex)
+			{
+				PrefetchLine(pNextResTex, offsetof(SEfResTexture, m_Sampler.m_pITex));
+				iSlot = EEfResTextures(iSlot + 1);
+				break;
+			}
+		}
+
+		if (CTexture* pTexture = pResTex->m_Sampler.m_pTex)
+		{
+			float minTiling = min(fabsf(pResTex->GetTiling(0)), fabsf(pResTex->GetTiling(1)));
+			int maxResolution = max(abs(pTexture->GetHeight()), abs(pTexture->GetWidth()));
+
+			float minMipMap = logf(max(1.0f, iScreenTexels / minTiling)) / logf(2.0f);
+			float maxMipMap = logf(float(maxResolution)) / logf(2.0f);
+
+			float currentMipFactor = expf((maxMipMap - minMipMap) * 2.0f * 0.69314718055994530941723212145818f /*M_LN2*/);
+			float fMipFactor = currentMipFactor / gRenDev->GetMipDistFactor(pTexture->GetHeight(), pTexture->GetWidth());
+
+			CRenderer::EF_PrecacheResource(pTexture, fMipFactor, 0.f, Flags, nUpdateId);
+		}
+	}
+
+	return true;
+}
+
+bool CRenderer::EF_PrecacheResource(SShaderItem* pSI, float fMipFactorSI, float fTimeToReady, int Flags, int nUpdateId)
+{
+	CRY_ASSERT_MESSAGE(pSI, "Invalid parameter given to EF_PrecacheResource");
+	CShader* pSH = (CShader*)pSI->m_pShader;
+
+	if (pSH && !(pSH->m_Flags & EF_NODRAW))
+	{
+		if (IRenderShaderResources* pSR = pSI->m_pShaderResources)
+			CRenderer::EF_PrecacheResource(pSR, fMipFactorSI, fTimeToReady, Flags, nUpdateId);
+	}
+
+	return true;
+}
+
+bool CRenderer::EF_PrecacheResource(SShaderItem* pSI, int iScreenTexels, float fTimeToReady, int Flags, int nUpdateId)
+{
+	CRY_ASSERT_MESSAGE(pSI, "Invalid parameter given to EF_PrecacheResource");
+	CShader* pSH = (CShader*)pSI->m_pShader;
+
+	if (pSH && !(pSH->m_Flags & EF_NODRAW))
+	{
+		if (IRenderShaderResources* pSR = pSI->m_pShaderResources)
+			CRenderer::EF_PrecacheResource(pSR, iScreenTexels, fTimeToReady, Flags, nUpdateId);
+	}
+
+	return true;
+}
+
+bool CRenderer::EF_PrecacheResource(IShader* pSH, float fMipFactor, float fTimeToReady, int Flags, int nUpdateId)
+{
+	return true;
+}
+
+bool CRenderer::EF_PrecacheResource(IRenderMesh* _pPB, IMaterial* pMaterial, float fMipFactor, float fTimeToReady, int nFlags, int nUpdateId)
+{
+	CRY_ASSERT_MESSAGE(_pPB && pMaterial, "Invalid parameter given to EF_PrecacheResource");
+	CRenderMesh* pPB = (CRenderMesh*)_pPB;
+
+	for (int i = 0; i < pPB->m_Chunks.size(); i++)
+	{
+		CRenderChunk* pChunk = &pPB->m_Chunks[i];
+
+		EF_PrecacheResource(&pMaterial->GetShaderItem(pChunk->m_nMatID), fMipFactor, fTimeToReady, nFlags, nUpdateId);
+	}
 
 	return true;
 }
@@ -2896,17 +3038,18 @@ static float LinearToGamma(float x)
 
 // Squish uses non-standard inline friend templates which Recode cannot parse
 #if !defined(__RECODE__) && !defined(EXCLUDE_SQUISH_SDK)
-#ifdef __GNUC__
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Werror"
-#endif   // __GNUC__
+#if defined(CRY_COMPILER_GCC)
+    #pragma GCC diagnostic push
+    #pragma GCC diagnostic ignored "-Werror"
+#endif   // CRY_COMPILER_GCC
 
-#include "../../../SDKs/squish-ccr/squish.h"
-#include "../../../SDKs/squish-ccr/squish.inl"
+#include <squish-ccr/squish.h>
+#include <squish-ccr/squish.inl>
+#include <CryCore/Assert/CryAssert.h> // Ensure assert is redefined as CRY_ASSERT
 
-#ifdef __GNUC__
-#pragma GCC diagnostic pop
-#endif   // __GNUC__
+#if defined(CRY_COMPILER_GCC)
+    #pragma GCC diagnostic pop
+#endif   // CRY_COMPILER_GCC
 #endif
 
 // number of bytes per block per type
@@ -2922,22 +3065,22 @@ static float LinearToGamma(float x)
 struct SCompressRowData
 {
 	struct squish::sqio* pSqio;
-	byte*  destinationData;
-	byte*  sourceData;
-	int row;
-	int width;
-	int height;
-	int blockWidth;
-	int blockHeight;
-	int pixelStride;
-	int rowStride;
-	int blockStride;
-	int sourceChannels;
-	int destinationChannels;
-	int offs;
+	byte*                destinationData;
+	const byte*          sourceData;
+	int                  row;
+	int                  width;
+	int                  height;
+	int                  blockWidth;
+	int                  blockHeight;
+	int                  pixelStride;
+	int                  rowStride;
+	int                  blockStride;
+	int                  sourceChannels;
+	int                  destinationChannels;
+	int                  offs;
 };
 
-static void DXTDecompressRow(SCompressRowData data)
+void DXTDecompressRow(SCompressRowData data)
 {
 #if CRY_PLATFORM_WINDOWS
 	SCOPED_DISABLE_FLOAT_EXCEPTIONS();
@@ -2972,7 +3115,7 @@ static void DXTDecompressRow(SCompressRowData data)
 	}
 }
 
-static void DXTDecompressRowFloat(SCompressRowData data)
+void DXTDecompressRowFloat(SCompressRowData data)
 {
 #if CRY_PLATFORM_WINDOWS
 	SCOPED_DISABLE_FLOAT_EXCEPTIONS();
@@ -3007,7 +3150,7 @@ static void DXTDecompressRowFloat(SCompressRowData data)
 	}
 }
 
-static void DXTCompressRow(SCompressRowData data)
+void DXTCompressRow(SCompressRowData data)
 {
 #if CRY_PLATFORM_WINDOWS
 	SCOPED_DISABLE_FLOAT_EXCEPTIONS();
@@ -3042,7 +3185,7 @@ static void DXTCompressRow(SCompressRowData data)
 	}
 }
 
-static void DXTCompressRowFloat(SCompressRowData data)
+void DXTCompressRowFloat(SCompressRowData data)
 {
 #if CRY_PLATFORM_WINDOWS
 	SCOPED_DISABLE_FLOAT_EXCEPTIONS();
@@ -3084,8 +3227,10 @@ DECLARE_JOB("DXTCompressRowFloat", TDXTCompressRowFloat, DXTCompressRowFloat);
 
 #endif // #if !defined(__RECODE__) && !defined(EXCLUDE_SQUISH_SDK)
 
-bool CRenderer::DXTDecompress(byte* sourceData, const size_t srcFileSize, byte* destinationData, int width, int height, int mips, ETEX_Format sourceFormat, bool bUseHW, int nDstBytesPerPix)
+bool CRenderer::DXTDecompress(const byte* sourceData, const size_t srcFileSize, byte* destinationData, int width, int height, int mips, ETEX_Format sourceFormat, bool bUseHW, int nDstBytesPerPix)
 {
+	FUNCTION_PROFILER_RENDERER();
+
 	if (bUseHW)
 		return false;
 
@@ -3182,49 +3327,54 @@ bool CRenderer::DXTDecompress(byte* sourceData, const size_t srcFileSize, byte* 
 
 	if ((datatype == squish::sqio::DT_U8) && (nDstBytesPerPix == 4))
 	{
-#ifdef PROCESS_TEXTURES_IN_PARALLEL
+	#ifdef PROCESS_TEXTURES_IN_PARALLEL
 		JobManager::SJobState jobState;
-#endif
+	#endif
 
 		for (int y = 0; y < height; y += blockHeight)
 		{
 			data.row = y;
-#ifdef PROCESS_TEXTURES_IN_PARALLEL
-			TDXTDecompressRow compressJob(data);
-			compressJob.RegisterJobState(&jobState);
-			compressJob.SetPriorityLevel(JobManager::eStreamPriority);
-			compressJob.Run();
-#else
+	#ifdef PROCESS_TEXTURES_IN_PARALLEL
+			// if this is already running from a worker, we must not block it waiting for other jobs or we get a deadlock
+			// (this did happen, coming from voxel streaming)
+			if (!JobManager::IsWorkerThread())
+			{
+				TDXTDecompressRow compressJob(data);
+				compressJob.RegisterJobState(&jobState);
+				compressJob.SetPriorityLevel(JobManager::eStreamPriority);
+				compressJob.Run();
+			}
+			else
+	#endif
 			DXTDecompressRow(data);
-#endif
 		}
 
-#ifdef PROCESS_TEXTURES_IN_PARALLEL
+	#ifdef PROCESS_TEXTURES_IN_PARALLEL
 		gEnv->pJobManager->WaitForJob(jobState);
-#endif
+	#endif
 	}
 	else if ((datatype == squish::sqio::DT_F23) && (nDstBytesPerPix == 4))
 	{
-#ifdef PROCESS_TEXTURES_IN_PARALLEL
+	#ifdef PROCESS_TEXTURES_IN_PARALLEL
 		JobManager::SJobState jobState;
-#endif
+	#endif
 
 		for (int y = 0; y < height; y += blockHeight)
 		{
 			data.row = y;
-#ifdef PROCESS_TEXTURES_IN_PARALLEL
+	#ifdef PROCESS_TEXTURES_IN_PARALLEL
 			TDXTDecompressRowFloat compressJob(data);
 			compressJob.RegisterJobState(&jobState);
 			compressJob.SetPriorityLevel(JobManager::eStreamPriority);
 			compressJob.Run();
-#else
+	#else
 			DXTDecompressRowFloat(data);
-#endif
+	#endif
 		}
 
-#ifdef PROCESS_TEXTURES_IN_PARALLEL
+	#ifdef PROCESS_TEXTURES_IN_PARALLEL
 		gEnv->pJobManager->WaitForJob(jobState);
-#endif
+	#endif
 	}
 	else
 	{
@@ -3240,13 +3390,13 @@ bool CRenderer::DXTDecompress(byte* sourceData, const size_t srcFileSize, byte* 
 #endif
 }
 
-bool CRenderer::DXTCompress(byte* sourceData, int width, int height, ETEX_Format destinationFormat, bool bUseHW, bool bGenMips, int nSrcBytesPerPix, MIPDXTcallback callback)
+bool CRenderer::DXTCompress(const byte* sourceData, int width, int height, ETEX_Format destinationFormat, bool bUseHW, bool bGenMips, int nSrcBytesPerPix, MIPDXTcallback callback)
 {
+	FUNCTION_PROFILER_RENDERER();
+
 	if (bUseHW)
 		return false;
 	if (bGenMips)
-		return false;
-	if (CV_r_TextureCompressor == 0)
 		return false;
 
 #if CRY_PLATFORM_WINDOWS
@@ -3354,49 +3504,49 @@ bool CRenderer::DXTCompress(byte* sourceData, int width, int height, ETEX_Format
 
 	if ((datatype == squish::sqio::DT_U8) && (nSrcBytesPerPix == 4))
 	{
-#ifdef PROCESS_TEXTURES_IN_PARALLEL
+	#ifdef PROCESS_TEXTURES_IN_PARALLEL
 		JobManager::SJobState jobState;
-#endif
+	#endif
 
 		for (int y = 0; y < height; y += blockHeight)
 		{
 			data.row = y;
-#ifdef PROCESS_TEXTURES_IN_PARALLEL
+	#ifdef PROCESS_TEXTURES_IN_PARALLEL
 			TDXTCompressRow compressJob(data);
 			compressJob.RegisterJobState(&jobState);
 			compressJob.SetPriorityLevel(JobManager::eHighPriority);
 			compressJob.Run();
-#else
+	#else
 			DXTCompressRow(data);
-#endif
+	#endif
 		}
 
-#ifdef PROCESS_TEXTURES_IN_PARALLEL
+	#ifdef PROCESS_TEXTURES_IN_PARALLEL
 		gEnv->pJobManager->WaitForJob(jobState);
-#endif
+	#endif
 	}
 	else if ((datatype == squish::sqio::DT_F23) && (nSrcBytesPerPix == 4))
 	{
-#ifdef PROCESS_TEXTURES_IN_PARALLEL
+	#ifdef PROCESS_TEXTURES_IN_PARALLEL
 		JobManager::SJobState jobState;
-#endif
+	#endif
 
 		for (int y = 0; y < height; y += blockHeight)
 		{
 			data.row = y;
-#ifdef PROCESS_TEXTURES_IN_PARALLEL
+	#ifdef PROCESS_TEXTURES_IN_PARALLEL
 			TDXTCompressRowFloat compressJob(data);
 			compressJob.RegisterJobState(&jobState);
 			compressJob.SetPriorityLevel(JobManager::eHighPriority);
 			compressJob.Run();
-#else
+	#else
 			DXTCompressRowFloat(data);
-#endif
+	#endif
 		}
 
-#ifdef PROCESS_TEXTURES_IN_PARALLEL
+	#ifdef PROCESS_TEXTURES_IN_PARALLEL
 		gEnv->pJobManager->WaitForJob(jobState);
-#endif
+	#endif
 	}
 	else
 	{
@@ -3415,7 +3565,7 @@ bool CRenderer::DXTCompress(byte* sourceData, int width, int height, ETEX_Format
 #endif
 }
 
-bool CRenderer::WriteJPG(byte* dat, int wdt, int hgt, char* name, int src_bits_per_pixel, int nQuality)
+bool CRenderer::WriteJPG(const byte* dat, int wdt, int hgt, char* name, int src_bits_per_pixel, int nQuality)
 {
 	return ::WriteJPG(dat, wdt, hgt, name, src_bits_per_pixel, nQuality);
 }
@@ -3425,7 +3575,7 @@ ITexture* CRenderer::CreateTexture(const char* name, int width, int height, int 
 {
 	char uniqueName[128];
 	cry_sprintf(uniqueName, "%s%d", name, m_TexGenID++);
-	return CTexture::Create2DTexture(uniqueName, width, height, numMips, flags, pData, eTF, eTF);
+	return CTexture::GetOrCreate2DTexture(uniqueName, width, height, numMips, flags, pData, eTF);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -3433,12 +3583,42 @@ ITexture* CRenderer::CreateTextureArray(const char* name, ETEX_Type eType, uint3
 {
 	char uniqueName[128];
 	cry_sprintf(uniqueName, "%s%d", name, m_TexGenID++);
-	return CTexture::CreateTextureArray(uniqueName, eType, nWidth, nHeight, nArraySize, nMips, nFlags, eTF, nCustomID);
+	return CTexture::GetOrCreateTextureArray(uniqueName, nWidth, nHeight, nArraySize, nMips, eType, nFlags, eTF, nCustomID);
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CRenderer::CopyTextureRegion(ITexture* pSrc, RectI srcRegion, ITexture* pDst, RectI dstRegion, ColorF& color, const int renderStateFlags)
+{
+	_smart_ptr<ITexture> pSource = pSrc;
+	_smart_ptr<ITexture> pDestination = pDst;
+	ExecuteRenderThreadCommand([=]
+	{
+		RECT src;
+		src.left = srcRegion.x;
+		src.right = srcRegion.x + srcRegion.w;
+		src.bottom = srcRegion.y + srcRegion.h;
+		src.top = srcRegion.y;
+
+		RECT dst;
+		dst.left = dstRegion.x;
+		dst.right = dstRegion.x + dstRegion.w;
+		dst.bottom = dstRegion.y + dstRegion.h;
+		dst.top = dstRegion.y;
+
+		CStretchRegionPass(m_pActiveGraphicsPipeline.get()).Execute(static_cast<CTexture*>(pSource.get()), static_cast<CTexture*>(pDestination.get()), &src, &dst, false, color, renderStateFlags);
+	}
+    , ERenderCommandFlags::None);
+}
+
+//////////////////////////////////////////////////////////////////////////
+IShaderPublicParams* CRenderer::CreateShaderPublicParams()
+{
+	return new CShaderPublicParams;
 }
 
 //////////////////////////////////////////////////////////////////////////
 
-void CRenderer::SetLevelLoadingThreadId( threadID threadId )
+void CRenderer::SetLevelLoadingThreadId(threadID threadId)
 {
 	m_pRT->m_nLevelLoadingThread = threadId;
 }
@@ -3458,8 +3638,25 @@ void CRenderer::GetThreadIDs(threadID& mainThreadID, threadID& renderThreadID) c
 //////////////////////////////////////////////////////////////////////////
 void CRenderer::PostLevelLoading()
 {
-	int nThreadID = m_pRT->GetThreadList();
-	m_RP.m_fogVolumeContibutions[nThreadID].reserve(2048);
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
+
+	if (gRenDev)
+	{
+		m_bStartLevelLoading = false;
+		if (m_pRT->IsMultithreaded())
+		{
+			iLog->Log("-- Render thread was idle during level loading: %.3f secs", SRenderStatistics::Write().m_Summary.idleLoading);
+			iLog->Log("-- Render thread was busy during level loading: %.3f secs", SRenderStatistics::Write().m_Summary.busyLoading);
+		}
+
+		m_cEF.mfSortResources();
+	}
+
+	{
+		CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY)(iSystem);
+		const bool isBlocking = true;
+		CTexture::Precache(isBlocking);
+	}
 }
 
 const char* CRenderer::GetTextureFormatName(ETEX_Format eTF)
@@ -3467,31 +3664,50 @@ const char* CRenderer::GetTextureFormatName(ETEX_Format eTF)
 	return CTexture::NameForTextureFormat(eTF);
 }
 
-int CRenderer::GetTextureFormatDataSize(int nWidth, int nHeight, int nDepth, int nMips, ETEX_Format eTF)
+uint32 CRenderer::GetTextureFormatDataSize(int nWidth, int nHeight, int nDepth, int nMips, ETEX_Format eTF, ETEX_TileMode mode)
 {
-	return CTexture::TextureDataSize(nWidth, nHeight, nDepth, nMips, 1, eTF);
+	return CTexture::TextureDataSize(nWidth, nHeight, nDepth, nMips, 1, eTF, mode);
 }
 
 //////////////////////////////////////////////////////////////////////////
 ERenderType CRenderer::GetRenderType() const
 {
-#if CRY_PLATFORM_ORBIS
-	return eRT_PS4;
-#elif CRY_PLATFORM_DURANGO
-	return eRT_XboxOne;
-#elif defined(OPENGL)
-	return eRT_OpenGL;
-#elif defined(CRY_USE_DX12)
-	return eRT_DX12;
+#if CRY_RENDERER_GNM
+	return ERenderType::GNM;
+#elif CRY_RENDERER_OPENGL
+	return ERenderType::OpenGL;
+#elif CRY_RENDERER_VULKAN
+	return ERenderType::Vulkan;
+#elif (CRY_RENDERER_DIRECT3D >= 120)
+	return ERenderType::Direct3D12;
+#elif (CRY_RENDERER_DIRECT3D >= 110)
+	return ERenderType::Direct3D11;
 #else
-	return eRT_DX11;
+	return ERenderType::eRT_Undefined;
+#endif
+}
+
+int CRenderer::GetPolyCount()
+{
+#if defined(ENABLE_PROFILING_CODE)
+	return m_frameRenderStats[m_pRT->GetThreadList()].GetNumberOfPolygons();
+#else
+	return 0;
+#endif
+}
+
+void CRenderer::GetPolyCount(int& nPolygons, int& nShadowPolys)
+{
+#if defined(ENABLE_PROFILING_CODE)
+	nPolygons    = m_frameRenderStats[m_pRT->GetThreadList()].GetNumberOfPolygons();
+	nShadowPolys = m_frameRenderStats[m_pRT->GetThreadList()].GetNumberOfPolygons(1 << EFSLIST_SHADOW_GEN);
 #endif
 }
 
 int CRenderer::GetNumGeomInstances()
 {
-#if !defined(RELEASE)
-	return m_RP.m_PS[m_RP.m_nProcessThreadID].m_nInsts;
+#if defined(ENABLE_PROFILING_CODE)
+	return m_frameRenderStats[m_pRT->GetThreadList()].GetNumGeomInstances();
 #else
 	return 0;
 #endif
@@ -3499,8 +3715,8 @@ int CRenderer::GetNumGeomInstances()
 
 int CRenderer::GetNumGeomInstanceDrawCalls()
 {
-#if !defined(RELEASE)
-	return m_RP.m_PS[m_RP.m_nProcessThreadID].m_nInstCalls;
+#if defined(ENABLE_PROFILING_CODE)
+	return m_frameRenderStats[m_pRT->GetThreadList()].GetNumGeomInstanceDrawCalls();
 #else
 	return 0;
 #endif
@@ -3508,48 +3724,28 @@ int CRenderer::GetNumGeomInstanceDrawCalls()
 
 int CRenderer::GetCurrentNumberOfDrawCalls()
 {
-	int nDIPs = 0;
 #if defined(ENABLE_PROFILING_CODE)
-	int nThr = m_pRT->GetThreadList();
-	for (int i = 0; i < EFSLIST_NUM; i++)
-	{
-		nDIPs += m_RP.m_PS[nThr].m_nDIPs[i];
-	}
+	return m_frameRenderStats[m_pRT->GetThreadList()].GetNumberOfDrawCalls();
+#else
+	return 0;
 #endif
-	return nDIPs;
 }
 
 void CRenderer::GetCurrentNumberOfDrawCalls(int& nGeneral, int& nShadowGen)
 {
-	int nDIPs = 0;
 #if defined(ENABLE_PROFILING_CODE)
-	int nThr = m_pRT->GetThreadList();
-	for (int i = 0; i < EFSLIST_NUM; i++)
-	{
-		if (i == EFSLIST_SHADOW_GEN)
-			continue;
-		nDIPs += m_RP.m_PS[nThr].m_nDIPs[i];
-	}
-	nGeneral   = nDIPs;
-	nShadowGen = m_RP.m_PS[nThr].m_nDIPs[EFSLIST_SHADOW_GEN];
+	nGeneral   = m_frameRenderStats[m_pRT->GetThreadList()].GetNumberOfDrawCalls();
+	nShadowGen = m_frameRenderStats[m_pRT->GetThreadList()].GetNumberOfDrawCalls(1 << EFSLIST_SHADOW_GEN);
 #endif
-	return;
 }
 
 int CRenderer::GetCurrentNumberOfDrawCalls(const uint32 EFSListMask)
 {
-	int nDIPs = 0;
 #if defined(ENABLE_PROFILING_CODE)
-	int nThr = m_pRT->GetThreadList();
-	for (uint32 i = 0; i < EFSLIST_NUM; i++)
-	{
-		if ((1 << i) & EFSListMask)
-		{
-			nDIPs += m_RP.m_PS[nThr].m_nDIPs[i];
-		}
-	}
+	return m_frameRenderStats[m_pRT->GetThreadList()].GetNumberOfDrawCalls(EFSListMask);
+#else
+	return 0;
 #endif
-	return nDIPs;
 }
 
 void CRenderer::SetDebugRenderNode(IRenderNode* pRenderNode)
@@ -3563,13 +3759,124 @@ bool CRenderer::IsDebugRenderNode(IRenderNode* pRenderNode) const
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
-
-void IRenderer::SDrawCallCountInfo::Update(CRenderObject* pObj, IRenderMesh* pRM)
+void SRenderStatistics::Begin(const SRenderStatistics* prevData)
 {
-	SRenderPipeline& RESTRICT_REFERENCE rRP = gRenDev->m_RP;
+#if defined(_DEBUG)
+	memcpy(this, prevData, sizeof(SRenderStatistics));
+#else
+	memset(this, 0, sizeof(SRenderStatistics));
+#endif
+}
+
+void SRenderStatistics::Finish()
+{
+	// Finish filling the current frame's global timings
+	{
+		m_Summary.frameTime = iTimer->GetRealFrameTime();
+		m_Summary.renderTime += m_Summary.miscTime;
+		m_Summary.renderTime += m_Summary.flashTime;
+
+		// BK: We need a way of getting gpu frame time in release, without gpu timers
+		// for now we just use overall frame time
+#if CRY_PLATFORM_ORBIS && !CRY_RENDERER_GNM
+		m_Summary.gpuIdlePerc  = DXOrbis::Device()->GetGPUIdlePercentage();
+		m_Summary.waitForGPU   = DXOrbis::Device()->GetCPUWaitOnGPUTime();
+		m_Summary.gpuFrameTime = DXOrbis::Device()->GetCPUFrameTime();
+#else
+		m_Summary.gpuIdlePerc = 0;
+		m_Summary.gpuFrameTime = m_Summary.renderTime;
+#endif
+	}
+
+#if defined(ENABLE_PROFILING_CODE)
+	m_nNumInsts               += m_nAsynchNumInsts;
+	m_nNumInstCalls           += m_nAsynchNumInstCalls;
+
+	m_nNumPSOSwitches         += m_nAsynchNumPSOSwitches;
+	m_nNumLayoutSwitches      += m_nAsynchNumLayoutSwitches;
+	m_nNumResourceSetSwitches += m_nAsynchNumResourceSetSwitches;
+	m_nNumInlineSets          += m_nAsynchNumInlineSets;
+	m_nNumTopologySets        += m_nAsynchNumTopologySets;
+
+	for (int i = 0; i < EFSLIST_NUM; i++)
+	{
+		m_nDIPs    [i] += m_nAsynchDIPs    [i];
+		m_nPolygons[i] += m_nAsynchPolygons[i];
+
+		for (int j = 0; j < EVCT_NUM; j++)
+		{
+			m_nPolygonsByTypes[i][j][0] += m_nAsynchPolygonsByTypes[i][j][0];
+			m_nPolygonsByTypes[i][j][1] += m_nAsynchPolygonsByTypes[i][j][1];
+		}
+	}
+#endif
+}
+
+#if defined(ENABLE_PROFILING_CODE)
+int SRenderStatistics::GetNumGeomInstances() const
+{
+	return m_nNumInsts; // +m_nAsynchNumInsts; impossible because of non-atomicity of stat-collection
+}
+
+int SRenderStatistics::GetNumGeomInstanceDrawCalls() const
+{
+	return m_nNumInstCalls; // +m_nAsynchNumInstCalls; impossible because of non-atomicity of stat-collection
+}
+
+int SRenderStatistics::GetNumberOfDrawCalls() const
+{
+	int nDIPs = 0;
+	for (int i = 0; i < EFSLIST_NUM; i++)
+	{
+		nDIPs += m_nDIPs[i]; // +m_nAsynchDIPs[i]; impossible because of non-atomicity of stat-collection
+	}
+	return nDIPs;
+}
+
+int SRenderStatistics::GetNumberOfDrawCalls(const uint32 EFSListMask) const
+{
+	int nDIPs = 0;
+	for (uint32 i = 0; i < EFSLIST_NUM; i++)
+	{
+		if ((1 << i) & EFSListMask)
+		{
+			nDIPs += m_nDIPs[i]; // +m_nAsynchDIPs[i]; impossible because of non-atomicity of stat-collection
+		}
+	}
+	return nDIPs;
+}
+
+int SRenderStatistics::GetNumberOfPolygons() const
+{
+	int nDIPs = 0;
+	for (int i = 0; i < EFSLIST_NUM; i++)
+	{
+		nDIPs += m_nPolygons[i]; // +m_nAsynchPolygons[i]; impossible because of non-atomicity of stat-collection
+	}
+	return nDIPs;
+}
+
+int SRenderStatistics::GetNumberOfPolygons(const uint32 EFSListMask) const
+{
+	int nDIPs = 0;
+	for (uint32 i = 0; i < EFSLIST_NUM; i++)
+	{
+		if ((1 << i) & EFSListMask)
+		{
+			nDIPs += m_nPolygons[i]; // +m_nAsynchPolygons[i]; impossible because of non-atomicity of stat-collection
+		}
+	}
+	return nDIPs;
+}
+#endif
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+#if defined(DO_RENDERSTATS)
+void IRenderer::SDrawCallCountInfo::Update(CRenderObject* pObj, IRenderMesh* pRM, EShaderTechniqueID techniqueID)
+{
 	if (((IRenderNode*)pObj->m_pRenderNode))
 	{
-		pPos = pObj->GetTranslation();
+		pPos = pObj->GetMatrix(gcpRendD3D->GetObjectAccessorThreadConfig()).GetTranslation();
 
 		if (meshName[0] == '\0')
 		{
@@ -3593,37 +3900,35 @@ void IRenderer::SDrawCallCountInfo::Update(CRenderObject* pObj, IRenderMesh* pRM
 			}
 		}
 
-		if (rRP.m_nBatchFilter & (FB_MOTIONBLUR | FB_CUSTOM_RENDER | FB_POST_3D_RENDER | FB_LAYER_EFFECT | FB_SOFTALPHATEST | FB_DEBUG))
-			nMisc++;
+		if (techniqueID == TTYPE_GENERAL || techniqueID == TTYPE_Z)
+		{
+			nGeneral++;
+		}
+		else if (techniqueID == TTYPE_SHADOWGEN)
+		{
+			nShadows++;
+		}
+		else if (techniqueID == TTYPE_ZPREPASS)
+		{
+			nZpass++;
+		}
 		else
 		{
-			if (rRP.m_nBatchFilter & FB_GENERAL)
-			{
-				if (rRP.m_nPassGroupID == EFSLIST_TRANSP)
-				{
-					nTransparent++;
-				}
-				else
-				{
-					nGeneral++;
-				}
-			}
-			else if (rRP.m_nBatchFilter & (FB_Z | FB_ZPREPASS))
-			{
-				nZpass++;
-			}
+			nMisc++;
 		}
 	}
 }
-
+#endif
 /////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void S3DEngineCommon::Update(threadID nThreadID)
+void S3DEngineCommon::Update(const SRenderingPassInfo& passInfo)
 {
+	CRY_ASSERT(gcpRendD3D->m_pRT->IsMainThread());
 	I3DEngine* p3DEngine = gEnv->p3DEngine;
 
+	Vec3 cameraPosition = passInfo.GetCamera().GetPosition();
 	// Camera vis area
-	IVisArea* pCamVisArea = p3DEngine->GetVisAreaFromPos(gRenDev->GetRCamera().vOrigin);
+	IVisArea* pCamVisArea = p3DEngine->GetVisAreaFromPos(cameraPosition);
 	m_pCamVisAreaInfo.nFlags &= ~VAF_MASK;
 	if (pCamVisArea)
 	{
@@ -3634,18 +3939,22 @@ void S3DEngineCommon::Update(threadID nThreadID)
 			m_pCamVisAreaInfo.nFlags |= VAF_AFFECTED_BY_OUT_LIGHTS;
 	}
 
+	UpdateSkyInfo(passInfo);
+
 	// Update ocean info
-	m_OceanInfo.m_fWaterLevel       = p3DEngine->GetWaterLevel(&gRenDev->GetRCamera().vOrigin);
+	m_OceanInfo.m_fWaterLevel       = p3DEngine->GetWaterLevel(&cameraPosition);
 	m_OceanInfo.m_nOceanRenderFlags = p3DEngine->GetOceanRenderFlags();
 	m_OceanInfo.m_vCausticsParams   = p3DEngine->GetCausticsParams();
 
 	if (CRenderer::CV_r_rain)
 	{
-		const int nFrmID = gRenDev->GetFrameID();
+		const int nFrmID = passInfo.GetFrameID();
 		if (m_RainInfo.nUpdateFrameID != nFrmID)
 		{
-			UpdateRainInfo(nThreadID);
-			UpdateSnowInfo(nThreadID);
+			UpdateRainInfo(passInfo);
+			UpdateSnowInfo(passInfo);
+			UpdateRainOccInfo(passInfo);
+
 			m_RainInfo.nUpdateFrameID = nFrmID;
 		}
 	}
@@ -3654,32 +3963,93 @@ void S3DEngineCommon::Update(threadID nThreadID)
 	if (CRenderer::CV_r_rain < 2 || m_RainInfo.bDisableOcclusion)
 	{
 		m_RainOccluders.Release();
-		stl::free_container(m_RainOccluders.m_arrCurrOccluders[nThreadID]);
+		stl::free_container(m_RainOccluders.m_arrOccluders);
 		m_RainInfo.bApplyOcclusion = false;
 	}
 }
 
-void S3DEngineCommon::UpdateRainInfo(threadID nThreadID)
+void S3DEngineCommon::UpdateSkyInfo(const SRenderingPassInfo& passInfo)
 {
+	I3DEngine* p3DEngine = gEnv->p3DEngine;
+	IMaterial* pSkyMaterial = p3DEngine->GetSkyMaterial();
+
+	m_SkyInfo.m_bIsVisible = p3DEngine->IsSkyVisible();
+	m_SkyInfo.m_bApplySkyBox = false;
+	m_SkyInfo.m_bApplySkyDome = true;
+
+	m_SkyInfo.m_fSkyBoxAngle      = p3DEngine->GetGlobalParameter(E3DPARAM_SKY_SKYBOX_ANGLE);
+	m_SkyInfo.m_fSkyBoxStretching = p3DEngine->GetGlobalParameter(E3DPARAM_SKY_SKYBOX_STRETCHING);
+	m_SkyInfo.m_fSkyBoxMultiplier = p3DEngine->GetGlobalParameter(E3DPARAM_SKYBOX_MULTIPLIER); // Deprecated: E3DPARAM_SKYBOX_MULTIPLIER
+
+	p3DEngine->GetGlobalParameter(E3DPARAM_SKY_SKYBOX_EMITTANCE, m_SkyInfo.m_vSkyBoxEmittance);
+	p3DEngine->GetGlobalParameter(E3DPARAM_SKY_SKYBOX_FILTER, m_SkyInfo.m_vSkyBoxFilter);
+	
+	m_SkyInfo.m_pSkyMaterial = pSkyMaterial;
+	m_SkyInfo.m_pSkyBoxTexture = nullptr;
+
+	// Translate to kilo-scale
+	m_SkyInfo.m_vSkyBoxEmittance *= (RENDERER_LIGHT_UNIT_SCALE / 1000.0f);
+
+	// Note: this should be deprecated at some point.
+	// Update some sky params from the material:
+	//    - m_fSkyBoxAngle
+	//    - m_vSkyBoxExposure
+	//    - m_vSkyBoxOpacity
+	//    - m_SkyDomeTextureName
+	if (pSkyMaterial &&
+		pSkyMaterial->GetShaderItem().m_pShader &&
+		pSkyMaterial->GetShaderItem().m_pShaderResources)
+	{
+		IRenderShaderResources* const pShaderResources = pSkyMaterial->GetShaderItem().m_pShaderResources;
+
+		// Angle is additive
+		auto& shaderParams = pShaderResources->GetParameters();
+		for (int i = 0; i < shaderParams.size(); i++)
+		{
+			const SShaderParam* const sp = &(shaderParams)[i];
+			if (sp && !stricmp(sp->m_Name, "SkyboxAngle") && sp->m_Type == eType_FLOAT)
+			{
+				m_SkyInfo.m_fSkyBoxAngle += sp->m_Value.m_Float;
+			}
+		}
+
+		m_SkyInfo.m_vSkyBoxEmittance += pShaderResources->GetFinalEmittance().toVec3();
+		m_SkyInfo.m_vSkyBoxFilter *= (pShaderResources->GetColorValue(EFTT_DIFFUSE) * pShaderResources->GetStrengthValue(EFTT_OPACITY)).toVec3();
+
+		if (const SEfResTexture* const pSkyTexInfo = pShaderResources->GetTexture(EFTT_DIFFUSE))
+		{
+			m_SkyInfo.m_pSkyBoxTexture =
+				pSkyTexInfo->m_Sampler.m_pTex;
+
+			m_SkyInfo.m_bApplySkyBox =
+				(m_SkyInfo.m_vSkyBoxFilter.x != 0.0f ||
+				 m_SkyInfo.m_vSkyBoxFilter.y != 0.0f ||
+				 m_SkyInfo.m_vSkyBoxFilter.z != 0.0f) &&
+				!pSkyTexInfo->m_Name.empty();
+
+			m_SkyInfo.m_bApplySkyDome =
+				(m_SkyInfo.m_vSkyBoxFilter.x != 1.0f ||
+				 m_SkyInfo.m_vSkyBoxFilter.y != 1.0f ||
+				 m_SkyInfo.m_vSkyBoxFilter.z != 1.0f) ||
+				pSkyTexInfo->m_Name.empty();
+		}
+	}
+}
+
+void S3DEngineCommon::UpdateRainInfo(const SRenderingPassInfo& passInfo)
+{
+	if (passInfo.IsAuxWindow())
+	{
+		// Secondary viewport: We only update rain for the primary viewport. Otherwise update will use wrong camera. This is needed as long as rain and snow are
+		// global engine states, with no regard to output context.
+		return;
+	}
+
 	gEnv->p3DEngine->GetRainParams(m_RainInfo);
 
-	bool bProcessedAll   = true;
-	const uint32 numGPUs = gRenDev->GetActiveGPUCount();
-	for (uint32 i = 0; i < numGPUs; ++i)
-		bProcessedAll &= m_RainOccluders.m_bProcessed[i];
-	const bool bUpdateOcc = bProcessedAll;
-	if (bUpdateOcc)
-		m_RainOccluders.Release();
-
-	const Vec3  vCamPos          = gRenDev->GetRCamera().vOrigin;
+	const Vec3 vCamPos = passInfo.GetCamera().GetPosition();
 	const float fUnderWaterAtten = clamp_tpl(vCamPos.z - m_OceanInfo.m_fWaterLevel + 1.f, 0.f, 1.f);
 	m_RainInfo.fCurrentAmount *= fUnderWaterAtten;
-
-	//#define RAIN_DEBUG
-#ifndef RAIN_DEBUG
-	if (m_RainInfo.fCurrentAmount < 0.05f)
-		return;
-#endif
 
 #ifdef RAIN_DEBUG
 	m_RainInfo.fAmount               = 1.f;
@@ -3701,212 +4071,222 @@ void S3DEngineCommon::UpdateRainInfo(threadID nThreadID)
 	m_RainInfo.vColor.Set(1, 1, 1);
 	m_RainInfo.vWorldPos.Set(0, 0, 0);
 #endif
-
-	UpdateRainOccInfo(nThreadID);
 }
 
-void S3DEngineCommon::UpdateSnowInfo(int nThreadID)
+void S3DEngineCommon::UpdateSnowInfo(const SRenderingPassInfo& passInfo)
 {
+	if (passInfo.IsAuxWindow())
+	{
+		// Secondary viewport: See UpdateRainInfo() comment.
+		return;
+	}
+
 	gEnv->p3DEngine->GetSnowSurfaceParams(m_SnowInfo.m_vWorldPos, m_SnowInfo.m_fRadius, m_SnowInfo.m_fSnowAmount, m_SnowInfo.m_fFrostAmount, m_SnowInfo.m_fSurfaceFreezing);
 	gEnv->p3DEngine->GetSnowFallParams(m_SnowInfo.m_nSnowFlakeCount, m_SnowInfo.m_fSnowFlakeSize, m_SnowInfo.m_fSnowFallBrightness, m_SnowInfo.m_fSnowFallGravityScale, m_SnowInfo.m_fSnowFallWindScale, m_SnowInfo.m_fSnowFallTurbulence, m_SnowInfo.m_fSnowFallTurbulenceFreq);
-
-	//#define RAIN_DEBUG
-#ifndef RAIN_DEBUG
-	if (m_SnowInfo.m_fSnowAmount < 0.05f && m_SnowInfo.m_fFrostAmount < 0.05f)
-		return;
-#endif
-
-	UpdateRainOccInfo(nThreadID);
 }
 
-void S3DEngineCommon::UpdateRainOccInfo(int nThreadID)
+void S3DEngineCommon::UpdateRainOccInfo(const SRenderingPassInfo& passInfo)
 {
-	bool bSnowEnabled = (m_SnowInfo.m_fSnowAmount > 0.05f || m_SnowInfo.m_fFrostAmount > 0.05f) && m_SnowInfo.m_fRadius > 0.05f;
+	static constexpr auto amountThreshold = 0.05f;
+	static constexpr auto rainBBHalfSize = 18.0f;
 
-	bool bProcessedAll   = true;
+	const bool bSnowEnabled = (m_SnowInfo.m_fSnowAmount > amountThreshold || m_SnowInfo.m_fFrostAmount > amountThreshold) && m_SnowInfo.m_fRadius > amountThreshold;
+	const bool bRainEnabled = m_RainInfo.fCurrentAmount > amountThreshold;
+	const bool rainOrSnowEnabled = bSnowEnabled || bRainEnabled;
+
+	const float fViewerArea = bSnowEnabled ? 128.f : 32.f;   // Snow requires further view distance, otherwise obvious "unoccluded" snow regions become visible.
+	const unsigned int nMaxOccluders = 512 * (bSnowEnabled ? 3 : 2);
+
+	// Choose world position and radius.
+	// Snow takes priority since occlusion has a much stronger impact on it.
+	Vec3  vWorldPos = bSnowEnabled ? m_SnowInfo.m_vWorldPos : m_RainInfo.vWorldPos;
+	float fRadius = bSnowEnabled ? m_SnowInfo.m_fRadius : m_RainInfo.fRadius;
+	float fOccArea = fViewerArea;
+	static bool oldRainOrSnowEnabled = false;
+
+	// Bail early if rain/snow is not enabled
+#ifndef RAIN_DEBUG
+	if (!rainOrSnowEnabled)
+	{
+		oldRainOrSnowEnabled = false;
+		return;
+	}
+#endif
+
+	bool bProcessedAll = true;
 	const uint32 numGPUs = gRenDev->GetActiveGPUCount();
 	for (uint32 i = 0; i < numGPUs; ++i)
 		bProcessedAll &= m_RainOccluders.m_bProcessed[i];
-	const bool bUpdateOcc = bProcessedAll;                 // there is no field called bForecedUpdate in RainOccluders - m_RainOccluders.bForceUpdate || bProcessedAll;
+
+	const Vec3 vCamPos = passInfo.GetCamera().GetPosition();
+	bool bDisableOcclusion = m_RainInfo.bDisableOcclusion;
+
+	// Rain volume BB
+	AABB bbRainVol(fRadius);
+	bbRainVol.Move(vWorldPos);
+
+	// Visible area BB (Expanded to BB diagonal length to allow rotation)
+	AABB bbViewer(fViewerArea);
+	bbViewer.Move(vCamPos);
+
+	// Area around viewer/rain source BB
+	AABB bbArea(bbViewer);
+	bbArea.ClipToBox(bbRainVol);
+
+	// Snap BB to grid
+	Vec3 vSnapped = bbArea.min / rainBBHalfSize;
+	bbArea.min.Set(floor_tpl(vSnapped.x), floor_tpl(vSnapped.y), floor_tpl(vSnapped.z));
+	bbArea.min *= rainBBHalfSize;
+	vSnapped = bbArea.max / rainBBHalfSize;
+	bbArea.max.Set(ceil_tpl(vSnapped.x), ceil_tpl(vSnapped.y), ceil_tpl(vSnapped.z));
+	bbArea.max *= rainBBHalfSize;
+
+	static bool bOldDisableOcclusion = true;               // set to true to allow update at first run
+	static float fOccTreshold = CRenderer::CV_r_rainOccluderSizeTreshold;
+	static float fOldRadius = .0f;
+	const AABB&  oldAreaBounds = m_RainInfo.areaAABB;
+
+	// Update occluders if properties changed
+	bool bUpdateOcc = bProcessedAll;                 // there is no field called bForecedUpdate in RainOccluders - m_RainOccluders.bForceUpdate || bProcessedAll;
+	bUpdateOcc &= !oldAreaBounds.min.IsEquivalent(bbArea.min)
+		|| !oldAreaBounds.max.IsEquivalent(bbArea.max)
+		|| fOldRadius           != fRadius        //m_RainInfo.fRadius
+		|| bOldDisableOcclusion != bDisableOcclusion
+		|| fOccTreshold         != CRenderer::CV_r_rainOccluderSizeTreshold
+		|| !oldRainOrSnowEnabled;
+	oldRainOrSnowEnabled = true;
+
 	if (bUpdateOcc)
 		m_RainOccluders.Release();
 
-	const Vec3 vCamPos               = gRenDev->GetRCamera().vOrigin;
-	bool bDisableOcclusion           = m_RainInfo.bDisableOcclusion;
-	static bool bOldDisableOcclusion = true;               // set to true to allow update at first run
+	// Set to new values, will be needed for other rain passes
+	m_RainInfo.areaAABB = bbArea;
 
 	if (CRenderer::CV_r_rain == 2 && !bDisableOcclusion)
 	{
 		N3DEngineCommon::ArrOccluders& arrOccluders = m_RainOccluders.m_arrOccluders;
-		static const unsigned int nMAX_OCCLUDERS    = bSnowEnabled ? 768 : 512;
-		static const float rainBBHalfSize           = 18.f;
 
 		if (bUpdateOcc)
 		{
+			// Get occluders inside area
+			unsigned int nOccluders(0);
 
-			// Choose world position and radius.
-			// Snow takes priority since occlusion has a much stronger impact on it.
-			Vec3  vWorldPos   = bSnowEnabled ? m_SnowInfo.m_vWorldPos : m_RainInfo.vWorldPos;
-			float fRadius     = bSnowEnabled ? m_SnowInfo.m_fRadius : m_RainInfo.fRadius;
-			float fViewerArea = bSnowEnabled ? 128.f : 32.f;   // Snow requires further view distance, otherwise obvious "unoccluded" snow regions become visible.
-			float fOccArea    = fViewerArea;
+			EERType eFilterType = eERType_Brush;
+			nOccluders = gEnv->p3DEngine->GetObjectsByTypeInBox(eFilterType, bbArea);
+			std::vector<IRenderNode*> occluders(nOccluders, NULL);
+			if (nOccluders)
+				gEnv->p3DEngine->GetObjectsByTypeInBox(eFilterType, bbArea, &occluders.front());
+			fOccTreshold        = CRenderer::CV_r_rainOccluderSizeTreshold;
+			fOldRadius          = fRadius;
 
-			// Rain volume BB
-			AABB bbRainVol(fRadius);
-			bbRainVol.Move(vWorldPos);
-
-			// Visible area BB (Expanded to BB diagonal length to allow rotation)
-			AABB bbViewer(fViewerArea);
-			bbViewer.Move(vCamPos);
-
-			// Area around viewer/rain source BB
-			AABB bbArea(bbViewer);
-			bbArea.ClipToBox(bbRainVol);
-
-			// Snap BB to grid
-			Vec3 vSnapped = bbArea.min / rainBBHalfSize;
-			bbArea.min.Set(floor_tpl(vSnapped.x), floor_tpl(vSnapped.y), floor_tpl(vSnapped.z));
-			bbArea.min *= rainBBHalfSize;
-			vSnapped    = bbArea.max / rainBBHalfSize;
-			bbArea.max.Set(ceil_tpl(vSnapped.x), ceil_tpl(vSnapped.y), ceil_tpl(vSnapped.z));
-			bbArea.max *= rainBBHalfSize;
-
-			// If occlusion map info dirty
-			static float fOccTreshold  = CRenderer::CV_r_rainOccluderSizeTreshold;
-			static float fOldRadius    = fRadius;
-			const AABB&  oldAreaBounds = m_RainInfo.areaAABB;
-			if (!oldAreaBounds.min.IsEquivalent(bbArea.min)
-			  || !oldAreaBounds.max.IsEquivalent(bbArea.max)
-			  || fOldRadius != fRadius        //m_RainInfo.fRadius
-			  || bOldDisableOcclusion != bDisableOcclusion
-			  || fOccTreshold != CRenderer::CV_r_rainOccluderSizeTreshold)
+			AABB geomBB(AABB::RESET);
+			const size_t occluderLimit = min(nOccluders, nMaxOccluders);
+			arrOccluders.resize(occluderLimit);
+			// Filter occluders and get bounding box
+			for (std::vector<IRenderNode*>::const_iterator it = occluders.begin();
+			     it != occluders.end() && m_RainOccluders.m_nNumOccluders < occluderLimit;
+			     ++it)
 			{
-				// Get occluders inside area
-				unsigned int nOccluders(0);
-
-				EERType eFilterType = eERType_Brush;
-				nOccluders = gEnv->p3DEngine->GetObjectsByTypeInBox(eFilterType, bbArea);
-				std::vector<IRenderNode*> occluders(nOccluders, NULL);
-				if (nOccluders)
-					gEnv->p3DEngine->GetObjectsByTypeInBox(eFilterType, bbArea, &occluders.front());
-
-				// Set to new values, will be needed for other rain passes
-				m_RainInfo.areaAABB = bbArea;
-				fOccTreshold        = CRenderer::CV_r_rainOccluderSizeTreshold;
-				fOldRadius          = fRadius;
-
-				AABB geomBB(AABB::RESET);
-				const size_t occluderLimit = min(nOccluders, nMAX_OCCLUDERS);
-				arrOccluders.resize(occluderLimit);
-				// Filter occluders and get bounding box
-				for (std::vector<IRenderNode*>::const_iterator it = occluders.begin();
-				  it != occluders.end() && m_RainOccluders.m_nNumOccluders < occluderLimit;
-				  ++it)
+				IRenderNode* pRndNode = *it;
+				if (pRndNode)
 				{
-					IRenderNode* pRndNode = *it;
-					if (pRndNode)
+					const AABB& aabb                                 = pRndNode->GetBBox();
+					const Vec3  vDiag                                = aabb.max - aabb.min;
+					const float fSqrFlatRadius                       = Vec2(vDiag.x, vDiag.y).GetLength2();
+					auto nRndNodeFlags = pRndNode->GetRndFlags();
+					// TODO: rainoccluder should be the only flag tested
+					// (ie. enabled ONLY for small subset of geometry assets - means going through all assets affected by rain)
+					if ((fSqrFlatRadius < CRenderer::CV_r_rainOccluderSizeTreshold)
+						|| !(nRndNodeFlags & ERF_RAIN_OCCLUDER)
+						|| (nRndNodeFlags & (ERF_COLLISION_PROXY | ERF_RAYCAST_PROXY | ERF_HIDDEN | ERF_PICKABLE)))
+						continue;
+
+					N3DEngineCommon::SRainOccluder rainOccluder;
+					IStatObj* pObj = pRndNode->GetEntityStatObj(0, &rainOccluder.m_WorldMat);
+					if (pObj)
 					{
-						const AABB& aabb             = pRndNode->GetBBox();
-						const Vec3  vDiag            = aabb.max - aabb.min;
-						const float fSqrFlatRadius   = Vec2(vDiag.x, vDiag.y).GetLength2();
-						const unsigned nRndNodeFlags = pRndNode->GetRndFlags();
-						// TODO: rainoccluder should be the only flag tested
-						// (ie. enabled ONLY for small subset of geometry assets - means going through all assets affected by rain)
-						if ((fSqrFlatRadius < CRenderer::CV_r_rainOccluderSizeTreshold)
-						  || !(nRndNodeFlags & ERF_RAIN_OCCLUDER)
-						  || (nRndNodeFlags & (ERF_COLLISION_PROXY | ERF_RAYCAST_PROXY | ERF_HIDDEN | ERF_PICKABLE)))
-							continue;
-
-						N3DEngineCommon::SRainOccluder rainOccluder;
-						IStatObj* pObj = pRndNode->GetEntityStatObj(0, 0, &rainOccluder.m_WorldMat);
-						if (pObj)
+						const size_t nPrevIdx = m_RainOccluders.m_nNumOccluders;
+						if (pObj->GetFlags() & STATIC_OBJECT_COMPOUND)
 						{
-							const size_t nPrevIdx = m_RainOccluders.m_nNumOccluders;
-							if (pObj->GetFlags() & STATIC_OBJECT_COMPOUND)
+							const Matrix34A matParentTM = rainOccluder.m_WorldMat;
+							int nSubCount               = pObj->GetSubObjectCount();
+							for (int nSubId = 0; nSubId < nSubCount && m_RainOccluders.m_nNumOccluders < occluderLimit; nSubId++)
 							{
-								const Matrix34A matParentTM = rainOccluder.m_WorldMat;
-								int nSubCount               = pObj->GetSubObjectCount();
-								for (int nSubId = 0; nSubId < nSubCount && m_RainOccluders.m_nNumOccluders < occluderLimit; nSubId++)
-								{
-									IStatObj::SSubObject* pSubObj = pObj->GetSubObject(nSubId);
-									if (pSubObj->bIdentityMatrix)
-										rainOccluder.m_WorldMat = matParentTM;
-									else
-										rainOccluder.m_WorldMat = matParentTM * pSubObj->localTM;
+								IStatObj::SSubObject* pSubObj = pObj->GetSubObject(nSubId);
+								if (pSubObj->bIdentityMatrix)
+									rainOccluder.m_WorldMat = matParentTM;
+								else
+									rainOccluder.m_WorldMat = matParentTM * pSubObj->localTM;
 
-									IStatObj* pSubStatObj = pSubObj->pStatObj;
-									if (pSubStatObj && pSubStatObj->GetRenderMesh())
-									{
-										rainOccluder.m_RndMesh = pSubStatObj->GetRenderMesh();
-										arrOccluders[m_RainOccluders.m_nNumOccluders++] = rainOccluder;
-									}
+								IStatObj* pSubStatObj = pSubObj->pStatObj;
+								if (pSubStatObj && pSubStatObj->GetRenderMesh())
+								{
+									rainOccluder.m_RndMesh = pSubStatObj->GetRenderMesh();
+									arrOccluders[m_RainOccluders.m_nNumOccluders++] = rainOccluder;
 								}
 							}
-							else if (pObj->GetRenderMesh())
-							{
-								rainOccluder.m_RndMesh = pObj->GetRenderMesh();
-								arrOccluders[m_RainOccluders.m_nNumOccluders++] = rainOccluder;
-							}
-
-							if (m_RainOccluders.m_nNumOccluders > nPrevIdx)
-								geomBB.Add(pRndNode->GetBBox());
 						}
+						else if (pObj->GetRenderMesh())
+						{
+							rainOccluder.m_RndMesh = pObj->GetRenderMesh();
+							arrOccluders[m_RainOccluders.m_nNumOccluders++] = rainOccluder;
+						}
+
+						if (m_RainOccluders.m_nNumOccluders > nPrevIdx)
+							geomBB.Add(pRndNode->GetBBox());
 					}
 				}
-				const bool bProcess = m_RainOccluders.m_nNumOccluders == 0;
-				for (uint32 i = 0; i < numGPUs; ++i)
-					m_RainOccluders.m_bProcessed[i] = bProcess;
-				m_RainInfo.bApplyOcclusion = m_RainOccluders.m_nNumOccluders > 0;
-
-				geomBB.ClipToBox(bbArea);
-				// Clip to ocean level
-				geomBB.min.z = max(geomBB.min.z, gEnv->p3DEngine->GetWaterLevel()) - 0.5f;
-
-				float fWaterOffset = m_OceanInfo.m_fWaterLevel - geomBB.min.z;
-				fWaterOffset = (float)__fsel(fWaterOffset, fWaterOffset, 0.0f);
-
-				geomBB.min.z += fWaterOffset - 0.5f;
-				geomBB.max.z += fWaterOffset;
-
-				Vec3 vSnappedCenter = bbArea.GetCenter() / rainBBHalfSize;
-				vSnappedCenter.Set(floor_tpl(vSnappedCenter.x), floor_tpl(vSnappedCenter.y), floor_tpl(vSnappedCenter.z));
-				vSnappedCenter *= rainBBHalfSize;
-
-				AABB occBB(fOccArea);
-				occBB.Move(vSnappedCenter);
-				occBB.min.z = max(occBB.min.z, geomBB.min.z);
-				occBB.max.z = min(occBB.max.z, geomBB.max.z);
-
-				// Generate rotation matrix part-way from identity
-				//	- Typical shadow filtering issues at grazing angles
-				Quat qOcc = m_RainInfo.qRainRotation;
-				qOcc.SetSlerp(qOcc, Quat::CreateIdentity(), 0.75f);
-				Matrix44 matRot(Matrix33(qOcc.GetInverted()));
-
-				// Get occlusion transformation matrix
-				Matrix44& matOccTrans = m_RainInfo.matOccTrans;
-				Matrix44  matScale;
-				matOccTrans.SetIdentity();
-				matOccTrans.SetTranslation(-occBB.min);
-				matScale.SetIdentity();
-				const Vec3 vScale(occBB.max - occBB.min);
-				matScale.m00 = 1.f / vScale.x;
-				matScale.m11 = 1.f / vScale.y;
-				matScale.m22 = 1.f / vScale.z;
-				matOccTrans  = matRot * matScale * matOccTrans;
 			}
+			const bool bProcess = m_RainOccluders.m_nNumOccluders == 0;
+			for (uint32 i = 0; i < numGPUs; ++i)
+				m_RainOccluders.m_bProcessed[i] = bProcess;
+			m_RainInfo.bApplyOcclusion = m_RainOccluders.m_nNumOccluders > 0;
+
+			geomBB.ClipToBox(bbArea);
+			// Clip to ocean level
+			geomBB.min.z = max(geomBB.min.z, gEnv->p3DEngine->GetWaterLevel()) - 0.5f;
+
+			float fWaterOffset = m_OceanInfo.m_fWaterLevel - geomBB.min.z;
+			fWaterOffset = (float)__fsel(fWaterOffset, fWaterOffset, 0.0f);
+
+			geomBB.min.z += fWaterOffset - 0.5f;
+			geomBB.max.z += fWaterOffset;
+
+			Vec3 vSnappedCenter = bbArea.GetCenter() / rainBBHalfSize;
+			vSnappedCenter.Set(floor_tpl(vSnappedCenter.x), floor_tpl(vSnappedCenter.y), floor_tpl(vSnappedCenter.z));
+			vSnappedCenter *= rainBBHalfSize;
+
+			AABB occBB(fOccArea);
+			occBB.Move(vSnappedCenter);
+			occBB.min.z = max(occBB.min.z, geomBB.min.z);
+			occBB.max.z = min(occBB.max.z, geomBB.max.z);
+
+			// Generate rotation matrix part-way from identity
+			//	- Typical shadow filtering issues at grazing angles
+			Quat qOcc = m_RainInfo.qRainRotation;
+			qOcc.SetSlerp(qOcc, Quat::CreateIdentity(), 0.75f);
+			Matrix44 matRot(Matrix33(qOcc.GetInverted()));
+
+			// Get occlusion transformation matrix
+			Matrix44& matOccTrans = m_RainInfo.matOccTrans;
+			Matrix44  matScale;
+			matOccTrans.SetIdentity();
+			matOccTrans.SetTranslation(-occBB.min);
+			matScale.SetIdentity();
+			const Vec3 vScale(occBB.max - occBB.min);
+			matScale.m00 = 1.f / vScale.x;
+			matScale.m11 = 1.f / vScale.y;
+			matScale.m22 = 1.f / vScale.z;
+			matOccTrans  = matRot * matScale * matOccTrans;
 		}
 
 #if CRY_PLATFORM_WINDOWS && !defined(_RELEASE)
-		if (m_RainOccluders.m_nNumOccluders >= nMAX_OCCLUDERS)
+		if (m_RainOccluders.m_nNumOccluders >= nMaxOccluders)
 		{
 			CryWarning(VALIDATOR_MODULE_3DENGINE, VALIDATOR_WARNING,
-			  "Reached max rain occluder limit (Max: %i), some objects may have been discarded!", nMAX_OCCLUDERS);
+			           "Reached max rain occluder limit (Max: %i), some objects may have been discarded!", nMaxOccluders);
 		}
 #endif
-
-		m_RainOccluders.m_arrCurrOccluders[nThreadID].resize(m_RainOccluders.m_nNumOccluders);
-		std::copy(arrOccluders.begin(), arrOccluders.begin() + m_RainOccluders.m_nNumOccluders, m_RainOccluders.m_arrCurrOccluders[nThreadID].begin());
 	}
 
 	bOldDisableOcclusion = bDisableOcclusion;
@@ -3931,7 +4311,7 @@ void CRenderer::GetBandwidthStats(float* fBandwidthRequested)
 #if !defined (_RELEASE) || defined(ENABLE_STATOSCOPE_RELEASE)
 	if (fBandwidthRequested)
 	{
-		*fBandwidthRequested = (CTexture::s_nBytesSubmittedToStreaming + CTexture::s_nBytesRequiredNotSubmitted) / 1024.0f;
+		*fBandwidthRequested = (CTexture::s_nBytesSubmittedToStreaming) / 1024.0f;
 	}
 #endif
 }
@@ -3959,24 +4339,27 @@ void CRenderer::RemoveAsyncTextureCompileListener(IAsyncTextureCompileListener* 
 //////////////////////////////////////////////////////////////////////////
 float CRenderer::GetGPUFrameTime()
 {
-	int nThr       = m_pRT->GetThreadList();
-	float fGPUidle = m_fTimeGPUIdlePercent[nThr] * 0.01f;        // normalise %
-	float fGPUload = 1.0f - fGPUidle;                            // normalised non-idle time
-	float fGPUtime = (m_fTimeProcessedGPU[nThr] * fGPUload);     //GPU time in seconds
+	const SRenderStatistics::SFrameSummary& rtSummary = SRenderStatistics::Read().m_Summary;
+
+	float fGPUidle = rtSummary.gpuIdlePerc * 0.01f;     // normalise %
+	float fGPUload = 1.0f - fGPUidle;                   // normalised non-idle time
+	float fGPUtime = rtSummary.gpuFrameTime * fGPUload; // GPU time in seconds
 	return fGPUtime;
 }
 
 void CRenderer::GetRenderTimes(SRenderTimes& outTimes)
 {
-	int nThr = m_pRT->GetThreadList();
-	//Query render times on main thread
-	outTimes.fWaitForMain          = m_fTimeWaitForMain[nThr];
-	outTimes.fWaitForRender        = m_fTimeWaitForRender[nThr];
-	outTimes.fWaitForGPU           = m_fTimeWaitForGPU[nThr];
-	outTimes.fTimeProcessedRT      = m_fTimeProcessedRT[nThr];
-	outTimes.fTimeProcessedRTScene = m_RP.m_PS[nThr].m_fRenderTime;
-	outTimes.fTimeProcessedGPU     = m_fTimeProcessedGPU[nThr];
-	outTimes.fTimeGPUIdlePercent   = m_fTimeGPUIdlePercent[nThr];
+	const SRenderStatistics::SFrameSummary& rtSummary = SRenderStatistics::Read().m_Summary;
+
+	// Query render times on main thread
+	outTimes.fWaitForMain          = rtSummary.waitForMain;
+	outTimes.fWaitForRender        = rtSummary.waitForRender;
+	outTimes.fWaitForGPU_MT        = rtSummary.waitForGPU_MT;
+	outTimes.fWaitForGPU_RT        = rtSummary.waitForGPU_RT;
+	outTimes.fTimeProcessedRT      = rtSummary.renderTime;
+	outTimes.fTimeProcessedRTScene = rtSummary.sceneTime;
+	outTimes.fTimeProcessedGPU     = rtSummary.gpuFrameTime;
+	outTimes.fTimeGPUIdlePercent   = rtSummary.gpuIdlePerc;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -3999,9 +4382,9 @@ void CRenderer::UpdateRenderingModesInfo()
 	if (!pPostEffectMgr || !pPostEffectMgr->IsCreated())
 		return;
 
-	CThermalVision* pThermalVision = (CThermalVision*)pPostEffectMgr->GetEffect(ePFX_ThermalVision);
-	CPostEffect* pSonarVision      = pPostEffectMgr->GetEffect(ePFX_SonarVision);
-	CPostEffect* pNightVision      = pPostEffectMgr->GetEffect(ePFX_NightVision);
+	CThermalVision* pThermalVision = (CThermalVision*)pPostEffectMgr->GetEffect(EPostEffectID::ThermalVision);
+	CPostEffect* pSonarVision      = pPostEffectMgr->GetEffect(EPostEffectID::SonarVision);
+	CPostEffect* pNightVision      = pPostEffectMgr->GetEffect(EPostEffectID::NightVision);
 
 	//if( m_nThermalVisionMode = (pThermalVision->IsActive() && CV_r_ThermalVision || CV_r_ThermalVision == 2) )
 	//{
@@ -4009,14 +4392,14 @@ void CRenderer::UpdateRenderingModesInfo()
 	//	return;
 	//}
 
-	if (m_nSonarVisionMode = (pSonarVision->IsActive() && CV_r_SonarVision || CV_r_SonarVision == 2))
+	if ((m_nSonarVisionMode = ((pSonarVision->IsActive() && CV_r_SonarVision) || CV_r_SonarVision == 2)))
 	{
 		m_nNightVisionMode   = 0;
 		m_nThermalVisionMode = 0;
 		return;
 	}
 
-	m_nNightVisionMode = (pNightVision->IsActive() && (CV_r_NightVision == 2) || (CV_r_NightVision == 3)) && gRenDev->IsHDRModeEnabled();             // check only for HDR version
+	m_nNightVisionMode = (pNightVision->IsActive() && (CV_r_NightVision == 2)) || ((CV_r_NightVision == 3));
 
 	if (!m_nNightVisionMode && pThermalVision->GetTransitionEffectState())
 		m_nThermalVisionMode = 0;
@@ -4063,7 +4446,7 @@ bool CRenderer::IsPost3DRendererEnabled() const
 	if (!pPostEffectMgr || !pPostEffectMgr->IsCreated())
 		return false;
 
-	CPostEffect* pPost3DRenderer = pPostEffectMgr->GetEffect(ePFX_Post3DRenderer);
+	CPostEffect* pPost3DRenderer = pPostEffectMgr->GetEffect(EPostEffectID::Post3DRenderer);
 	if (pPost3DRenderer)
 	{
 		return pPost3DRenderer->IsActive();
@@ -4084,64 +4467,124 @@ void CRenderer::ExecuteAsyncDIP()
 //////////////////////////////////////////////////////////////////////////
 void CRenderer::EF_SetPostEffectParam(const char* pParam, float fValue, bool bForceValue)
 {
-	if (pParam && m_RP.m_pREPostProcess)
-		m_RP.m_pREPostProcess->mfSetParameter(pParam, fValue, bForceValue);
+	CRY_ASSERT_MESSAGE((pParam), "mfSetParameter: null parameter");
+	if (!pParam)
+	{
+		return;
+	}
+
+	CEffectParam* pEffectParam = PostEffectMgr()->GetByName(pParam);
+	if (!pEffectParam)
+	{
+		return;
+	}
+
+	pEffectParam->SetParam(fValue, bForceValue);
 }
 
 void CRenderer::EF_SetPostEffectParamVec4(const char* pParam, const Vec4& pValue, bool bForceValue)
 {
-	if (pParam && m_RP.m_pREPostProcess)
-		m_RP.m_pREPostProcess->mfSetParameterVec4(pParam, pValue, bForceValue);
+	CRY_ASSERT_MESSAGE((pParam), "mfSetParameter: null parameter");
+
+	CEffectParam* pEffectParam = PostEffectMgr()->GetByName(pParam);
+	if (!pEffectParam)
+	{
+		return;
+	}
+
+	pEffectParam->SetParamVec4(pValue, bForceValue);
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CRenderer::EF_SetPostEffectParamString(const char* pParam, const char* pszArg)
 {
-	if (pParam && pszArg && m_RP.m_pREPostProcess)
-		m_RP.m_pREPostProcess->mfSetParameterString(pParam, pszArg);
+	CRY_ASSERT_MESSAGE((pParam && pszArg), "mfSetParameter: null parameter");
+
+	CEffectParam* pEffectParam = PostEffectMgr()->GetByName(pParam);
+	if (!pEffectParam)
+	{
+		return;
+	}
+
+	pEffectParam->SetParamString(pszArg);
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CRenderer::EF_GetPostEffectParam(const char* pParam, float& fValue)
 {
-	if (pParam && m_RP.m_pREPostProcess)
-		m_RP.m_pREPostProcess->mfGetParameter(pParam, fValue);
+	CRY_ASSERT_MESSAGE((pParam), "mfGetParameter: null parameter");
+
+	CEffectParam* pEffectParam = PostEffectMgr()->GetByName(pParam);
+	if (!pEffectParam)
+	{
+		return;
+	}
+
+	fValue = pEffectParam->GetParam();
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CRenderer::EF_GetPostEffectParamVec4(const char* pParam, Vec4& pValue)
 {
-	if (pParam && m_RP.m_pREPostProcess)
-		m_RP.m_pREPostProcess->mfGetParameterVec4(pParam, pValue);
+	CRY_ASSERT_MESSAGE((pParam), "mfGetParameter: null parameter");
 
+	CEffectParam* pEffectParam = PostEffectMgr()->GetByName(pParam);
+	if (!pEffectParam)
+	{
+		return;
+	}
+
+	pValue = pEffectParam->GetParamVec4();
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CRenderer::EF_GetPostEffectParamString(const char* pParam, const char*& pszArg)
 {
-	if (pParam && m_RP.m_pREPostProcess)
-		m_RP.m_pREPostProcess->mfGetParameterString(pParam, pszArg);
+	CRY_ASSERT_MESSAGE((pParam && pszArg), "mfGetParameter: null parameter");
 
+	CEffectParam* pEffectParam = PostEffectMgr()->GetByName(pParam);
+	if(!pParam || !pszArg)
+	{
+		return;
+	}
+
+	pszArg = pEffectParam->GetParamString();
 }
 
 //////////////////////////////////////////////////////////////////////////
 int32 CRenderer::EF_GetPostEffectID(const char* pPostEffectName)
 {
-	if (pPostEffectName && m_RP.m_pREPostProcess)
-		return m_RP.m_pREPostProcess->mfGetPostEffectID(pPostEffectName);
-	return ePFX_Invalid;
+	CRY_ASSERT_MESSAGE(pPostEffectName, "mfGetParameter: null parameter");
+
+	if (!pPostEffectName)
+	{
+		return EPostEffectID::Invalid;
+	}
+
+	return PostEffectMgr()->GetEffectID(pPostEffectName);
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CRenderer::EF_ResetPostEffects(bool bOnSpecChange)
 {
-	m_pRT->RC_ResetPostEffects(bOnSpecChange);
+	ExecuteRenderThreadCommand( 
+		[=] {
+			if (gRenDev->m_pPostProcessMgr)
+				gRenDev->m_pPostProcessMgr->Reset(bOnSpecChange);
+		},
+		ERenderCommandFlags::FlushAndWait
+	);
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CRenderer::EF_DisableTemporalEffects()
 {
-	m_pRT->RC_DisableTemporalEffects();
+	ExecuteRenderThreadCommand(
+		[=] {
+			m_nDisableTemporalEffects = GetActiveGPUCount();
+		},
+		ERenderCommandFlags::None
+	);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -4151,33 +4594,27 @@ void CRenderer::SetTexturePrecaching(bool stat)
 	CTexture::s_bPrecachePhase = stat;
 }
 
+void CRenderer::PrecachePostponedTextures()
+{
+	const bool isBlocking = false;
+	CTexture::Precache(isBlocking);
+}
+
 IOpticsElementBase* CRenderer::CreateOptics(EFlareType type) const
 {
 	return COpticsFactory::GetInstance()->Create(type);
 }
 
-void CRenderer::ReleaseOptics(IOpticsElementBase* pOpticsElement) const
-{
-	m_pRT->RC_ReleaseOptics(pOpticsElement);
-}
-
-void CRenderer::RT_UpdateLightVolumes()
-{
-	SRenderPipeline& rp = gRenDev->m_RP;
-	rp.m_lightVolumeBuffer.UpdateContent();
-}
 //////////////////////////////////////////////////////////////////////////
-SSkinningData* CRenderer::EF_CreateSkinningData(uint32 nNumBones, bool bNeedJobSyncVar)
+SSkinningData* CRenderer::EF_CreateSkinningData(IRenderView* pRenderView, uint32 nNumBones, bool bNeedJobSyncVar)
 {
-	int nList = m_nPoolIndex % m_computeSkinningData.size();
-
 	uint32 nNeededSize = Align(sizeof(SSkinningData), 16);
 	nNeededSize += Align(bNeedJobSyncVar ? sizeof(JobManager::SJobState) : 0, 16);
 	nNeededSize += Align(bNeedJobSyncVar ? sizeof(JobManager::SJobState) : 0, 16);
 	nNeededSize += Align(nNumBones * sizeof(DualQuat), 16);
 	nNeededSize += Align(nNumBones * sizeof(compute_skinning::SActiveMorphs), 16);
 
-	byte* pData = m_SkinningDataPool[nList].Allocate(nNeededSize);
+	byte* pData = static_cast<CRenderView*>(pRenderView)->GetSkinningDataPools().pDataCurrentFrame->Allocate(nNeededSize);
 
 	SSkinningData* pSkinningRenderData = alias_cast<SSkinningData*>(pData);
 	pData += Align(sizeof(SSkinningData), 16);
@@ -4210,6 +4647,7 @@ SSkinningData* CRenderer::EF_CreateSkinningData(uint32 nNumBones, bool bNeedJobS
 	pSkinningRenderData->pPreviousSkinningRenderData = NULL;
 	pSkinningRenderData->pCharInstCB                 = FX_AllocateCharInstCB(pSkinningRenderData, m_nPoolIndex);
 	pSkinningRenderData->remapGUID                   = ~0u;
+	pSkinningRenderData->vecAdditionalOffset.zero();
 
 	pSkinningRenderData->pNextSkinningData       = NULL;
 	pSkinningRenderData->pMasterSkinningDataList = &pSkinningRenderData->pNextSkinningData;
@@ -4217,22 +4655,20 @@ SSkinningData* CRenderer::EF_CreateSkinningData(uint32 nNumBones, bool bNeedJobS
 	return pSkinningRenderData;
 }
 
-SSkinningData* CRenderer::EF_CreateRemappedSkinningData(uint32 nNumBones, SSkinningData* pSourceSkinningData, uint32 nCustomDataSize, uint32 pairGuid)
+SSkinningData* CRenderer::EF_CreateRemappedSkinningData(IRenderView* pRenderView, uint32 nNumBones, SSkinningData* pSourceSkinningData, uint32 nCustomDataSize, uint32 pairGuid)
 {
 	assert(pSourceSkinningData);
 	assert(pSourceSkinningData->nNumBones >= nNumBones);    // don't try to remap more bones than exist
 
-	int nList = m_nPoolIndex % m_computeSkinningData.size();
-
 	uint32 nNeededSize = Align(sizeof(SSkinningData), 16);
 	nNeededSize += Align(nCustomDataSize, 16);
 
-	byte* pData = m_SkinningDataPool[nList].Allocate(nNeededSize);
+	byte* pData = static_cast<CRenderView*>(pRenderView)->GetSkinningDataPools().pDataCurrentFrame->Allocate(nNeededSize);
 
 	SSkinningData* pSkinningRenderData = alias_cast<SSkinningData*>(pData);
 	pData += Align(sizeof(SSkinningData), 16);
 
-	pSkinningRenderData->pRemapTable = NULL;
+	pSkinningRenderData->pRemapTable = pSourceSkinningData->pRemapTable;
 
 	pSkinningRenderData->pCustomData = nCustomDataSize ? alias_cast<void*>(pData) : NULL;
 	pData += nCustomDataSize ? Align(nCustomDataSize, 16) : 0;
@@ -4245,12 +4681,12 @@ SSkinningData* CRenderer::EF_CreateRemappedSkinningData(uint32 nNumBones, SSkinn
 
 	// use actual bone information from original skinning data
 	pSkinningRenderData->pBoneQuatsS    = pSourceSkinningData->pBoneQuatsS;
-	pSkinningRenderData->pActiveMorphs = pSourceSkinningData->pActiveMorphs;
+	pSkinningRenderData->pActiveMorphs  = pSourceSkinningData->pActiveMorphs;
 	pSkinningRenderData->pAsyncJobs     = pSourceSkinningData->pAsyncJobs;
 	pSkinningRenderData->pAsyncDataJobs = pSourceSkinningData->pAsyncDataJobs;
-	pSkinningRenderData->pRenderMesh = pSourceSkinningData->pRenderMesh;
+	pSkinningRenderData->pRenderMesh    = pSourceSkinningData->pRenderMesh;
 
-	pSkinningRenderData->pCharInstCB = pSourceSkinningData->pCharInstCB;
+	pSkinningRenderData->pCharInstCB    = pSourceSkinningData->pCharInstCB;
 
 	pSkinningRenderData->remapGUID               = pairGuid;
 	pSkinningRenderData->pNextSkinningData       = NULL;
@@ -4259,31 +4695,47 @@ SSkinningData* CRenderer::EF_CreateRemappedSkinningData(uint32 nNumBones, SSkinn
 	return pSkinningRenderData;
 }
 
-void CRenderer::EF_EnqueueComputeSkinningData(SSkinningData* pData)
+void CRenderer::EF_EnqueueComputeSkinningData(IRenderView* pRenderView, SSkinningData* pData)
 {
-	int nList = m_nPoolIndex % m_computeSkinningData.size();
-	m_computeSkinningData[nList].push_back(pData);
+	CRY_ASSERT(gcpRendD3D->m_pRT->IsMainThread()); // Compute skinning data pool is not thread safe currently.
+	static_cast<CRenderView*>(pRenderView)->GetSkinningDataPools().pDataComputeSkinning->push_back(pData);
 }
 
-void CRenderer::RT_SetSkinningPoolId(uint32 poolId)
+size_t CRenderer::GetTexturesStreamPoolSize()
 {
-	m_nPoolIndexRT = poolId;
-}
+	if (CRenderer::CV_r_TexturesStreamPoolSize >= 0)
+		return CV_r_TexturesStreamPoolSize;
 
-int CRenderer::GetTexturesStreamPoolSize()
-{
-	int poolSize = CV_r_TexturesStreamPoolSize + CV_r_TexturesStreamPoolSecondarySize;
-	return gEnv->IsEditor()
-		   ? max(poolSize, 512)
-		   : poolSize;
+	const size_t totalUsableMemory = gcpRendD3D->m_MaxTextureMemory * 7 / 8;
+	const size_t totalUsedMemory = size_t(2.5f * 1014 * 1024); // Best guess: 2GB allocations in targets and buffers etc. pp.
+	const size_t totalStreamMemory = CTexture::s_pPoolMgr->GetInUseSize();
+	const size_t totalAvailableMemory = totalUsableMemory - totalUsedMemory;
+
+	return std::max<size_t>(totalStreamMemory + totalAvailableMemory, 192ULL);
 }
 
 void CRenderer::ClearSkinningDataPool()
 {
-	m_pRT->RC_PushSkinningPoolId(++m_nPoolIndex);
+	m_nPoolIndex += 1;
+
 	m_SkinningDataPool[m_nPoolIndex % m_computeSkinningData.size()].ClearPool();
 	m_computeSkinningData[m_nPoolIndex % m_computeSkinningData.size()].resize(0);
+
 	FX_ClearCharInstCB(m_nPoolIndex);
+}
+
+SSkinningDataPoolInfo CRenderer::GetSkinningDataPools()
+{
+	const int currentPoolIndex  =  m_nPoolIndex %  CRY_ARRAY_COUNT(m_SkinningDataPool);
+	const int previousPoolIndex = (m_nPoolIndex + (CRY_ARRAY_COUNT(m_SkinningDataPool) - 1)) % CRY_ARRAY_COUNT(m_SkinningDataPool);
+
+	SSkinningDataPoolInfo result;
+	result.poolIndex            = m_nPoolIndex;
+	result.pDataCurrentFrame    = &m_SkinningDataPool[currentPoolIndex];
+	result.pDataPreviousFrame   = &m_SkinningDataPool[previousPoolIndex];
+	result.pDataComputeSkinning = &m_computeSkinningData[currentPoolIndex];
+
+	return result;
 }
 
 int CRenderer::EF_GetSkinningPoolID()
@@ -4314,32 +4766,42 @@ void CRenderer::UpdateShaderItem(SShaderItem* pShaderItem, IMaterial* pMaterial)
 
 void CRenderer::RefreshShaderResourceConstants(SShaderItem* pShaderItem, IMaterial* pMaterial)
 {
-	m_pRT->RC_RefreshShaderResourceConstants(pShaderItem, pMaterial);
+	ERenderCommandFlags flags = ERenderCommandFlags::LevelLoadingThread_executeDirect;
+	if (gcpRendD3D->m_pRT->m_eVideoThreadMode != SRenderThread::eVTM_Disabled)
+		flags |= ERenderCommandFlags::MainThread_defer;
+
+	ExecuteRenderThreadCommand(
+		[=]
+		{
+			if (pShaderItem->m_pShader && pShaderItem->m_pShaderResources)
+			{
+				CRY_PROFILE_SECTION(PROFILE_RENDERER, "CRenderer::RefreshShaderResourceConstants");
+				if (pShaderItem->RefreshResourceConstants())
+					pShaderItem->m_pShaderResources->UpdateConstants(pShaderItem->m_pShader);
+			}
+		},
+		flags
+	);
 }
 
 void CRenderer::ForceUpdateShaderItem(SShaderItem* pShaderItem, IMaterial* pMaterial)
 {
-	m_pRT->RC_UpdateShaderItem(pShaderItem, pMaterial);
-}
+	ERenderCommandFlags flags = ERenderCommandFlags::LevelLoadingThread_defer;
+	if (gcpRendD3D->m_pRT->m_eVideoThreadMode != SRenderThread::eVTM_Disabled)
+		flags |= ERenderCommandFlags::MainThread_defer;
 
-void CRenderer::RT_UpdateShaderItem(SShaderItem* pShaderItem)
-{
-	CShader* pShader = static_cast<CShader*>(pShaderItem->m_pShader);
-	if (pShader)
-	{
-		pShader->m_Flags &= ~EF_RELOADED;
-		pShaderItem->Update();
-	}
-}
-
-void CRenderer::RT_RefreshShaderResourceConstants(SShaderItem* pShaderItem)
-{
-	CShader* pShader = static_cast<CShader*>(pShaderItem->m_pShader);
-	if (pShader)
-	{
-		if (pShaderItem->RefreshResourceConstants())
-			pShaderItem->m_pShaderResources->UpdateConstants(pShader);
-	}
+	ExecuteRenderThreadCommand( 
+		[=]
+		{
+			if (pShaderItem->m_pShader && pShaderItem->m_pShaderResources)
+			{
+				CRY_PROFILE_SECTION(PROFILE_RENDERER, "CRenderer::ForceUpdateShaderItem");
+				static_cast<CShader*>(pShaderItem->m_pShader)->m_Flags &= ~EF_RELOADED;
+				pShaderItem->Update();
+			}
+		},
+		flags
+	);
 }
 
 bool CRenderer::LoadShaderStartupCache()
@@ -4352,13 +4814,34 @@ void CRenderer::UnloadShaderStartupCache()
 	m_cEF.UnloadShaderStartupCache();
 }
 
+void CRenderer::ClearShaderPipelineStateCache()
+{
+	for (auto pShaderResources : CShader::s_ShaderResources_known)
+	{
+		if (pShaderResources)
+		{
+			pShaderResources->ClearPipelineStateCache();
+		}
+	}
+}
+
 void CRenderer::FlushPendingTextureTasks()
 {
 	if (m_pRT)
 	{
-		m_pRT->RC_FlushTextureStreaming(true);
+		ExecuteRenderThreadCommand([] { CTexture::RT_FlushStreaming(true); }, ERenderCommandFlags::None);
 		FlushRTCommands(true, true, true);
 	}
+}
+
+void CRenderer::FlushPendingUploads()
+{
+#if CRY_RENDERER_VULKAN
+	if (m_pRT)
+	{
+		ExecuteRenderThreadCommand([] { GetDeviceObjectFactory().UpdateDeferredUploads(); }, ERenderCommandFlags::None);
+	}
+#endif
 }
 
 void CRenderer::SetCloakParams(const SRendererCloakParams& cloakParams)
@@ -4407,82 +4890,20 @@ float CRenderer::GetShadowJittering() const
 	return m_shadowJittering;
 }
 
-CRenderView* CRenderer::GetRenderViewForThread(int nThreadID, IRenderView::EViewType Type)
-{
-	return m_RP.m_pRenderViews[nThreadID][Type].get();
-}
-
-Matrix44A CRenderer::GetCameraMatrix()
-{
-	if (m_vSegmentedWorldOffset.IsZero())
-		return m_CameraMatrix;
-
-	static const Matrix33 matRotX = Matrix33::CreateRotationX(-gf_PI / 2);
-	Matrix34 matCam               = GetCamera().GetMatrix();
-	matCam.SetTranslation(matCam.GetTranslation() + m_vSegmentedWorldOffset);
-	Matrix44A matView = Matrix44A(matRotX * matCam.GetInverted()).GetTransposed();
-	return matView;
-}
-
-const Matrix44A& CRenderer::GetPreviousFrameCameraMatrix() const
-{
-	return gRenDev->m_CameraMatrixPrev[m_CurViewportID][m_CurRenderEye];
-}
-
-void CRenderer::SetPreviousFrameCameraMatrix(const Matrix44A& m)
-{
-	gRenDev->m_CameraMatrixPrev[m_CurViewportID][m_CurRenderEye] = m;
-}
-
-void CRenderer::OffsetPosition(const Vec3& delta)
-{
-#ifdef SEG_WORLD
-	m_vSegmentedWorldOffset = delta;
-#endif
-}
-
-void CRenderer::GetPolyCount(int& nPolygons, int& nShadowPolys)
-{
-#if defined(ENABLE_PROFILING_CODE)
-	nPolygons     = GetPolyCount();
-	nShadowPolys  = m_RP.m_PS[m_RP.m_nFillThreadID].m_nPolygons[EFSLIST_SHADOW_GEN];
-	nShadowPolys += m_RP.m_PS[m_RP.m_nFillThreadID].m_nPolygons[EFSLIST_SHADOW_PASS];
-	nPolygons    -= nShadowPolys;
-#endif
-}
-
-int CRenderer::GetPolyCount()
-{
-#if defined(ENABLE_PROFILING_CODE)
-	ASSERT_IS_MAIN_THREAD(m_pRT);
-	int nPolys = 0;
-	for (int i = 0; i < EFSLIST_NUM; i++)
-	{
-		nPolys += m_RP.m_PS[m_RP.m_nFillThreadID].m_nPolygons[i];
-	}
-	return nPolys;
-#else
-	return 0;
-#endif
-}
-
-int CRenderer::RT_GetPolyCount()
-{
-#if defined(ENABLE_PROFILING_CODE)
-	ASSERT_IS_RENDER_THREAD(m_pRT);
-	int nPolys = 0;
-	for (int i = 0; i < EFSLIST_NUM; i++)
-	{
-		nPolys += m_RP.m_PS[m_RP.m_nProcessThreadID].m_nPolygons[i];
-	}
-	return nPolys;
-#else
-	return 0;
-#endif
-}
-
 void CRenderer::SyncMainWithRender()
 {
+	FUNCTION_PROFILER_RENDERER();
+
+	// Update timing of the graphics pipeline
+	{
+		CTimeValue time = gEnv->pTimer->GetFrameStartTime(ITimer::ETIMER_UI);
+		SetFrameSyncTime(time);
+		if (!m_bPauseTimer)
+		{
+			SetAnimationTime(time);
+		}
+	}
+
 	const uint numListeners = m_syncMainWithRenderListeners.size();
 	for (uint i = 0; i < numListeners; ++i)
 	{
@@ -4502,12 +4923,13 @@ void CRenderer::RemoveSyncWithMainListener(const ISyncMainWithRenderListener* pL
 
 void CRenderer::FreePermanentRenderObjects(int bufferId)
 {
-	m_RP.m_persistentRenderObjectsToDelete[bufferId].CoalesceMemory();
-	for (int i = 0, num = m_RP.m_persistentRenderObjectsToDelete[bufferId].size(); i < num; i++)
+	auto& persistentRenderObjectsToDelete = m_tempRenderObjects.m_persistentRenderObjectsToDelete[bufferId];
+
+	for (CPermanentRenderObject * pRenderObj : persistentRenderObjectsToDelete)
 	{
-		CPermanentRenderObject::FreeToPool(m_RP.m_persistentRenderObjectsToDelete[bufferId][i]);
+		CPermanentRenderObject::FreeToPool(pRenderObj);
 	}
-	m_RP.m_persistentRenderObjectsToDelete[bufferId].clear();
+	persistentRenderObjectsToDelete.clear();
 }
 
 void CRenderer::SetCloudShadowsParams(int nTexID, const Vec3& speed, float tiling, bool invert, float brightness)
@@ -4524,40 +4946,56 @@ bool CRenderer::GetCloudShadowsEnabled() const
 	return m_bCloudShadowsEnabled && (m_cloudShadowTexId > 0);
 }
 
+void CRenderer::SetVolumetricCloudParams(int nTexID)
+{
+	ITexture* tex = EF_GetTextureByID(m_volumetricCloudTexId);
+	if (tex)
+	{
+		tex->Release();
+	}
+	m_volumetricCloudTexId = nTexID;
+}
+
+void CRenderer::SetVolumetricCloudNoiseTex(int cloudNoiseTexId, int edgeNoiseTexId)
+{
+	ITexture* tex = EF_GetTextureByID(m_volumetricCloudNoiseTexId);
+	if (tex)
+	{
+		tex->Release();
+	}
+	m_volumetricCloudNoiseTexId = cloudNoiseTexId;
+
+	tex = EF_GetTextureByID(m_volumetricCloudEdgeNoiseTexId);
+	if (tex)
+	{
+		tex->Release();
+	}
+	m_volumetricCloudEdgeNoiseTexId = edgeNoiseTexId;
+}
+
+void CRenderer::GetVolumetricCloudTextureInfo(SVolumetricCloudTexInfo& info) const
+{
+	info.cloudTexId = m_volumetricCloudTexId;
+	info.cloudNoiseTexId = m_volumetricCloudNoiseTexId;
+	info.edgeNoiseTexId = m_volumetricCloudEdgeNoiseTexId;
+}
+
 void CRenderer::UpdateCachedShadowsLodCount(int nGsmLods) const
 {
 	OnChange_CachedShadows(NULL);
-}
-
-bool CRenderer::IsHDRModeEnabled() const
-{
-	return (CV_r_HDRRendering && !CV_r_measureoverdraw && (!m_wireframe_mode || m_nGraphicsPipeline > 0)) ? true : false;
-}
-
-bool CRenderer::IsShadowPassEnabled() const
-{
-	return (CV_r_ShadowPass && CV_r_usezpass && !m_wireframe_mode) ? true : false;
 }
 
 #ifndef _RELEASE
 
 CRenderer::RNDrawcallsMapMesh& CRenderer::GetDrawCallsInfoPerMesh(bool mainThread /*=true*/)
 {
-	if (mainThread)
-	{
-		return m_RP.m_pRNDrawCallsInfoPerMesh[m_RP.m_nFillThreadID];
-	}
-	else
-	{
-		return m_RP.m_pRNDrawCallsInfoPerMesh[m_RP.m_nProcessThreadID];
-	}
+	return m_drawCallInfoPerMesh;
 }
 
 int CRenderer::GetDrawCallsPerNode(IRenderNode* pRenderNode)
 {
-	uint32 t = m_RP.m_nFillThreadID;
-	IRenderer::RNDrawcallsMapNodeItor iter = m_RP.m_pRNDrawCallsInfoPerNode[t].find(pRenderNode);
-	if (iter != m_RP.m_pRNDrawCallsInfoPerNode[t].end())
+	auto iter = m_drawCallInfoPerNode.find(pRenderNode);
+	if (iter != m_drawCallInfoPerNode.end())
 	{
 		SDrawCallCountInfo& pInfo = iter->second;
 		uint32 nDrawcalls         = pInfo.nShadows + pInfo.nZpass + pInfo.nGeneral + pInfo.nTransparent + pInfo.nMisc;
@@ -4571,40 +5009,47 @@ void CRenderer::ForceRemoveNodeFromDrawCallsMap(IRenderNode* pNode)
 {
 	for (int i = 0; i < RT_COMMAND_BUF_COUNT; i++)
 	{
-		IRenderer::RNDrawcallsMapNodeItor pItor = m_RP.m_pRNDrawCallsInfoPerNode[i].find(pNode);
-		if (pItor != m_RP.m_pRNDrawCallsInfoPerNode[i].end())
+		auto pItor = m_drawCallInfoPerNode.find(pNode);
+		if (pItor != m_drawCallInfoPerNode.end())
 		{
-			m_RP.m_pRNDrawCallsInfoPerNode[i].erase(pItor);
+			m_drawCallInfoPerNode.erase(pItor);
 		}
 	}
 }
 
 void CRenderer::ClearDrawCallsInfo()
 {
-	for (int i = 0; i < RT_COMMAND_BUF_COUNT; i++)
-	{
-		m_RP.m_pRNDrawCallsInfoPerMesh[i].clear();
-		m_RP.m_pRNDrawCallsInfoPerNode[i].clear();
-	}
+	m_drawCallInfoPerNode.clear();
+	m_drawCallInfoPerMesh.clear();
 }
 #endif
 
 #ifdef ENABLE_PROFILING_CODE
-void CRenderer::AddRecordedProfilingStats(const SProfilingStats& stats, ERenderListID renderList, bool bScenePass)
+void CRenderer::AddRecordedProfilingStats(const SProfilingStats& stats, ERenderListID renderList, bool bAsynchronous)
 {
-	SPipeStat& pipelineStats = m_RP.m_PS[m_RP.m_nProcessThreadID];
+	SRenderStatistics& pipelineStats = SRenderStatistics::Write();
 
-	CryInterlockedAdd(&pipelineStats.m_nNumPSOSwitches, stats.numPSOSwitches);
-	CryInterlockedAdd(&pipelineStats.m_nNumLayoutSwitches, stats.numLayoutSwitches);
-	CryInterlockedAdd(&pipelineStats.m_nNumResourceSetSwitches, stats.numResourceSetSwitches);
-	CryInterlockedAdd(&pipelineStats.m_nNumInlineSets, stats.numInlineSets);
-	CryInterlockedAdd(&pipelineStats.m_nPolygons[renderList], stats.numPolygons);
-	CryInterlockedAdd(&pipelineStats.m_nDIPs[renderList], stats.numDIPs);
-
-	if (bScenePass)
+	// Asynchronously recorded stats (accumulation to available stats is deferred until end-frame)
+	if (bAsynchronous)
 	{
-		CryInterlockedAdd(&pipelineStats.m_nScenePassDIPs, stats.numDIPs);
-		CryInterlockedAdd(&pipelineStats.m_nScenePassPolygons, stats.numPolygons);
+		CryInterlockedAdd(&pipelineStats.m_nAsynchNumPSOSwitches        , stats.numPSOSwitches);
+		CryInterlockedAdd(&pipelineStats.m_nAsynchNumLayoutSwitches     , stats.numLayoutSwitches);
+		CryInterlockedAdd(&pipelineStats.m_nAsynchNumResourceSetSwitches, stats.numResourceSetSwitches);
+		CryInterlockedAdd(&pipelineStats.m_nAsynchNumInlineSets         , stats.numInlineSets);
+		CryInterlockedAdd(&pipelineStats.m_nAsynchNumTopologySets       , stats.numTopologySets);
+		CryInterlockedAdd(&pipelineStats.m_nAsynchDIPs[renderList]      , stats.numDIPs);
+		CryInterlockedAdd(&pipelineStats.m_nAsynchPolygons[renderList]  , stats.numPolygons);
+	}
+	// Synchronously recorded stats
+	else
+	{
+		pipelineStats.m_nNumPSOSwitches         += stats.numPSOSwitches;
+		pipelineStats.m_nNumLayoutSwitches      += stats.numLayoutSwitches;
+		pipelineStats.m_nNumResourceSetSwitches += stats.numResourceSetSwitches;
+		pipelineStats.m_nNumInlineSets          += stats.numInlineSets;
+		pipelineStats.m_nNumTopologySets        += stats.numTopologySets;
+		pipelineStats.m_nDIPs[renderList]       += stats.numDIPs;
+		pipelineStats.m_nPolygons[renderList]   += stats.numPolygons;
 	}
 }
 #endif
@@ -4669,4 +5114,217 @@ void CRenderer::ResumeRendererFromFrameEnd()
 void CRenderer::QueryActiveGpuInfo(SGpuInfo& info) const
 {
 	info = m_adapterInfo;
+}
+
+void CRenderer::SetRenderQuality(const SRenderQuality& quality)
+{
+	m_renderQuality = quality;
+}
+
+void CRenderer::ScheduleResourceForDelete(CBaseResource* pResource)
+{
+	if (m_pRT->IsRenderThread())
+	{
+		delete pResource;
+	}
+	else
+	{
+		m_resourcesToDelete[m_currentResourceDeleteBuffer].push_back(pResource);
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CRenderer::RT_DelayedDeleteResources(bool bAllResources)
+{
+	FUNCTION_PROFILER_RENDERER();
+
+	m_currentResourceDeleteBuffer = (m_currentResourceDeleteBuffer + 1) % RT_COMMAND_BUF_COUNT;
+	int buffer = bAllResources ? 0 : m_currentResourceDeleteBuffer;
+	const int bufferEnd = bAllResources ? RT_COMMAND_BUF_COUNT : buffer + 1;
+
+	for (buffer = 0; buffer < bufferEnd; ++buffer)
+	{
+		for (CBaseResource * pResource : m_resourcesToDelete[buffer])
+		{
+			delete pResource;
+		}
+		m_resourcesToDelete[buffer].clear();
+	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CRenderer::InitRenderViewPool()
+{
+	for (int type = 0; type < IRenderView::eViewType_Count; ++type)
+	{
+		m_pRenderViewPool[type].allocElementFunction = [type]() -> CRenderView*
+		{
+			return new CRenderView(cc_RenderViewName[type], IRenderView::EViewType(type));
+		};
+		m_pRenderViewPool[type].freeElementFunction = [](CRenderView*) {};
+	}
+}
+
+//=============================================================================
+
+alloc_info_struct* CRenderer::GetFreeChunk(int bytes_count, int nBufSize, PodArray<alloc_info_struct>& alloc_info, const char* szSource)
+{
+	int best_i = -1;
+	int min_size = 10000000;
+
+	// find best chunk
+	for (int i = 0; i < alloc_info.Count(); i++)
+	{
+		if (!alloc_info[i].busy)
+		{
+			if (alloc_info[i].bytes_num >= bytes_count)
+			{
+				if (alloc_info[i].bytes_num < min_size)
+				{
+					best_i = i;
+					min_size = alloc_info[i].bytes_num;
+				}
+			}
+		}
+	}
+
+	if (best_i >= 0)
+	{
+		// use best free chunk
+		alloc_info[best_i].busy = true;
+		alloc_info[best_i].szSource = szSource;
+
+		int bytes_free = alloc_info[best_i].bytes_num - bytes_count;
+		if (bytes_free > 0)
+		{
+			// modify reused shunk
+			alloc_info[best_i].bytes_num = bytes_count;
+
+			// insert another free shunk
+			alloc_info_struct new_chunk;
+			new_chunk.bytes_num = bytes_free;
+			new_chunk.ptr = alloc_info[best_i].ptr + alloc_info[best_i].bytes_num;
+			new_chunk.busy = false;
+
+			if (best_i < alloc_info.Count() - 1) // if not last
+			{
+				alloc_info.InsertBefore(new_chunk, best_i + 1);
+			}
+			else
+			{
+				alloc_info.Add(new_chunk);
+			}
+		}
+
+		return &alloc_info[best_i];
+	}
+
+	int res_ptr = 0;
+
+	int piplevel = alloc_info.Count() ? (alloc_info.Last().ptr - alloc_info[0].ptr) + alloc_info.Last().bytes_num : 0;
+	if (piplevel + bytes_count >= nBufSize)
+	{
+		return NULL;
+	}
+	else
+	{
+		res_ptr = piplevel;
+	}
+
+	// register new chunk
+	alloc_info_struct ai;
+	ai.ptr = res_ptr;
+	ai.szSource = szSource;
+	ai.bytes_num = bytes_count;
+	ai.busy = true;
+	alloc_info.Add(ai);
+
+	return &alloc_info[alloc_info.Count() - 1];
+}
+
+bool CRenderer::ReleaseChunk(int p, PodArray<alloc_info_struct>& alloc_info)
+{
+	for (int i = 0; i < alloc_info.Count(); i++)
+	{
+		if (alloc_info[i].ptr == p)
+		{
+			alloc_info[i].busy = false;
+
+			// delete info about last unused chunks
+			while (alloc_info.Count() && alloc_info.Last().busy == false)
+			{
+				alloc_info.Delete(alloc_info.Count() - 1);
+			}
+
+			// merge unused chunks
+			for (int s = 0; s < alloc_info.Count() - 1; s++)
+			{
+				assert(alloc_info[s].ptr < alloc_info[s + 1].ptr);
+
+				if (alloc_info[s].busy == false)
+				{
+					if (alloc_info[s + 1].busy == false)
+					{
+						alloc_info[s].bytes_num += alloc_info[s + 1].bytes_num;
+						alloc_info.Delete(s + 1);
+						s--;
+					}
+				}
+			}
+
+			return true;
+		}
+	}
+
+	return false;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+CRenderObject* CRenderer::EF_GetObject()
+{
+	CRenderObject* pObj = CPermanentRenderObject::AllocateFromPool();
+	return pObj;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+void CRenderer::EF_FreeObject(CRenderObject* pObj)
+{
+	assert(pObj && pObj->m_bPermanent);
+
+	m_tempRenderObjects.m_persistentRenderObjectsToDelete[gRenDev->GetMainThreadID()].push_back(reinterpret_cast<CPermanentRenderObject*>(pObj));
+}
+
+///////////////////////////////////////////////////////////////////////////////
+CRenderObject* CRenderer::EF_DuplicateRO(CRenderObject* pSrc, const SRenderingPassInfo& passInfo)
+{
+	if (pSrc->m_bPermanent)
+	{
+		// Clone object and attach to the end of linked list of the source object
+		CPermanentRenderObject* pObjSrc = reinterpret_cast<CPermanentRenderObject*>(pSrc);
+		CPermanentRenderObject* pObjNew = reinterpret_cast<CPermanentRenderObject*>(CRenderer::EF_GetObject());
+
+		uint32 nId = pObjNew->m_Id;
+		pObjNew->CloneObject(pObjSrc);
+		pObjNew->m_Id = nId;
+
+		// Link duplicated object to the source object
+		{
+			// Prevent multi-threaded object cloning corrupting linked list.
+			WriteLock lock(pObjSrc->m_accessLock);
+			pObjNew->m_pNextPermanent = pObjSrc->m_pNextPermanent;
+			pObjSrc->m_pNextPermanent = pObjNew;
+		}
+
+		return pObjNew;
+	}
+
+	CRenderObject* pObjNew = passInfo.GetRenderView()->AllocateTemporaryRenderObject();
+	pObjNew->CloneObject(pSrc);
+	return pObjNew;
+}
+
+
+gpu_pfx2::IManager* CRenderer::GetGpuParticleManager()
+{
+	return m_pGpuParticleManager;
 }

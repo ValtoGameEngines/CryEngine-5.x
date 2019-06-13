@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "ParticleParams.h"
 
@@ -65,11 +65,11 @@ ENUM_INFO_BEGIN(EGeomForm)
 ENUM_INFO_END(EGeomForm)
 
 ENUM_INFO_BEGIN(CryAudio::EOcclusionType)
-	ENUM_ELEM_INFO(CryAudio::, eOcclusionType_Ignore)
-	ENUM_ELEM_INFO(CryAudio::, eOcclusionType_Adaptive)
-	ENUM_ELEM_INFO(CryAudio::, eOcclusionType_Low)
-	ENUM_ELEM_INFO(CryAudio::, eOcclusionType_Medium)
-	ENUM_ELEM_INFO(CryAudio::, eOcclusionType_High)
+	ENUM_ELEM_INFO(CryAudio::, EOcclusionType::Ignore)
+	ENUM_ELEM_INFO(CryAudio::, EOcclusionType::Adaptive)
+	ENUM_ELEM_INFO(CryAudio::, EOcclusionType::Low)
+	ENUM_ELEM_INFO(CryAudio::, EOcclusionType::Medium)
+	ENUM_ELEM_INFO(CryAudio::, EOcclusionType::High)
 ENUM_INFO_END(CryAudio::EOcclusionType)
 
 STRUCT_INFO_BEGIN(ParticleParams)
@@ -285,9 +285,10 @@ STRUCT_INFO_BEGIN(ParticleParams::SMoveRelativeEmitter)
 STRUCT_INFO_END(ParticleParams::SMoveRelativeEmitter)
 
 STRUCT_INFO_BEGIN(ParticleParams::SPlatforms)
-	VAR_INFO(PCDX11)
+	VAR_INFO(PCDX)
 	VAR_INFO(PS4)
 	VAR_INFO(XBoxOne)
+	VAR_INFO(XBoxOneX)
 STRUCT_INFO_END(ParticleParams::SPlatforms)
 
 // *INDENT-ON* - disable uncrustify's indenting, as it doesn't make sense here.

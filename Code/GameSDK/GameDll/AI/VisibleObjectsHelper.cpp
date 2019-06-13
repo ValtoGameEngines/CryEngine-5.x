@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
  -------------------------------------------------------------------------
@@ -15,6 +15,7 @@
 #include "StdAfx.h"
 #include "VisibleObjectsHelper.h"
 #include "Agent.h"
+#include <Cry3DEngine/IRenderNode.h>
 #include <CryAISystem/IAIObjectManager.h>
 #include <CryAISystem/ITargetTrackManager.h>
 
@@ -193,7 +194,7 @@ void CVisibleObjectsHelper::UnregisterVisibility(SVisibleObject &visibleObject) 
 //////////////////////////////////////////////////////////////////////////
 bool CVisibleObjectsHelper::IsObjectVisible(const Agent& agent, EntityId objectId) const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	assert(agent.IsValid());
 
@@ -212,7 +213,7 @@ bool CVisibleObjectsHelper::IsObjectVisible(const Agent& agent, EntityId objectI
 //////////////////////////////////////////////////////////////////////////
 bool CVisibleObjectsHelper::IsObjectVisible(const Agent& agent, const SVisibleObject &visibleObject) const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	assert(agent.IsValid());
 
@@ -234,7 +235,7 @@ bool CVisibleObjectsHelper::IsObjectVisible(const Agent& agent, const SVisibleOb
 //////////////////////////////////////////////////////////////////////////
 bool CVisibleObjectsHelper::CheckObjectViewDist(const Agent& agent, const SVisibleObject &visibleObject) const
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	assert(agent.IsValid());
 
@@ -285,7 +286,7 @@ void CVisibleObjectsHelper::Reset()
 //////////////////////////////////////////////////////////////////////////
 void CVisibleObjectsHelper::Update()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	const float fCurrTime = gEnv->pTimer->GetFrameStartTime().GetSeconds();
 	IVisionMap& visionMap = *gEnv->pAISystem->GetVisionMap();
@@ -397,9 +398,6 @@ void CVisibleObjectsHelper::CheckVisibilityToAI(const TActiveVisibleObjects &act
 {
 	assert(agent.IsValid());
 
-	IScriptSystem *pSS = gEnv->pScriptSystem;
-	assert(pSS);
-
 	IEntity *pAIEntity = gEnv->pEntitySystem->GetEntity(agent.GetEntityID());
 
 	TActiveVisibleObjects::const_iterator itObject = activeVisibleObjects.begin();
@@ -442,12 +440,13 @@ void CVisibleObjectsHelper::CheckVisibilityToAI(const TActiveVisibleObjects &act
 						IAIObject* pAIObjectSender = pAIEntity->GetAI();
 						if (pAIObjectSender)
 						{
-							IAISignalExtraData *pSignalData = gEnv->pAISystem->CreateSignalExtraData();
+							AISignals::IAISignalExtraData *pSignalData = gEnv->pAISystem->CreateSignalExtraData();
 							if (pSignalData)
 							{
 								pSignalData->nID = visibleObject->entityId;
 							}
-							gEnv->pAISystem->SendSignal(SIGNALFILTER_SENDER, 1, "OnSawObjectMove", pAIObjectSender, pSignalData);
+							const AISignals::SignalSharedPtr pSignal = gEnv->pAISystem->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, gEnv->pAISystem->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnSawObjectMove(), pAIObjectSender->GetEntityID(), pSignalData);
+							gEnv->pAISystem->SendSignal(AISignals::ESignalFilter::SIGNALFILTER_SENDER, pSignal);
 						}
 					}
 				}

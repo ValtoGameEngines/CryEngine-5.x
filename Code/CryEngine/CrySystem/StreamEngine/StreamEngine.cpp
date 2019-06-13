@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   StreamEngine.cpp
@@ -65,7 +65,7 @@ CStreamEngine::CStreamEngine()
 	StartThreads();
 
 	// register system listener
-	GetISystem()->GetISystemEventDispatcher()->RegisterListener(this);
+	GetISystem()->GetISystemEventDispatcher()->RegisterListener(this,"CStreamEngine");
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -141,7 +141,7 @@ IReadStreamPtr CStreamEngine::StartRead(const EStreamTaskType tSource, const cha
 
 size_t CStreamEngine::StartBatchRead(IReadStreamPtr* pStreamsOut, const StreamReadBatchParams* pReqs, size_t numReqs)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_SYSTEM);
+	CRY_PROFILE_FUNCTION(PROFILE_SYSTEM);
 
 	size_t nValidStreams = 0;
 
@@ -170,7 +170,7 @@ size_t CStreamEngine::StartBatchRead(IReadStreamPtr* pStreamsOut, const StreamRe
 				CReadStream* pStream;
 
 				{
-					FRAME_PROFILER("CStreamEngine::StartBatchRead_AllocReadStream", gEnv->pSystem, PROFILE_SYSTEM);
+					CRY_PROFILE_SECTION(PROFILE_SYSTEM, "CStreamEngine::StartBatchRead_AllocReadStream");
 					pStream = CReadStream::Allocate(this, args.tSource, args.szFile, args.pCallback, &args.params);
 				}
 
@@ -198,7 +198,7 @@ size_t CStreamEngine::StartBatchRead(IReadStreamPtr* pStreamsOut, const StreamRe
 			}
 
 			{
-				FRAME_PROFILER("CStreamEngine::StartBatchRead_PushStreams", gEnv->pSystem, PROFILE_SYSTEM);
+				CRY_PROFILE_SECTION(PROFILE_SYSTEM, "CStreamEngine::StartBatchRead_PushStreams");
 				CryMT::set<CReadStream_AutoPtr>::AutoLock lock(m_streams.get_lock());
 				for (size_t i = 0; i < nStreamsInBatch; ++i)
 					m_streams.insert(pStreams[i]);
@@ -207,13 +207,13 @@ size_t CStreamEngine::StartBatchRead(IReadStreamPtr* pStreamsOut, const StreamRe
 			CAsyncIOFileRequest* pFileReqs[MaxStreamsPerBatch];
 
 			{
-				FRAME_PROFILER("CStreamEngine::StartBatchRead_CreateRequests", gEnv->pSystem, PROFILE_SYSTEM);
+				CRY_PROFILE_SECTION(PROFILE_SYSTEM, "CStreamEngine::StartBatchRead_CreateRequests");
 				for (size_t i = 0; i < nStreamsInBatch; ++i)
 					pFileReqs[i] = pStreams[i]->CreateFileRequest();
 			}
 
 			{
-				FRAME_PROFILER("CStreamEngine::StartBatchRead_PushRequests", gEnv->pSystem, PROFILE_SYSTEM);
+				CRY_PROFILE_SECTION(PROFILE_SYSTEM, "CStreamEngine::StartBatchRead_PushRequests");
 				for (size_t i = 0; i < nStreamsInBatch; ++i)
 				{
 					CAsyncIOFileRequest* pFileRequest = pFileReqs[i];
@@ -390,7 +390,8 @@ void UpdateIOThreadStats(
 
 void CStreamEngine::Update(uint32 nUpdateTypesBitmask)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_SYSTEM);
+	CRY_PROFILE_FUNCTION(PROFILE_SYSTEM);
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "CStreamEngine::Update");
 
 	// Dispatch completed callbacks.
 	MainThread_FinalizeIOJobs(nUpdateTypesBitmask);
@@ -402,7 +403,7 @@ void CStreamEngine::Update(uint32 nUpdateTypesBitmask)
 //  - starts new jobs in the single-threaded model
 void CStreamEngine::Update()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_SYSTEM);
+	CRY_PROFILE_FUNCTION(PROFILE_SYSTEM);
 
 	// Dispatch completed callbacks.
 	MainThread_FinalizeIOJobs();
@@ -535,7 +536,7 @@ void CStreamEngine::Update()
 void CStreamEngine::UpdateAndWait(bool bAbortAll)
 {
 	// for stream->Wait sync
-	LOADING_TIME_PROFILE_SECTION(gEnv->pSystem);
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY)(gEnv->pSystem);
 
 	if (bAbortAll)
 	{
@@ -548,12 +549,15 @@ void CStreamEngine::UpdateAndWait(bool bAbortAll)
 
 	while (!m_finishedStreams.empty() || !m_streams.empty())
 	{
-		Update();
 		// In case we still have cancelled or aborted streams in the queue,
 		// we wake the io threads here to ensure they are removed correctly;
 		for (uint32 i = 0; i < (uint32)eIOThread_Last; ++i)
 			SignalToStartWork((EIOThread)i, true);
-		CrySleep(10);
+		Update();
+		// If a stream finishes while Update is running, it will not be finalized until the next Update call.
+		// It can therefore happen that there are finished streams already, in which case we don't need to wait.
+		if(m_finishedStreams.empty() && !m_streams.empty())
+			CrySleep(10);
 	}
 
 	if (bAbortAll)
@@ -576,7 +580,7 @@ void CStreamEngine::MainThread_FinalizeIOJobs(uint32 type)
 	{
 		bNoReentrant = true;
 
-		FUNCTION_PROFILER(GetISystem(), PROFILE_SYSTEM);
+		CRY_PROFILE_FUNCTION(PROFILE_SYSTEM);
 
 #ifdef STREAMENGINE_ENABLE_STATS
 		m_Statistics.nMainStreamingThreadWait = CryGetTicks();
@@ -638,7 +642,7 @@ void CStreamEngine::MainThread_FinalizeIOJobs()
 	{
 		bNoReentrant = true;
 
-		FUNCTION_PROFILER(GetISystem(), PROFILE_SYSTEM);
+		CRY_PROFILE_FUNCTION(PROFILE_SYSTEM);
 
 #ifdef STREAMENGINE_ENABLE_STATS
 		m_Statistics.nMainStreamingThreadWait = CryGetTicks();
@@ -1087,19 +1091,16 @@ void WriteToStreamingLog(const char* str)
 #ifdef STREAMENGINE_ENABLE_STATS
 	if (g_cvars.sys_streaming_debug == 4)
 	{
-		// ignore invalid file access when logging steaming data
-		CDebugAllowFileAccess ignoreInvalidFileAccess;
+		// ignore invalid file access when logging streaming data
+		SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
 
-		static string sFileName;
+		static CryPathString s_fileName;
 		static bool bFirstTime = true;
 		if (bFirstTime)
 		{
-			char path[ICryPak::g_nMaxPath];
-			path[sizeof(path) - 1] = 0;
-			gEnv->pCryPak->AdjustFileName("%USER%/TestResults/StreamingLog.txt", path, ICryPak::FLAGS_PATH_REAL | ICryPak::FLAGS_FOR_WRITING);
-			sFileName = path;
+			gEnv->pCryPak->AdjustFileName("%USER%/TestResults/StreamingLog.txt", s_fileName, ICryPak::FLAGS_PATH_REAL | ICryPak::FLAGS_FOR_WRITING);
 		}
-		FILE* file = fxopen(sFileName, (bFirstTime) ? "wt" : "at");
+		FILE* file = fxopen(s_fileName, (bFirstTime) ? "wt" : "at");
 		bFirstTime = false;
 		if (file)
 		{
@@ -1115,6 +1116,9 @@ void WriteToStreamingLog(const char* str)
 //////////////////////////////////////////////////////////////////////////
 void CStreamEngine::DrawStatistics()
 {
+	if (!IRenderAuxGeom::GetAux())
+		return;
+
 	std::vector<CAsyncIOFileRequest_AutoPtr> tempRequests;
 
 	if (g_cvars.sys_streaming_debug == 4)
@@ -1466,7 +1470,7 @@ void CStreamEngine::OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR 
 #if defined(STREAMENGINE_ENABLE_STATS)
 		ClearStatistics();
 #endif
-
+		PauseStreaming(false, -1);
 		WriteToStreamingLog("*LEVEL_LOAD_PREPARE");
 		break;
 

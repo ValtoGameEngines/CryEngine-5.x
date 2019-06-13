@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    -------------------------------------------------------------------------
@@ -66,7 +66,7 @@ public:
 	// SYSTEM/AI SYSTEM RELATED FUNCTIONS
 	////////////////////////////////////////////////////////////////////////////////////////////////
 
-	void         Update(EObjectUpdate type);
+	void         Update(EUpdateType type);
 	void         Reset(EObjectResetType type);
 	void         OnObjectRemoved(CAIObject* pObject);
 	void         Serialize(TSerialize ser);
@@ -153,14 +153,6 @@ public:
 	//	(see CLeader::GetAttentionTarget()
 	CAIObject* GetEnemyLeader() const;
 
-	// <Title GetHidePoint>
-	// Description: Find the point to hide for a unit, given the obstacle, using the enemy position as a reference
-	// Arguments:
-	//	CAIObject* pAIObject - unit's AI object
-	//  const CObstacleRef& obstacle - obstacle reference
-	// TODO : this method should be moved to the graph
-	Vec3 GetHidePoint(const CAIObject* pAIObject, const CObstacleRef& obstacle) const;
-
 	// <Title ShootSpotsAvailable>
 	// Description: returns true if there are active shoot spots available
 	inline bool ShootSpotAvailable() { return false; }
@@ -208,7 +200,7 @@ public:
 	// FORMATION RELATED FUNCTIONS
 	////////////////////////////////////////////////////////////////////////////////////////////////
 
-	bool                       LeaderCreateFormation(const char* szFormationName, const Vec3& vTargetPos, bool bIncludeLeader = true, uint32 unitProp = UNIT_ALL, CAIObject* pOwner = NULL);
+	bool                       LeaderCreateFormation(const char* szFormationName, const Vec3& vTargetPos, bool bIncludeLeader = true, uint32 unitProp = UPR_ALL, CAIObject* pOwner = NULL);
 	bool                       ReleaseFormation();
 
 	CWeakRef<CAIObject>        GetNewFormationPoint(CWeakRef<CAIObject> refRequester, int iPointType = 0);
@@ -232,8 +224,8 @@ public:
 
 protected:
 	void           UpdateEnemyStats();
-	void           ProcessSignal(AISIGNAL& signal);
-	CLeaderAction* CreateAction(const LeaderActionParams* params, const char* signalText = NULL);
+	void           ProcessSignal(const AISignals::SignalSharedPtr pSignal);
+	CLeaderAction* CreateAction(const LeaderActionParams* params, const bool sendActionCreatedSignal = false);
 
 private:
 	void ChangeStance(EStance stance);

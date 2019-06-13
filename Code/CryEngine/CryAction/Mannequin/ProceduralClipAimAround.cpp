@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 //
 ////////////////////////////////////////////////////////////////////////////
@@ -8,6 +8,8 @@
 #include "ICryMannequin.h"
 
 #include <Mannequin/Serialization.h>
+
+#include <CryMath/Random.h>
 
 struct SAimAroundParams : public IProceduralParams
 {
@@ -122,7 +124,6 @@ public:
 
 		//--- TODO! Context use of random number generator!
 		float yaw = cry_random(params.yawMin, params.yawMax);
-		float pitch = cry_random(params.pitchMin, params.pitchMax);
 		m_lookOffset.Set(sin_tpl(yaw), cos_tpl(yaw), 0.0f);
 		m_lookAroundTime = cry_random(params.timeMin, params.timeMax);
 	}

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "MementoHistory.h"
@@ -147,7 +147,6 @@ bool CMementoHistory::ReadCurrentValue(const SReceiveContext& ctx, bool commit)
 	ChunkID chunkID = GetChunkIDFromObject(ctx.ctxObj, ctx.index);
 	uint8 profile = ctx.ctxObj.main->vAspectProfiles[ctx.index];
 	CHistory* pProfHistory = ctx.pView->GetHistory(eH_Profile);
-	CHistory* pAuthHistory = ctx.pView->GetHistory(eH_Auth);
 
 	if (pProfHistory->indexMask & (1 << ctx.index))
 	{

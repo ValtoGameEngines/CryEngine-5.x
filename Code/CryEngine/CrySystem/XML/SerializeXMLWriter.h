@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __SERIALIZEXMLWRITER_H__
 #define __SERIALIZEXMLWRITER_H__
@@ -10,6 +10,7 @@
 #include <CrySystem/XML/IXml.h>
 #include <CrySystem/IValidator.h>
 #include <CryNetwork/SimpleSerialize.h>
+#include <CryEntitySystem/IEntityBasicTypes.h>
 
 class CSerializeXMLWriterImpl : public CSimpleSerializeImpl<false, eST_SaveGame>
 {

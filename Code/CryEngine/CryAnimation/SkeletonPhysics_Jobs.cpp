@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "SkeletonPhysics.h"
@@ -36,19 +36,19 @@ void CSkeletonPhysics::ResetNonphysicalBoneRotations(Skeleton::CPoseData& poseDa
 
 		//		if (m_pSkeletonAnim->m_IsAnimPlaying || m_bPhysicsRelinquished)
 		{
-			if (joint.m_PhysInfo.pPhysGeom)
+			if (joint.m_PhysInfoRef[nLod].pPhysGeom)
 				continue;
 		}
 
 		const CPhysicsJoint& physicsJoint = m_arrPhysicsJoints[nBone];
-		QuatT qDef(physicsJoint.m_DefaultRelativeQuat.q, physicsJoint.m_DefaultRelativeQuat.t * m_fScale);
+		const QuatT &qDef = physicsJoint.m_DefaultRelativeQuat;
 		if (fBlend >= 1.0f)
 		{
 			pJointRelative[nBone] = qDef;
 		}
 		else
 		{
-			QuatT g(physicsJoint.m_qRelFallPlay, physicsJoint.m_DefaultRelativeQuat.t * m_fScale);
+			QuatT g(physicsJoint.m_qRelFallPlay, physicsJoint.m_DefaultRelativeQuat.t);
 			pJointRelative[nBone].SetNLerp(g, qDef, fBlend);
 		}
 	}
@@ -85,9 +85,9 @@ void CSkeletonPhysics::UnconvertBoneGlobalFromRelativeForm(Skeleton::CPoseData& 
 	{
 		const CDefaultSkeleton::SJoint& modelJoint = pModelJoints[i];
 
-		bool bPhysical = modelJoint.m_PhysInfo.pPhysGeom != 0;
+		bool bPhysical = modelJoint.m_PhysInfoRef[nLod].pPhysGeom != 0;
 
-		if ((modelJoint.m_PhysInfo.flags & 0xFFFF0000) == 0x30000)
+		if ((modelJoint.m_PhysInfoRef[nLod].flags & 0xFFFF0000) == 0x30000)
 		{
 			nRopeLevel = modelJoint.m_numLevels;
 		}
@@ -121,7 +121,7 @@ int CSkeletonPhysics::getBonePhysParentIndex(int iBoneIndex, int nLod)
 	{
 		iBoneIndex = getBoneParentIndex(iPrevBoneIndex = iBoneIndex);
 	}
-	while (iBoneIndex != iPrevBoneIndex && !GetModelJointPointer(iBoneIndex)->m_PhysInfo.pPhysGeom);
+	while (iBoneIndex != iPrevBoneIndex && !GetModelJointPointer(iBoneIndex)->m_PhysInfoRef[nLod].pPhysGeom);
 
 	return iBoneIndex == iPrevBoneIndex ? -1 : iBoneIndex;
 }
@@ -145,7 +145,7 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromEntityPrepare(Memory::CPool& m
 	if (pPhysicalEntity)
 	{
 		pe_status_awake statusTmp2;
-		statusTmp2.lag = 2;
+		statusTmp2.lag = 2 + g_pCharacterManager->m_nUpdateCounter - m_idLastSyncFrame;
 		m_bPhysicsAwake = pPhysicalEntity->GetStatus(&statusTmp2) != 0;
 	}
 
@@ -165,7 +165,7 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromEntityPrepare(Memory::CPool& m
 
 	uint32 jointCount = rDefaultSkeleton.GetJointCount();
 
-	int nLod = (m_pCharPhysics != pPhysicalEntity || m_bPhysicsRelinquished) ? GetPhysicsLod() : 0;
+	const int nLod = m_physLod;
 
 	m_pPhysBuffer = (PhysData*)memoryPool.Allocate(jointCount * sizeof(PhysData));
 	m_bPhysBufferFilled = false;
@@ -173,11 +173,12 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromEntityPrepare(Memory::CPool& m
 	CDefaultSkeleton::SJoint* pModelJoints = &rDefaultSkeleton.m_arrModelJoints[0];
 	pe_status_pos partpos;
 	partpos.flags = status_local;
+	float rscale = 1 / m_offset.s;
 	for (uint32 i = 0; i < jointCount; ++i)
 	{
 		m_pPhysBuffer[i].bSet = false;
 
-		if (!pModelJoints[i].m_PhysInfo.pPhysGeom)
+		if (!pModelJoints[i].m_PhysInfoRef[nLod].pPhysGeom)
 			continue;
 
 		partpos.partid = i;
@@ -187,7 +188,7 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromEntityPrepare(Memory::CPool& m
 
 		m_pPhysBuffer[i].bSet = true;
 		m_pPhysBuffer[i].location.q = partpos.q;
-		m_pPhysBuffer[i].location.t = partpos.pos;
+		m_pPhysBuffer[i].location.t = partpos.pos * rscale;
 		if (m_fPhysBlendTime < m_fPhysBlendMaxTime)
 		{
 			// if in blending stage, do it only for the root
@@ -202,7 +203,7 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromEntityPrepare(Memory::CPool& m
 	{
 		m_pPhysBuffer[i].bSet2 = false;
 
-		if (!pModelJoints[i].m_PhysInfo.pPhysGeom)
+		if (!pModelJoints[i].m_PhysInfoRef[nLod].pPhysGeom)
 			continue;
 
 		sj.idChildBody = i;
@@ -238,7 +239,7 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromEntity(Skeleton::CPoseData& po
 
 	m_bPhysicsAwake = false;
 
-	int nLod = (m_pCharPhysics != pPhysicalEntity || m_bPhysicsRelinquished) ? GetPhysicsLod() : 0;
+	const int nLod = m_physLod;
 	ResetNonphysicalBoneRotations(poseData, nLod, m_fPhysBlendTime * m_frPhysBlendMaxTime);
 
 	QuatT roffs(!offset.q, -offset.t * offset.q);
@@ -253,9 +254,8 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromEntity(Skeleton::CPoseData& po
 	if (pPhysicalEntity)
 	{
 		QuatT transform(IDENTITY);
-
-		CDefaultSkeleton::SJoint* pModelJoints = &rDefaultSkeleton.m_arrModelJoints[0];
 		QuatT location;
+
 		for (uint i = 0; i < jointCount; ++i)
 		{
 			PhysData& rCurPhysData = pPhysBuffer[i];
@@ -269,7 +269,7 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromEntity(Skeleton::CPoseData& po
 			if (rCurPhysData.bSet2)
 			{
 				pJointRelative[i].q = pPhysJoints[i].m_qRelPhysParent * rCurPhysData.rotation * Quat::CreateRotationXYZ(rCurPhysData.angles);
-				pJointRelative[i].t = pPhysJoints[i].m_DefaultRelativeQuat.t * m_fScale;
+				pJointRelative[i].t = pPhysJoints[i].m_DefaultRelativeQuat.t;
 			}
 
 			rCurPhysData.location = location;
@@ -304,7 +304,7 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromEntity(Skeleton::CPoseData& po
 				parentMatrix = m_pPhysBuffer[k].location.q * parentMatrix;
 
 			Quat physicsJointFrame(IDENTITY);
-			CryBonePhysics& physInfo = GetModelJointPointer(i)->m_PhysInfo;
+			CryBonePhysics& physInfo = GetModelJointPointer(i)->m_PhysInfoRef[nLod];
 			if (physInfo.flags != -1 &&
 			    physInfo.framemtx[0][0] < 10)
 			{
@@ -319,6 +319,7 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromEntity(Skeleton::CPoseData& po
 	poseData.ComputeRelativePose(rDefaultSkeleton);
 
 	m_bPhysicsWasAwake = m_bPhysicsAwake;
+	m_idLastSyncFrame = g_pCharacterManager->m_nUpdateCounter;
 }
 
 void CSkeletonPhysics::Job_Physics_SynchronizeFromEntityArticulated(Skeleton::CPoseData& poseData, float fDeltaTimePhys)
@@ -341,7 +342,10 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFrom(Skeleton::CPoseData& poseData
 		DrawHelper::Pose(*m_pInstance->m_pDefaultSkeleton, poseData, QuatT(m_location), ColorB(0xff, 0xff, 0x80, 0xff));
 
 	if (!m_pSkeletonAnim->m_IsAnimPlaying && !m_bPhysicsRelinquished)
+	{
+		Job_Physics_SynchronizeFromAux(poseData);
 		return;
+	}
 
 	Job_Physics_SynchronizeFromEntityArticulated(poseData, timeDelta);
 	Job_Physics_SynchronizeFromAux(poseData);
@@ -424,7 +428,7 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromAux(Skeleton::CPoseData& poseD
 		return;
 	const CDefaultSkeleton& rDefaultSkeleton = *m_pInstance->m_pDefaultSkeleton;
 
-	int nLod = m_bPhysicsRelinquished ? GetPhysicsLod() : 0;
+	const int nLod = m_physLod;
 
 	if (m_bPhysicsSynchronizeFromEntity &&
 	    !m_pSkeletonAnim->m_IsAnimPlaying && !m_bPhysicsRelinquished)
@@ -444,7 +448,7 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromAux(Skeleton::CPoseData& poseD
 	if (m_pPhysBuffer)
 	{
 		for (uint32 i = 0; i < jointCount; ++i)
-			m_pPhysBuffer[i].location = pJointRelative[i];
+			(m_pPhysBuffer[i].location = pJointRelative[i]).t *= m_offset.s;
 		m_bPhysBufferFilled = true;
 	}
 
@@ -512,11 +516,11 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromImpactPrepare(Memory::CPool& m
 		return;
 	const CDefaultSkeleton& rDefaultSkeleton = *m_pInstance->m_pDefaultSkeleton;
 
+	if (m_bPhysicsRelinquished)
+		return;
 	pe_status_awake physicsStatusAwake;
 	m_bPhysicsAwake = m_pCharPhysics->GetStatus(&physicsStatusAwake) != 0;
 	if (!m_bPhysicsAwake)
-		return;
-	if (m_bPhysicsRelinquished)
 		return;
 
 	if (!Console::GetInst().ca_physicsProcessImpact)
@@ -527,17 +531,17 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromImpactPrepare(Memory::CPool& m
 	if (!m_pPhysImpactBuffer)
 		return;
 
-	int physicsLod = m_bPhysicsRelinquished ? GetPhysicsLod() : 0;
+	const int nLod = m_physLod;
 
 	pe_status_joint physicsStatusJoint;
 	for (int i = 0; i < jointCount; i++)
 	{
 		m_pPhysImpactBuffer[i].bSet = false;
 
-		if (!GetModelJointPointer(i)->m_PhysInfo.pPhysGeom)
+		if (!GetModelJointPointer(i)->m_PhysInfoRef[nLod].pPhysGeom)
 			continue;
 
-		int parentIndex = getBonePhysParentIndex(i, physicsLod);
+		int parentIndex = getBonePhysParentIndex(i, nLod);
 		if (parentIndex < 0)
 			continue;
 
@@ -555,7 +559,7 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromImpact(Skeleton::CPoseData& po
 	if (!m_pPhysImpactBuffer)
 		return;
 
-	int physicsLod = m_bPhysicsRelinquished ? GetPhysicsLod() : 0;
+	const int nLod = m_physLod;
 
 	int iRoot = -1, jointCount = poseData.GetJointCount();
 	for (int i = 0; i < jointCount; ++i)
@@ -563,7 +567,7 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromImpact(Skeleton::CPoseData& po
 		if (!m_pPhysImpactBuffer[i].bSet)
 			continue;
 
-		int parentIndex = getBonePhysParentIndex(i, physicsLod);
+		int parentIndex = getBonePhysParentIndex(i, nLod);
 		if (parentIndex < 0)
 			continue;
 		iRoot += parentIndex - iRoot & iRoot >> 31;
@@ -573,10 +577,10 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromImpact(Skeleton::CPoseData& po
 			parentMatrix = poseData.GetJointRelative(k).q * parentMatrix;
 
 		Quat physicsJointFrame(IDENTITY);
-		if (GetModelJointPointer(i)->m_PhysInfo.flags != -1 &&
-		    GetModelJointPointer(i)->m_PhysInfo.framemtx[0][0] < 10)
+		if (GetModelJointPointer(i)->m_PhysInfoRef[nLod].flags != -1 &&
+		    GetModelJointPointer(i)->m_PhysInfoRef[nLod].framemtx[0][0] < 10)
 		{
-			physicsJointFrame = Quat(*(Matrix33*)&GetModelJointPointer(i)->m_PhysInfo.framemtx[0][0]);
+			physicsJointFrame = Quat(*(Matrix33*)&GetModelJointPointer(i)->m_PhysInfoRef[nLod].framemtx[0][0]);
 		}
 
 		Ang3 animationAngles = Ang3::GetAnglesXYZ(!physicsJointFrame * parentMatrix * poseData.GetJointRelative(i).q);
@@ -592,8 +596,8 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromImpact(Skeleton::CPoseData& po
 		int parentNextIndex = parentIndex;
 		int j;
 		while (
-		  (GetModelJointPointer(parentIndex)->m_PhysInfo.flags & all_angles_locked) == all_angles_locked &&
-		  (j = getBonePhysParentIndex(parentIndex, physicsLod)) >= 0)
+		  (GetModelJointPointer(parentIndex)->m_PhysInfoRef[nLod].flags & all_angles_locked) == all_angles_locked &&
+		  (j = getBonePhysParentIndex(parentIndex, nLod)) >= 0)
 		{
 			parentIndex = j;
 		}
@@ -608,8 +612,8 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromImpact(Skeleton::CPoseData& po
 
 		m_pPhysImpactBuffer[i].angles = animationAngles;
 		m_pPhysImpactBuffer[i].pivot =
-		  poseData.GetJointAbsolute(parentIndex).GetInverted() *
-		  poseData.GetJointAbsolute(i).t;
+		  (poseData.GetJointAbsolute(parentIndex).GetInverted() *
+		  poseData.GetJointAbsolute(i).t) * m_offset.s;
 		if (bUpdateParent)
 			m_pPhysImpactBuffer[i].q0 = updateParentMatrix * physicsJointFrame;
 		else
@@ -618,7 +622,7 @@ void CSkeletonPhysics::Job_Physics_SynchronizeFromImpact(Skeleton::CPoseData& po
 	if (iRoot >= 0)
 		m_pPhysImpactBuffer[iRoot].angles = Ang3::GetAnglesXYZ(poseData.GetJointAbsolute(iRoot).q);
 
-	UnconvertBoneGlobalFromRelativeForm(poseData, false, physicsLod);
+	UnconvertBoneGlobalFromRelativeForm(poseData, false, nLod);
 }
 
 ILINE Quat SafeInterpolation(const Quat& q0, Quat q1, const float w, bool bFlip)

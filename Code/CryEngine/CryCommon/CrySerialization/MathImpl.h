@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -8,34 +8,168 @@
 #include <CryMath/Cry_Vector3.h>
 #include <CryMath/Cry_Vector4.h>
 #include <CryMath/Cry_Quat.h>
+#include <CryMath/Cry_Matrix33.h>
 #include <CryMath/Cry_Matrix34.h>
+#include <CryMath/Cry_Matrix44.h>
 #include <CryMath/Cry_Geo.h>
 #include <CrySerialization/Gap.h>
 #include <CrySerialization/Decorators/Range.h>
 
+namespace Serialization
+{
+	template<typename T>
+	struct SSerializeRange
+	{
+		TRange<T>& value;
+		SSerializeRange(TRange<T>& v) : value(v) {}
+		void Serialize(Serialization::IArchive& ar)
+		{
+			ar(value.start, "start", "start");
+			ar(value.end, "end", "end");
+		}
+	};
+	template<typename T>
+	struct SSerializeVec2
+	{
+		Vec2_tpl<T>& value;
+		SSerializeVec2(Vec2_tpl<T>& v) : value(v) {}
+		void Serialize(Serialization::IArchive& ar)
+		{
+			ar(value.x, "x", "x");
+			ar(value.y, "y", "y");
+		}
+	};
+	template<typename T>
+	struct SSerializeVec3
+	{
+		Vec3_tpl<T>& value;
+		SSerializeVec3(Vec3_tpl<T>& v) : value(v) {}
+		void Serialize(Serialization::IArchive& ar)
+		{
+			ar(value.x, "x", "x");
+			ar(value.y, "y", "y");
+			ar(value.z, "z", "z");
+		}
+	};
+	template<typename T>
+	struct SSerializeVec4
+	{
+		Vec4_tpl<T>& value;
+		SSerializeVec4(Vec4_tpl<T>& v) : value(v) {}
+		void Serialize(Serialization::IArchive& ar)
+		{
+			ar(value.x, "x", "x");
+			ar(value.y, "y", "y");
+			ar(value.z, "z", "z");
+			ar(value.w, "w", "w");
+		}
+	};
+
+#ifdef CRY_HARDWARE_VECTOR4
+	template<typename T>
+	struct SSerializeVec4H
+	{
+		Vec4H<T>& value;
+		SSerializeVec4H(Vec4H<T>& v) : value(v) {}
+		void Serialize(Serialization::IArchive& ar)
+		{
+			ar(value.x, "x", "x");
+			ar(value.y, "y", "y");
+			ar(value.z, "z", "z");
+			ar(value.w, "w", "w");
+		}
+	};
+#endif
+
+	template<typename T>
+	struct SSerializeQuat
+	{
+		Quat_tpl<T>& value;
+		SSerializeQuat(Quat_tpl<T>& v) : value(v) {}
+		void Serialize(Serialization::IArchive& ar)
+		{
+			ar(value.v.x, "x", "x");
+			ar(value.v.y, "y", "y");
+			ar(value.v.z, "z", "z");
+			ar(value.w, "w", "w");
+		}
+	};
+}
+
+template<typename T>
+bool Serialize(Serialization::IArchive& ar, TRange<T>& value, const char* name, const char* label)
+{
+	if (!ar.isEdit() && !ar.caps(Serialization::IArchive::XML_VERSION_1))
+	{
+		return ar(Serialization::SStruct(Serialization::SSerializeRange<T>(value)), name, label);
+	}
+	else
+	{
+		typedef T(&Array)[2];
+		return ar((Array)value, name, label);
+	}
+}
+
 template<typename T>
 bool Serialize(Serialization::IArchive& ar, Vec2_tpl<T>& value, const char* name, const char* label)
 {
-	typedef T (& Array)[2];
-	return ar((Array)value, name, label);
+	if (!ar.isEdit() && !ar.caps(Serialization::IArchive::XML_VERSION_1))
+	{
+		return ar(Serialization::SStruct(Serialization::SSerializeVec2<T>(value)), name, label);
+	}
+	else
+	{
+		typedef T(&Array)[2];
+		return ar((Array)value, name, label);
+	}
 }
 
 template<typename T>
 bool Serialize(Serialization::IArchive& ar, Vec3_tpl<T>& value, const char* name, const char* label)
 {
-	typedef T (& Array)[3];
-	return ar((Array)value, name, label);
+	if (!ar.isEdit() && !ar.caps(Serialization::IArchive::XML_VERSION_1))
+	{
+		return ar(Serialization::SStruct(Serialization::SSerializeVec3<T>(value)), name, label);
+	}
+	else
+	{
+		typedef T (& Array)[3];
+		return ar((Array)value, name, label);
+	}
 }
 
 template<typename T>
-inline bool Serialize(Serialization::IArchive& ar, struct Vec4_tpl<T>& v, const char* name, const char* label)
+inline bool Serialize(Serialization::IArchive& ar, struct Vec4_tpl<T>& value, const char* name, const char* label)
 {
-	typedef T (& Array)[4];
-	return ar((Array)v, name, label);
+	if (!ar.isEdit() && !ar.caps(Serialization::IArchive::XML_VERSION_1))
+	{
+		return ar(Serialization::SStruct(Serialization::SSerializeVec4<T>(value)), name, label);
+	}
+	else
+	{
+		typedef T (& Array)[4];
+		return ar((Array)value, name, label);
+	}
 }
 
+#ifdef CRY_TYPE_SIMD4
 template<typename T>
-bool Serialize(Serialization::IArchive& ar, struct Quat_tpl<T>& value, const char* name, const char* label)
+inline bool Serialize(Serialization::IArchive& ar, Vec4H<T>& value, const char* name, const char* label)
+{
+	if (!ar.isEdit() && !ar.caps(Serialization::IArchive::XML_VERSION_1))
+	{
+		return ar(Serialization::SStruct(Serialization::SSerializeVec4H<T>(value)), name, label);
+	}
+	else
+	{
+		typedef T (& Array)[4];
+		return ar((Array)value, name, label);
+	}
+}
+#endif
+
+template<typename T>
+bool Serialize(Serialization::IArchive& ar, Quat_tpl<T>& value, const char* name, const char* label)
 {
 	if (ar.isEdit())
 	{
@@ -45,6 +179,10 @@ bool Serialize(Serialization::IArchive& ar, struct Quat_tpl<T>& value, const cha
 		if (ar.isInput())
 			value = Quat_tpl<T>(Ang3_tpl<T>(DEG2RAD(v)));
 		return result;
+	}
+	else if (!ar.caps(Serialization::IArchive::XML_VERSION_1))
+	{
+		return ar(Serialization::SStruct(Serialization::SSerializeQuat<T>(value)), name, label);
 	}
 	else
 	{
@@ -84,11 +222,44 @@ inline bool Serialize(Serialization::IArchive& ar, struct AABB& value, const cha
 }
 
 template<typename T>
-bool Serialize(Serialization::IArchive& ar, Matrix34_tpl<T>& value, const char* name, const char* label)
+bool Serialize(Serialization::IArchive& ar, Matrix33_tpl<T>& value, const char* name, const char* label)
 {
-	typedef T (& Array)[3][4];
+	typedef T(&Array)[9];
 	return ar((Array)value, name, label);
 }
+
+template<typename T>
+bool Serialize(Serialization::IArchive& ar, Matrix34_tpl<T>& value, const char* name, const char* label)
+{
+	typedef T (& Array)[12];
+	return ar((Array)value, name, label);
+}
+
+#ifdef CRY_TYPE_SIMD4
+template<typename T>
+bool Serialize(Serialization::IArchive& ar, Matrix34H<T>& value, const char* name, const char* label)
+{
+	typedef T (& Array)[12];
+	return ar((Array)value, name, label);
+}
+#endif
+
+template<typename T>
+bool Serialize(Serialization::IArchive& ar, Matrix44_tpl<T>& value, const char* name, const char* label)
+{
+	typedef T(&Array)[16];
+	return ar((Array)value, name, label);
+}
+
+
+#ifdef CRY_TYPE_SIMD4
+template<typename T>
+bool Serialize(Serialization::IArchive& ar, Matrix44H<T>& value, const char* name, const char* label)
+{
+	typedef T(&Array)[16];
+	return ar((Array)value, name, label);
+}
+#endif
 
 //////////////////////////////////////////////////////////////////////////
 
@@ -102,36 +273,26 @@ struct SRotation
 
 	void Serialize(Serialization::IArchive& ar)
 	{
+		if (ar.isEdit())
+		{
+			Vec3 v = Vec3(RAD2DEG(Ang3::GetAnglesXYZ(Matrix33(quat))));
+			ar(Serialization::MinMaxRange(v.x, 1.0f), "x", "^");
+			ar(Serialization::MinMaxRange(v.y, 1.0f), "y", "^");
+			ar(Serialization::MinMaxRange(v.z, 1.0f), "z", "^");
+			if (ar.isInput())
+				quat = Quat(Ang3(DEG2RAD(v)));
+
+			ar(Serialization::SGap(), "gap", "^");
+		}
+		else
+		{
+			typedef float(&Array)[4];
+			ar((Array)quat, "rotation", "Rotation");
+		}
 	}
 
 	Quat& quat;
 };
-
-inline bool Serialize(Serialization::IArchive& ar, SRotation& value, const char* name, const char* label)
-{
-	if (ar.isEdit())
-	{
-		if (ar.openBlock(name, label))
-		{
-			Vec3 v = Vec3(RAD2DEG(Ang3::GetAnglesXYZ(Matrix33(value.quat))));
-			ar(Serialization::Range(v.x, -FLT_MAX, FLT_MAX, 1.0f), "x", "^");
-			ar(Serialization::Range(v.y, -FLT_MAX, FLT_MAX, 1.0f), "y", "^");
-			ar(Serialization::Range(v.z, -FLT_MAX, FLT_MAX, 1.0f), "z", "^");
-			if (ar.isInput())
-				value.quat = Quat(Ang3(DEG2RAD(v)));
-
-			ar(Serialization::SGap(), "gap", "^");
-			ar.closeBlock();
-			return true;
-		}
-		return false;
-	}
-	else
-	{
-		typedef float (& Array)[4];
-		return ar((Array)value, name, label);
-	}
-}
 
 struct SPosition
 {
@@ -141,38 +302,52 @@ struct SPosition
 
 	void Serialize(Serialization::IArchive& ar)
 	{
+		if (ar.isEdit())
+		{
+			ar(Serialization::MinMaxRange(vec.x), "x", "^");
+			ar(Serialization::MinMaxRange(vec.y), "y", "^");
+			ar(Serialization::MinMaxRange(vec.z), "z", "^");
+			ar(Serialization::SGap(), "gap", "^");
+		}
+		else
+		{
+			typedef float(*Array)[3];
+			ar(*((Array)& vec.x), "position", "Position");
+		}
 	}
 
 	Vec3& vec;
 };
 
-inline bool Serialize(Serialization::IArchive& ar, SPosition& c, const char* name, const char* label)
+struct SScale
 {
-	if (ar.isEdit())
+	explicit SScale(Vec3& v)
+		: vec(v)
+	{}
+
+	void Serialize(Serialization::IArchive& ar)
 	{
-		if (ar.openBlock(name, label))
+		if (ar.isEdit())
 		{
-			ar(c.vec.x, "x", "^");
-			ar(c.vec.y, "y", "^");
-			ar(c.vec.z, "z", "^");
-			ar(Serialization::SGap(), "gap", "^");
-			ar.closeBlock();
-			return true;
+			ar(Serialization::MinMaxRange(vec.x), "x", "^");
+			ar(Serialization::MinMaxRange(vec.y), "y", "^");
+			ar(Serialization::MinMaxRange(vec.z), "z", "^");
 		}
-		return false;
+		else
+		{
+			typedef float(*Array)[3];
+			ar(*((Array)& vec.x), "scale", "Scale");
+		}
 	}
-	else
-	{
-		typedef float (* Array)[3];
-		return ar(*((Array) & c.vec.x), name, label);
-	}
-}
+
+	Vec3& vec;
+};
 
 struct SUniformScale
 {
-	explicit SUniformScale(Vec3& v, bool& u)
+	explicit SUniformScale(Vec3& v)
 		: vec(v)
-		, uniform(u)
+		, uniform(false)
 	{}
 
 	void Serialize(Serialization::IArchive& ar)
@@ -180,54 +355,60 @@ struct SUniformScale
 	}
 
 	Vec3& vec;
-	bool& uniform;
+	bool uniform;
 };
 
 inline bool Serialize(Serialization::IArchive& ar, SUniformScale& c, const char* name, const char* label)
 {
-	if (ar.isEdit())
+	if (!ar.isEdit())
 	{
-		if (ar.openBlock(name, label))
-		{
-			bool result = true;
-			if (ar.isInput() && c.uniform)
-			{
-				Vec3 vec = c.vec;
-				ar(vec.x, "x", "^");
-				ar(vec.y, "y", "^");
-				ar(vec.z, "z", "^");
-				result = ar(Serialization::SStruct(c), "scale", "^");
+		typedef float(*Array)[3];
+		return ar(*((Array)& c.vec.x), name, label);
+	}
+	else if(ar.openBlock(name, label))
+	{
+		bool result = true;
 
-				if (!strcmp(ar.getModifiedRowName(), "x"))
-				{
-					c.vec.x = c.vec.y = c.vec.z = vec.x;
-				}
-				else if (!strcmp(ar.getModifiedRowName(), "y"))
-				{
-					c.vec.x = c.vec.y = c.vec.z = vec.y;
-				}
-				else if (!strcmp(ar.getModifiedRowName(), "z"))
-				{
-					c.vec.x = c.vec.y = c.vec.z = vec.z;
-				}
-			}
-			else
+		Vec3 vec = c.vec;
+		ar(Serialization::MinMaxRange(vec.x), "x", "^");
+		ar(Serialization::MinMaxRange(vec.y), "y", "^");
+		ar(Serialization::MinMaxRange(vec.z), "z", "^");
+		result = ar(Serialization::SStruct(c), "scale", "^");
+
+		if (ar.isInput() && c.uniform)
+		{
+			if (!strcmp(ar.getModifiedRowName(), "x"))
 			{
-				ar(c.vec.x, "x", "^");
-				ar(c.vec.y, "y", "^");
-				ar(c.vec.z, "z", "^");
-				result = ar(Serialization::SStruct(c), "scale", "^");
+				float multiplier = c.vec.x != 0 ? vec.x / c.vec.x : 0;
+				c.vec.x = vec.x;
+				c.vec.y *= multiplier;
+				c.vec.z *= multiplier;
 			}
-			ar.closeBlock();
-			return result;
+			else if (!strcmp(ar.getModifiedRowName(), "y"))
+			{
+				float multiplier = c.vec.y != 0 ? vec.y / c.vec.y : 0;
+				c.vec.x *= multiplier;
+				c.vec.y = vec.y;
+				c.vec.z *= multiplier;
+			}
+			else if (!strcmp(ar.getModifiedRowName(), "z"))
+			{
+				float multiplier = c.vec.z != 0 ? vec.z / c.vec.z : 0;
+				c.vec.x *= multiplier;
+				c.vec.y *= multiplier;
+				c.vec.z = vec.z;
+			}
 		}
-		return false;
+		else
+		{
+			c.vec.x = vec.x;
+			c.vec.y = vec.y;
+			c.vec.z = vec.z;
+		}
+		ar.closeBlock();
+		return result;
 	}
-	else
-	{
-		typedef float (* Array)[3];
-		return ar(*((Array) & c.vec.x), name, label);
-	}
+	return false;
 }
 
 template<class T>

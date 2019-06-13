@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -27,6 +27,7 @@ History:
 #include <IUIDraw.h>
 #include "RecordingSystem.h"
 #include "Network/Lobby/GameLobby.h"
+#include <IGameplayRecorder.h>
 
 // -----------------------------------------------------------------------
 
@@ -476,10 +477,9 @@ EntityId CGameRulesMPSpectator::GetNextSpectatorTarget( EntityId playerId, int c
 		CGameRules::TPlayers  players;
 		players.reserve(m_pGameRules->GetNumChannels() + 1);
 
-		int  teamCount = m_pGameRules->GetTeamCount();
-		int  friendlyTeam = m_pGameRules->GetTeam(playerId);
+		int teamCount = m_pGameRules->GetTeamCount();
+		int friendlyTeam = m_pGameRules->GetTeam(playerId);
 
-		int teamIndex = max(friendlyTeam - 1, 0);
 		if ((teamCount == 0) || (friendlyTeam == 0))
 		{
 			IGameRulesPlayerStatsModule*  pPlayStatsMod = m_pGameRules->GetPlayerStatsModule();

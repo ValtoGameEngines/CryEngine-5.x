@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -8,6 +8,7 @@
 
 	#include <CrySystem/UserAnalytics/IUserAnalytics.h>
 	#include <CrySystem/UserAnalytics/ICryUserAnalyticsPlugin.h>
+	#include <CrySystem/ConsoleRegistration.h>
 	#include "ExtensionSystem/CryPluginManager.h"
 
 int CUserAnalyticsSystem::m_enableUserAnalyticsCollect = 0;
@@ -18,19 +19,6 @@ CUserAnalyticsSystem::CUserAnalyticsSystem()
 	: m_pUserAnalyticsPlugin(nullptr)
 	, m_pUserAnalytics(nullptr)
 {
-	ICryPluginManager* pPluginManager = GetISystem()->GetIPluginManager();
-	if (pPluginManager != nullptr)
-	{
-		const bool bSuccess = pPluginManager->LoadPluginFromDisk(ICryPluginManager::EPluginType::EPluginType_CPP, "CryUserAnalytics", "Plugin_CryUserAnalytics");
-
-		if (bSuccess)
-		{
-			pPluginManager->RegisterEventListener(cryiidof<ICryUserAnalyticsPlugin>(), this);
-
-			Initialize();
-		}
-
-	}
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -50,11 +38,9 @@ void CUserAnalyticsSystem::RegisterCVars()
 ///////////////////////////////////////////////////////////////////////////
 CUserAnalyticsSystem::~CUserAnalyticsSystem()
 {
-	// Plugin Manager might be not available anymore
-	ICryPluginManager* pPluginManager = GetISystem()->GetIPluginManager();
-	if (pPluginManager != nullptr)
+	if (Cry::IPluginManager* pPluginManager = GetISystem()->GetIPluginManager())
 	{
-		pPluginManager->RemoveEventListener(cryiidof<ICryUserAnalyticsPlugin>(), this);
+		pPluginManager->RemoveEventListener<ICryUserAnalyticsPlugin>(this);
 	}
 
 	if (IConsole* const pConsole = gEnv->pConsole)
@@ -67,26 +53,20 @@ CUserAnalyticsSystem::~CUserAnalyticsSystem()
 ///////////////////////////////////////////////////////////////////////////
 void CUserAnalyticsSystem::Initialize()
 {
-	ICryPluginManager* pPluginManager = GetISystem()->GetIPluginManager();
-	if (pPluginManager != nullptr)
-	{
-		m_pUserAnalyticsPlugin = pPluginManager->QueryPlugin<ICryUserAnalyticsPlugin>();
+	m_pUserAnalyticsPlugin = GetISystem()->GetIPluginManager()->QueryPlugin<ICryUserAnalyticsPlugin>();
 
-		if (m_pUserAnalyticsPlugin != nullptr)
-		{
-			m_pUserAnalytics = m_pUserAnalyticsPlugin->GetIUserAnalytics();
-		}
+	if (m_pUserAnalyticsPlugin != nullptr)
+	{
+		GetISystem()->GetIPluginManager()->RegisterEventListener<ICryUserAnalyticsPlugin>(this);
+
+		m_pUserAnalytics = m_pUserAnalyticsPlugin->GetIUserAnalytics();
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////
-void CUserAnalyticsSystem::OnPluginEvent(const CryClassID& pluginClassId, IPluginEventListener::EPluginEvent event)
+void CUserAnalyticsSystem::OnPluginEvent(const CryClassID& pluginClassId, Cry::IPluginManager::IEventListener::EEvent event)
 {
-	if (event == IPluginEventListener::EPluginEvent::Initialized)
-	{
-		Initialize();
-	}
-	else if (event == IPluginEventListener::EPluginEvent::Unloaded)
+	if (event == Cry::IPluginManager::IEventListener::EEvent::Unloaded)
 	{
 		m_pUserAnalyticsPlugin = nullptr;
 		m_pUserAnalytics = nullptr;

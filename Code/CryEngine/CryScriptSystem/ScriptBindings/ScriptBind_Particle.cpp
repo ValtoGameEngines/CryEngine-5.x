@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   ScriptBind_Particle.cpp
@@ -15,8 +15,10 @@
 #include "ScriptBind_Particle.h"
 #include <CrySystem/ISystem.h>
 #include <Cry3DEngine/I3DEngine.h>
+#include <Cry3DEngine/CryEngineDecalInfo.h>
 #include <CryEntitySystem/IEntitySystem.h>
 #include <CryAnimation/ICryAnimation.h>
+#include <CryParticleSystem/IParticles.h>
 #include <CryParticleSystem/ParticleParams.h>
 
 // TypeInfo implementations

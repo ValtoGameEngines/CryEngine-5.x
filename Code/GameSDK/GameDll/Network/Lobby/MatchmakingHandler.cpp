@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -152,8 +152,6 @@ void CMatchMakingHandler::Search( int freeSlots, int maxResults, SCrySessionSear
 	param.m_maxNumReturn = maxResults;
 	param.m_ranked = false;
 
-	int curData = 0;
-
 	CRY_ASSERT_MESSAGE( numSearchParameters < FIND_GAMES_SEARCH_NUM_DATA, "Session search data buffer overrun" );
 	searchParameters[ numSearchParameters ].m_operator = eCSSO_Equal;
 	searchParameters[ numSearchParameters ].m_data.m_id = LID_MATCHDATA_VERSION;
@@ -248,11 +246,12 @@ void CMatchMakingHandler::OnSearchResult( SCrySessionSearchResult* pSession )
 		
 		const CGameLobby::EActiveStatus activeStatus = (CGameLobby::EActiveStatus) GameLobbyData::GetSearchResultsData( pSession, LID_MATCHDATA_ACTIVE );
 		bool bIsBadServer = pLobby->IsBadServer( pSession->m_id );
+#if defined(TRACK_MATCHMAKING)
 		const int skillRank = pLobby->CalculateAverageSkill();
+		float sessionScore = LegacyC2MatchMakingScore( pSession, pLobby, false );
+#endif
 		const int sessionSkillRank = GameLobbyData::GetSearchResultsData( pSession, LID_MATCHDATA_SKILL );
 		const int sessionLanguageId = GameLobbyData::GetSearchResultsData( pSession, LID_MATCHDATA_LANGUAGE );
-
-		float sessionScore = LegacyC2MatchMakingScore( pSession, pLobby, false );
 
 		int32 region = 0;
 #if GAMELOBBY_USE_COUNTRY_FILTERING
@@ -570,7 +569,7 @@ float CMatchMakingHandler::LegacyC2MatchMakingScore( SCrySessionSearchResult* se
 	{										
 		float diff = (float) abs(skillRank - sessionSkillRank);
 		float fracDiff = diff / (float) skillRank;
-		skillSubMetric = 1.f - MIN(fracDiff, 1.f);
+		skillSubMetric = 1.f - std::min(fracDiff, 1.f);
 		skillSubMetric = (skillSubMetric * skillSubMetric);
 	}
 
@@ -673,28 +672,28 @@ void CMatchMakingHandler::NewSessionParameter( ELOBBYIDS paramID, ScriptAnyValue
 	{
 		m_sessionParams[ m_nSessionParams ].m_id = paramID;
 
-		switch( valueVal.type )
+		switch (valueVal.GetType())
 		{
-		case ANY_TNUMBER:
+		case EScriptAnyType::Number:
 			m_sessionParams[ m_nSessionParams ].m_type = eCLUDT_Int32;
-			m_sessionParams[ m_nSessionParams ].m_int32 = (int32)valueVal.number;
+			m_sessionParams[ m_nSessionParams ].m_int32 = static_cast<int32>(valueVal.GetNumber());
 			break;
 
-		case ANY_TBOOLEAN:
+		case EScriptAnyType::Boolean:
 			m_sessionParams[ m_nSessionParams ].m_type = eCLUDT_Int32;
-			m_sessionParams[ m_nSessionParams ].m_int32 = (int32)valueVal.b;
+			m_sessionParams[ m_nSessionParams ].m_int32 = valueVal.GetBool() ? 1 : 0;
 			break;
 
-		case ANY_THANDLE:
+		case EScriptAnyType::Handle:
 			m_sessionParams[ m_nSessionParams ].m_type = eCLUDT_Int32;
-			m_sessionParams[ m_nSessionParams ].m_int32 = (int32)(TRUNCATE_PTR)valueVal.ptr;
+			m_sessionParams[ m_nSessionParams ].m_int32 = static_cast<int32>(valueVal.GetScriptHandle().n);
 			break;
 
 		default:
 			MMLog( "MMLua: Unsupported type in session data", true );
 		}
 
-		CryLog( "MMLua: Create Session Parameter, id %d, value %d", m_sessionParams[ m_nSessionParams ].m_id, m_sessionParams[ m_nSessionParams ].m_int32 );
+		CryLog( "MMLua: Create Session Parameter, id %s, value %d", m_sessionParams[ m_nSessionParams ].m_id.c_str(), m_sessionParams[ m_nSessionParams ].m_int32 );
 		m_nSessionParams++;
 	}
 	else

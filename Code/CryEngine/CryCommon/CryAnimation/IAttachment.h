@@ -1,11 +1,15 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-#ifndef IAttachment_h
-#define IAttachment_h
+#pragma once
 
-#include <CryAnimation/ICryAnimation.h>
+#include <Cry3DEngine/I3DEngine.h>
+#include <Cry3DEngine/IRenderNode.h>
 #include <CryParticleSystem/IParticles.h>
 #include <CryString/CryName.h>
+#include <CryEntitySystem/IEntitySystem.h>
+#include <Cry3DEngine/IStatObj.h>
+#include <Cry3DEngine/I3DEngine.h>
+#include "ICryAnimation.h"
 
 struct IStatObj;
 struct IMaterial;
@@ -29,34 +33,33 @@ enum AttachmentTypes
 	CA_Invalid,
 };
 
-enum AttachmentFlags
+enum AttachmentFlags : uint32
 {
 	//Static Flags
-	FLAGS_ATTACH_HIDE_ATTACHMENT          = BIT(0),  //!< Already stored in CDF, so don't change this.
-	FLAGS_ATTACH_PHYSICALIZED_RAYS        = BIT(1),  //!< Already stored in CDF, so don't change this.
-	FLAGS_ATTACH_PHYSICALIZED_COLLISIONS  = BIT(2),  //!< Already stored in CDF, so don't change this.
-	FLAGS_ATTACH_SW_SKINNING              = BIT(3),  //!< Already stored in CDF, so don't change this.
-	FLAGS_ATTACH_RENDER_ONLY_EXISTING_LOD = BIT(4),  //!< Already stored in CDF, so don't change this.
-	FLAGS_ATTACH_LINEAR_SKINNING          = BIT(5),  //!< Already stored in CDF, so don't change this.
+	FLAGS_ATTACH_HIDE_ATTACHMENT          = BIT32(0),  //!< Already stored in CDF, so don't change this.
+	FLAGS_ATTACH_PHYSICALIZED_RAYS        = BIT32(1),  //!< Already stored in CDF, so don't change this.
+	FLAGS_ATTACH_PHYSICALIZED_COLLISIONS  = BIT32(2),  //!< Already stored in CDF, so don't change this.
+	FLAGS_ATTACH_SW_SKINNING              = BIT32(3),  //!< Already stored in CDF, so don't change this.
+	FLAGS_ATTACH_RENDER_ONLY_EXISTING_LOD = BIT32(4),  //!< Already stored in CDF, so don't change this.
+	FLAGS_ATTACH_LINEAR_SKINNING          = BIT32(5),  //!< Already stored in CDF, so don't change this.
 	FLAGS_ATTACH_PHYSICALIZED             = FLAGS_ATTACH_PHYSICALIZED_RAYS | FLAGS_ATTACH_PHYSICALIZED_COLLISIONS,
 
 	// Geometry deformation using direct compute
-	FLAGS_ATTACH_COMPUTE_SKINNING           = BIT(6),  //!< Already stored in CDF, so don't change this.
-	FLAGS_ATTACH_COMPUTE_SKINNING_PREMORPHS = BIT(7),  //!< Already stored in CDF, so don't change this.
-	FLAGS_ATTACH_COMPUTE_SKINNING_TANGENTS  = BIT(8),  //!< Already stored in CDF, so don't change this.
+	FLAGS_ATTACH_COMPUTE_SKINNING           = BIT32(6),  //!< Already stored in CDF, so don't change this.
+	FLAGS_ATTACH_COMPUTE_SKINNING_PREMORPHS = BIT32(7),  //!< Already stored in CDF, so don't change this.
+	FLAGS_ATTACH_COMPUTE_SKINNING_TANGENTS  = BIT32(8),  //!< Already stored in CDF, so don't change this.
+
+	FLAGS_ATTACH_EXCLUDE_FROM_NEAREST       = BIT32(9),  //!< Already stored in CDF, so don't change this.
 
 	// Dynamic Flags.
-	FLAGS_ATTACH_VISIBLE            = BIT(13),    //!< We set this flag if we can render the object.
-	FLAGS_ATTACH_PROJECTED          = BIT(14),    //!< We set this flag if we can attacht the object to a triangle.
-	FLAGS_ATTACH_WAS_PHYSICALIZED   = BIT(15),    //!< The attachment actually was physicalized.
-	FLAGS_ATTACH_HIDE_MAIN_PASS     = BIT(16),
-	FLAGS_ATTACH_HIDE_SHADOW_PASS   = BIT(17),
-	FLAGS_ATTACH_HIDE_RECURSION     = BIT(18),
-	FLAGS_ATTACH_NEAREST_NOFOV      = BIT(19),
-	FLAGS_ATTACH_NO_BBOX_INFLUENCE  = BIT(21),
-	FLAGS_ATTACH_COMBINEATTACHMENT  = BIT(24),
-	FLAGS_ATTACH_ID_MASK            = BIT(25) | BIT(26) | BIT(27) | BIT(28) | BIT(29),
-	FLAGS_ATTACH_MERGED_FOR_SHADOWS = BIT(30),    //!< The attachment has been merged with other attachments for shadow rendering.
+	FLAGS_ATTACH_VISIBLE            = BIT32(13),    //!< We set this flag if we can render the object.
+	FLAGS_ATTACH_PROJECTED          = BIT32(14),    //!< We set this flag if we can attacht the object to a triangle.
+	FLAGS_ATTACH_WAS_PHYSICALIZED   = BIT32(15),    //!< The attachment actually was physicalized.
+	FLAGS_ATTACH_HIDE_MAIN_PASS     = BIT32(16),
+	FLAGS_ATTACH_HIDE_SHADOW_PASS   = BIT32(17),
+	FLAGS_ATTACH_HIDE_RECURSION     = BIT32(18),
+	FLAGS_ATTACH_NO_BBOX_INFLUENCE  = BIT32(21),
+	FLAGS_ATTACH_ID_MASK            = BIT32(25) | BIT32(26) | BIT32(27) | BIT32(28) | BIT32(29),
 };
 
 struct SVClothParams
@@ -65,16 +68,17 @@ struct SVClothParams
 	bool  forceSkinning;                   //!< If enabled, simulation is skipped and skinning is enforced.
 	float forceSkinningFpsThreshold;       //!< If the framerate drops under the provided FPS, simulation is skipped and skinning is enforced.
 	float forceSkinningTranslateThreshold; //!< If the translation is larger than this value, simulation is skipped and skinning is enforced.
-	bool  checkAnimationRewind;            //!< Check for Rewind in animation, if enabled, the cloth is re-initialized to collision-proxies in that case
-	float disableSimulationAtDistance;     //! Disable simulation / enable skinning in dependance of camera distance.
+	bool  checkAnimationRewind;            //!< Check for rewind in animation, if enabled, the cloth is re-initialized to collision-proxies in that case.
+	float disableSimulationAtDistance;     //!< Disable simulation / enable skinning in dependence of camera distance.
 	float disableSimulationTimeRange;      //!< Within this time range, the fading process (skinning vs. simulation) is done.
+	float enableSimulationSSaxisSizePerc;  //!< If size of characters bounding box exceeds provided percentage of viewport size, simulation is enabled.
 
 	// Simulation and Collision
 	float timeStep;                     //!< The (pseudo)fixed time step for the simulator.
-	int   timeStepsMax;                 //!< Number of maximum iterations for the time discretization in a single step
+	int   timeStepsMax;                 //!< Number of maximum iterations for the time discretization in a single step.
 	int   numIterations;                //!< Number of iterations for the positional stiffness & collision solver (contacts & edges).
-	int   collideEveryNthStep;          //!< for stiffness & collision solver: collide only every Nth step
-	float collisionMultipleShiftFactor; //!< for collision solver: if a particle collides with more than one collider at the same time, the particle is shifted by this factor in the average direction
+	int   collideEveryNthStep;          //!< For stiffness & collision solver: collide only every Nth step.
+	float collisionMultipleShiftFactor; //!< For collision solver: if a particle collides with more than one collider at the same time, the particle is shifted by this factor in the average direction.
 	float gravityFactor;
 
 	// Stiffness and Elasticity
@@ -89,13 +93,13 @@ struct SVClothParams
 	float rigidDamping;                 //!< Damping stiffness into rigid-body. 0.0 represents no damping, 1.0 represents rigid cloth.
 	float springDamping;                //!< Damping of springs.
 	bool  springDampingPerSubstep;      //!< Also damp springs in substeps.
-	float collisionDampingTangential;   //!< Tangential damping factor in case of collisions
+	float collisionDampingTangential;   //!< Tangential damping factor in case of collisions.
 
-	// Long Range Attachments
-	bool  longRangeAttachments;                     // Enables LRA.
-	float longRangeAttachmentsAllowedExtension;     // Allowed extension, e.g. 0.1 = 10%.
-	float longRangeAttachmentsMaximumShiftFactor;   // Scales maximum shift per iteration to closest neighbor, e.g. 0.5 -> half way to closest neighbor.
-	float longRangeAttachmentsShiftCollisionFactor; // Scales in case of shift the velocity.
+	// Nearest Neighbor Distance Constraints
+	bool  useNearestNeighborDistanceConstraints; //!< Enables nndc
+	float nndcAllowedExtension;			//!< Allowed extension, e.g. 0.1 = 10%.
+	float nndcMaximumShiftFactor;		//!< Scales maximum shift per iteration to closest neighbor, e.g. 0.5 -> half way to closest neighbor.
+	float nndcShiftCollisionFactor;		//!< Scales in case of shift the velocity.
 
 	// Test Reset Damping
 	int   resetDampingRange;            //!< No of frames, within resetDampingFactor is used within simulation for dampening the system.
@@ -115,9 +119,10 @@ struct SVClothParams
 	string simMeshName;
 	string simBinding;
 	string material;
+	string materialLods[g_nMaxGeomLodLevels];
 	float  debugDrawVerticesRadius;
 	int    debugDrawCloth;
-	int    debugDrawLRA;       //!< Debug long range attachments (LRA).
+	int    debugDrawNndc;      //!< Debug Nearest Neighbor Distance Constraints (nndc).
 	int    debugPrint;
 
 	float* weights;            //!< Per vertex weights used for blending with animation.
@@ -135,6 +140,7 @@ public:
 		, checkAnimationRewind(true)
 		, disableSimulationAtDistance(10.0)
 		, disableSimulationTimeRange(0.5f)
+		, enableSimulationSSaxisSizePerc(0.25f)
 
 		// Simulation and Collision
 		, timeStep(0.007f)
@@ -158,11 +164,11 @@ public:
 		, springDampingPerSubstep(true)
 		, collisionDampingTangential(0)
 
-		// Long Range Attachments
-		, longRangeAttachments(false)
-		, longRangeAttachmentsAllowedExtension(0.0)     // allowed extension, e.g. 0.1 = 10%
-		, longRangeAttachmentsMaximumShiftFactor(0.25)  // scales maximum shift per iteration to closest neighbor, e.g. 0.5 -> half way to closest neighbor
-		, longRangeAttachmentsShiftCollisionFactor(1.0) // scales in case of shift the velocity, 0.0=no shift, 1.0=no velocity change, -1=increase velocity by change
+		// Nearest Neighbor Distance Constraints
+		, useNearestNeighborDistanceConstraints(false)
+		, nndcAllowedExtension(0.0)     // allowed extension, e.g. 0.1 = 10%
+		, nndcMaximumShiftFactor(0.25)  // scales maximum shift per iteration to closest neighbor, e.g. 0.5 -> half way to closest neighbor
+		, nndcShiftCollisionFactor(1.0) // scales in case of shift the velocity, 0.0=no shift, 1.0=no velocity change, -1=increase velocity by change
 
 		// Test Reset Damping
 		, resetDampingRange(3)
@@ -184,13 +190,29 @@ public:
 		, material("")
 		, debugDrawVerticesRadius(0.01f)
 		, debugDrawCloth(1)
-		, debugDrawLRA(0) // long range attachments
+		, debugDrawNndc(0) // Nearest Neighbor Distance Constraints
 		, debugPrint(0)
 
 		, weights(nullptr)
 		, hide(false)
 		, disableSimulation(false)
 	{}
+};
+
+
+struct SVClothAttachmentParams
+{
+	SVClothAttachmentParams(const char* attachmentName, const SVClothParams& vclothParams, int skinLoadingFlags, int flags)
+		: attachmentName(attachmentName)
+		, vclothParams(vclothParams)
+		, flags(flags)
+		, skinLoadingFlags(skinLoadingFlags)
+	{}
+
+	const string attachmentName;
+	const SVClothParams& vclothParams;
+	const int flags;
+	const int skinLoadingFlags;
 };
 
 struct SimulationParams
@@ -206,6 +228,13 @@ struct SimulationParams
 		PENDULUM_HALF_CONE       = 0x03, //!< For pendula.
 		SPRING_ELLIPSOID         = 0x04, //!< For springs.
 		TRANSLATIONAL_PROJECTION = 0x05  //!< Used to project joints out of proxies.
+	};
+
+	enum EBlendControlJointAxisToUse
+	{
+		eBlendControlJointAxisToUse_X = 0,
+		eBlendControlJointAxisToUse_Y = 1,
+		eBlendControlJointAxisToUse_Z = 2
 	};
 
 	ClampType          m_nClampType;
@@ -235,6 +264,17 @@ struct SimulationParams
 	CCryName           m_strDirTransJoint;
 	DynArray<CCryName> m_arrProxyNames; //!< Test capsules/sphere joint against these colliders.
 
+	int  GetBlendControlJointId() const { return m_blendControlJointId; }
+	void SetBlendControlJointId(int id) { m_blendControlJointId = id; }
+	CCryName const& GetBlendControlJointName() const { return m_sBlendControlJointName; }
+	void SetBlendControlJointName(CCryName const& sName)
+	{
+		m_sBlendControlJointName = sName;
+		m_blendControlJointId = -1;
+	}
+	EBlendControlJointAxisToUse GetBlendControlAxis() const { return m_blendControlAxis; }
+	void SetBlendControlAxis(EBlendControlJointAxisToUse axis) { m_blendControlAxis = axis; }
+
 	SimulationParams()
 	{
 		m_nClampType = DISABLED;
@@ -260,7 +300,15 @@ struct SimulationParams
 		m_vStiffnessTarget.zero();
 		m_vCapsule.set(0, 0);
 		m_nProjectionType = 0;
+
+		m_blendControlJointId = -1;
+		m_blendControlAxis = EBlendControlJointAxisToUse::eBlendControlJointAxisToUse_X;
 	};
+
+protected:
+	CCryName					m_sBlendControlJointName;
+	int							m_blendControlJointId;
+	EBlendControlJointAxisToUse m_blendControlAxis;
 };
 
 struct RowSimulationParams
@@ -332,6 +380,7 @@ struct RowSimulationParams
 	};
 };
 
+//! Interface for a character instance's attachment manager, responsible for keeping track of the various object attachments tied to a character
 struct IAttachmentManager
 {
 	// <interfuscator:shuffle>
@@ -339,6 +388,7 @@ struct IAttachmentManager
 	virtual uint32              LoadAttachmentList(const char* pathname) = 0;
 
 	virtual IAttachment*        CreateAttachment(const char* szName, uint32 type, const char* szJointName = 0, bool bCallProject = true) = 0;
+	virtual IAttachment*        CreateVClothAttachment(const SVClothAttachmentParams& params) = 0;
 
 	virtual int32               RemoveAttachmentByInterface(const IAttachment* pAttachment, uint32 loadingFlags = 0) = 0;
 	virtual int32               RemoveAttachmentByName(const char* szName, uint32 loadingFlags = 0) = 0;
@@ -375,6 +425,7 @@ struct IAttachmentManager
 	// </interfuscator:shuffle>
 };
 
+//! Represents an attachment attached to a character, usually loaded from the .CDF file - but can also be created at run-time
 struct IAttachment
 {
 	// <interfuscator:shuffle>
@@ -387,7 +438,6 @@ struct IAttachment
 	virtual uint32      ReName(const char* szSocketName, uint32 crc) = 0;
 
 	virtual uint32      GetType() const = 0;
-	bool                IsMerged() const { return (GetFlags() & FLAGS_ATTACH_MERGED_FOR_SHADOWS) != 0; }
 
 	virtual uint32      SetJointName(const char* szJointName) = 0;
 
@@ -488,7 +538,7 @@ struct IAttachmentSkin
 	virtual ISkin*            GetISkin() = 0;
 	virtual IVertexAnimation* GetIVertexAnimation() = 0;
 	virtual float             GetExtent(EGeomForm eForm) = 0;
-	virtual void              GetRandomPos(PosNorm& ran, CRndGen& seed, EGeomForm eForm) const = 0;
+	virtual void              GetRandomPoints(Array<PosNorm> points, CRndGen& seed, EGeomForm eForm) const = 0;
 	virtual void              GetMemoryUsage(class ICrySizer* pSizer) const = 0;
 	virtual SMeshLodInfo      ComputeGeometricMean() const = 0;
 	virtual ~IAttachmentSkin(){}
@@ -500,7 +550,7 @@ struct IAttachmentSkin
 #endif
 };
 
-//! This interface define a way to allow an object to be bound to a character.
+//! Represents an instance of an attachment on a character, managing the updating of the contained object (for example an IStatObj).
 struct IAttachmentObject
 {
 	enum EType
@@ -514,12 +564,10 @@ struct IAttachmentObject
 		eAttachment_Effect,
 	};
 
-	// <interfuscator:shuffle>
-	virtual ~IAttachmentObject(){}
+	virtual ~IAttachmentObject() {}
 	virtual EType GetAttachmentType() = 0;
 
 	virtual void  ProcessAttachment(IAttachment* pIAttachment) = 0;
-	virtual void  RenderAttachment(SRendParams& rParams, const SRenderingPassInfo& passInfo) {};
 
 	//! \return Handled state.
 	virtual bool                PhysicalizeAttachment(IAttachmentManager* pManager, int idx, int nLod, IPhysicalEntity* pent, const Vec3& offset) { return false; }
@@ -530,7 +578,8 @@ struct IAttachmentObject
 
 	virtual IStatObj*           GetIStatObj() const;
 	virtual ICharacterInstance* GetICharacterInstance() const;
-	virtual IAttachmentSkin*    GetIAttachmentSkin() const { return 0; };
+	virtual IRenderNode*        GetIRenderNode() const;
+	virtual IAttachmentSkin*    GetIAttachmentSkin() const { return 0; }
 	virtual const char*         GetObjectFilePath() const
 	{
 		ICharacterInstance* pICharInstance = GetICharacterInstance();
@@ -554,7 +603,6 @@ struct IAttachmentObject
 
 	virtual void       OnRemoveAttachment(IAttachmentManager* pManager, int idx) {}
 	virtual void       Release() = 0;
-	// </interfuscator:shuffle>
 };
 
 inline ICharacterInstance* IAttachmentObject::GetICharacterInstance() const
@@ -567,47 +615,83 @@ inline IStatObj* IAttachmentObject::GetIStatObj() const
 	return 0;
 }
 
-struct IAttachmentMerger
+inline IRenderNode* IAttachmentObject::GetIRenderNode() const
 {
-	virtual ~IAttachmentMerger() {};
-	virtual uint GetAllocatedBytes() const = 0;
-	virtual bool IsOutOfMemory() const = 0;
-	virtual uint GetMergedAttachmentsCount() const = 0;
-};
+	return 0;
+}
 
 //
 
+//! Represents a static (IStatObj) object instance tied to a character
 struct CCGFAttachment : public IAttachmentObject
 {
-	virtual EType GetAttachmentType() override                          { return eAttachment_StatObj; };
-	virtual void  ProcessAttachment(IAttachment* pIAttachment) override {}
-	void          RenderAttachment(SRendParams& rParams, const SRenderingPassInfo& passInfo) override
-	{
-		rParams.pInstance = this;
-		IMaterial* pPrev = rParams.pMaterial;
-		rParams.pMaterial = pObj->GetMaterial();
-		if (m_pReplacementMaterial)
-			rParams.pMaterial = m_pReplacementMaterial;
-		pObj->Render(rParams, passInfo);
-		rParams.pMaterial = pPrev;
-	};
+	CCGFAttachment();
 
-	virtual AABB  GetAABB() const override      { return pObj->GetAABB(); };
-	virtual float GetRadiusSqr() const override { return sqr(pObj->GetRadius()); };
-	IStatObj*     GetIStatObj() const override;
-	void          Release()  override           { delete this; }
+	virtual ~CCGFAttachment();
 
-	IMaterial*    GetBaseMaterial(uint32 nLOD) const override;
-	void          SetReplacementMaterial(IMaterial* pMaterial, uint32 nLOD = 0) override { m_pReplacementMaterial = pMaterial; };
-	IMaterial*    GetReplacementMaterial(uint32 nLOD) const override                     { return m_pReplacementMaterial; }
+	CCGFAttachment(const CCGFAttachment&) = delete;
+	void operator=(const CCGFAttachment&) = delete;
+
+	CCGFAttachment(CCGFAttachment&&) = delete;
+	void operator=(CCGFAttachment&&) = delete;
+
+	virtual EType        GetAttachmentType() override                          { return eAttachment_StatObj; }
+	virtual void         ProcessAttachment(IAttachment* pIAttachment) override;
+
+	virtual AABB         GetAABB() const override      { return pObj->GetAABB(); }
+	virtual float        GetRadiusSqr() const override { return sqr(pObj->GetRadius()); }
+	virtual IStatObj*    GetIStatObj() const override;
+	virtual IRenderNode* GetIRenderNode() const override;
+	virtual void         Release()  override           { delete this; }
+
+	IMaterial*           GetBaseMaterial(uint32 nLOD) const override;
+	void                 SetReplacementMaterial(IMaterial* pMaterial, uint32 nLOD = 0) override { m_pReplacementMaterial = pMaterial; }
+	IMaterial*           GetReplacementMaterial(uint32 nLOD) const override                     { return m_pReplacementMaterial; }
 
 	_smart_ptr<IStatObj>  pObj;
 	_smart_ptr<IMaterial> m_pReplacementMaterial;
+
+private:
+
+	IBrush* pBrush;
 };
+
+inline CCGFAttachment::CCGFAttachment()
+	: pObj()
+	, m_pReplacementMaterial()
+	, pBrush(static_cast<IBrush*>(gEnv->p3DEngine->CreateRenderNode(eERType_MovableBrush)))
+{
+	pBrush->SetRndFlags(ERF_MOVES_EVERY_FRAME, true);
+	pBrush->SetMinSpec(CONFIG_LOW_SPEC);
+	pBrush->DisablePhysicalization(true); // Physicalization of attachments is handled by a dedicated subsystem.
+}
+
+inline CCGFAttachment::~CCGFAttachment()
+{
+	gEnv->p3DEngine->DeleteRenderNode(pBrush);
+}
+
+inline void CCGFAttachment::ProcessAttachment(IAttachment* pIAttachment)
+{
+	if (pBrush->GetEntityStatObj() != pObj)
+	{
+		pBrush->SetEntityStatObj(pObj, 0);
+	}
+
+	if (pBrush->GetMaterial() != GetBaseMaterial(0))
+	{
+		pBrush->SetMaterial(GetBaseMaterial(0));
+	}
+}
 
 inline IStatObj* CCGFAttachment::GetIStatObj() const
 {
 	return pObj;
+}
+
+inline IRenderNode* CCGFAttachment::GetIRenderNode() const
+{
+	return pBrush;
 }
 
 inline IMaterial* CCGFAttachment::GetBaseMaterial(uint32 nLOD) const
@@ -618,33 +702,26 @@ inline IMaterial* CCGFAttachment::GetBaseMaterial(uint32 nLOD) const
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
+//! Represents a skeleton (.skel, .chr) attached to a character
 struct CSKELAttachment : public IAttachmentObject
 {
-	CSKELAttachment()
-	{}
+	CSKELAttachment();
 
-	virtual EType GetAttachmentType() override { return eAttachment_Skeleton; };
-	void          RenderAttachment(SRendParams& rParams, const SRenderingPassInfo& passInfo) override
-	{
-		rParams.pInstance = this;
-		IMaterial* pPrev = rParams.pMaterial;
-		rParams.pMaterial = (IMaterial*)(m_pCharInstance ? m_pCharInstance->GetIMaterial() : 0);
-		if (m_pReplacementMaterial)
-			rParams.pMaterial = m_pReplacementMaterial;
-		m_pCharInstance->Render(rParams, QuatTS(IDENTITY), passInfo);
-		rParams.pMaterial = pPrev;
-	};
-	virtual void        ProcessAttachment(IAttachment* pIAttachment)  override {}
-	virtual AABB        GetAABB() const override                               { return m_pCharInstance ? m_pCharInstance->GetAABB() : AABB(AABB::RESET);  };
-	virtual float       GetRadiusSqr() const override                          { return m_pCharInstance ? m_pCharInstance->GetRadiusSqr() : 0.0f;    }
-	ICharacterInstance* GetICharacterInstance() const override;
+	virtual ~CSKELAttachment();
 
-	void                Release() override
-	{
-		if (m_pCharInstance)
-			m_pCharInstance->OnDetach();
-		delete this;
-	}
+	CSKELAttachment(const CSKELAttachment&) = delete;
+	void operator=(const CSKELAttachment&) = delete;
+
+	CSKELAttachment(CSKELAttachment&&) = delete;
+	void operator=(CSKELAttachment&&) = delete;
+
+	virtual EType               GetAttachmentType() override { return eAttachment_Skeleton; }
+	virtual void                ProcessAttachment(IAttachment* pIAttachment)  override;
+	virtual AABB                GetAABB() const override                               { return m_pCharInstance ? m_pCharInstance->GetAABB() : AABB(AABB::RESET);  };
+	virtual float               GetRadiusSqr() const override                          { return m_pCharInstance ? m_pCharInstance->GetRadiusSqr() : 0.0f;    }
+	virtual ICharacterInstance* GetICharacterInstance() const override;
+	virtual IRenderNode*        GetIRenderNode() const override;
+	virtual void                Release() override { delete this; }
 
 	IMaterial* GetBaseMaterial(uint32 nLOD) const override;
 	void       SetReplacementMaterial(IMaterial* pMaterial, uint32 nLOD) override { m_pReplacementMaterial = pMaterial; }
@@ -652,11 +729,53 @@ struct CSKELAttachment : public IAttachmentObject
 
 	_smart_ptr<ICharacterInstance> m_pCharInstance;
 	_smart_ptr<IMaterial>          m_pReplacementMaterial;
+
+private:
+
+	ICharacterRenderNode* m_pRenderNode;
 };
+
+inline CSKELAttachment::CSKELAttachment()
+	: m_pCharInstance()
+	, m_pReplacementMaterial()
+	, m_pRenderNode(static_cast<ICharacterRenderNode*>(gEnv->p3DEngine->CreateRenderNode(eERType_Character)))
+{
+	assert(m_pRenderNode);
+	m_pRenderNode->SetRndFlags(ERF_MOVES_EVERY_FRAME, true);
+	m_pRenderNode->SetMinSpec(CONFIG_LOW_SPEC);
+}
+
+inline CSKELAttachment::~CSKELAttachment()
+{
+	if (m_pCharInstance)
+	{
+		m_pCharInstance->OnDetach();
+	}
+
+	gEnv->p3DEngine->DeleteRenderNode(m_pRenderNode);
+}
+
+inline void CSKELAttachment::ProcessAttachment(IAttachment* pIAttachment)
+{
+	if (m_pRenderNode->GetEntityCharacter() != m_pCharInstance)
+	{
+		m_pRenderNode->SetCharacter(m_pCharInstance);
+	}
+
+	if (m_pRenderNode->GetMaterial() != GetBaseMaterial(0))
+	{
+		m_pRenderNode->SetMaterial(GetBaseMaterial(0));
+	}
+}
 
 inline ICharacterInstance* CSKELAttachment::GetICharacterInstance() const
 {
 	return m_pCharInstance;
+}
+
+inline IRenderNode* CSKELAttachment::GetIRenderNode() const
+{
+	return m_pRenderNode;
 }
 
 inline IMaterial* CSKELAttachment::GetBaseMaterial(uint32 nLOD) const
@@ -667,17 +786,18 @@ inline IMaterial* CSKELAttachment::GetBaseMaterial(uint32 nLOD) const
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
 //------------------------------------------------------------------------------
+//! Represents a skin file (.skin) attached to a character
 struct CSKINAttachment : public IAttachmentObject
 {
 	CSKINAttachment()
 	{}
 
-	virtual EType    GetAttachmentType() override                          { return eAttachment_SkinMesh; };
-	virtual AABB     GetAABB() const override                              { return AABB(AABB::RESET); };
+	virtual EType    GetAttachmentType() override                          { return eAttachment_SkinMesh; }
+	virtual AABB     GetAABB() const override                              { return AABB(AABB::RESET); }
 	virtual float    GetRadiusSqr() const override                         { return 0.0f; }
 	IAttachmentSkin* GetIAttachmentSkin() const override                   { return m_pIAttachmentSkin; }
 	void             Release() override                                    { delete this; }
-	virtual void     ProcessAttachment(IAttachment* pIAttachment) override {};
+	virtual void     ProcessAttachment(IAttachment* pIAttachment) override {}
 
 	IMaterial*       GetBaseMaterial(uint32 nLOD) const override;
 	void             SetReplacementMaterial(IMaterial* pMaterial, uint32 nLOD) override
@@ -700,13 +820,14 @@ inline IMaterial* CSKINAttachment::GetBaseMaterial(uint32 nLOD) const
 	return m_pReplacementMaterial[nLOD] ? m_pReplacementMaterial[nLOD].get() : (m_pIAttachmentSkin ? m_pIAttachmentSkin->GetISkin()->GetIMaterial(nLOD) : NULL);
 }
 
+//! Used for attaching entities to attachment slots on a character, continuously overriding the child entities transformation in the scene to match the animated joint
 struct CEntityAttachment : public IAttachmentObject
 {
 public:
-	CEntityAttachment() : m_scale(1.0f, 1.0f, 1.0f), m_id(0){}
+	CEntityAttachment() : m_id(0), m_scale(1.0f, 1.0f, 1.0f) {}
 
-	virtual EType GetAttachmentType() override { return eAttachment_Entity; };
-	void          SetEntityId(EntityId id)     { m_id = id; };
+	virtual EType GetAttachmentType() override { return eAttachment_Entity; }
+	void          SetEntityId(EntityId id)     { m_id = id; }
 	EntityId      GetEntityId()                { return m_id; }
 
 	virtual void  ProcessAttachment(IAttachment* pIAttachment) override
@@ -724,7 +845,7 @@ public:
 
 		if (pEntity) pEntity->GetLocalBounds(aabb);
 		return aabb;
-	};
+	}
 
 	virtual float GetRadiusSqr() const override
 	{
@@ -739,7 +860,7 @@ public:
 		{
 			return 0.0f;
 		}
-	};
+	}
 
 	void       Release() override { delete this; }
 
@@ -761,10 +882,11 @@ inline IMaterial* CEntityAttachment::GetBaseMaterial(uint32 nLOD) const
 	return 0;
 }
 
+//! Allows for attaching a light source to a character
 struct CLightAttachment : public IAttachmentObject
 {
 public:
-	CLightAttachment() : m_pLightSource(0) {};
+	CLightAttachment() : m_pLightSource(0) {}
 	virtual ~CLightAttachment()
 	{
 		if (m_pLightSource)
@@ -772,11 +894,11 @@ public:
 			gEnv->p3DEngine->DeleteRenderNode(m_pLightSource);
 			m_pLightSource = NULL;
 		}
-	};
+	}
 
 	virtual EType GetAttachmentType() override { return eAttachment_Light; }
 
-	void          LoadLight(const CDLight& light)
+	void          LoadLight(const SRenderLight& light)
 	{
 		m_pLightSource = gEnv->p3DEngine->CreateLightSource();
 		if (m_pLightSource)
@@ -789,7 +911,7 @@ public:
 	{
 		if (m_pLightSource)
 		{
-			CDLight& light = m_pLightSource->GetLightProperties();
+			SRenderLight& light = m_pLightSource->GetLightProperties();
 			Matrix34 worldMatrix = Matrix34(pIAttachment->GetAttWorldAbsolute());
 			Vec3 origin = worldMatrix.GetTranslation();
 			light.SetPosition(origin);
@@ -806,7 +928,7 @@ public:
 	{
 		f32 r = m_pLightSource->GetLightProperties().m_fRadius;
 		return AABB(Vec3(-r, -r, -r), Vec3(+r, +r, +r));
-	};
+	}
 
 	virtual float GetRadiusSqr() const override { return sqr(m_pLightSource->GetLightProperties().m_fRadius); }
 
@@ -825,8 +947,17 @@ inline IMaterial* CLightAttachment::GetBaseMaterial(uint32 nLOD) const
 	return 0;
 }
 
+//! Allows for attaching particle effects to characters
 struct CEffectAttachment : public IAttachmentObject
 {
+	struct SParameter
+	{
+		SParameter() : name(), value(0) { }
+		SParameter(const string& name, const IParticleAttributes::TValue& value) : name(name), value(value) {}
+		string name;
+		IParticleAttributes::TValue value;
+	};
+
 public:
 
 	virtual EType GetAttachmentType() override { return eAttachment_Effect; }
@@ -864,13 +995,19 @@ public:
 				SpawnParams sp;
 				sp.bPrime = m_bPrime;
 				m_pEmitter = m_pEffect->Spawn(loc, sp);
+				ApplyAttribsToEmitter(m_pEmitter);
+				FreeAttribs(); // just to conserve some memory, attributes are not needed any more
 			}
 			else if (m_pEmitter)
 				m_pEmitter->SetLocation(loc);
 		}
 		else
 		{
-			m_pEmitter = 0;
+			if (m_pEmitter)
+			{
+				m_pEmitter->Activate(false);
+				m_pEmitter = 0;
+			}
 		}
 	}
 
@@ -886,7 +1023,7 @@ public:
 		{
 			return AABB(Vec3(-0.1f), Vec3(0.1f));
 		}
-	};
+	}
 
 	virtual float GetRadiusSqr() const override
 	{
@@ -914,11 +1051,34 @@ public:
 			m_pEmitter->SetSpawnParams(params);
 	}
 
+	void ClearParticleAttributes() { m_particleAttribs.clear(); }
+	void AppendParticleAttribute(const string& name, const IParticleAttributes::TValue& value) { m_particleAttribs.emplace_back(name, value); }
+
+private:
+	void FreeAttribs()
+	{
+		m_particleAttribs.clear();
+		m_particleAttribs.shrink_to_fit();
+	}
+
+	void ApplyAttribsToEmitter(IParticleEmitter* pEmitter) const
+	{
+		if (!pEmitter)
+			return;
+
+		IParticleAttributes& particleAttributes = pEmitter->GetAttributes();
+		for (const SParameter& param : m_particleAttribs)
+		{
+			particleAttributes.SetValue(param.name.c_str(), param.value);
+		}
+	}
+
 private:
 	_smart_ptr<IParticleEmitter> m_pEmitter;
 	_smart_ptr<IParticleEffect>  m_pEffect;
 	QuatTS                       m_loc;
 	bool                         m_bPrime;
+	std::vector<SParameter>      m_particleAttribs;
 };
 
 inline IMaterial* CEffectAttachment::GetBaseMaterial(uint32 nLOD) const
@@ -950,5 +1110,3 @@ struct IProxy
 
 	virtual ~IProxy(){}
 };
-
-#endif // IAttachment_h

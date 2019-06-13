@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 #ifndef RESOURCE_COMPILER
@@ -11,6 +11,7 @@
 #include <CryString/NameCRCHelper.h>
 #include "AnimEventList.h"
 #include <CryMemory/PoolAllocator.h>
+#include <CryMemory/MemoryAccess.h>
 
 struct CInternalSkinningInfoDBA;
 class ILoaderCAFListener;
@@ -240,7 +241,7 @@ struct CRY_ALIGN (16)GlobalAnimationHeaderCAF:public GlobalAnimationHeader
 	{
 		if (numControllers > 512)
 		{
-			CryLogAlways("ERROR, controller array size to big(size = %u", numControllers);
+			CryLogAlways("ERROR, controller array size too big(size = %u", numControllers);
 		}
 		m_arrControllerLookupVector.resize(numControllers);
 		for (uint32 i = 0; i < numControllers; ++i)

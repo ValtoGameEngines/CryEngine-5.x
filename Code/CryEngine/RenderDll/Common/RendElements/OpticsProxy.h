@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -14,7 +14,7 @@ public:
 	EFlareType          GetType() override                     { return eFT_Proxy; }
 	bool                IsGroup() const override               { return false; }
 
-	string              GetName() const override               { return m_name;  }
+	const char*         GetName() const override               { return m_name.c_str();  }
 	void                SetName(const char* ch_name) override  { m_name = ch_name; }
 	void                Load(IXmlNode* pNode) override;
 
@@ -33,7 +33,7 @@ public:
 	void                GetMemoryUsage(ICrySizer* pSizer) const override;
 	void                Invalidate() override;
 
-	void                RenderPreview(SLensFlareRenderParam* pParam, const Vec3& vPos) override;
+	void                RenderPreview(const SLensFlareRenderParam* pParam, const Vec3& vPos) override;
 
 	void                SetOpticsReference(IOpticsElementBase* pReference) override
 	{
@@ -47,6 +47,8 @@ public:
 #if defined(FLARES_SUPPORT_EDITING)
 	DynArray<FuncVariableGroup> GetEditorParamGroups();
 #endif
+
+	void                DeleteThis() override;
 
 public:
 

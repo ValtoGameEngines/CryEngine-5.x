@@ -1,9 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __GAMEMECHANISMEVENTS_H__
 #define __GAMEMECHANISMEVENTS_H__
 
 #include "AutoEnum.h"
+
+struct ILoadGame;
+struct ISaveGame;
 
 #define GameMechanismEventList(f)   \
 	f(kGMEvent_GameRulesInit)         \

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    -------------------------------------------------------------------------
@@ -37,8 +37,8 @@ bool CAIDbgRecorder::IsRecording(const IAIObject* pTarget, IAIRecordable::e_AIDb
 	if (!pTarget)
 		return false;
 
-	return !strcmp(gAIEnv.CVars.StatsTarget, "all")
-	       || !strcmp(gAIEnv.CVars.StatsTarget, pTarget->GetName());
+	return !strcmp(gAIEnv.CVars.legacyDebugDraw.StatsTarget, "all")
+	       || !strcmp(gAIEnv.CVars.legacyDebugDraw.StatsTarget, pTarget->GetName());
 }
 
 //
@@ -69,7 +69,7 @@ void CAIDbgRecorder::Record(const IAIObject* pTarget, IAIRecordable::e_AIDbgEven
 
 	// Filter to only log the targets we are interested in
 	// I.e. if not "all" and if not our current target, return
-	const char* sStatsTarget = gAIEnv.CVars.StatsTarget;
+	const char* sStatsTarget = gAIEnv.CVars.legacyDebugDraw.StatsTarget;
 	if ((strcmp(sStatsTarget, "all") != 0) && (strcmp(sStatsTarget, pTarget->GetName()) != 0))
 		return;
 
@@ -155,8 +155,7 @@ void CAIDbgRecorder::Record(const IAIObject* pTarget, IAIRecordable::e_AIDbgEven
 void CAIDbgRecorder::InitFile() const
 {
 	// Set the string
-	m_sFile = gEnv->pSystem->GetRootFolder();
-	m_sFile += AIRECORDER_FILENAME;
+	m_sFile = PathUtil::Make(gEnv->pSystem->GetRootFolder(), AIRECORDER_FILENAME);
 
 	// Open to wipe and write any preamble
 	FILE* pFile = fxopen(m_sFile.c_str(), "wt");
@@ -180,8 +179,7 @@ void CAIDbgRecorder::InitFile() const
 //----------------------------------------------------------------------------------------------
 void CAIDbgRecorder::InitFileSecondary() const
 {
-	m_sFileSecondary = gEnv->pSystem->GetRootFolder();
-	m_sFileSecondary += AIRECORDER_SECONDARYFILENAME;
+	m_sFileSecondary = PathUtil::Make(gEnv->pSystem->GetRootFolder(), AIRECORDER_SECONDARYFILENAME);
 
 	FILE* pFileSecondary = fxopen(m_sFileSecondary.c_str(), "wt");
 	fputs("Function,Time,Page faults,Entity\n", pFileSecondary);
@@ -191,7 +189,7 @@ void CAIDbgRecorder::InitFileSecondary() const
 //----------------------------------------------------------------------------------------------
 void CAIDbgRecorder::LogString(const char* pString) const
 {
-	bool mergeWithLog(gAIEnv.CVars.RecordLog != 0);
+	bool mergeWithLog(gAIEnv.CVars.LegacyRecordLog != 0);
 	if (!mergeWithLog)
 	{
 		if (m_sFile.empty())

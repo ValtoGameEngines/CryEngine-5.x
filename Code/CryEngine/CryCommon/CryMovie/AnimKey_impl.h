@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   AnimKey_impl.h
@@ -51,7 +51,6 @@ SERIALIZATION_ANIM_KEY(SCameraKey);
 SERIALIZATION_ANIM_KEY(SFaceSequenceKey);
 SERIALIZATION_ANIM_KEY(SSequenceKey);
 SERIALIZATION_ANIM_KEY(SAudioTriggerKey);
-SERIALIZATION_ANIM_KEY(SAudioFileKey);
 SERIALIZATION_ANIM_KEY(SAudioSwitchKey);
 SERIALIZATION_ANIM_KEY(SDynamicResponseSignalKey);
 SERIALIZATION_ANIM_KEY(STimeRangeKey);

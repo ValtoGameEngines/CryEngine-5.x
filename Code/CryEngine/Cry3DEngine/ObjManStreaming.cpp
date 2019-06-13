@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   statobjman.cpp
@@ -41,26 +41,9 @@ struct CObjManager_Cmp_Streamable_Priority
 		IStreamable* arrObj[2] = { v1.GetStreamAbleObject(), v2.GetStreamAbleObject() };
 
 		// compare priorities
-		if (v1.fCurImportance > v2.fCurImportance)
-			return true;
-		if (v1.fCurImportance < v2.fCurImportance)
-			return false;
-
-		// give low lod's and small meshes higher priority
-		int MemUsage0 = v1.GetStreamableContentMemoryUsage();
-		int MemUsage1 = v2.GetStreamableContentMemoryUsage();
-		if (MemUsage0 < MemUsage1)
-			return true;
-		if (MemUsage0 > MemUsage1)
-			return false;
-
-		// fix sorting consistency
-		if (arrObj[0] > arrObj[1])
-			return true;
-		if (arrObj[0] < arrObj[1])
-			return false;
-
-		return false;
+		if (v1.fCurImportance == v2.fCurImportance)
+			return arrObj[0] > arrObj[1];
+		return v1.fCurImportance > v2.fCurImportance;
 	}
 };
 
@@ -87,11 +70,13 @@ void CObjManager::UnregisterForStreaming(IStreamable* pObj)
 	if (m_arrStreamableObjects.size() > 0)
 	{
 		SStreamAbleObject streamAbleObject(pObj, false);
-		bool deleted = m_arrStreamableObjects.Delete(streamAbleObject);
 
 #ifdef OBJMAN_STREAM_STATS
+		bool deleted = m_arrStreamableObjects.Delete(streamAbleObject);
 		if (deleted && m_pStreamListener)
 			m_pStreamListener->OnDestroyedStreamedObject(pObj);
+#else
+		m_arrStreamableObjects.Delete(streamAbleObject);
 #endif
 
 		if (m_arrStreamableObjects.empty())
@@ -137,7 +122,7 @@ void CObjManager::UpdateObjectsStreamingPriority(bool bSyncLoad, const SRenderin
 
 		if (!m_arrStreamingNodeStack.Count())
 		{
-			FRAME_PROFILER("UpdateObjectsStreamingPriority_Init", GetSystem(), PROFILE_3DENGINE);
+			CRY_PROFILE_SECTION(PROFILE_3DENGINE, "UpdateObjectsStreamingPriority_Init");
 
 			if (GetCVars()->e_StreamCgf == 2)
 				PrintMessage("UpdateObjectsStreamingPriority_Restart %d", passInfo.GetFrameID());
@@ -171,26 +156,27 @@ void CObjManager::UpdateObjectsStreamingPriority(bool bSyncLoad, const SRenderin
 						bFoundOutside = true;
 					}
 
-					if (bFoundOutside)
+					if (bFoundOutside && Get3DEngine()->IsObjectsTreeValid())
 					{
-						for (int nSID = 0; nSID < Get3DEngine()->m_pObjectsTree.Count(); nSID++)
-							if (Get3DEngine()->IsSegmentSafeToUse(nSID))
-								m_arrStreamingNodeStack.Add(Get3DEngine()->m_pObjectsTree[nSID]);
+							m_arrStreamingNodeStack.Add(Get3DEngine()->GetObjectsTree());
 					}
 
 					for (int v = 0; v < m_tmpAreas0.Count(); v++)
 					{
 						CVisArea* pN1 = m_tmpAreas0[v];
-						assert(bNeedsUnique || m_arrStreamingNodeStack.Find(pN1->m_pObjectsTree) < 0);
-						if (pN1->m_pObjectsTree)
-							m_arrStreamingNodeStack.Add(pN1->m_pObjectsTree);
+						assert(bNeedsUnique || m_arrStreamingNodeStack.Find(pN1->GetObjectsTree()) < 0);
+						if (pN1->IsObjectsTreeValid())
+						{
+							m_arrStreamingNodeStack.Add(pN1->GetObjectsTree());
+						}
 					}
 				}
 				else if (GetVisAreaManager())
 				{
-					for (int nSID = 0; nSID < Get3DEngine()->m_pObjectsTree.Count(); nSID++)
-						if (Get3DEngine()->IsSegmentSafeToUse(nSID))
-							m_arrStreamingNodeStack.Add(Get3DEngine()->m_pObjectsTree[nSID]);
+					if (Get3DEngine()->IsObjectsTreeValid()) 
+					{
+						m_arrStreamingNodeStack.Add(Get3DEngine()->GetObjectsTree());
+					}
 
 					// find portals around
 					m_tmpAreas0.Clear();
@@ -206,16 +192,19 @@ void CObjManager::UpdateObjectsStreamingPriority(bool bSyncLoad, const SRenderin
 					for (int v = 0; v < m_tmpAreas1.Count(); v++)
 					{
 						CVisArea* pN1 = m_tmpAreas1[v];
-						assert(bNeedsUnique || m_arrStreamingNodeStack.Find(pN1->m_pObjectsTree) < 0);
-						if (pN1->m_pObjectsTree)
-							m_arrStreamingNodeStack.Add(pN1->m_pObjectsTree);
+						assert(bNeedsUnique || m_arrStreamingNodeStack.Find(pN1->GetObjectsTree()) < 0);
+						if (pN1->IsObjectsTreeValid())
+						{
+							m_arrStreamingNodeStack.Add(pN1->GetObjectsTree());
+						}
 					}
 				}
 				else
 				{
-					for (int nSID = 0; nSID < Get3DEngine()->m_pObjectsTree.Count(); nSID++)
-						if (Get3DEngine()->IsSegmentSafeToUse(nSID))
-							m_arrStreamingNodeStack.Add(Get3DEngine()->m_pObjectsTree[nSID]);
+					if (Get3DEngine()->IsObjectsTreeValid())
+					{
+						m_arrStreamingNodeStack.Add(Get3DEngine()->GetObjectsTree());
+					}
 				}
 			}
 
@@ -241,7 +230,7 @@ void CObjManager::UpdateObjectsStreamingPriority(bool bSyncLoad, const SRenderin
 			const float fMaxViewDistance = Get3DEngine()->GetMaxViewDistance();
 
 			{
-				FRAME_PROFILER("UpdateObjectsStreamingPriority_MarkNodes", GetSystem(), PROFILE_3DENGINE);
+				CRY_PROFILE_SECTION(PROFILE_3DENGINE, "UpdateObjectsStreamingPriority_MarkNodes");
 
 				while (m_arrStreamingNodeStack.Count())
 				{
@@ -265,7 +254,7 @@ void CObjManager::UpdateObjectsStreamingPriority(bool bSyncLoad, const SRenderin
 
 	if (bPrecacheNear || bSyncLoad)
 	{
-		FRAME_PROFILER("UpdateObjectsStreamingPriority_Mark_NEAR_Nodes", GetSystem(), PROFILE_3DENGINE);
+		CRY_PROFILE_SECTION(PROFILE_3DENGINE, "UpdateObjectsStreamingPriority_Mark_NEAR_Nodes");
 
 		PodArray<COctreeNode*> fastStreamingNodeStack;
 		const int nVisAreaRecursion = min(GetCVars()->e_StreamPredictionMaxVisAreaRecursion, 2);
@@ -299,26 +288,27 @@ void CObjManager::UpdateObjectsStreamingPriority(bool bSyncLoad, const SRenderin
 					bFoundOutside = true;
 				}
 
-				if (bFoundOutside)
+				if (bFoundOutside && Get3DEngine()->IsObjectsTreeValid())
 				{
-					for (int nSID = 0; nSID < Get3DEngine()->m_pObjectsTree.Count(); nSID++)
-						if (Get3DEngine()->IsSegmentSafeToUse(nSID))
-							fastStreamingNodeStack.Add(Get3DEngine()->m_pObjectsTree[nSID]);
+					fastStreamingNodeStack.Add(Get3DEngine()->GetObjectsTree());
 				}
 
 				for (int v = 0; v < m_tmpAreas0.Count(); v++)
 				{
 					CVisArea* pN1 = m_tmpAreas0[v];
-					assert(bNeedsUnique || fastStreamingNodeStack.Find(pN1->m_pObjectsTree) < 0);
-					if (pN1->m_pObjectsTree)
-						fastStreamingNodeStack.Add(pN1->m_pObjectsTree);
+					assert(bNeedsUnique || fastStreamingNodeStack.Find(pN1->GetObjectsTree()) < 0);
+					if (pN1->IsObjectsTreeValid())
+					{
+						fastStreamingNodeStack.Add(pN1->GetObjectsTree());
+					}
 				}
 			}
 			else if (GetVisAreaManager())
 			{
-				for (int nSID = 0; nSID < Get3DEngine()->m_pObjectsTree.Count(); nSID++)
-					if (Get3DEngine()->IsSegmentSafeToUse(nSID))
-						fastStreamingNodeStack.Add(Get3DEngine()->m_pObjectsTree[nSID]);
+				if (Get3DEngine()->IsObjectsTreeValid())
+				{
+					fastStreamingNodeStack.Add(Get3DEngine()->GetObjectsTree());
+				}
 
 				// find portals around
 				m_tmpAreas0.Clear();
@@ -334,16 +324,19 @@ void CObjManager::UpdateObjectsStreamingPriority(bool bSyncLoad, const SRenderin
 				for (int v = 0; v < m_tmpAreas1.Count(); v++)
 				{
 					CVisArea* pN1 = m_tmpAreas1[v];
-					assert(bNeedsUnique || fastStreamingNodeStack.Find(pN1->m_pObjectsTree) < 0);
-					if (pN1->m_pObjectsTree)
-						fastStreamingNodeStack.Add(pN1->m_pObjectsTree);
+					assert(bNeedsUnique || fastStreamingNodeStack.Find(pN1->GetObjectsTree()) < 0);
+					if (pN1->IsObjectsTreeValid())
+					{
+						fastStreamingNodeStack.Add(pN1->GetObjectsTree());
+					}
 				}
 			}
 			else
 			{
-				for (int nSID = 0; nSID < Get3DEngine()->m_pObjectsTree.Count(); nSID++)
-					if (Get3DEngine()->IsSegmentSafeToUse(nSID))
-						fastStreamingNodeStack.Add(Get3DEngine()->m_pObjectsTree[nSID]);
+				if (Get3DEngine()->IsObjectsTreeValid())
+				{
+					fastStreamingNodeStack.Add(Get3DEngine()->GetObjectsTree());
+				}
 			}
 		}
 
@@ -400,18 +393,13 @@ void CObjManager::CheckTextureReadyFlag()
 	if (m_lstStaticTypes.empty())
 		return;
 
-	static uint32 nSID = 0;
 	static uint32 nGroupId = 0;
 
-	if (nSID >= m_lstStaticTypes.size())
-		nSID = 0;
-
-	PodArray<StatInstGroup>& rGroupTable = m_lstStaticTypes[nSID];
+	PodArray<StatInstGroup>& rGroupTable = m_lstStaticTypes;
 
 	if (nGroupId >= rGroupTable.size())
 	{
 		nGroupId = 0;
-		nSID++;
 	}
 
 	for (size_t currentGroup = 0; currentGroup < rGroupTable.size(); currentGroup++)
@@ -570,7 +558,6 @@ void CObjManager::ProcessObjectsStreaming(const SRenderingPassInfo& passInfo)
 void CObjManager::ProcessObjectsStreaming_Impl(bool bSyncLoad, const SRenderingPassInfo& passInfo)
 {
 	ProcessObjectsStreaming_Sort(bSyncLoad, passInfo);
-	ProcessObjectsStreaming_Release();
 #ifdef OBJMAN_STREAM_STATS
 	ProcessObjectsStreaming_Stats(passInfo);
 #endif
@@ -579,6 +566,8 @@ void CObjManager::ProcessObjectsStreaming_Impl(bool bSyncLoad, const SRenderingP
 
 void CObjManager::ProcessObjectsStreaming_Sort(bool bSyncLoad, const SRenderingPassInfo& passInfo)
 {
+	static constexpr float fMeshStreamingMaxIImportance = 10.f;
+
 	int nNumStreamableObjects = m_arrStreamableObjects.Count();
 
 	static float fLastTime = 0;
@@ -587,12 +576,10 @@ void CObjManager::ProcessObjectsStreaming_Sort(bool bSyncLoad, const SRenderingP
 	// call sort only every 100 ms
 	if (nNumStreamableObjects && ((fTime > fLastTime + 0.1f) || bSyncLoad))
 	{
-		FRAME_PROFILER("ProcessObjectsStreaming_Sort", GetSystem(), PROFILE_3DENGINE);
+		CRY_PROFILE_SECTION(PROFILE_3DENGINE, "ProcessObjectsStreaming_Sort");
 
 		SStreamAbleObject* arrStreamableObjects = &m_arrStreamableObjects[0];
 		assert(arrStreamableObjects);
-
-		const float fMeshStreamingMaxIImportance = 10.f;
 
 		if (bSyncLoad)
 		{
@@ -618,6 +605,13 @@ void CObjManager::ProcessObjectsStreaming_Sort(bool bSyncLoad, const SRenderingP
 			// use data of previous prediction round since current round is not finished yet
 			int nRoundId = CObjManager::m_nUpdateStreamingPrioriryRoundId - 1;
 
+			int maxSize = 0;
+			for (int i = 0; i < nNumStreamableObjects; i++)
+			{
+				SStreamAbleObject& rObj = arrStreamableObjects[i];
+				maxSize = std::max(maxSize, rObj.GetStreamableContentMemoryUsage());
+			}
+
 			for (int i = 0; i < nNumStreamableObjects; i++)
 			{
 				SStreamAbleObject& rObj = arrStreamableObjects[i];
@@ -628,6 +622,9 @@ void CObjManager::ProcessObjectsStreaming_Sort(bool bSyncLoad, const SRenderingP
 					continue;
 				}
 
+				const int size = rObj.GetStreamableContentMemoryUsage();
+				const float normalized_size = static_cast<float>(size) / static_cast<float>(maxSize);
+
 				// compute importance of objects for selected nRoundId
 				rObj.fCurImportance = -1000.f;
 
@@ -637,7 +634,7 @@ void CObjManager::ProcessObjectsStreaming_Sort(bool bSyncLoad, const SRenderingP
 				{
 					if (pInfo[nRoundIdx].nRoundId == nRoundId)
 					{
-						rObj.fCurImportance = pInfo[nRoundIdx].fMaxImportance;
+						rObj.fCurImportance = pInfo[nRoundIdx].fMaxImportance - normalized_size;
 						if (rObj.GetLastDrawMainFrameId() > (passInfo.GetMainFrameID() - GetCVars()->e_RNTmpDataPoolMaxFrames))
 							rObj.fCurImportance += GetFloatCVar(e_StreamCgfVisObjPriority);
 						break;
@@ -652,56 +649,14 @@ void CObjManager::ProcessObjectsStreaming_Sort(bool bSyncLoad, const SRenderingP
 	}
 }
 
-void CObjManager::ProcessObjectsStreaming_Release()
-{
-	FRAME_PROFILER("ProcessObjectsStreaming_Release", GetSystem(), PROFILE_3DENGINE);
-	int nMemoryUsage = 0;
-
-	int nNumStreamableObjects = m_arrStreamableObjects.Count();
-	SStreamAbleObject* arrStreamableObjects = nNumStreamableObjects ? &m_arrStreamableObjects[0] : NULL;
-
-	for (int nObjId = 0; nObjId < nNumStreamableObjects; nObjId++)
-	{
-		const SStreamAbleObject& rObj = arrStreamableObjects[nObjId];
-
-		nMemoryUsage += rObj.GetStreamableContentMemoryUsage();
-
-		bool bUnload = nMemoryUsage >= GetCVars()->e_StreamCgfPoolSize * 1024 * 1024;
-
-		if (!bUnload && GetCVars()->e_StreamCgfDebug == 4)
-			if (rObj.GetStreamAbleObject()->m_arrUpdateStreamingPrioriryRoundInfo[0].nRoundId < (CObjManager::m_nUpdateStreamingPrioriryRoundId - 8))
-				bUnload = true;
-
-		if (bUnload && rObj.GetStreamAbleObject()->IsUnloadable())
-		{
-			if (rObj.GetStreamAbleObject()->m_eStreamingStatus == ecss_Ready)
-			{
-				m_arrStreamableToRelease.push_back(rObj.GetStreamAbleObject());
-			}
-
-			// remove from list if not active for long time
-			if (rObj.GetStreamAbleObject()->m_eStreamingStatus == ecss_NotLoaded)
-			{
-				if (rObj.GetStreamAbleObject()->m_arrUpdateStreamingPrioriryRoundInfo[0].nRoundId < (CObjManager::m_nUpdateStreamingPrioriryRoundId - 8))
-				{
-					rObj.GetStreamAbleObject()->m_arrUpdateStreamingPrioriryRoundInfo[0].nRoundId = 0;
-					m_arrStreamableToDelete.push_back(rObj.GetStreamAbleObject());
-				}
-			}
-		}
-	}
-	s_nLastStreamingMemoryUsage = nMemoryUsage;
-}
-
 void CObjManager::ProcessObjectsStreaming_InitLoad(bool bSyncLoad)
 {
-	FRAME_PROFILER("ProcessObjectsStreaming_InitLoad", GetSystem(), PROFILE_3DENGINE);
+	CRY_PROFILE_SECTION(PROFILE_3DENGINE, "ProcessObjectsStreaming_InitLoad");
 
-	int nMaxInProgress = GetCVars()->e_StreamCgfMaxTasksInProgress;
-	int nMaxToStart = GetCVars()->e_StreamCgfMaxNewTasksPerUpdate;
-	int nMaxMemUsage = GetCVars()->e_StreamCgfPoolSize * 1024 * 1024;
-	int nNumStreamableObjects = m_arrStreamableObjects.Count();
-	SStreamAbleObject* arrStreamableObjects = nNumStreamableObjects ? &m_arrStreamableObjects[0] : NULL;
+	const int nMaxInProgress = GetCVars()->e_StreamCgfMaxTasksInProgress;
+	const int nMaxToStart = GetCVars()->e_StreamCgfMaxNewTasksPerUpdate;
+	const int nMaxMemUsage = GetCVars()->e_StreamCgfPoolSize * 1024 * 1024;
+	const int nNumStreamableObjects = m_arrStreamableObjects.Count();
 
 	int nMemoryUsage = 0;
 	int nInProgress = 0;
@@ -712,22 +667,43 @@ void CObjManager::ProcessObjectsStreaming_InitLoad(bool bSyncLoad)
 	GetRenderer()->EF_Query(EFQ_GetMeshPoolInfo, stats);
 	size_t poolLimit = stats.nPoolSize << 2; // 4 times the pool limit because the rendermesh pool has been reduced
 
-	for (int nObjId = 0; nObjId < nNumStreamableObjects; nObjId++)
+	// Count memory usage
+	for (const auto& rObj : m_arrStreamableObjects)
 	{
-		const SStreamAbleObject& rObj = m_arrStreamableObjects[nObjId];
+		const int size = rObj.GetStreamableContentMemoryUsage();
+
 		if (rObj.GetStreamAbleObject()->m_eStreamingStatus == ecss_InProgress)
 		{
 			nInProgress++;
-			nInProgressMem += rObj.GetStreamableContentMemoryUsage();
+			nInProgressMem += size;
+		}
+		if (rObj.GetStreamAbleObject()->m_eStreamingStatus != ecss_NotLoaded)
+			nMemoryUsage += size;
+	}
+	s_nLastStreamingMemoryUsage = nMemoryUsage;
+
+	// Release stale objects
+	for (const auto& rObj : m_arrStreamableObjects)
+	{
+		if (rObj.GetStreamAbleObject()->IsUnloadable() && rObj.GetStreamAbleObject()->m_eStreamingStatus != ecss_NotLoaded &&
+			rObj.GetStreamAbleObject()->m_arrUpdateStreamingPrioriryRoundInfo[0].nRoundId < (CObjManager::m_nUpdateStreamingPrioriryRoundId - 8))
+		{
+			// remove from list if not active for long time
+			rObj.GetStreamAbleObject()->m_arrUpdateStreamingPrioriryRoundInfo[0].nRoundId = 0;
+			m_arrStreamableToDelete.push_back(rObj.GetStreamAbleObject());
 		}
 	}
 
-	for (int nObjId = 0; (nObjId < nNumStreamableObjects) && ((nInProgress < nMaxInProgress && (nInProgressMem < static_cast<int>(poolLimit) || !poolLimit) && nStarted < nMaxToStart) || bSyncLoad); nObjId++)
+	// Load pending
+	auto* unload_iterator = m_arrStreamableObjects.end()-1;
+	for (auto* it = m_arrStreamableObjects.begin(); (it != m_arrStreamableObjects.end()) && ((nInProgress < nMaxInProgress && (nInProgressMem < static_cast<int>(poolLimit) || !poolLimit) && nStarted < nMaxToStart) || bSyncLoad); it++)
 	{
-		const SStreamAbleObject& rObj = arrStreamableObjects[nObjId];
-		IStreamable* pStatObj = rObj.GetStreamAbleObject();
+		IStreamable* pStatObj = it->GetStreamAbleObject();
+		const int size = it->GetStreamableContentMemoryUsage();
 
-		int size = rObj.GetStreamableContentMemoryUsage();
+		if (pStatObj->m_eStreamingStatus != ecss_NotLoaded)
+			continue;
+
 		if (poolLimit && poolLimit <= (size_t)(nInProgressMem + size))
 		{
 			// Actually the above check is an implicit size limit on CGFs - which is awful because it can lead to meshes never
@@ -745,20 +721,44 @@ void CObjManager::ProcessObjectsStreaming_InitLoad(bool bSyncLoad)
 				continue;
 		}
 
-		nMemoryUsage += size;
-		if (nMemoryUsage >= nMaxMemUsage)
-			break;
-
-		if (rObj.GetStreamAbleObject()->m_eStreamingStatus == ecss_NotLoaded)
+		// See if we can free enough memory to stream in higher-priority content
+		auto unload_it2 = unload_iterator;
+		auto new_mem_usage = nMemoryUsage;
+		for (; new_mem_usage + size >= nMaxMemUsage && unload_it2 > it; --unload_it2)
 		{
-			m_arrStreamableToLoad.push_back(rObj.GetStreamAbleObject());
-			nInProgressMem += size;
-			++nInProgress;
-			++nStarted;
-
-			if ((GetCVars()->e_AutoPrecacheCgf == 2) && (nObjId > nNumStreamableObjects / 2))
-				break;
+			if (unload_it2->GetStreamAbleObject()->IsUnloadable() && unload_it2->GetStreamAbleObject()->m_eStreamingStatus == ecss_Ready)
+				new_mem_usage -= unload_it2->GetStreamableContentMemoryUsage();
 		}
+		// If we failed to free memory warn once for each object and continue.
+		if (new_mem_usage + size >= nMaxMemUsage)
+		{
+			if (!pStatObj->warnedWhenCGFPoolIsOutOfMemory)
+			{
+				string name;
+				pStatObj->GetStreamableName(name);
+				CryWarning(EValidatorModule::VALIDATOR_MODULE_RENDERER, EValidatorSeverity::VALIDATOR_WARNING,
+					"[WARNING] object '%s' skipped because failed to free CGF pool memory for it", name.c_str());
+				pStatObj->warnedWhenCGFPoolIsOutOfMemory = true;
+			}
+
+			continue;
+		}
+		// Unload content
+		for (; unload_iterator != unload_it2; --unload_iterator)
+		{
+			if (unload_iterator->GetStreamAbleObject()->IsUnloadable() && unload_iterator->GetStreamAbleObject()->m_eStreamingStatus == ecss_Ready)
+				m_arrStreamableToRelease.push_back(unload_iterator->GetStreamAbleObject());
+		}
+
+		// Stream in new content
+		m_arrStreamableToLoad.push_back(pStatObj);
+		nMemoryUsage = new_mem_usage + size;
+		nInProgressMem += size;
+		++nInProgress;
+		++nStarted;
+
+		if (GetCVars()->e_AutoPrecacheCgf == 2 && std::distance(m_arrStreamableObjects.begin(), it)*2 > nNumStreamableObjects)
+			break;
 	}
 }
 
@@ -767,10 +767,9 @@ void CObjManager::ProcessObjectsStreaming_Finish()
 	if (m_bNeedProcessObjectsStreaming_Finish == false)
 		return;
 
-	int nNumStreamableObjects = m_arrStreamableObjects.Count();
 	m_bNeedProcessObjectsStreaming_Finish = false;
 
-	FRAME_PROFILER("ProcessObjectsStreaming_Finish", GetSystem(), PROFILE_3DENGINE);
+	CRY_PROFILE_SECTION(PROFILE_3DENGINE, "ProcessObjectsStreaming_Finish");
 	bool bSyncLoad = Get3DEngine()->IsStatObjSyncLoad();
 
 	{
@@ -814,7 +813,7 @@ void CObjManager::ProcessObjectsStreaming_Finish()
 			// the pool size in the renderer is sufficient. NOTE: This is a weak
 			// test. Better test would be to actually preallocate the memory here and
 			// only submit the streaming job if the memory could be obtained.
-			int size = pStatObj->GetStreamableContentMemoryUsage();
+			pStatObj->GetStreamableContentMemoryUsage();
 
 			if (GetCVars()->e_StreamCgfDebug == 2)
 			{
@@ -848,6 +847,8 @@ void CObjManager::ProcessObjectsStreaming_Finish()
 			m_arrStreamableToDelete.DeleteLast();
 			SStreamAbleObject stramAbleObject(pStatObj);
 			m_arrStreamableObjects.Delete(stramAbleObject);
+
+			pStatObj->ReleaseStreamableContent();
 
 #ifdef OBJMAN_STREAM_STATS
 			if (m_pStreamListener)
@@ -938,7 +939,7 @@ void CObjManager::GetObjectsStreamingStatus(I3DEngine::SObjectsStreamingStatus& 
 			continue;
 
 		for (int l = 0; l < MAX_STATOBJ_LODS_NUM; l++)
-			if (CStatObj* pLod = (CStatObj*)pStatObj->GetLodObject(l))
+			if (pStatObj->GetLodObject(l) != nullptr)
 				outStatus.nTotal++;
 	}
 
@@ -957,7 +958,7 @@ void CObjManager::GetObjectsStreamingStatus(I3DEngine::SObjectsStreamingStatus& 
 		if (rStreamAbleObject.GetStreamAbleObject()->m_eStreamingStatus == ecss_Ready)
 			outStatus.nAllocatedBytes += rStreamAbleObject.GetStreamableContentMemoryUsage();
 
-		if (rStreamAbleObject.GetStreamAbleObject()->m_arrUpdateStreamingPrioriryRoundInfo[0].nRoundId >= (CObjManager::m_nUpdateStreamingPrioriryRoundId - 4))
+		if (rStreamAbleObject.GetStreamAbleObject()->m_arrUpdateStreamingPrioriryRoundInfo[0].nRoundId >= (CObjManager::m_nUpdateStreamingPrioriryRoundId - 8))
 			outStatus.nMemRequired += rStreamAbleObject.GetStreamableContentMemoryUsage();
 	}
 }
@@ -980,17 +981,14 @@ void CObjManager::PrecacheStatObjMaterial(IMaterial* pMaterial, const float fEnt
 
 	if (CMatInfo* pMatInfo = static_cast<CMatInfo*>(pMaterial))
 	{
-		CStatObj* pCStatObj = static_cast<CStatObj*>(pStatObj);
 		pMatInfo->PrecacheMaterial(fEntDistance, (pStatObj ? pStatObj->GetRenderMesh() : NULL), bFullUpdate, bDrawNear);
 	}
 }
 
-void CObjManager::PrecacheStatObj(CStatObj* pStatObj, int nLod, const Matrix34A& statObjMatrix, IMaterial* pMaterial, float fImportance, float fEntDistance, bool bFullUpdate, bool bHighPriority)
+void CObjManager::PrecacheStatObj(CStatObj* pStatObj, int nLod, IMaterial* pMaterial, float fImportance, float fEntDistance, bool bFullUpdate, bool bHighPriority)
 {
 	if (!pStatObj)
-	{
 		return;
-	}
 
 	const int minLod = pStatObj->GetMinUsableLod();
 	const int maxLod = (int)pStatObj->m_nMaxUsableLod;
@@ -1002,16 +1000,13 @@ void CObjManager::PrecacheStatObj(CStatObj* pStatObj, int nLod, const Matrix34A&
 		IStatObj* pLodStatObj = pStatObj->GetLodObject(currentLod, true);
 		IMaterial* pLodMaterial = pLodStatObj->GetMaterial();
 		PrecacheStatObjMaterial(pMaterial ? pMaterial : pLodMaterial, fEntDistance, pLodStatObj, bFullUpdate, bHighPriority);
-		pStatObj->UpdateStreamableComponents(fImportance, statObjMatrix, bFullUpdate, nLod);
+		pStatObj->UpdateStreamableComponents(fImportance, bFullUpdate, nLod);
 	}
 }
 
 void CObjManager::UpdateRenderNodeStreamingPriority(IRenderNode* pObj, float fEntDistanceReal, float fImportanceFactor, bool bFullUpdate, const SRenderingPassInfo& passInfo, bool bHighPriority)
 {
 	//  FUNCTION_PROFILER_3DENGINE;
-
-	if (pObj->m_dwRndFlags & ERF_HIDDEN)
-		return;
 
 	if (pObj->m_fWSMaxViewDist < 0.01f)
 		return;
@@ -1066,7 +1061,6 @@ void CObjManager::UpdateRenderNodeStreamingPriority(IRenderNode* pObj, float fEn
 	case eERType_FogVolume:
 		fObjScale = max(0.001f, ((CFogVolumeRenderNode*)pObj)->CFogVolumeRenderNode::GetMatrix().GetColumn0().GetLength());
 		break;
-	case eERType_Cloud:
 	case eERType_DistanceCloud:
 		fObjScale = max(0.001f, pObj->GetBBox().GetRadius());
 		break;
@@ -1080,7 +1074,6 @@ void CObjManager::UpdateRenderNodeStreamingPriority(IRenderNode* pObj, float fEn
 		break;
 	}
 
-	float fInvObjScale = 1.0f / fObjScale;
 	int nLod = CObjManager::GetObjectLOD(pObj, fEntDistanceReal);
 	IMaterial* pRenderNodeMat = pObj->GetMaterialOverride();
 
@@ -1091,74 +1084,37 @@ void CObjManager::UpdateRenderNodeStreamingPriority(IRenderNode* pObj, float fEn
 	ctx.lod = nLod;
 	ctx.bFullUpdate = bFullUpdate;
 
-	if (pObj->m_pTempData)
+	if (const auto pTempData = pObj->m_pTempData)
 	{
 		if (GetFloatCVar(e_StreamCgfGridUpdateDistance) != 0.0f || GetFloatCVar(e_StreamPredictionAhead) != 0.0f || GetFloatCVar(e_StreamPredictionMinFarZoneDistance) != 0.0f)
 		{
 			float fDistanceToCam = sqrt_tpl(Distance::Point_AABBSq(passInfo.GetCamera().GetPosition(), objBox)) * passInfo.GetZoomFactor();
 
-			if (pObj->GetRenderNodeType() == eERType_Vegetation && ((CVegetation*)pObj)->m_pInstancingInfo)
+			if (nodeType == eERType_Vegetation && ((CVegetation*)pObj)->m_pInstancingInfo)
 			{
 				// for instance groups compute distance to the center of bbox
 				AABB objBoxS = AABB(objBox.GetCenter() - Vec3(.1f, .1f, .1f), objBox.GetCenter() + Vec3(.1f, .1f, .1f));
 				fDistanceToCam = sqrt_tpl(Distance::Point_AABBSq(passInfo.GetCamera().GetPosition(), objBoxS)) * passInfo.GetZoomFactor();
 			}
 
-			pObj->m_pTempData->userData.nWantedLod = CObjManager::GetObjectLOD(pObj, fDistanceToCam);
+			pTempData->userData.nWantedLod = CObjManager::GetObjectLOD(pObj, fDistanceToCam);
 		}
 		else
 		{
-			pObj->m_pTempData->userData.nWantedLod = nLod;
+			pTempData->userData.nWantedLod = nLod;
 		}
-	}
-
-	if (nodeType == eERType_Brush || nodeType == eERType_Vegetation)
-	{
-		Matrix34A brushMatrix;
-		IStatObj* pStatObj = pObj->GetEntityStatObj(0, 0, &brushMatrix);
-		if (pStatObj)
-		{
-			IMaterial* pStatObjMat = pStatObj->GetMaterial();
-			PrecacheStatObj(static_cast<CStatObj*>(pStatObj), nLod, brushMatrix, pRenderNodeMat ? pRenderNodeMat : pStatObjMat, fImportance, fEntDistanceReal * fInvObjScale, bFullUpdate, bHighPriority);
-		}
-		return;
-	}
-	else if (nodeType == eERType_ParticleEmitter)
-	{
-		IParticleEmitter* pEmitter = (IParticleEmitter*)pObj;
-		Matrix34A tm34A;
-		tm34A.SetIdentity();
-		tm34A.SetTranslation(pEmitter->GetPos());
-		pEmitter->UpdateStreamableComponents(fImportance, tm34A, pObj, fEntDistance, bFullUpdate, nLod);
-		return;
-	}
-	else if (nodeType == eERType_MergedMesh)
-	{
-		CMergedMeshRenderNode* pMMRM = static_cast<CMergedMeshRenderNode*>(pObj);
-		pMMRM->UpdateStreamableComponents(fImportance, fEntDistance, bFullUpdate);
-		return;
-	}
-	else if (nodeType == eERType_Character)
-	{
-		pObj->UpdateStreamingPriority(ctx);
-		return;
-	}
-	else if (nodeType == eERType_GeomCache)
-	{
-		pObj->UpdateStreamingPriority(ctx);
-		return;
 	}
 
 	Matrix34A matParent;
-	CStatObj* pStatObj = (CStatObj*)pObj->GetEntityStatObj(0, 0, &matParent, false);
-	if (pStatObj)
+	if (CStatObj* pStatObj = (CStatObj*)pObj->GetEntityStatObj(0, &matParent, false))
 	{
-		IMaterial* pStatObjMat = pStatObj->GetMaterial();
-		PrecacheStatObj(pStatObj, nLod, matParent, pRenderNodeMat ? pRenderNodeMat : pStatObjMat, fImportance, fEntDistanceReal * fInvObjScale, bFullUpdate, bHighPriority);
+		PrecacheStatObj(pStatObj, nLod, pRenderNodeMat ? pRenderNodeMat : pStatObj->GetMaterial(), fImportance, fEntDistanceReal / fObjScale, bFullUpdate, bHighPriority);
 	}
 	else if (pRenderNodeMat)
 	{
-		// If not any of the known render nodes try to pre-cache only the override material
-		pRenderNodeMat->PrecacheMaterial(fEntDistance * fInvObjScale, pObj->GetRenderMesh(nLod), bFullUpdate, bHighPriority);
+		pRenderNodeMat->PrecacheMaterial(fEntDistance / fObjScale, pObj->GetRenderMesh(nLod), bFullUpdate, bHighPriority);
 	}
+
+	// Additional precaching for RenderNode types.
+	pObj->UpdateStreamingPriority(ctx);
 }

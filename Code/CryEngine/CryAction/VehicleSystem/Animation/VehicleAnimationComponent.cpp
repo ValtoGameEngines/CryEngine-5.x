@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -142,8 +142,6 @@ void CVehicleAnimationComponent::AttachPassengerScope(CVehicleSeat* pSeat, Entit
 				pAnimChar->RequestPhysicalColliderMode(eColliderMode_Undefined, eColliderModeLayer_Game, "CVehicle::AttachPassengerScope");
 			}
 		}
-
-		uint32 numScopes = m_pActionController->GetTotalScopes();
 
 		if (pActor && pActor->GetAnimatedCharacter()->GetActionController())
 		{

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -227,7 +227,7 @@ public:
 	bool                     SetJointPhysProperties_ROPE(uint32 jointIndex, int nLod, const DynArray<SJointProperty>& props) override                                                                               { return m_physics.SetJointPhysProperties_ROPE(jointIndex, nLod, props); }
 
 	float GetExtent(EGeomForm eForm);
-	void GetRandomPos(PosNorm & ran, CRndGen & seed, EGeomForm eForm) const;
+	void GetRandomPoints(Array<PosNorm> points, CRndGen& seed, EGeomForm eForm) const;
 
 	CSkeletonPhysics m_physics;
 
@@ -260,6 +260,7 @@ public:
 
 	bool m_bInstanceVisible : 1;
 	bool m_bFullSkeletonUpdate : 1;
+	bool m_bVisibleLastFrame : 1;
 	uint32 m_bAllNodesValid : 1; //True if this animation was already played once.
 	bool m_bSetDefaultPoseExecute : 1;
 

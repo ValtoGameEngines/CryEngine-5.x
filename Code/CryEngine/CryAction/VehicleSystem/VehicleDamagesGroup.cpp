@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -264,7 +264,7 @@ void CVehicleDamagesGroup::OnDamageEvent(EVehicleDamageBehaviorEvent event, cons
 //------------------------------------------------------------------------
 void CVehicleDamagesGroup::Update(float frameTime)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	TDelayedDamagesSubGroupList::iterator ite = m_delayedSubGroups.begin();
 	TDelayedDamagesSubGroupList::iterator next;
@@ -307,9 +307,7 @@ bool CVehicleDamagesGroup::IsPotentiallyFatal()
 
 		for (TVehicleDamageBehaviorVector::iterator behaviorIte = damageBehaviors.begin(); behaviorIte != damageBehaviors.end(); ++behaviorIte)
 		{
-			//IVehicleDamageBehavior* pBehavio
-			if (CVehicleDamageBehaviorDestroy* pBehaviorDestroy =
-			      CAST_VEHICLEOBJECT(CVehicleDamageBehaviorDestroy, (*behaviorIte)))
+			if (CAST_VEHICLEOBJECT(CVehicleDamageBehaviorDestroy, (*behaviorIte)) != nullptr)
 			{
 				return true;
 			}

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "DX12CommandList.hpp"
@@ -47,6 +47,11 @@ CCommandList::CCommandList(CCommandListPool& rPool)
 }
 
 //---------------------------------------------------------------------------------------------------------------------
+#if NTDDI_WIN10_RS2 && (WDK_NTDDI_VERSION >= NTDDI_WIN10_RS2)
+BOOL CCommandList::s_DepthBoundsTestSupported = false;
+#endif
+
+//---------------------------------------------------------------------------------------------------------------------
 CCommandList::~CCommandList()
 {
 }
@@ -55,7 +60,8 @@ CCommandList::~CCommandList()
 
 bool CCommandList::Init(UINT64 currentFenceValue)
 {
-	m_eState = CLSTATE_STARTED;
+	m_pD3D12Device = GetDevice()->GetD3D12Device();
+
 	m_nCommands = 0;
 	m_pDSV = nullptr;
 	m_CurrentNumRTVs = 0;
@@ -64,8 +70,6 @@ bool CCommandList::Init(UINT64 currentFenceValue)
 
 	m_CurrentFenceValue = currentFenceValue;
 	ZeroMemory(m_UsedFenceValues, sizeof(m_UsedFenceValues));
-
-	m_pD3D12Device = GetDevice()->GetD3D12Device();
 
 	for (D3D12_DESCRIPTOR_HEAP_TYPE eType = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV; eType < D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES; eType = D3D12_DESCRIPTOR_HEAP_TYPE(eType + 1))
 	{
@@ -82,7 +86,7 @@ bool CCommandList::Init(UINT64 currentFenceValue)
 	if (!m_pCmdAllocator)
 	{
 		ID3D12CommandAllocator* pCmdAllocator = nullptr;
-		if (S_OK != m_pD3D12Device->CreateCommandAllocator(eCmdListType, IID_PPV_ARGS(&pCmdAllocator)))
+		if (S_OK != m_pD3D12Device->CreateCommandAllocator(eCmdListType, IID_GFX_ARGS(&pCmdAllocator)))
 		{
 			DX12_ERROR("Could not create command allocator!");
 			return false;
@@ -95,7 +99,7 @@ bool CCommandList::Init(UINT64 currentFenceValue)
 	if (!m_pCmdList)
 	{
 		ID3D12GraphicsCommandList* pCmdList = nullptr;
-		if (S_OK != m_pD3D12Device->CreateCommandList(m_nodeMask, eCmdListType, m_pCmdAllocator, nullptr, IID_PPV_ARGS(&pCmdList)))
+		if (S_OK != m_pD3D12Device->CreateCommandList(m_nodeMask, eCmdListType, m_pCmdAllocator, nullptr, IID_GFX_ARGS(&pCmdList)))
 		{
 			DX12_ERROR("Could not create command list");
 			return false;
@@ -103,6 +107,38 @@ bool CCommandList::Init(UINT64 currentFenceValue)
 
 		m_pCmdList = pCmdList;
 		pCmdList->Release();
+		
+		if (m_eListType == D3D12_COMMAND_LIST_TYPE_COPY)
+		{
+#if NTDDI_WIN10_RS2 && (WDK_NTDDI_VERSION >= NTDDI_WIN10_RS2)
+			m_pCmdList1 = nullptr;
+#endif
+#if NTDDI_WIN10_RS3 && (WDK_NTDDI_VERSION >= NTDDI_WIN10_RS3)
+			m_pCmdList2 = nullptr;
+#endif
+		}
+		else
+		{
+			// Creator's Update
+#if NTDDI_WIN10_RS2 && (WDK_NTDDI_VERSION >= NTDDI_WIN10_RS2)
+			ID3D12GraphicsCommandList1* pCmdList1 = nullptr;
+			pCmdList->QueryInterface(__uuidof(ID3D12GraphicsCommandList1), (void**)&pCmdList1);
+			if (m_pCmdList1 = pCmdList1)
+				pCmdList1->Release();
+
+			D3D12_FEATURE_DATA_D3D12_OPTIONS2 Options2;
+			if (GetDevice()->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS2, &Options2, sizeof(Options2)) == S_OK)
+				s_DepthBoundsTestSupported = Options2.DepthBoundsTestSupported;
+#endif
+
+			// Fall Creator's Update
+#if NTDDI_WIN10_RS3 && (WDK_NTDDI_VERSION >= NTDDI_WIN10_RS3)
+			ID3D12GraphicsCommandList2* pCmdList2 = nullptr;
+			pCmdList->QueryInterface(__uuidof(ID3D12GraphicsCommandList1), (void**)&pCmdList2);
+			if (m_pCmdList2 = pCmdList2)
+				pCmdList2->Release();
+#endif
+		}
 	}
 
 #ifdef DX12_STATS
@@ -110,8 +146,21 @@ bool CCommandList::Init(UINT64 currentFenceValue)
 	m_NumWaitsCPU = 0;
 #endif // DX12_STATS
 
-	IsInitialized(true);
 	return true;
+}
+
+void CCommandList::Register()
+{
+	UINT64 nextFenceValue = m_rPool.GetCurrentFenceValue() + 1;
+
+	// Increment fence on allocation, this has the effect that
+	// acquired CommandLists need to be submitted in-order to prevent
+	// dead-locking
+	m_rPool.SetCurrentFenceValue(nextFenceValue);
+
+	Init(nextFenceValue);
+
+	m_eState = CLSTATE_STARTED;
 }
 
 void CCommandList::Begin()
@@ -124,8 +173,8 @@ void CCommandList::End()
 	{
 		PendingResourceBarriers();
 
-		HRESULT res = m_pCmdList->Close();
-		DX12_ASSERT(res == S_OK, "Could not close command list!");
+		if (m_pCmdList->Close() != S_OK)
+			DX12_ERROR("Could not close command list!");
 	}
 
 	m_eState = CLSTATE_COMPLETED;
@@ -137,7 +186,21 @@ void CCommandList::Schedule()
 	{
 		m_eState = CLSTATE_SCHEDULED;
 
-		m_rPool.SetSubmittedFenceValue(m_CurrentFenceValue);
+#ifdef DX12_OMITTABLE_COMMANDLISTS
+		const bool bRecyclable = (m_rPool.GetCurrentFenceValue() == m_CurrentFenceValue);
+		if (bRecyclable & !IsUtilized())
+		{
+			// Rewind fence value and don't declare submitted
+			m_rPool.SetCurrentFenceValue(m_CurrentFenceValue - 1);
+
+			// The command-list doesn't "exist" now (makes all IsFinished() checks return true)
+			m_CurrentFenceValue = 0;
+		}
+		else
+#endif
+		{
+			m_rPool.SetSubmittedFenceValue(m_CurrentFenceValue);
+		}
 	}
 }
 
@@ -146,15 +209,17 @@ void CCommandList::Submit()
 	if (IsUtilized())
 	{
 		// Inject a Wait() into the CommandQueue prior to executing it to wait for all required resources being available either readable or writable
-#ifdef DX12_IN_ORDER_SUBMISSION
-		m_UsedFenceValues[CMDTYPE_ANY][CMDQUEUE_COMPUTE] = std::max(m_UsedFenceValues[CMDTYPE_READ][CMDQUEUE_COMPUTE], m_UsedFenceValues[CMDTYPE_WRITE][CMDQUEUE_COMPUTE]);
-		m_UsedFenceValues[CMDTYPE_ANY][CMDQUEUE_GRAPHICS] = std::max(m_UsedFenceValues[CMDTYPE_READ][CMDQUEUE_GRAPHICS], m_UsedFenceValues[CMDTYPE_WRITE][CMDQUEUE_GRAPHICS]);
-		m_UsedFenceValues[CMDTYPE_ANY][CMDQUEUE_COPY] = std::max(m_UsedFenceValues[CMDTYPE_READ][CMDQUEUE_COPY], m_UsedFenceValues[CMDTYPE_WRITE][CMDQUEUE_COPY]);
+		// *INDENT-OFF*
+#ifdef VK_IN_ORDER_SUBMISSION
+		         m_UsedFenceValues[CMDTYPE_ANY][CMDQUEUE_COMPUTE ] = std::max(m_UsedFenceValues[CMDTYPE_READ][CMDQUEUE_COMPUTE ], m_UsedFenceValues[CMDTYPE_WRITE][CMDQUEUE_COMPUTE ]);
+		         m_UsedFenceValues[CMDTYPE_ANY][CMDQUEUE_GRAPHICS] = std::max(m_UsedFenceValues[CMDTYPE_READ][CMDQUEUE_GRAPHICS], m_UsedFenceValues[CMDTYPE_WRITE][CMDQUEUE_GRAPHICS]);
+		         m_UsedFenceValues[CMDTYPE_ANY][CMDQUEUE_COPY    ] = std::max(m_UsedFenceValues[CMDTYPE_READ][CMDQUEUE_COPY    ], m_UsedFenceValues[CMDTYPE_WRITE][CMDQUEUE_COPY    ]);
 #else
-		std::upr(m_UsedFenceValues[CMDTYPE_ANY][CMDQUEUE_COMPUTE], std::max(m_UsedFenceValues[CMDTYPE_READ][CMDQUEUE_COMPUTE], m_UsedFenceValues[CMDTYPE_WRITE][CMDQUEUE_COMPUTE]));
+		std::upr(m_UsedFenceValues[CMDTYPE_ANY][CMDQUEUE_COMPUTE ], std::max(m_UsedFenceValues[CMDTYPE_READ][CMDQUEUE_COMPUTE ], m_UsedFenceValues[CMDTYPE_WRITE][CMDQUEUE_COMPUTE ]));
 		std::upr(m_UsedFenceValues[CMDTYPE_ANY][CMDQUEUE_GRAPHICS], std::max(m_UsedFenceValues[CMDTYPE_READ][CMDQUEUE_GRAPHICS], m_UsedFenceValues[CMDTYPE_WRITE][CMDQUEUE_GRAPHICS]));
-		std::upr(m_UsedFenceValues[CMDTYPE_ANY][CMDQUEUE_COPY], std::max(m_UsedFenceValues[CMDTYPE_READ][CMDQUEUE_COPY], m_UsedFenceValues[CMDTYPE_WRITE][CMDQUEUE_COPY]));
+		std::upr(m_UsedFenceValues[CMDTYPE_ANY][CMDQUEUE_COPY    ], std::max(m_UsedFenceValues[CMDTYPE_READ][CMDQUEUE_COPY    ], m_UsedFenceValues[CMDTYPE_WRITE][CMDQUEUE_COPY    ]));
 #endif
+		// *INDENT-ON*
 
 		m_rPool.WaitForFenceOnGPU(m_UsedFenceValues[CMDTYPE_ANY]);
 
@@ -163,13 +228,19 @@ void CCommandList::Submit()
 		m_rPool.GetAsyncCommandQueue().ExecuteCommandLists(1, ppCommandLists); // TODO: allow to submit multiple command-lists in one go
 	}
 
-	// Inject the signal of the utilized fence to unblock code which picked up the fence of the command-list (even if it doesn't have contents)
-	SignalFenceOnGPU();
-	m_eState = CLSTATE_SUBMITTED;
+#ifdef DX12_OMITTABLE_COMMANDLISTS
+	if (IsUtilized())
+#endif
+	{
+		// Inject the signal of the utilized fence to unblock code which picked up the fence of the command-list (even if it doesn't have contents)
+		SignalFenceOnGPU();
 
-	DX12_LOG(DX12_CONCURRENCY_ANALYZER, "######################################## END [%s %lld] CL ########################################",
-	         m_rPool.GetFenceID() == CMDQUEUE_GRAPHICS ? "gfx" : m_rPool.GetFenceID() == CMDQUEUE_COMPUTE ? "cmp" : "cpy",
-	         m_rPool.GetSubmittedFenceValue());
+		DX12_LOG(DX12_CONCURRENCY_ANALYZER, "######################################## END [%s %lld] CL ########################################",
+			m_rPool.GetFenceID() == CMDQUEUE_GRAPHICS ? "gfx" : m_rPool.GetFenceID() == CMDQUEUE_COMPUTE ? "cmp" : "cpy",
+			m_rPool.GetSubmittedFenceValue());
+	}
+
+	m_eState = CLSTATE_SUBMITTED;
 }
 
 void CCommandList::Clear()
@@ -180,10 +251,10 @@ void CCommandList::Clear()
 
 bool CCommandList::Reset()
 {
+	HRESULT ret = S_OK;
+
 	if (IsUtilized())
 	{
-		HRESULT ret = 0;
-
 		// reset the allocator before the list re-occupies it, otherwise the whole state of the allocator starts leaking
 		if (m_pCmdAllocator)
 		{
@@ -198,7 +269,7 @@ bool CCommandList::Reset()
 
 	m_eState = CLSTATE_FREE;
 	m_nCommands = 0;
-	return true;
+	return ret == S_OK;
 }
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -332,7 +403,7 @@ bool CCommandList::IsFull(size_t numResources, size_t numSamplers, size_t numRen
 //---------------------------------------------------------------------------------------------------------------------
 void CCommandList::SetGraphicsRootSignature(const CRootSignature* pRootSignature, const D3D12_GPU_VIRTUAL_ADDRESS (&vConstViews)[8 /*CB_PER_FRAME*/])
 {
-	DX12_ASSERT(pRootSignature);
+	DX12_ASSERT(pRootSignature, "Graphics Root-Signature is nullptr");
 
 	const SResourceMappings& rm = pRootSignature->GetResourceMappings();
 	const CD3DX12_ROOT_PARAMETER* pTableInfo = rm.m_RootParameters;
@@ -364,7 +435,7 @@ void CCommandList::SetGraphicsRootSignature(const CRootSignature* pRootSignature
 
 void CCommandList::SetGraphicsDescriptorTables(const CRootSignature* pRootSignature, D3D12_DESCRIPTOR_HEAP_TYPE eType)
 {
-	DX12_ASSERT(pRootSignature);
+	DX12_ASSERT(pRootSignature, "Graphics Root-Signature is nullptr");
 
 	const SResourceMappings& rm = pRootSignature->GetResourceMappings();
 	const CD3DX12_ROOT_PARAMETER* pTableInfo = rm.m_RootParameters;
@@ -388,7 +459,7 @@ void CCommandList::SetGraphicsDescriptorTables(const CRootSignature* pRootSignat
 //---------------------------------------------------------------------------------------------------------------------
 void CCommandList::SetComputeRootSignature(const CRootSignature* pRootSignature, const D3D12_GPU_VIRTUAL_ADDRESS (&vConstViews)[8 /*CB_PER_FRAME*/])
 {
-	DX12_ASSERT(pRootSignature);
+	DX12_ASSERT(pRootSignature, "Graphics Root-Signature is nullptr");
 
 	const SResourceMappings& rm = pRootSignature->GetResourceMappings();
 	const CD3DX12_ROOT_PARAMETER* pTableInfo = rm.m_RootParameters;
@@ -420,7 +491,7 @@ void CCommandList::SetComputeRootSignature(const CRootSignature* pRootSignature,
 
 void CCommandList::SetComputeDescriptorTables(const CRootSignature* pRootSignature, D3D12_DESCRIPTOR_HEAP_TYPE eType)
 {
-	DX12_ASSERT(pRootSignature);
+	DX12_ASSERT(pRootSignature, "Graphics Root-Signature is nullptr");
 
 	const SResourceMappings& rm = pRootSignature->GetResourceMappings();
 	const CD3DX12_ROOT_PARAMETER* pTableInfo = rm.m_RootParameters;
@@ -467,101 +538,17 @@ void CCommandList::BindDepthStencilView(const CView& dsv)
 }
 
 //---------------------------------------------------------------------------------------------------------------------
-CResource& CCommandList::PatchRenderTarget(CResource& assumedResource)
+
+bool CCommandList::PresentSwapChain(CSwapChain* pDX12SwapChain)
 {
-#ifdef DX12_REPLACE_BACKBUFFER
-	// Check if we bind a back-buffer as render-target
-	if (CSwapChain* pSwapChain = assumedResource.GetDX12SwapChain())
-	{
-		// Wait until the previous Present() has been executed, to make the swap-chain progress to the next back-buffer
-		// NOTE: this is not a CPU-GPU sync-point, it syncs the asynchronous command queue with the submission-thread
-		m_rPool.GetAsyncCommandQueue().FlushNextPresent();
-		DX12_ASSERT(!pSwapChain->IsPresentScheduled(), "Flush didn't dry out all outstanding Present() calls!");
+	CResource& pBB = pDX12SwapChain->GetCurrentBackBuffer(); pBB.VerifyBackBuffer(true);
 
-		return pSwapChain->GetCurrentBackBuffer();
-	}
-#endif // DX12_REPLACE_BACKBUFFER
-
-	return assumedResource;
-}
-
-const CView& CCommandList::PatchRenderTargetView(const CView& assumedView)
-{
-#ifdef DX12_REPLACE_BACKBUFFER
-	CResource& assumedResource = assumedView.GetDX12Resource();
-
-	// Check if we bind a back-buffer as render-target
-	if (CSwapChain* pSwapChain = assumedResource.GetDX12SwapChain())
-	{
-		// Wait until the previous Present() has been executed, to make the swap-chain progress to the next back-buffer
-		// NOTE: this is not a CPU-GPU sync-point, it syncs the asynchronous command queue with the submission-thread
-		m_rPool.GetAsyncCommandQueue().FlushNextPresent();
-		DX12_ASSERT(!pSwapChain->IsPresentScheduled(), "Flush didn't dry out all outstanding Present() calls!");
-
-		CView& rtv = pSwapChain->GetCurrentBackBufferView(true);
-
-	#if 1
-		// Cache the view (breaks CView immutability)
-		if (INVALID_CPU_DESCRIPTOR_HANDLE == rtv.GetDescriptorHandle())
-		{
-			rtv.SetDescriptorHandle(GetDevice()->CacheRenderTargetView(&rtv.GetRTVDesc(), rtv.GetD3D12Resource()));
-		}
-	#else
-		DX12_ASSERT(INVALID_CPU_DESCRIPTOR_HANDLE != rtv.GetDescriptorHandle(), "RTV has no descriptor set, this is not supported!");
-	#endif
-
-		return rtv;
-	}
-#endif // DX12_REPLACE_BACKBUFFER
-
-	return assumedView;
-}
-
-const CView& CCommandList::PatchShaderResourceView(const CView& assumedView)
-{
-#ifdef DX12_REPLACE_BACKBUFFER
-	CResource& assumedResource = assumedView.GetDX12Resource();
-
-	// Check if we bind a back-buffer as render-target
-	if (CSwapChain* pSwapChain = assumedResource.GetDX12SwapChain())
-	{
-		// Wait until the previous Present() has been executed, to make the swap-chain progress to the next back-buffer
-		// NOTE: this is not a CPU-GPU sync-point, it syncs the asynchronous command queue with the submission-thread
-		m_rPool.GetAsyncCommandQueue().FlushNextPresent();
-		DX12_ASSERT(!pSwapChain->IsPresentScheduled(), "Flush didn't dry out all outstanding Present() calls!");
-
-		CView& srv = pSwapChain->GetCurrentBackBufferView(false);
-
-	#if 1
-		// Cache the view (breaks CView immutability)
-		if (INVALID_CPU_DESCRIPTOR_HANDLE == srv.GetDescriptorHandle())
-		{
-			srv.SetDescriptorHandle(GetDevice()->CacheShaderResourceView(&srv.GetSRVDesc(), srv.GetD3D12Resource()));
-		}
-	#else
-		DX12_ASSERT(INVALID_CPU_DESCRIPTOR_HANDLE != srv.GetDescriptorHandle(), "SRV has no descriptor set, this is not supported!");
-	#endif
-
-		return srv;
-	}
-#endif // DX12_REPLACE_BACKBUFFER
-
-	return assumedView;
-}
-
-bool CCommandList::PresentRenderTargetView(CView& rtv)
-{
-	if (SetResourceState(rtv.GetDX12Resource(), D3D12_RESOURCE_STATE_PRESENT) != D3D12_RESOURCE_STATE_PRESENT)
+	if (SetResourceState(pBB, D3D12_RESOURCE_STATE_PRESENT) != D3D12_RESOURCE_STATE_PRESENT)
 	{
 		return true;
 	}
 
 	return false;
-}
-
-bool CCommandList::PresentRenderTargetView(CSwapChain* pDX12SwapChain)
-{
-	return PresentRenderTargetView(pDX12SwapChain->GetCurrentBackBufferView(true));
 }
 
 void CCommandList::BindRenderTargetView(const CView& rtv)
@@ -600,10 +587,9 @@ void CCommandList::BindUnorderedAccessView(const CView& uav)
 }
 
 //---------------------------------------------------------------------------------------------------------------------
-void CCommandList::BindResourceView(const CView& assumedview, const TRange<UINT>& bindRange, D3D12_CPU_DESCRIPTOR_HANDLE dstHandle)
+void CCommandList::BindResourceView(const CView& view, const TRange<UINT>& bindRange, D3D12_CPU_DESCRIPTOR_HANDLE dstHandle)
 {
-	const CView& view = PatchShaderResourceView(assumedview);
-	CResource& resource = view.GetDX12Resource();
+	CResource& resource = view.GetDX12Resource(); resource.VerifyBackBuffer(false);
 
 	switch (view.GetType())
 	{
@@ -662,25 +648,25 @@ void CCommandList::BindResourceView(const CView& assumedview, const TRange<UINT>
 		break;
 
 	case EVT_DepthStencilView:
-		DX12_ASSERT(0, "Unsupported DSV creation for input!");
+		DX12_ERROR("Unsupported DSV creation for input!");
 
 		TrackResourceDSVUsage(resource, view);
 		break;
 
 	case EVT_RenderTargetView:
-		DX12_ASSERT(0, "Unsupported RTV creation for input!");
+		DX12_ERROR("Unsupported RTV creation for input!");
 
 		TrackResourceRTVUsage(resource, view);
 		break;
 
 	case EVT_VertexBufferView:
-		DX12_ASSERT(0, "Unsupported VSV creation for input!");
+		DX12_ERROR("Unsupported VSV creation for input!");
 
 		TrackResourceVBVUsage(resource);
 		break;
 
 	default:
-		DX12_ASSERT(0, "Unsupported resource-type for input!");
+		DX12_ERROR("Unsupported resource-type for input!");
 		break;
 	}
 }
@@ -818,7 +804,7 @@ void CCommandList::ClearDepthStencilView(const CView& view, D3D12_CLEAR_FLAGS cl
 	// TODO: if we know early that the resource(s) will be PRESENT we can begin the barrier early and end it here
 	TrackResourceDSVUsage(resource, view);
 
-#if !defined(RELEASE) && defined(_DEBUG) && 0 // will break a lot currently, won't really be coherent in the future
+#if !defined(RELEASE) && defined(_DEBUG) // will break a lot currently, won't really be coherent in the future
 	UINT len = 512;
 	char str[512] = "-";
 	UINT cen = 20;
@@ -839,17 +825,16 @@ void CCommandList::ClearDepthStencilView(const CView& view, D3D12_CLEAR_FLAGS cl
 	m_nCommands += CLCOUNT_CLEAR;
 }
 
-void CCommandList::ClearRenderTargetView(const CView& assumedview, const FLOAT rgba[4], UINT NumRects, const D3D12_RECT* pRect)
+void CCommandList::ClearRenderTargetView(const CView& view, const FLOAT rgba[4], UINT NumRects, const D3D12_RECT* pRect)
 {
-	DX12_ASSERT(INVALID_CPU_DESCRIPTOR_HANDLE != assumedview.GetDescriptorHandle(), "View has no descriptor handle, that is not allowed!");
+	DX12_ASSERT(INVALID_CPU_DESCRIPTOR_HANDLE != view.GetDescriptorHandle(), "View has no descriptor handle, that is not allowed!");
 
-	const CView& view = PatchRenderTargetView(assumedview);
-	CResource& resource = view.GetDX12Resource();
+	CResource& resource = view.GetDX12Resource(); resource.VerifyBackBuffer(true);
 
 	// TODO: if we know early that the resource(s) will be PRESENT we can begin the barrier early and end it here
 	TrackResourceRTVUsage(resource, view);
 
-#if !defined(RELEASE) && defined(_DEBUG) && 0 // will break a lot currently, won't really be coherent in the future
+#if !defined(RELEASE) && defined(_DEBUG) // will break a lot currently, won't really be coherent in the future
 	UINT len = 512;
 	char str[512] = "-";
 	UINT cen = 20;
@@ -920,9 +905,26 @@ void CCommandList::ClearView(const CView& view, const FLOAT rgba[4], UINT NumRec
 	case EVT_ConstantBufferView:
 	case EVT_VertexBufferView:
 	default:
-		DX12_ASSERT(0, "Unsupported resource-type for input!");
+		DX12_ERROR("Unsupported resource-type for input!");
 		break;
 	}
+}
+
+//---------------------------------------------------------------------------------------------------------------------
+void CCommandList::CopyTextureRegion(const D3D12_TEXTURE_COPY_LOCATION* pDst, UINT DstX, UINT DstY, UINT DstZ, const D3D12_TEXTURE_COPY_LOCATION* pSrc, const D3D12_BOX* pSrcBox)
+{
+	PendingResourceBarriers();
+
+	m_pCmdList->CopyTextureRegion(pDst, DstX, DstY, DstZ, pSrc, pSrcBox);
+	m_nCommands += CLCOUNT_COPY;
+}
+
+void CCommandList::CopyResource(ID3D12Resource* pDstResource, ID3D12Resource* pSrcResource)
+{
+	PendingResourceBarriers();
+
+	m_pCmdList->CopyResource(pDstResource, pSrcResource);
+	m_nCommands += CLCOUNT_COPY;
 }
 
 //---------------------------------------------------------------------------------------------------------------------
@@ -934,8 +936,8 @@ void CCommandList::CopyResource(CResource& rDstResource, CResource& rSrcResource
 	MaxResourceFenceValue(rSrcResource, CMDTYPE_WRITE);
 
 	// TODO: if we know early that the resource(s) will be DEST and SOURCE we can begin the barrier early and end it here
-	D3D12_RESOURCE_STATES prevDstState = SetResourceState(rDstResource, D3D12_RESOURCE_STATE_COPY_DEST);        // compatible with D3D12_HEAP_TYPE_READBACK's D3D12_RESOURCE_STATE_COPY_DEST requirement
-	D3D12_RESOURCE_STATES prevSrcState = SetResourceState(rSrcResource, D3D12_RESOURCE_STATE_COPY_SOURCE);      // compatible with D3D12_HEAP_TYPE_UPLOAD's D3D12_RESOURCE_STATE_GENERIC_READ requirement
+	/*D3D12_RESOURCE_STATES prevDstState = */SetResourceState(rDstResource, D3D12_RESOURCE_STATE_COPY_DEST);        // compatible with D3D12_HEAP_TYPE_READBACK's D3D12_RESOURCE_STATE_COPY_DEST requirement
+	/*D3D12_RESOURCE_STATES prevSrcState = */SetResourceState(rSrcResource, D3D12_RESOURCE_STATE_COPY_SOURCE);      // compatible with D3D12_HEAP_TYPE_UPLOAD's D3D12_RESOURCE_STATE_GENERIC_READ requirement
 
 	PendingResourceBarriers();
 
@@ -961,8 +963,8 @@ void CCommandList::CopySubresources(CResource& rDstResource, UINT dstSubResource
 	MaxResourceFenceValue(rSrcResource, CMDTYPE_WRITE);
 
 	// TODO: if we know early that the resource(s) will be DEST and SOURCE we can begin the barrier early and end it here
-	D3D12_RESOURCE_STATES prevDstState = SetResourceState(rDstResource, D3D12_RESOURCE_STATE_COPY_DEST);        // compatible with D3D12_HEAP_TYPE_READBACK's D3D12_RESOURCE_STATE_COPY_DEST requirement
-	D3D12_RESOURCE_STATES prevSrcState = SetResourceState(rSrcResource, D3D12_RESOURCE_STATE_COPY_SOURCE);      // compatible with D3D12_HEAP_TYPE_UPLOAD's D3D12_RESOURCE_STATE_GENERIC_READ requirement
+	/*D3D12_RESOURCE_STATES prevDstState = */SetResourceState(rDstResource, D3D12_RESOURCE_STATE_COPY_DEST);        // compatible with D3D12_HEAP_TYPE_READBACK's D3D12_RESOURCE_STATE_COPY_DEST requirement
+	/*D3D12_RESOURCE_STATES prevSrcState = */SetResourceState(rSrcResource, D3D12_RESOURCE_STATE_COPY_SOURCE);      // compatible with D3D12_HEAP_TYPE_UPLOAD's D3D12_RESOURCE_STATE_GENERIC_READ requirement
 
 	PendingResourceBarriers();
 
@@ -976,13 +978,65 @@ void CCommandList::CopySubresources(CResource& rDstResource, UINT dstSubResource
 	}
 	else if (rSrcResource.GetDesc().Dimension != D3D12_RESOURCE_DIMENSION_BUFFER && rDstResource.GetDesc().Dimension != D3D12_RESOURCE_DIMENSION_BUFFER)
 	{
-		for (UINT n = 0; n < NumSubresources; ++n)
+		if (NumSubresources <= 1)
 		{
-			CD3DX12_TEXTURE_COPY_LOCATION src(rSrcResource.GetD3D12Resource(), srcSubResource + n);
-			CD3DX12_TEXTURE_COPY_LOCATION dst(rDstResource.GetD3D12Resource(), dstSubResource + n);
+			CD3DX12_TEXTURE_COPY_LOCATION src(rSrcResource.GetD3D12Resource(), srcSubResource);
+			CD3DX12_TEXTURE_COPY_LOCATION dst(rDstResource.GetD3D12Resource(), dstSubResource);
 
 			m_pCmdList->CopyTextureRegion(&dst, x, y, z, &src, srcBox);
 			m_nCommands += CLCOUNT_COPY;
+		}
+		else
+		{
+			D3D12_RESOURCE_DESC srcDesc = rSrcResource.GetDesc();
+			D3D12_RESOURCE_DESC dstDesc = rDstResource.GetDesc();
+			D3D12_BOX srcBoxBck = { 0 };
+			D3D12_BOX srcRegion = { 0 };
+			D3D12_BOX dstRegion = { x, y, z };
+			if (srcBox)
+			{
+				srcBoxBck = *srcBox;
+				srcRegion = *srcBox;
+				srcBox = &srcRegion;
+			}
+
+			// NOTE: too complex case which is not supported as it leads to fe. [slice,mip] sequences like [0,4],[0,5],[0,6],[1,0],[1,1],...
+			// which we don't support because the offsets and dimensions are relative to a intermediate mip-level, while crossing the
+			// slice-boundary forces us to extrapolate dimensions to larger mips, which is probably not what is wanted in the first place.
+			DX12_ASSERT(!srcDesc.MipLevels || (srcSubResource / srcDesc.MipLevels == (srcSubResource + NumSubresources - 1) / srcDesc.MipLevels));
+			DX12_ASSERT(!dstDesc.MipLevels || (dstSubResource / dstDesc.MipLevels == (dstSubResource + NumSubresources - 1) / dstDesc.MipLevels));
+
+			for (UINT n = 0; n < NumSubresources; ++n)
+			{
+				const UINT srcSlice = (srcSubResource + n) / (srcDesc.MipLevels);
+				const UINT dstSlice = (dstSubResource + n) / (dstDesc.MipLevels);
+				const UINT srcLevel = (srcSubResource + n) % (srcDesc.MipLevels);
+				const UINT dstLevel = (dstSubResource + n) % (dstDesc.MipLevels);
+
+				// reset dimensions/coordinates when crossing slice-boundary
+				if (!srcLevel)
+					srcRegion = srcBoxBck;
+				if (!dstLevel)
+					dstRegion = { x, y, z };
+
+				CD3DX12_TEXTURE_COPY_LOCATION src(rSrcResource.GetD3D12Resource(), srcSubResource + n);
+				CD3DX12_TEXTURE_COPY_LOCATION dst(rDstResource.GetD3D12Resource(), dstSubResource + n);
+
+				m_pCmdList->CopyTextureRegion(&dst, dstRegion.left, dstRegion.top, dstRegion.front, &src, srcBox);
+				m_nCommands += CLCOUNT_COPY;
+
+				srcRegion.left   >>= 1;
+				srcRegion.top    >>= 1;
+				srcRegion.front  >>= 1;
+
+				srcRegion.right  >>= 1; if (srcRegion.right  == srcRegion.left ) srcRegion.right  = srcRegion.left + 1;
+				srcRegion.bottom >>= 1; if (srcRegion.bottom == srcRegion.top  ) srcRegion.bottom = srcRegion.top  + 1;
+				srcRegion.back   >>= 1; if (srcRegion.back   == srcRegion.front) srcRegion.back   = srcRegion.front+ 1;
+				
+				dstRegion.left   >>= 1;
+				dstRegion.top    >>= 1;
+				dstRegion.front  >>= 1;
+			}
 		}
 	}
 	else if (rDstResource.GetDesc().Dimension != D3D12_RESOURCE_DIMENSION_BUFFER)
@@ -1026,7 +1080,7 @@ void CCommandList::UpdateSubresourceRegion(CResource& rResource, UINT subResourc
 	MaxResourceFenceValue(rResource, CMDTYPE_ANY);
 
 	// TODO: if we know early that the resource(s) will be DEST we can begin the barrier early and end it here
-	D3D12_RESOURCE_STATES prevDstState = SetResourceState(rResource, D3D12_RESOURCE_STATE_COPY_DEST);        // compatible with D3D12_HEAP_TYPE_READBACK's D3D12_RESOURCE_STATE_COPY_DEST requirement
+	/*D3D12_RESOURCE_STATES prevDstState = */SetResourceState(rResource, D3D12_RESOURCE_STATE_COPY_DEST);        // compatible with D3D12_HEAP_TYPE_READBACK's D3D12_RESOURCE_STATE_COPY_DEST requirement
 
 	ID3D12Resource* res12 = rResource.GetD3D12Resource();
 	const D3D12_RESOURCE_DESC& desc = rResource.GetDesc();
@@ -1051,6 +1105,7 @@ void CCommandList::UpdateSubresourceRegion(CResource& rResource, UINT subResourc
 	subData.SlicePitch = slicePitch;
 	assert(subData.pData != nullptr);
 
+	// NOTE: this is a staging resource, a single instance for all GPUs is valid
 	const NODE64& uploadMasks = rResource.GetNodeMasks();
 	if (S_OK != GetDevice()->CreateOrReuseCommittedResource(
 	      &CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD, blsi(uploadMasks.creationMask), uploadMasks.creationMask),
@@ -1058,7 +1113,7 @@ void CCommandList::UpdateSubresourceRegion(CResource& rResource, UINT subResourc
 	      &CD3DX12_RESOURCE_DESC::Buffer(uploadBufferSize),
 	      D3D12_RESOURCE_STATE_GENERIC_READ,
 	      nullptr,
-	      IID_PPV_ARGS(&uploadBuffer)))
+	      IID_GFX_ARGS(&uploadBuffer)))
 	{
 		DX12_ERROR("Could not create intermediate upload buffer!");
 		return;
@@ -1097,7 +1152,7 @@ void CCommandList::UpdateSubresources(CResource& rResource, D3D12_RESOURCE_STATE
 	      &CD3DX12_RESOURCE_DESC::Buffer(uploadBufferSize),
 	      D3D12_RESOURCE_STATE_GENERIC_READ,
 	      nullptr,
-	      IID_PPV_ARGS(&uploadBuffer)))
+	      IID_GFX_ARGS(&uploadBuffer)))
 	{
 		DX12_ERROR("Could not create intermediate upload buffer!");
 	}
@@ -1175,7 +1230,7 @@ bool CCommandListPool::Init(D3D12_COMMAND_LIST_TYPE eType, UINT nodeMask)
 		queueDesc.NodeMask = m_nodeMask = nodeMask;
 
 		ID3D12CommandQueue* pCmdQueue = NULL;
-		if (S_OK != m_pDevice->GetD3D12Device()->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&pCmdQueue)))
+		if (S_OK != m_pDevice->GetD3D12Device()->CreateCommandQueue(&queueDesc, IID_GFX_ARGS(&pCmdQueue)))
 		{
 			DX12_ERROR("Could not create command queue");
 			return false;
@@ -1278,12 +1333,7 @@ void CCommandListPool::CreateOrReuseCommandList(DX12_PTR(CCommandList)& result)
 		m_FreeCommandLists.pop_front();
 	}
 
-	// Increment fence on allocation, this has the effect that
-	// acquired CommandLists need to be submitted in-order to prevent
-	// dead-locking
-	SetCurrentFenceValue(GetCurrentFenceValue() + 1);
-
-	result->Init(GetCurrentFenceValue());
+	result->Register();
 	m_LiveCommandLists.push_back(result);
 
 #ifdef DX12_STATS
@@ -1308,9 +1358,11 @@ void CCommandListPool::ForfeitCommandList(DX12_PTR(CCommandList)& result, bool b
 	CryAutoLock<CryCriticalSectionNonRecursive> lThreadSafeScope(csThreadSafeScope);
 	DX12_PTR(CCommandList) pWaitable = result;
 
-	DX12_ASSERT(result->IsCompleted(), "It's not possible to forfeit an unclosed command list!");
-	result->Schedule();
-	result = nullptr;
+	{
+		DX12_ASSERT(result->IsCompleted(), "It's not possible to forfeit an unclosed command list!");
+		result->Schedule();
+		result = nullptr;
+	}
 
 	ScheduleCommandLists();
 
@@ -1335,7 +1387,8 @@ void CCommandListPool::ForfeitCommandLists(uint32 numCLs, DX12_PTR(CCommandList)
 	CryAutoLock<CryCriticalSectionNonRecursive> lThreadSafeScope(csThreadSafeScope);
 	DX12_PTR(CCommandList) pWaitable = results[numCLs - 1];
 
-	for (uint32 i = 0; i < numCLs; ++i)
+	int32 i = numCLs;
+	while (--i >= 0)
 	{
 		DX12_ASSERT(results[i]->IsCompleted(), "It's not possible to forfeit an unclosed command list!");
 		results[i]->Schedule();

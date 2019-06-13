@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -43,9 +43,6 @@ CTargetTrackGroup::CTargetTrackGroup(TargetTrackHelpers::ITargetTrackPoolProxy* 
 	assert(m_aiObjectId > 0);
 	assert(m_uConfigHash > 0);
 
-	CAISystem* pAISystem = GetAISystem();
-	assert(pAISystem);
-
 	CWeakRef<CAIObject> refAIObject = gAIEnv.pObjectContainer->GetWeakRef(aiObjectId);
 	const bool bAIObjectValid = refAIObject.IsValid();
 
@@ -62,7 +59,6 @@ CTargetTrackGroup::CTargetTrackGroup(TargetTrackHelpers::ITargetTrackPoolProxy* 
 #ifdef TARGET_TRACK_DEBUG
 	m_fLastGraphUpdate = 0.0f;
 	m_pDebugHistoryManager = gEnv->pGameFramework->CreateDebugHistoryManager();
-	assert(m_pDebugHistoryManager);
 
 	memset(m_bDebugGraphOccupied, 0, sizeof(m_bDebugGraphOccupied));
 #endif //TARGET_TRACK_DEBUG
@@ -81,7 +77,7 @@ CTargetTrackGroup::~CTargetTrackGroup()
 //////////////////////////////////////////////////////////////////////////
 void CTargetTrackGroup::Reset()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	// Add all active tracks back to the pool
 	TTargetTrackContainer::iterator itTrack = m_TargetTracks.begin();
@@ -99,7 +95,8 @@ void CTargetTrackGroup::Reset()
 	m_bNeedSort = false;
 
 #ifdef TARGET_TRACK_DEBUG
-	m_pDebugHistoryManager->Clear();
+	if (m_pDebugHistoryManager)
+		m_pDebugHistoryManager->Clear();
 #endif //TARGET_TRACK_DEBUG
 }
 
@@ -117,7 +114,7 @@ void CTargetTrackGroup::Serialize_Write(TSerialize ser)
 	{
 		tAIObjectID targetId = itTrack->first;
 		CTargetTrack* pTrack = itTrack->second;
-		assert(targetId > 0 && pTrack);
+		assert(pTrack);
 
 		ser.BeginGroup("Track");
 		{
@@ -148,7 +145,6 @@ void CTargetTrackGroup::Serialize_Read(TSerialize ser)
 		ser.BeginGroup("Track");
 		{
 			ser.Value("targetId", targetId);
-			assert(targetId != INVALID_AIOBJECTID);
 
 			CTargetTrack* pTrack = GetTargetTrack(targetId);
 			assert(pTrack);
@@ -182,7 +178,7 @@ void CTargetTrackGroup::InitDummy()
 //////////////////////////////////////////////////////////////////////////
 void CTargetTrackGroup::Update(TargetTrackHelpers::ITargetTrackConfigProxy* pConfigProxy)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	const float fCurrTime = GetAISystem()->GetFrameStartTimeSeconds();
 
@@ -259,11 +255,13 @@ CTargetTrack* CTargetTrackGroup::GetTargetTrack(tAIObjectID aiTargetId)
 				m_bDebugGraphOccupied[uDebugGraphIndex] = true;
 				pTrack->SetDebugGraphIndex(uDebugGraphIndex);
 
-				IDebugHistory* pDebugHistory = m_pDebugHistoryManager->CreateHistory(pTarget->GetName());
-				if (pDebugHistory)
+				if (m_pDebugHistoryManager)
 				{
-					pDebugHistory->SetVisibility(false);
-					pDebugHistory->SetupScopeExtent(-360.0f, 360.0f, 0.0f, 200.0f);
+					if (IDebugHistory* pDebugHistory = m_pDebugHistoryManager->CreateHistory(pTarget->GetName()))
+					{
+						pDebugHistory->SetVisibility(false);
+						pDebugHistory->SetupScopeExtent(-360.0f, 360.0f, 0.0f, 200.0f);
+					}
 				}
 			}
 		}
@@ -278,7 +276,7 @@ CTargetTrack* CTargetTrackGroup::GetTargetTrack(tAIObjectID aiTargetId)
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackGroup::HandleStimulusEvent(const TargetTrackHelpers::STargetTrackStimulusEvent& stimulusEvent, uint32 uStimulusNameHash)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	assert(!stimulusEvent.m_sStimulusName.empty());
 
@@ -288,7 +286,7 @@ bool CTargetTrackGroup::HandleStimulusEvent(const TargetTrackHelpers::STargetTra
 
 bool CTargetTrackGroup::TriggerPulse(tAIObjectID targetID, uint32 uStimulusNameHash, uint32 uPulseNameHash)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	bool bResult = false;
 
@@ -301,7 +299,7 @@ bool CTargetTrackGroup::TriggerPulse(tAIObjectID targetID, uint32 uStimulusNameH
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackGroup::TriggerPulse(uint32 uStimulusNameHash, uint32 uPulseNameHash)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	bool bResult = true;
 
@@ -321,7 +319,7 @@ bool CTargetTrackGroup::TriggerPulse(uint32 uStimulusNameHash, uint32 uPulseName
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackGroup::HandleStimulusEvent_All(const TargetTrackHelpers::STargetTrackStimulusEvent& stimulusEvent, uint32 uStimulusNameHash)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	bool bResult = true;
 
@@ -338,7 +336,7 @@ bool CTargetTrackGroup::HandleStimulusEvent_All(const TargetTrackHelpers::STarge
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackGroup::HandleStimulusEvent_Target(const TargetTrackHelpers::STargetTrackStimulusEvent& stimulusEvent, uint32 uStimulusNameHash, CTargetTrack* pTrack)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	assert(pTrack);
 
@@ -365,7 +363,7 @@ bool CTargetTrackGroup::IsDesiredTarget(tAIObjectID aiTargetId) const
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackGroup::GetDesiredTarget(TargetTrackHelpers::EDesiredTargetMethod eMethod, CWeakRef<CAIObject>& outTarget, SAIPotentialTarget*& pOutTargetInfo)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	bool bResult = false;
 
@@ -448,8 +446,8 @@ bool CTargetTrackGroup::TestTrackAgainstFilters(CTargetTrack* pTrack, TargetTrac
 	bool bResult = true;
 
 	// [Kevin:26.02.2010] Need a better method than using the track manager here...
-	CTargetTrackManager* pManager = gAIEnv.pTargetTrackManager;
-	assert(pManager);
+	//CTargetTrackManager* pManager = gAIEnv.pTargetTrackManager;
+	//assert(pManager);
 
 	const uint32 uFilterBitmask = eMethod & TargetTrackHelpers::eDTM_FILTER_MASK;
 
@@ -480,7 +478,7 @@ bool CTargetTrackGroup::TestTrackAgainstFilters(CTargetTrack* pTrack, TargetTrac
 //////////////////////////////////////////////////////////////////////////
 void CTargetTrackGroup::UpdateTargetRepresentation(const CTargetTrack* pBestTrack, CWeakRef<CAIObject>& outTarget, SAIPotentialTarget*& pOutTargetInfo)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CWeakRef<CAIObject> refTarget = pBestTrack->GetAITarget();
 
@@ -649,12 +647,14 @@ void CTargetTrackGroup::DebugDrawTracks(TargetTrackHelpers::ITargetTrackConfigPr
 				const uint32 uGraphY = uDebugGraphIndex / 4;
 
 				// Debug graph update
-				IDebugHistory* pDebugHistory = m_pDebugHistoryManager->GetHistory(pTarget->GetName());
-				if (pDebugHistory)
+				if (m_pDebugHistoryManager)
 				{
-					pDebugHistory->SetupLayoutAbs(fColumnGraphX + (fGraphWidth + fGraphMargin) * uGraphX, fColumnGraphY + (fGraphHeight + fGraphMargin) * uGraphY, fGraphWidth, fGraphHeight, fGraphMargin);
-					pDebugHistory->AddValue(pTrack->GetTrackValue());
-					pDebugHistory->SetVisibility(!bLastDraw);
+					if (IDebugHistory* pDebugHistory = m_pDebugHistoryManager->GetHistory(pTarget->GetName()))
+					{
+						pDebugHistory->SetupLayoutAbs(fColumnGraphX + (fGraphWidth + fGraphMargin) * uGraphX, fColumnGraphY + (fGraphHeight + fGraphMargin) * uGraphY, fGraphWidth, fGraphHeight, fGraphMargin);
+						pDebugHistory->AddValue(pTrack->GetTrackValue());
+						pDebugHistory->SetVisibility(!bLastDraw);
+					}
 				}
 			}
 		}
@@ -700,7 +700,6 @@ void CTargetTrackGroup::DebugDrawTargets(int nMode, int nTargetedCount, bool bEx
 
 		CWeakRef<CAIObject> refTarget = pTrack->GetAIObject();
 		assert(refTarget.IsValid());
-		CAIObject* pTarget = refTarget.GetAIObject();
 
 		switch (eType)
 		{

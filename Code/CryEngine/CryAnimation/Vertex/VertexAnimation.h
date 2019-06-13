@@ -1,8 +1,9 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <CryAnimation/IVertexAnimation.h>
+#include <CryRenderer/IShader.h>
 #include "VertexData.h"
 
 namespace Skeleton {
@@ -14,6 +15,7 @@ class CAttachmentSKIN;
 class CAttachmentVCLOTH;
 class CClothPiece;
 struct SSoftwareVertexFrame;
+struct SVertexAnimationJob;
 struct RecTangents;
 
 enum VA_FRAME_FLAGS
@@ -136,6 +138,8 @@ public:
 
 	void                         CreateFrameStates(const CSoftwareVertexFrames& vertexFrames, const CDefaultSkeleton& skeleton);
 	void                         UpdateFrameWeightsFromPose(const Skeleton::CPoseData& pose);
+
+	void                         DrawVertexDebug(IRenderMesh* pRenderMesh, const QuatT& location, const SVertexAnimationJob* pVertexAnimation) const;
 
 private:
 	bool CompileAdds(CVertexCommandBuffer& commandBuffer);

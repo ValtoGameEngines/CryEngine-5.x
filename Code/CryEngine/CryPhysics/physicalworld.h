@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef physicalworld_h
 #define physicalworld_h
@@ -26,6 +26,7 @@ struct le_precomp_entity;
 struct le_precomp_part;
 struct le_tmp_contact;
 enum { pef_step_requested = 0x40000000 };
+enum entity_query_flags_aux { ent_GEA_recursive = ent_reserved1, ent_GEA_external = ent_reserved2 };
 
 template <class T> T *CONTACT_END(T *const &pnext) { return (T*)((INT_PTR)&pnext-(INT_PTR)&((T*)0)->next); }
 
@@ -136,7 +137,82 @@ struct SThreadTaskRequest {
 	int *pbAllGroupsFinished;
 };
 
-//#define GRID_AXIS_STANDARD
+template<typename I,int offs,int size> struct bitfield { // signed int bitfield
+	I& data;
+	operator I() const { return (data << sizeof(I)*8-offs-size) >> sizeof(I)*8-size; } 
+	bitfield& operator=(I val) { (data &= ~(((I)1<<size)-1<<offs)) |= (val & ((I)1<<size)-1)<<offs; return *this; }
+};
+
+const int ISFREE = 1;
+const int IDBITS = 24;
+
+struct SEntityIdList {
+	CPhysicalPlaceholder **data = nullptr;
+	~SEntityIdList() { reset(); }
+	void reset() { delete[] data; data=nullptr; size=0; maxid=-1; idx0=((INT_PTR)1<<IDBITS*2)-1<<ISFREE|1; }
+	struct SFreeIndex {
+		SFreeIndex(INT_PTR *pidx) : next({*pidx}), prev({*pidx}) {}
+		bitfield<INT_PTR,ISFREE,IDBITS> next; // next_free_id = this_id+1+next
+		bitfield<INT_PTR,IDBITS+ISFREE,IDBITS> prev;	// prev_free_id = this_id-1-prev
+		bool isFree() const { return next.data==0 || next.data & 1; }
+		SFreeIndex& setFree() { next.data|=1; return *this; }
+	};
+	INT_PTR idx0 = ((INT_PTR)1<<IDBITS*2)-1<<ISFREE|1; // next,prev = -1
+	int size = 0, maxid = -1;
+	
+	SFreeIndex freeIdx(int id) { return SFreeIndex((unsigned int)id<size ? (INT_PTR*)data+id : &idx0); }
+	int findFreeIdx() { if (freeIdx(-1).next<0) alloc(); return freeIdx(-1).next; }
+	int getMaxId() const { return min(size-1,maxid); }
+	void alloc(int id=0) {
+		int szold = size;
+		ReallocateList(data,szold,size=max(id+32767 & ~32767,size+32768),true);
+		freeIdx(size-1).next = freeIdx(-1).next-size;	// [last_new_id].next_free = prev_first_free
+		freeIdx(szold).prev = szold; // [first_new_id].prev_free = -1
+		freeIdx(size-1).setFree(); freeIdx(szold).setFree();
+		if (freeIdx(-1).next<0)
+			freeIdx(-1).prev = -1-size;	// last_free = last_new_id
+		freeIdx(-1).next = szold;	// first_free = first_new_id
+	}
+	bool validate() {
+		int iprev=-1, i, loop=0;
+		for(i=0;i<maxid;i++) if (!freeIdx(i).isFree())
+			data[i]->GetType();	// makes sure the pointer is not stale
+		for(i=freeIdx(iprev).next; i!=-1 && i-1-freeIdx(i).prev==iprev && loop<size+10; loop++,iprev=i,i+=1+freeIdx(i).next);
+		return i==-1;
+	}
+
+	struct SEntityIdListItem {
+		SEntityIdList &list;
+		int id;
+		operator CPhysicalPlaceholder*() { return id>=list.size || list.freeIdx(id).isFree() ? nullptr : list.data[id]; }
+		CPhysicalPlaceholder* operator->() const { return list.data[id]; }
+		SEntityIdListItem& operator=(CPhysicalPlaceholder *ptr) {
+			if (ptr) {
+				if (id>=list.size)
+					list.alloc(id);
+				auto idx = list.freeIdx(id);
+				if (idx.isFree()) {	// remove id from the free id list
+					int delta = idx.next+idx.prev+1;
+					list.freeIdx(id+1+idx.next).setFree().prev = delta;
+					list.freeIdx(id-1-idx.prev).setFree().next = delta;
+				}
+				list.maxid = max(list.maxid, id);
+				list.data[id] = ptr;
+			} else if ((unsigned int)id<list.size) {
+				auto idx = list.freeIdx(id);
+				idx.setFree();
+				SFreeIndex idx0(&list.idx0);
+				int delta = idx0.next-id-1;
+				list.freeIdx(idx0.next).prev = delta;	// [first_free].prev = id
+				idx.next = delta; // [id].next_free = first_free
+				idx.prev = id; // [id].prev_free = -1
+				idx0.next = id;	// first_free = id
+			}
+			return *this;
+		}
+	};
+	SEntityIdListItem operator[](int id) { return {*this,id}; }
+};
 
 #ifdef ENTGRID_2LEVEL
 struct pe_entgrid {
@@ -201,6 +277,70 @@ inline void DeallocateGrid(int *&grid, const Vec2i &size) { delete[] grid; }
 inline int GetGridSize(int *&grid, const Vec2i& size) { return (size.x*size.y+1)*sizeof(int); }
 #endif
 
+const int TRIGGER_PORTAL = 1<<9;
+const int TRIGGER_PORTAL_INV = 1<<10;
+inline int IsPortal(const CPhysicalPlaceholder *pobj) { return iszero(pobj->m_iSimClass-6) & pobj->m_iForeignFlags>>9; }
+inline int IsPortal(const pe_gridthunk &thunk) { return thunk.iSimClass==6 && thunk.pent->m_iForeignFlags & TRIGGER_PORTAL; }
+
+inline Vec3* transformBBox(const Vec3& ptmin, const Vec3& ptmax, Vec3* dstBBox, const QuatT& trans) {
+	Matrix33 R = Matrix33(trans.q);
+	Vec3 c = trans*((ptmin+ptmax)*0.5f), sz = R.Fabs()*(ptmax-ptmin)*0.5f;
+	dstBBox[0] = c-sz; dstBBox[1] = c+sz;
+	return dstBBox;
+}
+
+
+struct SEntityGrid : public CPhysicalPlaceholder, grid {
+	int iup;
+	float zGran,rzGran;
+	pe_entgrid cells;
+	pe_PODcell **pPODcells,dummyPODcell,*pDummyPODcell;
+	Vec2i PODstride;
+	int log2PODscale;
+	int bHasPODGrid,iActivePODCell0;
+
+	SEntityGrid *m_next,*m_prev;
+	QuatT m_transInHost,m_transW;
+	Vec3 m_velW;
+	Vec3 m_v, m_w, m_com;
+	float m_dvSleep2;
+	CPhysicalEntity *m_host;
+	QuatT GetUpdatedTransW();
+	Vec3 GetUpdatedVelW();
+
+	class CPhysicalWorld *m_pWorld = nullptr;
+	volatile mutable int m_refCount = 0;
+	virtual int AddRef() { return CryInterlockedIncrement(&m_refCount); }
+	virtual int Release();
+	virtual int SetParams(pe_params*, int bThreadSafe=1);
+	virtual int GetParams(pe_params*) const;
+
+	virtual pe_type GetType() const { return PE_GRID; }
+	void Init();
+	void Free() { if (cells) DeallocateGrid(cells,size); cells=0; if (m_host) m_host->Release(); m_host=0; }
+	void Setup(int axisz, Vec3 org, int nx,int ny, float stepx,float stepy, int log2PODscale, int bCyclic);
+	void DeactivateOnDemand();
+	void GetPODGridCellBBox(int ix,int iy, Vec3 &center,Vec3 &size) const;
+	void RegisterBBoxInPODGrid(const Vec3 *BBox, IPhysicsStreamer *pStreamer);
+	void UnregisterBBoxInPODGrid(const Vec3 *BBox);
+	int AddRefEntInPODGrid(IPhysicalEntity *_pent, const Vec3 *BBox);
+
+	pe_PODcell *getPODcell(int ix,int iy)	const {
+		int i, imask = ~negmask(ix) & ~negmask(iy) & negmask(ix - size.x) & negmask(iy - size.y);   // (x>=0 && x<m_entgrid.size.x) ? 0xffffffff : 0;
+		ix >>= log2PODscale; iy >>= log2PODscale;
+		i = (ix>>3)*PODstride.x + (iy>>3)*PODstride.y;
+		i = i + ((-1-i) & ~imask) & -bHasPODGrid;
+		INT_PTR pmask = -iszero((INT_PTR)pPODcells[i]);
+		pe_PODcell *pcell0 = (pe_PODcell*)(((INT_PTR)pPODcells[i] & ~pmask) + ((INT_PTR)pDummyPODcell & pmask));
+		imask &= -bHasPODGrid & ~pmask;
+		return pcell0 + ((ix&7)+((iy&7)<<3) & imask);
+	}
+	Vec3 vecToGrid(const Vec3& src) const { return src.GetPermutated(iup); }
+	Vec3 vecFromGrid(const Vec3& src) const { return src.GetPermutated(iup^1^iup>>1); }
+	void BBoxToGrid(const Vec3& ptmin, const Vec3& ptmax, Vec3* dst) const {	dst[0]=vecToGrid(ptmin-origin); dst[1]=vecToGrid(ptmax-origin); }
+	void BBoxFromGrid(const Vec3& ptmin, const Vec3& ptmax, Vec3* dst) const {	dst[0]=vecFromGrid(ptmin)+origin; dst[1]=vecFromGrid(ptmax)+origin; }
+};
+
 
 struct SPhysTask : public IThread {
 	SPhysTask(CPhysicalWorld *pWorld,int idx) { m_pWorld=pWorld; m_idx=idx; bStop=0; }
@@ -255,7 +395,8 @@ public:
 	virtual IGeomManager* GetGeomManager() { return this; }
 	virtual IPhysUtils* GetPhysUtils() { return this; }
 
-	virtual void SetupEntityGrid(int axisz, Vec3 org, int nx,int ny, float stepx,float stepy, int log2PODscale=0, int bCyclic=0);
+	virtual IPhysicalEntity* SetupEntityGrid(int axisz, Vec3 org, int nx,int ny, float stepx,float stepy, int log2PODscale=0, int bCyclic=0, 
+		IPhysicalEntity* pHost=nullptr, const QuatT& posInHost=QuatT(IDENTITY));
 	virtual void Cleanup();
 	virtual void DeactivateOnDemandGrid();
 	virtual void RegisterBBoxInPODGrid(const Vec3 *BBox);
@@ -274,23 +415,12 @@ public:
 		float &ric_vel_reduction, unsigned int &flags);
 	virtual PhysicsVars *GetPhysVars() { return &m_vars; }
 
-	void GetPODGridCellBBox(int ix,int iy, Vec3 &center,Vec3 &size);
-	pe_PODcell *getPODcell(int ix,int iy)	{
-		int i, imask = ~negmask(ix) & ~negmask(iy) & negmask(ix - m_entgrid.size.x) & negmask(iy - m_entgrid.size.y);   // (x>=0 && x<m_entgrid.size.x) ? 0xffffffff : 0;
-		ix >>= m_log2PODscale; iy >>= m_log2PODscale;
-		i = (ix>>3)*m_PODstride.x + (iy>>3)*m_PODstride.y;
-		i = i + ((-1-i) & ~imask) & -m_bHasPODGrid;
-		INT_PTR pmask = -iszero((INT_PTR)m_pPODCells[i]);
-		pe_PODcell *pcell0 = (pe_PODcell*)(((INT_PTR)m_pPODCells[i] & ~pmask) + ((INT_PTR)m_pDummyPODcell & pmask));
-		imask &= -m_bHasPODGrid & ~pmask;
-		return pcell0 + ((ix&7)+((iy&7)<<3) & imask);
-	}
-
 	void InitGThunksPool();
 	void AllocGThunksPool( int nNewSize );
 	void DeallocGThunksPool();
 	void FlushOldThunks();
 	void SortThunks();
+	int GetFreeThunk();
 
 	virtual IPhysicalEntity* CreatePhysicalEntity(pe_type type, pe_params* params=0, void *pForeignData=0,int iForeignData=0, int id=-1, IGeneralMemoryHeap* pHeap = NULL)
 	{ return CreatePhysicalEntity(type,0.0f,params,pForeignData,iForeignData,id, NULL, pHeap); }
@@ -307,6 +437,7 @@ public:
 		int iChunk; for(iChunk=0; iChunk<m_nPlaceholderChunks && (unsigned int)(pent-m_pPlaceholders[iChunk])>=(unsigned int)PLACEHOLDER_CHUNK_SZ; iChunk++);
 		return iChunk<m_nPlaceholderChunks ? (iChunk<<PLACEHOLDER_CHUNK_SZLG2 | (int)(pent-m_pPlaceholders[iChunk]))+1 : 0;
 	}
+	virtual IPhysicalEntity* ClonePhysicalEntity(IPhysicalEntity *src, bool regInWorld=true, int newId=-1);
 
 	virtual void TimeStep(float time_interval, int flags=ent_all|ent_deleted);
 	virtual float GetPhysicsTime() { return m_timePhysics; }
@@ -366,11 +497,12 @@ public:
 	virtual int CollideEntityWithPrimitive(IPhysicalEntity *_pent, int itype, primitive *pprim, Vec3 dir, ray_hit *phit, intersection_params* pip=0);
 
 	virtual float PrimitiveWorldIntersection(const SPWIParams &pp, WriteLockCond *pLockContacts=0, const char *pNameTag="PrimitiveWorldIntersection");
-	virtual void RasterizeEntities(const grid3d& grid, uchar *rbuf, int objtypes, float massThreshold, const Vec3& offsBBox, const Vec3& sizeBBox, int flags);
+	virtual void RasterizeEntities(const grid3d& grid, uchar *rbuf, int objtypes, float massThreshold, const Vec3& offsBBox, const Vec3& sizeBBox, int flags, IPhysicalEntity *pentOnlyThis=nullptr);
 
 	virtual int GetEntitiesInBox(Vec3 ptmin,Vec3 ptmax, IPhysicalEntity **&pList, int objtypes, int szListPrealloc) {
-		WriteLock lock(m_lockCaller[MAX_PHYS_THREADS]);
-		return GetEntitiesAround(ptmin,ptmax, (CPhysicalEntity**&)pList, objtypes, 0, szListPrealloc, MAX_PHYS_THREADS);
+		int iCaller = get_iCaller(1);
+		WriteLock lock(m_lockCaller[iCaller]);
+		return GetEntitiesAround(ptmin,ptmax, (CPhysicalEntity**&)pList, objtypes, 0, szListPrealloc, iCaller);
 	}
 	int GetEntitiesAround(const Vec3 &ptmin,const Vec3 &ptmax, CPhysicalEntity **&pList, int objtypes, CPhysicalEntity *pPetitioner=0,
 		int szListPrealoc=0, int iCaller=get_iCaller());
@@ -396,8 +528,9 @@ public:
 			case PLOCK_WORLD_STEP: return &m_lockStep;
 			case PLOCK_QUEUE: return &m_lockQueue;
 			case PLOCK_AREAS: return &m_lockAreas;
+			case PLOCK_TRACE_PENDING_RAYS: return &m_lockTPR;
 			default:
-				if ((unsigned int)(idx-PLOCK_CALLER0)<=(unsigned int)MAX_PHYS_THREADS)
+				if ((unsigned int)(idx-PLOCK_CALLER0)<(unsigned int)MAX_TOT_THREADS)
 					return m_lockCaller+(idx-PLOCK_CALLER0);
 		}
 		return 0;
@@ -440,14 +573,15 @@ public:
 		}
 		return res;
 	}
-	template<class Etype> int SignalEvent(Etype *pEvent, int bLogged) {
+	int SignalEvent(EventPhys *pEvent, int bLogged) {
 		int nres = 0;
 		EventClient *pClient;
 		ReadLock lock(m_lockEventClients);
-		for(pClient = m_pEventClients[Etype::id][bLogged]; pClient; pClient=pClient->next)
+		for(pClient = m_pEventClients[pEvent->idval][bLogged]; pClient; pClient=pClient->next)
 			nres += pClient->OnEvent(pEvent);
 		return nres;
 	}
+	virtual int NotifyEventClients(EventPhys *pEvent, int bLogged) { return SignalEvent(pEvent,bLogged); }
 
 	virtual int SerializeWorld(const char *fname, int bSave);
 	virtual int SerializeGeometries(const char *fname, int bSave);
@@ -533,11 +667,10 @@ public:
 
 	int GetTmpEntList(CPhysicalEntity **&pEntList, int iCaller)	{
 		INT_PTR plist = (INT_PTR)m_threadData[iCaller].pTmpEntList;
-		int is0=iCaller-1>>31, isN=MAX_PHYS_THREADS-iCaller-1>>31;
+		INT_PTR is0=-iszero(iCaller);
 		plist += (INT_PTR)m_pTmpEntList -plist & is0;
-		plist += (INT_PTR)m_pTmpEntList2-plist & isN;
 		m_threadData[iCaller].pTmpEntList = (CPhysicalEntity**)plist;
-		m_threadData[iCaller].szList += m_nEntsAlloc-m_threadData[iCaller].szList & (is0|isN);
+		m_threadData[iCaller].szList += m_nEntsAlloc-m_threadData[iCaller].szList & is0;
 		pEntList = m_threadData[iCaller].pTmpEntList;
 		return m_threadData[iCaller].szList;
 	}
@@ -572,6 +705,7 @@ public:
 			case EventPhysBBoxOverlap::id       : { EventPhysBBoxOverlap *pLogged; OnEvent(EventPhysBBoxOverlap::flagsLog,(EventPhysBBoxOverlap*)event,&pLogged); return pLogged; }
 			case EventPhysCollision::id         : { EventPhysCollision *pLogged; OnEvent(EventPhysCollision::flagsLog,(EventPhysCollision*)event,&pLogged); return pLogged; }
 			case EventPhysStateChange::id       : { EventPhysStateChange *pLogged; OnEvent(EventPhysStateChange::flagsLog,(EventPhysStateChange*)event,&pLogged); return pLogged; }
+			case EventPhysBBoxChange::id        : { EventPhysBBoxChange *pLogged; OnEvent(EventPhysBBoxChange::flagsLog,(EventPhysBBoxChange*)event,&pLogged); return pLogged; }
 			case EventPhysEnvChange::id         : { EventPhysEnvChange *pLogged; OnEvent(EventPhysEnvChange::flagsLog,(EventPhysEnvChange*)event,&pLogged); return pLogged; }
 			case EventPhysPostStep::id          : { EventPhysPostStep *pLogged; OnEvent(EventPhysPostStep::flagsLog,(EventPhysPostStep*)event,&pLogged); return pLogged; }
 			case EventPhysUpdateMesh::id        : { EventPhysUpdateMesh *pLogged; OnEvent(EventPhysUpdateMesh::flagsLog,(EventPhysUpdateMesh*)event,&pLogged); return pLogged; }
@@ -658,46 +792,59 @@ public:
 	IPhysRenderer *m_pRenderer;
 
 	CPhysicalEntity *m_pTypedEnts[8],*m_pTypedEntsPerm[8];
-	CPhysicalEntity **m_pTmpEntList,**m_pTmpEntList1,**m_pTmpEntList2;
+	CPhysicalEntity **m_pTmpEntList,**m_pTmpEntList1;
 	CPhysicalEntity *m_pHiddenEnts;
 	float *m_pGroupMass,*m_pMassList;
 	int *m_pGroupIds,*m_pGroupNums;
-	grid m_entgrid;
 
-#ifdef GRID_AXIS_STANDARD
-	static int const m_iEntAxisx = 0; static int const m_iEntAxisy = 1; static int const m_iEntAxisz = 2;
+	SEntityGrid m_entgrid;
+	SEntityGrid *m_pDeletedGrids = nullptr;
+#ifdef MULTI_GRID
+	SEntityGrid* GetGrid(const CPhysicalPlaceholder *pobj) { return pobj->m_pGrid; }
+	SEntityGrid* GetGrid(const IPhysicalEntity *pIEnt) { return pIEnt!=WORLD_ENTITY ? GetGrid((CPhysicalPlaceholder*)pIEnt) : &m_entgrid; }
+	SEntityGrid* SetGrid(CPhysicalPlaceholder *pobj, SEntityGrid *pgrid) { SEntityGrid *pgridPrev=GetGrid(pobj); pobj->m_pGrid=pgrid; return pgridPrev; }
+	SEntityGrid* GetHostedGrid(const CPhysicalEntity *pent) { 
+		return pent->m_pOuterEntity && pent->m_pOuterEntity->GetType()==PE_GRID ? static_cast<SEntityGrid*>((IPhysicalEntity*)pent->m_pOuterEntity) : nullptr;
+	}
+	template<typename Rot,typename Tdst> QuatT TransformToGrid(const CPhysicalPlaceholder *src, const Tdst *dst, Vec3 &offs, Rot &rot) {
+		if (GetGrid(src) != GetGrid(dst)) {
+			QuatT diff = GetGrid(dst)->m_transW.GetInverted()*GetGrid(src)->m_transW;
+			rot = Rot(diff.q)*rot;
+			offs = diff*offs;
+			return diff;
+		}
+		return QuatT(IDENTITY);
+	}
 #else
-	int m_iEntAxisx, m_iEntAxisy, m_iEntAxisz;
+	template<typename T> SEntityGrid* GetGrid(const T *pobj) { return &m_entgrid; }
+	SEntityGrid* SetGrid(CPhysicalPlaceholder *pobj, SEntityGrid *pgrid) { return &m_entgrid; }
+	SEntityGrid* GetHostedGrid(const CPhysicalEntity *pent) { return nullptr; }
+	template<typename Rot,typename Tdst> QuatT TransformToGrid(const CPhysicalPlaceholder *src, const Tdst *dst, Vec3 &offs, Rot &rot) { return QuatT(IDENTITY); }
 #endif
+	void UnlockGrid(CPhysicalPlaceholder *pobj, int val=-WRITE_LOCK_VAL) { AtomicAdd(&m_lockGrid, val); }
+	void SyncPortal(CPhysicalPlaceholder *portal);
+	SEntityGrid* DestroyGrid(SEntityGrid *pgrid);	// returns pgrid->m_next
 
-	float m_zGran,m_rzGran;
-	pe_entgrid m_pEntGrid;
 	pe_gridthunk *m_gthunks;
 	int m_thunkPoolSz,m_iFreeGThunk0;
 	pe_gridthunk *m_oldThunks;
 	volatile int m_lockOldThunks;
-	pe_PODcell **m_pPODCells,m_dummyPODcell,*m_pDummyPODcell;
-	Vec2i m_PODstride;
-	int m_log2PODscale;
-	int m_bHasPODGrid,m_iActivePODCell0;
 	int m_nEnts,m_nEntsAlloc;
 	int m_nDynamicEntitiesDeleted;
-	CPhysicalPlaceholder **m_pEntsById;
-	int m_nIdsAlloc, m_iNextId;
-	int m_iNextIdDown,m_lastExtId,m_nExtIds;
+	SEntityIdList m_pEntsById;
 	int m_bGridThunksChanged;
 	int m_bUpdateOnlyFlagged;
 	int m_nTypeEnts[10];
 	int m_bEntityCountReserved;
 #ifndef _RELEASE
-	volatile int m_nGEA[MAX_PHYS_THREADS+1];
+	volatile int m_nGEA[MAX_TOT_THREADS];
 #endif
 	int m_nEntListAllocs;
 	int m_nOnDemandListFailures;
 	int m_iLastPODUpdate;
-	Vec3 m_prevGEABBox[MAX_PHYS_THREADS+1][2];
-	int m_prevGEAobjtypes[MAX_PHYS_THREADS+1];
-	int m_nprevGEAEnts[MAX_PHYS_THREADS+1];
+	Vec3 m_prevGEABBox[MAX_TOT_THREADS][2];
+	int m_prevGEAobjtypes[MAX_TOT_THREADS];
+	int m_nprevGEAEnts[MAX_TOT_THREADS];
 
 	int m_nPlaceholders,m_nPlaceholderChunks,m_iLastPlaceholder;
 	CPhysicalPlaceholder **m_pPlaceholders;
@@ -712,7 +859,7 @@ public:
 	Vec3 *m_pExplVictimsImp;
 	int m_nExplVictims,m_nExplVictimsAlloc;
 
-	CPhysicalEntity *m_pHeightfield[MAX_PHYS_THREADS+2];
+	CPhysicalEntity *m_pHeightfield[MAX_TOT_THREADS+1];
 	Matrix33 m_HeightfieldBasis;
 	Vec3 m_HeightfieldOrigin;
 
@@ -799,9 +946,9 @@ public:
 
 	SThreadTaskRequest m_rq;
 	CryEvent m_threadStart[MAX_PHYS_THREADS],m_threadDone[MAX_PHYS_THREADS];
-	SThreadData m_threadData[MAX_PHYS_THREADS+1];
+	SThreadData m_threadData[MAX_TOT_THREADS];
 	SPhysTask *m_threads[MAX_PHYS_THREADS];
-	Vec3 m_BBoxPlayerGroup[MAX_PHYS_THREADS+1][2];
+	Vec3 m_BBoxPlayerGroup[MAX_TOT_THREADS][2];
 	int m_nGroups;
 	float m_maxGroupMass;
 	volatile int m_nWorkerThreads;
@@ -812,9 +959,10 @@ public:
 	volatile int m_lockMovedEntsList;
 	volatile int m_lockPlayerGroups;
 
+	volatile int m_lockGrid;
 	volatile int m_lockPODGrid;
 	volatile int m_lockEntIdList;
-	volatile int m_lockStep,m_lockGrid, m_lockCaller[MAX_PHYS_THREADS+1],m_lockQueue,m_lockList;
+	volatile int m_lockStep, m_lockCaller[MAX_TOT_THREADS],m_lockQueue,m_lockList;
 	volatile int m_lockAreas;
 	volatile int m_lockActiveAreas;
 	volatile int m_lockEventsQueue,m_iLastLogPump, m_lockEventClients;
@@ -830,6 +978,48 @@ public:
 	volatile int m_lockWaterMan;
 };
 
+#ifdef MULTI_GRID
+template<typename Tdst> inline QuatT GridTrans(const CPhysicalPlaceholder *pentSrc, const Tdst *pentDst) {
+	return pentDst->m_pWorld->GetGrid(pentDst)->m_transW.GetInverted() * pentDst->m_pWorld->GetGrid(pentSrc)->m_transW;
+}
+#else
+template<typename Tdst> inline QuatT GridTrans(const CPhysicalPlaceholder *pentSrc, const Tdst *pentDst) { return QuatT(IDENTITY); }
+#endif
+
+template<typename Rot> inline void CPhysicalEntity::GetPartTransform(int ipart, Vec3 &offs, Rot &R, float &scale, const CPhysicalPlaceholder *trg) const 
+{
+	R = Rot(m_pNewCoords->q*m_parts[ipart].pNewCoords->q);
+	offs = m_pNewCoords->q*m_parts[ipart].pNewCoords->pos + m_pNewCoords->pos;
+	scale = m_parts[ipart].scale;
+	m_pWorld->TransformToGrid(this,trg, offs,R);
+}
+
+template<typename CTrg> inline Vec3* CPhysicalEntity::GetPartBBox(int ipart, Vec3* BBox, const CTrg *trg) const 
+{	
+	if (m_pWorld->GetGrid(this)==m_pWorld->GetGrid(trg))
+		return m_parts[ipart].BBox; 
+	QuatT trans = GridTrans(this,trg);
+	return transformBBox(m_parts[ipart].BBox[0], m_parts[ipart].BBox[1], BBox, trans);
+}
+
+inline RigidBody *CPhysicalEntity::GetRigidBodyTrans(RigidBody *pbody, int ipart, CPhysicalEntity *trg, int type, bool needIinv)
+{
+	RigidBody *pbodySrc = type==2 ? GetRigidBodyData(pbody,ipart) : GetRigidBody(ipart,type&1);
+	if (m_pWorld->GetGrid(this)==m_pWorld->GetGrid(trg))
+		return pbodySrc;
+	QuatT trans = GridTrans(this,trg);
+	pbody->v = trans.q*pbodySrc->v;
+	pbody->w = trans.q*pbodySrc->w;
+	pbody->pos = trans*pbodySrc->pos;
+	pbody->M=pbodySrc->M; pbody->Minv=pbodySrc->Minv;
+	if (needIinv)	{
+		pbody->flags = 0;
+		pbody->Iinv = Matrix33(trans.q)*pbodySrc->Iinv*Matrix33(!trans.q);
+	}
+	return pbody;
+}
+
+
 const int PHYS_FOREIGN_ID_PHYS_AREA = 12;
 
 class CRY_ALIGN(128) CPhysArea : public CPhysicalPlaceholder {
@@ -837,6 +1027,7 @@ public:
 	CPhysArea(CPhysicalWorld *pWorld);
 	~CPhysArea();
 	virtual pe_type GetType() const { return PE_AREA; }
+	virtual bool IsPlaceholder() const { return false; }
 	virtual CPhysicalEntity *GetEntity();
 	virtual CPhysicalEntity *GetEntityFast() { return GetEntity(); }
 	virtual int AddRef() { return CryInterlockedIncrement(&m_lockRef); }
@@ -863,7 +1054,7 @@ public:
 	static int OnBBoxOverlap(const EventPhysBBoxOverlap*);
 
 	float GetExtent(EGeomForm eForm) const;
-	void GetRandomPos(PosNorm& ran, CRndGen& seed, EGeomForm eForm) const;
+	void GetRandomPoints(Array<PosNorm> points, CRndGen& seed, EGeomForm eForm) const;
 
 	virtual void GetMemoryStatistics(ICrySizer *pSizer) const;
 
@@ -978,6 +1169,12 @@ struct CBlockProfiler {
 	~CBlockProfiler() { m_time = CryGetTicks()-m_time; }
 };
 
+template<class T> inline QuatT InputGridTrans(const T* input, const CPhysicalEntity *trg) {
+	return !is_unused(input->pGridRefEnt) && input->pGridRefEnt && trg->m_pWorld->GetGrid(trg)!=trg->m_pWorld->GetGrid(input->pGridRefEnt) ?
+		trg->m_pWorld->GetGrid(trg)->m_transW.GetInverted() * trg->m_pWorld->GetGrid(input->pGridRefEnt)->m_transW :
+		QuatT(IDENTITY);
+}
+
 template<class T> inline bool StructChangesPos(T*) { return false; }
 inline bool StructChangesPos(pe_params *params) {
 	pe_params_pos *pp = (pe_params_pos*)params;
@@ -989,11 +1186,11 @@ inline void OnStructQueued(pe_geomparams *params, CPhysicalWorld *pWorld, void *
 
 template<class T> struct ChangeRequest {
 	CPhysicalWorld *m_pWorld;
-	int m_bQueued,m_bLocked,m_bLockedCaller;
+	int m_bQueued,m_bLocked,m_bLockedCaller,m_iCaller;
 	T *m_pQueued;
 
 	ChangeRequest(CPhysicalPlaceholder *pent, CPhysicalWorld *pWorld, T *params, int bInactive, void *ptrAux=0,int iAux=0) :
-	m_pWorld(pWorld),m_bQueued(0),m_bLocked(0),m_bLockedCaller(0)
+	m_pWorld(pWorld),m_bQueued(0),m_bLocked(0),m_bLockedCaller(0),m_iCaller(MAX_PHYS_THREADS)
 	{
 		if (pent->m_iSimClass==-1 && ((CPhysicalEntity*)pent)->m_iDeletionTime==3)
 			bInactive |= bInactive-1>>31;
@@ -1004,9 +1201,10 @@ template<class T> struct ChangeRequest {
 		if (bInactive<=0) {
 			int isPODthread;
 			int isProcessed = 0;
+			m_iCaller = get_iCaller();
 			while (!isProcessed) {
 				if (m_pWorld->m_lockStep || m_pWorld->m_lockTPR || pent->m_bProcessed>=PENT_QUEUED || bInactive<0 ||
-						!(isPODthread=IsPODThread(m_pWorld)) && m_pWorld->m_lockCaller[MAX_PHYS_THREADS])
+						!(isPODthread=IsPODThread(m_pWorld)) && m_pWorld->m_lockCaller[m_iCaller])
 				{
 					subref *psubref;
 					int szSubref,szTot;
@@ -1037,15 +1235,15 @@ template<class T> struct ChangeRequest {
 					m_bQueued = 1;
 					isProcessed = 1;
 				}	else {
-					if (!isPODthread) {
-						if (AtomicCAS(&m_pWorld->m_lockCaller[MAX_PHYS_THREADS], WRITE_LOCK_VAL, 0)) {
+					if (!isPODthread && m_iCaller>=MAX_PHYS_THREADS) {
+						if (AtomicCAS(&m_pWorld->m_lockCaller[m_iCaller], WRITE_LOCK_VAL, 0)) {
 							continue;
 						}
 						m_bLockedCaller = WRITE_LOCK_VAL;
 					}
 					if (AtomicCAS(&m_pWorld->m_lockStep, WRITE_LOCK_VAL, 0)) {
-						if (!isPODthread) {
-							AtomicAdd(&m_pWorld->m_lockCaller[MAX_PHYS_THREADS], -m_bLockedCaller);
+						if (!isPODthread && m_iCaller>=MAX_PHYS_THREADS) {
+							AtomicAdd(&m_pWorld->m_lockCaller[m_iCaller], -m_bLockedCaller);
 							m_bLockedCaller=0;
 						}
 						continue;
@@ -1058,12 +1256,19 @@ template<class T> struct ChangeRequest {
 		if (StructChangesPos(params) && !(pent->m_bProcessed & PENT_SETPOSED))
 			AtomicAdd(&pent->m_bProcessed, PENT_SETPOSED);
 	}
-	~ChangeRequest() { AtomicAdd(&m_pWorld->m_lockStep,-m_bLocked);AtomicAdd(&m_pWorld->m_lockCaller[MAX_PHYS_THREADS],-m_bLockedCaller); }
+	~ChangeRequest() { AtomicAdd(&m_pWorld->m_lockStep,-m_bLocked);AtomicAdd(&m_pWorld->m_lockCaller[m_iCaller],-m_bLockedCaller); }
 	int IsQueued() { return m_bQueued; }
 	T *GetQueuedStruct() { return m_pQueued; }
 };
 
-
+inline void InitEventBase(EventPhysMono *ev, CPhysicalEntity *pent)	{
+	ev->pEntity = pent; ev->pForeignData = pent->m_pForeignData; ev->iForeignData = pent->m_iForeignData;
+}
+inline void InitEvent(EventPhysPostStep *ev, CPhysicalEntity *pent, int iCaller)	{
+	InitEventBase((EventPhysMono*)ev, pent);
+	ev->pGrid = pent->m_pWorld->GetGrid(pent);
+	ev->iCaller = iCaller;
+}
 
 class CRayGeom;
 struct geom_contact;

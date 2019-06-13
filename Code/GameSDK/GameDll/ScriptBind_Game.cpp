@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -32,8 +32,9 @@ History:
 #include "GamePhysicsSettings.h"
 
 #include <GameObjects/GameObject.h>
+#include <CryRenderer/IRenderAuxGeom.h>
 
-#if CRY_PLATFORM_WINDOWS && CRY_PLATFORM_64BIT
+#if CRY_PLATFORM_WINDOWS
 	#pragma warning(disable: 4244)
 #endif
 

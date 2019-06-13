@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   stdafx.h
@@ -93,8 +93,6 @@ const int nThreadsNum = 3;
 #include "terrain.h"
 #include "ObjectsTree.h"
 
-#include <CrySystem/Profilers/FrameProfiler/FrameProfiler_JobSystem.h>  // to be removed
-
 template<class T>
 void AddToPtr(byte*& pPtr, T& rObj, EEndian eEndian)
 {
@@ -177,7 +175,7 @@ struct TriangleIndex
 	uint16        nCull;
 };
 
-#define FUNCTION_PROFILER_3DENGINE FUNCTION_PROFILER(gEnv->pSystem, PROFILE_3DENGINE)
+#define FUNCTION_PROFILER_3DENGINE CRY_PROFILE_FUNCTION(PROFILE_3DENGINE)
 
 #if CRY_PLATFORM_DESKTOP
 	#define INCLUDE_SAVECGF

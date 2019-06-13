@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -27,6 +27,8 @@ Plays sounds for nearby actors
 #include "Utility/CryDebugLog.h"
 #include "GameRulesModules/GameRulesObjective_Predator.h"
 #include "GameRulesModules/IGameRulesRoundsModule.h"
+
+#include <CrySystem/ConsoleRegistration.h>
 
 #define DbgLog(...) CRY_DEBUG_LOG(BATTLECHATTER, __VA_ARGS__)
 #define DbgLogAlways(...) CRY_DEBUG_LOG_ALWAYS(BATTLECHATTER, __VA_ARGS__)
@@ -420,8 +422,6 @@ bool CBattlechatter::UpdateEvent(EBattlechatter& chatter, EntityId &actorId, IAc
 
 	if(pActor->IsPlayer() && m_clientPlayer)
 	{
-		CPlayer* pPlayer = static_cast<CPlayer*>(pActor);
-
 		EBattlechatter inChatter = chatter;	// cache chatter so tests are always done against original "parent" chatter rather than any new stealth/armour variants
 		CGameRules* pGameRules = g_pGame->GetGameRules();
 		

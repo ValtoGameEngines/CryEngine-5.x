@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 //
 ////////////////////////////////////////////////////////////////////////////
@@ -509,7 +509,6 @@ bool CActionScope::PlayPendingAnim(uint32 layer, float timePassed)
 	if ((sequencer.pos < sequencer.sequence.size()) || isBlendingOut)
 	{
 		uint8 fragPart = 0;
-		bool isTransition = false;
 		const SAnimationEntry* animation = NULL;
 		SAnimationEntry animNull;
 		animNull.animRef.SetByString(NULL);
@@ -861,12 +860,13 @@ void CActionScope::InstallProceduralClip(const SProceduralEntry& proc, int layer
 
 		if (procSeq.proceduralClip)
 		{
-			const char* contextName = procSeq.proceduralClip->GetContextName();
-
-			if (contextName)
+			const CryClassID& contextId = procSeq.proceduralClip->GetContextID();
+			if (contextId.hipart != 0 && contextId.lopart != 0)
 			{
-				IProceduralContext* context = m_actionController.FindOrCreateProceduralContext(contextName);
-				procSeq.proceduralClip->SetContext(context);
+				if (IProceduralContext* context = m_actionController.FindOrCreateProceduralContext(contextId))
+				{
+					procSeq.proceduralClip->SetContext(context);
+				}
 			}
 
 			IEntity* pEntity = gEnv->pEntitySystem->GetEntity(GetEntityId()); // TODO: Handle invalid entity!

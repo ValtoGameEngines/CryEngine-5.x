@@ -1,6 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
+//! \cond INTERNAL
 
 #pragma once
+
+#include <CryMath/Cry_Color.h>
 
 // These lines will enable AI signal profiling
 //#ifndef AI_LOG_SIGNALS
@@ -48,10 +52,10 @@ struct IAIRecorderListener
 {
 	// <interfuscator:shuffle>
 	virtual ~IAIRecorderListener(){}
-	virtual void OnRecordingStart(EAIRecorderMode mode, const char* filename) {};
-	virtual void OnRecordingStop(const char* filename)                        {};
-	virtual void OnRecordingLoaded(const char* filename)                      {};
-	virtual void OnRecordingSaved(const char* filename)                       {};
+	virtual void OnRecordingStart(EAIRecorderMode mode, const char* filename) {}
+	virtual void OnRecordingStop(const char* filename)                        {}
+	virtual void OnRecordingLoaded(const char* filename)                      {}
+	virtual void OnRecordingSaved(const char* filename)                       {}
 	// </interfuscator:shuffle>
 };
 
@@ -158,3 +162,5 @@ struct IAIDebugRecord
 	virtual IAIDebugStream* GetStream(IAIRecordable::e_AIDbgEvent streamTag) = 0;
 	// </interfuscator:shuffle>
 };
+
+//! \endcond

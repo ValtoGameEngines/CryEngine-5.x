@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "GameVolumesManager.h"
@@ -23,18 +23,21 @@ IGameVolumesEdit* CGameVolumesManager::GetEditorInterface()
 
 bool CGameVolumesManager::GetVolumeInfoForEntity(EntityId entityId, IGameVolumes::VolumeInfo* pOutInfo) const
 {
-	TEntityVolumes::const_iterator volumeIt = std::find(m_volumesData.begin(), m_volumesData.end(), entityId);
 
-	if (volumeIt != m_volumesData.end() && !(*volumeIt).vertices.empty())
+	TEntityToIndexMap::const_iterator indexIt = m_entityToIndexMap.find(entityId);
+	if (indexIt != m_entityToIndexMap.end())
 	{
-		const EntityVolume& entityVolume = *volumeIt;
+		const EntityVolume& entityVolume = m_volumesData[indexIt->second];
 
-		pOutInfo->volumeHeight = entityVolume.height;
-		pOutInfo->closed = entityVolume.closed;
-		pOutInfo->verticesCount = entityVolume.vertices.size();
-		pOutInfo->pVertices = &entityVolume.vertices[0];
+		if (!entityVolume.vertices.empty())
+		{
+			pOutInfo->volumeHeight = entityVolume.height;
+			pOutInfo->closed = entityVolume.closed;
+			pOutInfo->verticesCount = entityVolume.vertices.size();
+			pOutInfo->pVertices = &entityVolume.vertices[0];
 
-		return true;
+			return true;
+		}
 	}
 
 	return false;
@@ -59,7 +62,7 @@ void CGameVolumesManager::Load(const char* fileName)
 		file.ReadType(&nFileVersion);
 
 		// Verify version...
-		if ((nFileVersion >= 1) && (nFileVersion <= GAME_VOLUMES_FILE_VERSION))
+		if (nFileVersion == GAME_VOLUMES_FILE_VERSION)
 		{
 			const uint32 maxVertices = 512;
 			Vec3 readVertexBuffer[maxVertices];
@@ -75,11 +78,12 @@ void CGameVolumesManager::Load(const char* fileName)
 				EntityVolume& volumeInfo = m_volumesData[i];
 
 				uint32 nVertexCount = 0;
-				uint32 nEntityId = 0;
 				f32 fHeight = 0;
 				bool bClosed = false;
 
-				file.ReadType(&nEntityId);
+				file.ReadType(&volumeInfo.entityGUID.hipart);
+				file.ReadType(&volumeInfo.entityGUID.lopart);
+
 				file.ReadType(&fHeight);
 				if (nFileVersion > 1)
 				{
@@ -87,7 +91,6 @@ void CGameVolumesManager::Load(const char* fileName)
 				}
 				file.ReadType(&nVertexCount);
 
-				volumeInfo.entityId = (EntityId)nEntityId;
 				volumeInfo.height = fHeight;
 				volumeInfo.closed = bClosed;
 				volumeInfo.vertices.resize(nVertexCount);
@@ -113,22 +116,27 @@ void CGameVolumesManager::Load(const char* fileName)
 
 void CGameVolumesManager::Reset()
 {
+	stl::free_container(m_entityToIndexMap);
 	stl::free_container(m_volumesData);
 }
 
 void CGameVolumesManager::SetVolume(EntityId entityId, const IGameVolumes::VolumeInfo& volumeInfo)
 {
-	bool inserted = false;
+	IEntity* pEntity = gEnv->pEntitySystem->GetEntity(entityId);
+	CRY_ASSERT_MESSAGE(pEntity != nullptr, "Invalid entity for game volume passed in!");
+	if (pEntity == nullptr)
+		return;
 
-	TEntityVolumes::iterator volumeIt = std::find(m_volumesData.begin(), m_volumesData.end(), entityId);
-	if (volumeIt == m_volumesData.end())
+	TEntityToIndexMap::iterator indexIt = m_entityToIndexMap.find(entityId);
+	if (indexIt == m_entityToIndexMap.end())
 	{
+		m_entityToIndexMap[entityId] = static_cast<uint32>(m_volumesData.size());
 		m_volumesData.push_back(EntityVolume());
-		inserted = true;
+		indexIt = --m_entityToIndexMap.end();
 	}
 
-	EntityVolume& entityVolume = inserted ? m_volumesData.back() : *volumeIt;
-	entityVolume.entityId = entityId;
+	EntityVolume& entityVolume = m_volumesData[indexIt->second];
+	entityVolume.entityGUID = pEntity->GetGuid();
 	entityVolume.height = volumeInfo.volumeHeight;
 	entityVolume.closed = volumeInfo.closed;
 	entityVolume.vertices.resize(volumeInfo.verticesCount);
@@ -140,7 +148,14 @@ void CGameVolumesManager::SetVolume(EntityId entityId, const IGameVolumes::Volum
 
 void CGameVolumesManager::DestroyVolume(EntityId entityId)
 {
-	stl::find_and_erase(m_volumesData, entityId);
+	IEntity* pEntity = gEnv->pEntitySystem->GetEntity(entityId);
+	CRY_ASSERT_MESSAGE(pEntity != nullptr, "Attempting to destroy game volume for invalid entity!");
+
+	if (pEntity != nullptr)
+	{
+		stl::find_and_erase(m_volumesData, pEntity->GetGuid());
+		ResolveEntityIdsFromGUIDs(); // That's a bit costly, but it only happens in editor when a designer actually deletes a volume
+	}
 }
 
 void CGameVolumesManager::RegisterEntityClass(const char* className)
@@ -190,11 +205,11 @@ void CGameVolumesManager::Export(const char* fileName) const
 			CRY_ASSERT(volumeInfo.vertices.size() < maxVertices);
 
 			uint32 nVertexCount = min((uint32)volumeInfo.vertices.size(), maxVertices);
-			uint32 nEntityId = volumeInfo.entityId;
 			f32 fHeight = volumeInfo.height;
 			bool bClosed = volumeInfo.closed;
 
-			file.Write(&nEntityId, sizeof(nEntityId));
+			file.Write(&volumeInfo.entityGUID.hipart, sizeof(volumeInfo.entityGUID.hipart));
+			file.Write(&volumeInfo.entityGUID.lopart, sizeof(volumeInfo.entityGUID.lopart));
 			file.Write(&fHeight, sizeof(fHeight));
 			if (nFileVersion > 1)
 			{
@@ -213,5 +228,18 @@ void CGameVolumesManager::Export(const char* fileName) const
 		}
 
 		file.Close();
+	}
+}
+
+void CGameVolumesManager::ResolveEntityIdsFromGUIDs()
+{
+	m_entityToIndexMap.clear();
+	m_entityToIndexMap.reserve(m_volumesData.size());
+	const uint32 count = static_cast<uint32>(m_volumesData.size());
+	for (uint32 index = 0; index < count; ++index)
+	{
+		const EntityId entityId = gEnv->pEntitySystem->FindEntityByGuid(m_volumesData[index].entityGUID);
+		CRY_ASSERT(entityId != INVALID_ENTITYID);
+		m_entityToIndexMap[entityId] = index;
 	}
 }

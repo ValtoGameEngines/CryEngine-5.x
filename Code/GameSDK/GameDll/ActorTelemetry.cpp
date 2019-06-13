@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -20,6 +20,7 @@ History:
 #include "StatHelpers.h"
 #include "Weapon.h"
 #include "GameActions.h"
+#include <CryGame/GameUtils.h>
 
 static const float POSITION_DUMP_INTERVAL = 1.0f;
 static const float POSITION_THRESHOLD = 0.5f;
@@ -116,7 +117,7 @@ void CActorTelemetry::SetStatsTracker(IStatsTracker *inTracker)
 
 void CActorTelemetry::Update()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 #ifndef _RELEASE
 	if (m_statsTracker)
@@ -134,9 +135,7 @@ void CActorTelemetry::Update()
 	CStatsRecordingMgr* pMgr = g_pGame->GetStatsRecorder();
 	if(tracker && pOwner && pMgr)
 	{
-		IGameStatistics		*gs=g_pGame->GetIGameFramework()->GetIGameStatistics();
 		CTimeValue time = gEnv->pTimer->GetFrameStartTime(ITimer::ETIMER_UI);
-		assert(gs);
 
 		if (TimePassedCheck(m_lastPositionTime, time, POSITION_DUMP_INTERVAL) && pMgr->ShouldRecordEvent(eSE_Position, pOwnerRaw))
 		{

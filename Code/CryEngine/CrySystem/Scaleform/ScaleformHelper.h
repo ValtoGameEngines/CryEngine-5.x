@@ -1,3 +1,5 @@
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
 #pragma once
 #ifdef INCLUDE_SCALEFORM_SDK
 
@@ -18,6 +20,7 @@ class CScaleformHelper final : public IScaleformHelper
 public:
 	virtual bool Init() override
 	{
+		MEMSTAT_CONTEXT(EMemStatContextType::Other, "Init Scaleform Helper");
 		CFlashPlayer::InitCVars();
 		CSharedFlashPlayerResources::Init();
 		return true;
@@ -25,6 +28,7 @@ public:
 
 	virtual void Destroy() override
 	{
+		CSharedFlashPlayerResources::Shutdown();
 		delete this;
 	}
 
@@ -57,9 +61,9 @@ public:
 		CSharedFlashPlayerResources::GetAccess().ResetMeshCache();
 	}
 
-	virtual IFlashPlayer* CreateFlashPlayerInstance() override
+	virtual std::shared_ptr<IFlashPlayer> CreateFlashPlayerInstance() override
 	{
-		return new CFlashPlayer;
+		return std::make_shared<CFlashPlayer>();
 	}
 
 	virtual IFlashPlayerBootStrapper* CreateFlashPlayerBootStrapper() override

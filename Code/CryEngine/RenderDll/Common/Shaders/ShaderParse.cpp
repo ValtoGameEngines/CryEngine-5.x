@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*=============================================================================
    ShaderParse.cpp : implementation of the Shaders parser part of shaders manager.
@@ -169,8 +169,6 @@ SShaderGenBit* CShaderMan::mfCompileShaderGenProperty(char* scr)
 
 				if (!stricmp(data, "$HW_WaterTessellation"))
 					shgm->m_nDependencySet |= SHGD_HW_WATER_TESSELLATION;
-				else if (!stricmp(data, "$HW_SilhouettePom"))
-					shgm->m_nDependencySet |= SHGD_HW_SILHOUETTE_POM;
 				else if (!stricmp(data, "$UserEnabled"))
 					shgm->m_nDependencySet |= SHGD_USER_ENABLED;
 				else if (!stricmp(data, "$HW_DURANGO"))
@@ -179,10 +177,14 @@ SShaderGenBit* CShaderMan::mfCompileShaderGenProperty(char* scr)
 					shgm->m_nDependencySet |= SHGD_HW_ORBIS;
 				else if (!stricmp(data, "$HW_DX11"))
 					shgm->m_nDependencySet |= SHGD_HW_DX11;
+				else if (!stricmp(data, "$HW_DX12"))
+					shgm->m_nDependencySet |= SHGD_HW_DX12;
 				else if (!stricmp(data, "$HW_GL4"))
 					shgm->m_nDependencySet |= SHGD_HW_GL4;
 				else if (!stricmp(data, "$HW_GLES3"))
 					shgm->m_nDependencySet |= SHGD_HW_GLES3;
+				else if (!stricmp(data, "$HW_VULKAN"))
+					shgm->m_nDependencySet |= SHGD_HW_VULKAN;
 
 				// backwards compatible names
 				else if (!stricmp(data, "$TEX_Bump") || !stricmp(data, "TM_Bump"))
@@ -251,12 +253,12 @@ SShaderGenBit* CShaderMan::mfCompileShaderGenProperty(char* scr)
 
 				if (!stricmp(data, "$HW_WaterTessellation"))
 					shgm->m_nDependencyReset |= SHGD_HW_WATER_TESSELLATION;
-				else if (!stricmp(data, "$HW_SilhouettePom"))
-					shgm->m_nDependencyReset |= SHGD_HW_SILHOUETTE_POM;
 				else if (!stricmp(data, "$UserEnabled"))
 					shgm->m_nDependencyReset |= SHGD_USER_ENABLED;
 				else if (!stricmp(data, "$HW_DX11"))
 					shgm->m_nDependencyReset |= SHGD_HW_DX11;
+				else if (!stricmp(data, "$HW_DX12"))
+					shgm->m_nDependencyReset |= SHGD_HW_DX12;
 				else if (!stricmp(data, "$HW_GL4"))
 					shgm->m_nDependencyReset |= SHGD_HW_GL4;
 				else if (!stricmp(data, "$HW_GLES3"))
@@ -265,6 +267,8 @@ SShaderGenBit* CShaderMan::mfCompileShaderGenProperty(char* scr)
 					shgm->m_nDependencyReset |= SHGD_HW_DURANGO;
 				else if (!stricmp(data, "$HW_ORBIS"))
 					shgm->m_nDependencyReset |= SHGD_HW_ORBIS;
+				else if (!stricmp(data, "$HW_VULKAN"))
+					shgm->m_nDependencySet |= SHGD_HW_VULKAN;
 
 				// backwards compatible names
 				else if (!stricmp(data, "$TEX_Bump") || !stricmp(data, "TM_Bump"))
@@ -332,79 +336,6 @@ bool CShaderMan::mfCompileShaderGen(SShaderGen* shg, char* scr)
 	return shg->m_BitMask.Num() != 0;
 }
 
-void CShaderMan::mfCompileLevelsList(std::vector<string>& List, char* scr)
-{
-	char* name;
-	long cmd;
-	char* params;
-	char* data;
-
-	enum {eName = 1, eVersion};
-	static STokenDesc commands[] =
-	{
-		{ eName, "Name" },
-		{ 0,     0      }
-	};
-
-	while ((cmd = shGetObject(&scr, commands, &name, &params)) > 0)
-	{
-		data = NULL;
-		if (name)
-			data = name;
-		else if (params)
-			data = params;
-
-		switch (cmd)
-		{
-		case eName:
-			if (data && data[0])
-				List.push_back(string("Levels/") + string(data) + string("/"));
-			break;
-		}
-	}
-}
-
-bool CShaderMan::mfCompileShaderLevelPolicies(SShaderLevelPolicies* pPL, char* scr)
-{
-	char* name;
-	long cmd;
-	char* params;
-	char* data;
-
-	enum {eGlobalList = 1, ePerLevelList, eVersion};
-	static STokenDesc commands[] =
-	{
-		{ eGlobalList,   "GlobalList"   },
-		{ ePerLevelList, "PerLevelList" },
-		{ eVersion,      "Version"      },
-		{ 0,             0              }
-	};
-
-	while ((cmd = shGetObject(&scr, commands, &name, &params)) > 0)
-	{
-		data = NULL;
-		if (name)
-			data = name;
-		else if (params)
-			data = params;
-
-		switch (cmd)
-		{
-		case eGlobalList:
-			mfCompileLevelsList(pPL->m_WhiteGlobalList, params);
-			break;
-		case ePerLevelList:
-			mfCompileLevelsList(pPL->m_WhitePerLevelList, params);
-			break;
-
-		case eVersion:
-			break;
-		}
-	}
-
-	return pPL->m_WhiteGlobalList.size() != 0;
-}
-
 string CShaderMan::mfGetShaderBitNamesFromMaskGen(const char* szFileName, uint64 nMaskGen)
 {
 	// debug/helper function: returns ShaderGen bit names string based on nMaskGen
@@ -415,7 +346,6 @@ string CShaderMan::mfGetShaderBitNamesFromMaskGen(const char* szFileName, uint64
 	string pszShaderName = PathUtil::GetFileName(szFileName);
 	pszShaderName.MakeUpper();
 
-	uint64 nMaskGenRemaped = 0;
 	ShaderMapNameFlagsItor pShaderRmp = m_pShadersGlobalFlags.find(pszShaderName.c_str());
 	if (pShaderRmp == m_pShadersGlobalFlags.end() || !pShaderRmp->second)
 		return "NO_FLAGS";
@@ -468,8 +398,6 @@ void CShaderMan::mfRemapShaderGenInfoBits(const char* szName, SShaderGen* pShGen
 		MapNameFlagsItor pRemaped = m_pShaderCommonGlobalFlag.find(pGenBit->m_ParamName.c_str());
 		if (pRemaped != m_pShaderCommonGlobalFlag.end())
 			pGenBit->m_Mask = pRemaped->second;
-
-		int test = 2;
 	}
 }
 
@@ -573,7 +501,7 @@ uint64 CShaderMan::mfGetRemapedShaderMaskGen(const char* szName, uint64 nMaskGen
 				// found match - enable bit for remapped mask
 				if ((pIter->second) & nMask)
 				{
-					const char* pFlagName = pIter->first.c_str();
+					//const char* pFlagName = pIter->first.c_str();
 					MapNameFlagsItor pMatchIter = m_pShaderCommonGlobalFlag.find(pIter->first);
 					if (pMatchIter != m_pShaderCommonGlobalFlag.end())
 					{

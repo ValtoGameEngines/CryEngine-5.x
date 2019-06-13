@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __TURRET_SOUND_MANAGER__H__
 #define __TURRET_SOUND_MANAGER__H__
@@ -101,8 +101,8 @@ public:
 	void SetSoundParam( const size_t soundId, const char* const paramName, const float value )
 	{
 		assert( soundId < eTS_SoundCount );
-		const STurretSoundInfo& soundInfo = m_sounds[ soundId ];
-		/*_smart_ptr< ISound > pSound = m_pIEntityAudioComponent->GetSound( soundInfo.soundId );
+		/*const STurretSoundInfo& soundInfo = m_sounds[ soundId ];
+		_smart_ptr< ISound > pSound = m_pIEntityAudioComponent->GetSound( soundInfo.soundId );
 		if ( pSound )
 		{
 			const bool logError = false;
@@ -176,7 +176,12 @@ public:
 		ReleaseResources();
 	}
 
-	void ProcessEvent( SEntityEvent& event )
+	Cry::Entity::EventFlags GetEventMask() const
+	{
+		return ENTITY_EVENT_HIDE | ENTITY_EVENT_UNHIDE | ENTITY_EVENT_DEACTIVATED | ENTITY_EVENT_ACTIVATED;
+	}
+
+	void ProcessEvent( const SEntityEvent& event )
 	{
 		switch( event.event )
 		{

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef _GFILE_CRYPAK_H_
 #define _GFILE_CRYPAK_H_
@@ -16,6 +16,7 @@
 	#include <CrySystem/IStreamEngineDefs.h>
 
 struct ICryPak;
+struct IStreamEngine;
 
 class GFileCryPak : public GFile
 {

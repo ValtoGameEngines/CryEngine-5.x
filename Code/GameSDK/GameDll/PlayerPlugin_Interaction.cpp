@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -106,7 +106,7 @@ void CPlayerPlugin_Interaction::Update(float dt)
 {
 	assert (IsEntered());
 
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 #if defined(_DEBUG)
 	const SInteractionInfo& interactionInfo = m_ownerPlayer->GetCurrentInteractionInfo();
@@ -140,8 +140,6 @@ void CPlayerPlugin_Interaction::Update(float dt)
 
 void CPlayerPlugin_Interaction::UpdateAutoPickup()
 {
-	const Vec3 ownerPlayerPosition = m_ownerPlayer->GetEntity()->GetWorldPos();
-
 	CGameRules* pGameRules = g_pGame->GetGameRules();
 	IGameRulesObjectivesModule* pObjectives = pGameRules ? pGameRules->GetObjectivesModule() : NULL;
 
@@ -160,7 +158,6 @@ void CPlayerPlugin_Interaction::UpdateAutoPickup()
 			//auto pickup ammo
 			if(pItem != NULL && pInventory != NULL)
 			{
-				IEntityClass* pItemClass = pItem->GetEntity()->GetClass();
 				if (IsInventoryFullForWeapon(pInventory, pItem->GetIWeapon()))
 					inventoryFull = true;
 				if (CanAutoPickupAmmo(pItem))
@@ -669,7 +666,6 @@ bool CPlayerPlugin_Interaction::CanAutoPickupAmmo(CItem* pTargetItem) const
 	if (pTargetItem)
 	{
 		IEntity* pTargetEntity = pTargetItem->GetEntity();
-		IEntityClass* pTargetItemClass = pTargetEntity->GetClass();
 		
 		if (CanLocalPlayerSee(pTargetEntity))
 		{

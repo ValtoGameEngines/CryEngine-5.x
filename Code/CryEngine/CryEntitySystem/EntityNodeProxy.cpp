@@ -1,15 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   EntityNodeProxy.cpp
-//  Version:     v1.00
-//  Created:     23/11/2010 by Benjamin B.
-//  Description:
-// -------------------------------------------------------------------------
-//  History:	The EntityNodeProxy handles events that are specific to EntityNodes
-//						(e.g. Footsteps).
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "EntityNodeProxy.h"
@@ -19,11 +8,16 @@
 
 CRYREGISTER_CLASS(CEntityComponentTrackViewNode);
 
+CEntityComponentTrackViewNode::CEntityComponentTrackViewNode()
+{
+	m_componentFlags.Add(EEntityComponentFlags::NoSave);
+}
+
 void CEntityComponentTrackViewNode::Initialize()
 {
 }
 
-void CEntityComponentTrackViewNode::ProcessEvent(SEntityEvent& event)
+void CEntityComponentTrackViewNode::ProcessEvent(const SEntityEvent& event)
 {
 	switch (event.event)
 	{
@@ -81,7 +75,7 @@ void CEntityComponentTrackViewNode::ProcessEvent(SEntityEvent& event)
 }
 
 //////////////////////////////////////////////////////////////////////////
-uint64 CEntityComponentTrackViewNode::GetEventMask() const
+Cry::Entity::EventFlags CEntityComponentTrackViewNode::GetEventMask() const
 {
-	return BIT64(ENTITY_EVENT_ANIM_EVENT);
+	return ENTITY_EVENT_ANIM_EVENT;
 }

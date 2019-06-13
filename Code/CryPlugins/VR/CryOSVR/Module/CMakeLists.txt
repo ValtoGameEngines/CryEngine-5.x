@@ -28,18 +28,18 @@ add_sources("NoUberFile"
 end_sources()
 #END-FILE-LIST
 
-if (WIN64)
+if (WINDOWS)
 	CryEngineModule(CryOSVR PCH "StdAfx.cpp" SOLUTION_FOLDER "CryPlugins")
 
 	target_include_directories( ${THIS_PROJECT}
 	PRIVATE
-		${CRYENGINE_DIR}/Code/SDKs/OSVR/include
-		${CRYENGINE_DIR}/Code/CryEngine/CryCommon
+		"${CRYENGINE_DIR}/Code/SDKs/OSVR/include"
+		"${CRYENGINE_DIR}/Code/CryEngine/CryCommon"
 	PUBLIC
 		../Interface
 	)
 
 	find_library(osvrClientKit osvrClientKit PATHS "${SDK_DIR}/OSVR/lib")
 	find_library(osvrRenderManager osvrRenderManager PATHS "${SDK_DIR}/OSVR/lib")
-	target_link_libraries(${THIS_PROJECT} PRIVATE ${osvrClientKit} ${osvrRenderManager})
+	target_link_libraries(${THIS_PROJECT} PRIVATE "${osvrClientKit}" "${osvrRenderManager}")
 endif()

@@ -1,6 +1,7 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
+#include <CryRenderer/IRenderAuxGeom.h>
 #include "PoseModifier.h"
 
 #include "PoseModifierHelper.h"
@@ -37,7 +38,7 @@ public:
 	CRYINTERFACE_ADD(IAnimationSerializable)
 	CRYINTERFACE_END()
 
-	CRYGENERATE_CLASS(CConstraintPoint, "AnimationPoseModifier_ConstraintPoint", 0x705fd8b7906f42a1, 0xb7d6d5dee73d3b54)
+	CRYGENERATE_CLASS_GUID(CConstraintPoint, "AnimationPoseModifier_ConstraintPoint", "705fd8b7-906f-42a1-b7d6-d5dee73d3b54"_cry_guid)
 
 	CConstraintPoint();
 	virtual ~CConstraintPoint() {}
@@ -173,7 +174,7 @@ public:
 	CRYINTERFACE_ADD(IAnimationSerializable)
 	CRYINTERFACE_END()
 
-	CRYGENERATE_CLASS(CConstraintLine, "AnimationPoseModifier_ConstraintLine", 0x705fd8b7906f42d2, 0xb7d6d5dee73d3c64)
+	CRYGENERATE_CLASS_GUID(CConstraintLine, "AnimationPoseModifier_ConstraintLine", "705fd8b7-906f-42d2-b7d6-d5dee73d3c64"_cry_guid)
 
 	CConstraintLine();
 	virtual ~CConstraintLine() {}
@@ -281,8 +282,6 @@ bool CConstraintLine::Execute(const SAnimationPoseModifierParams& params)
 		weight *= clamp_tpl(pPoseData->GetJointRelative(m_weightNodeIndex).t.x, 0.0f, 1.0f);
 	}
 
-	const QuatT& nodeAbsolute = pPoseData->GetJointAbsolute(m_nodeIndex);
-
 	const QuatT& startPointAbsolute = pPoseData->GetJointAbsolute(m_startPointNodeIndex);
 	const Vec3 startPoint = startPointAbsolute.t + startPointAbsolute.q * m_desc.startPoint.localOffset + m_desc.startPoint.worldOffset;
 	const QuatT& endPointAbsolute = pPoseData->GetJointAbsolute(m_endPointNodeIndex);
@@ -323,7 +322,7 @@ public:
 	CRYINTERFACE_ADD(IAnimationSerializable)
 	CRYINTERFACE_END()
 
-	CRYGENERATE_CLASS(CConstraintAim, "AnimationPoseModifier_ConstraintAim", 0x9d07deeb5408413d, 0xad471fabc571f964)
+	CRYGENERATE_CLASS_GUID(CConstraintAim, "AnimationPoseModifier_ConstraintAim", "9d07deeb-5408-413d-ad47-1fabc571f964"_cry_guid)
 
 	CConstraintAim();
 	virtual ~CConstraintAim() {}
@@ -504,7 +503,7 @@ public:
 	CRYINTERFACE_ADD(IAnimationSerializable)
 	CRYINTERFACE_END()
 
-	CRYGENERATE_CLASS(CDrivenTwist, "AnimationPoseModifier_DrivenTwist", 0x4d9ef0061e064b8d, 0xb1a6d24fd84c599b)
+	CRYGENERATE_CLASS_GUID(CDrivenTwist, "AnimationPoseModifier_DrivenTwist", "4d9ef006-1e06-4b8d-b1a6-d24fd84c599b"_cry_guid)
 
 	CDrivenTwist();
 	virtual ~CDrivenTwist() {}
@@ -608,7 +607,7 @@ public:
 	CRYINTERFACE_ADD(IAnimationSerializable)
 	CRYINTERFACE_END()
 
-	CRYGENERATE_CLASS(CIk2Segments, "AnimationPoseModifier_Ik2Segments", 0x6a078d00c19441eb, 0xb8919c52d094076d);
+	CRYGENERATE_CLASS_GUID(CIk2Segments, "AnimationPoseModifier_Ik2Segments", "6a078d00-c194-41eb-b891-9c52d094076d"_cry_guid);
 
 	CIk2Segments();
 	virtual ~CIk2Segments() {}
@@ -821,7 +820,7 @@ public:
 	CRYINTERFACE_ADD(IAnimationSerializable)
 	CRYINTERFACE_END()
 
-	CRYGENERATE_CLASS(CIkCCD, "AnimationPoseModifier_IkCcd", 0x6a078d00c19441e2, 0xb8919c52d094076d);
+	CRYGENERATE_CLASS_GUID(CIkCCD, "AnimationPoseModifier_IkCcd", "6a078d00-c194-41e2-b891-9c52d094076d"_cry_guid);
 
 	CIkCCD();
 	virtual ~CIkCCD() {}
@@ -866,6 +865,9 @@ CIkCCD::CIkCCD() :
 	m_endNodeIndex(-1),
 	m_targetNodeIndex(-1),
 	m_weightNodeIndex(-1),
+	m_nIterations(0),
+	m_fStepSize(0),
+	m_fThreshold(0),
 	m_bInitialized(false),
 	m_bDraw(false)
 {
@@ -890,7 +892,7 @@ void CIkCCD::Draw(const QuatT& location, const QuatT& startAbsolute, const QuatT
 	ColorF pCol(0, 0.7f, 0);
 	Ang3 angles = Ang3(targetAbsolute.q);
 	pAuxGeom->Draw2dLabel(10, g_YLine+=12, 1.2f, pCol, false, "IkCCD %s -> %s:\t%d   Pos: %f  %f  %f   Rot: %f  %f  %f", m_desc.rootNode.name.c_str(), m_desc.endNode.name.c_str(), (uint8)(weight*100.0f), targetAbsolute.t.x, targetAbsolute.t.y, targetAbsolute.t.z, RAD2DEG(angles.x), RAD2DEG(angles.y), RAD2DEG(angles.z));
-	pAuxGeom->Flush();
+	pAuxGeom->Submit();
 }
 
 // IAnimationPoseModifier
@@ -936,7 +938,7 @@ bool CIkCCD::Prepare(const SAnimationPoseModifierParams& params)
 			m_arrJointChain.clear();
 		else
 		{
-			if (uint32 size = m_arrJointChain.size())
+			if (!m_arrJointChain.empty())
 			{
 				std::reverse(m_arrJointChain.begin(), m_arrJointChain.end());
 				m_bInitialized = true;
@@ -985,9 +987,8 @@ bool CIkCCD::Execute(const SAnimationPoseModifierParams& params)
 		weight *= clamp_tpl(pPoseData->GetJointRelative(m_weightNodeIndex).t.x, 0.0f, 1.0f);
 
 	f32 inumLinks = 1.0f / f32(numLinks);
-	int32 nRootIdx = m_arrJointChain[1];              //Root
 	int32 nEndEffIdx = m_arrJointChain[numLinks - 1]; //EndEffector
-	ANIM_ASSET_ASSERT(nRootIdx < nEndEffIdx);
+	ANIM_ASSET_ASSERT(m_arrJointChain[1] < nEndEffIdx);
 	int32 iJointIterator = 1;
 
 	// Cyclic Coordinate Descent
@@ -1105,7 +1106,7 @@ public:
 	CRYINTERFACE_ADD(IAnimationSerializable)
 	CRYINTERFACE_END()
 
-	CRYGENERATE_CLASS(CDynamicsSpring, "AnimationPoseModifier_DynamicsSpring", 0x92e070d5701b4f8a, 0xa76142e967579948)
+	CRYGENERATE_CLASS_GUID(CDynamicsSpring, "AnimationPoseModifier_DynamicsSpring", "92e070d5-701b-4f8a-a761-42e967579948"_cry_guid)
 
 	CDynamicsSpring();
 	virtual ~CDynamicsSpring() {}
@@ -1157,9 +1158,6 @@ void CDynamicsSpring::Draw(const Vec3& position)
 	IRenderAuxGeom* pAuxGeom = gEnv->pRenderer->GetIRenderAuxGeom();
 	if (!pAuxGeom)
 		return;
-
-	const float length = max(m_desc.length, 0.1f);
-	const Vec3 weightDirection = Vec3(0.0f, length, 0.0f).normalize();
 
 	SAuxGeomRenderFlags flags = gEnv->pRenderer->GetIRenderAuxGeom()->GetRenderFlags();
 	flags.SetDepthTestFlag(e_DepthTestOff);
@@ -1351,7 +1349,7 @@ public:
 	CRYINTERFACE_ADD(IAnimationSerializable)
 	CRYINTERFACE_END()
 
-	CRYGENERATE_CLASS(CDynamicsPendulum, "AnimationPoseModifier_DynamicsPendulum", 0xf6c1b4da5caf4b9e, 0xbb97c28f9f17b003)
+	CRYGENERATE_CLASS_GUID(CDynamicsPendulum, "AnimationPoseModifier_DynamicsPendulum", "f6c1b4da-5caf-4b9e-bb97-c28f9f17b003"_cry_guid)
 
 	CDynamicsPendulum();
 	virtual ~CDynamicsPendulum() {}
@@ -1603,8 +1601,6 @@ bool CDynamicsPendulum::Execute(const SAnimationPoseModifierParams& params)
 	if (m_runtimeDesc.nodeIndex >= pPoseData->GetJointCount())
 		return false;
 
-	const Skeleton::CPoseData& poseDataDefault = defaultSkeleton.m_poseDefaultData;
-
 	const float _30hz = 0.0333f;
 	const float _1000hz = 0.001f;
 	const float timeDelta = clamp_tpl(params.timeDelta, _1000hz, _30hz);
@@ -1726,7 +1722,7 @@ public:
 	CRYINTERFACE_ADD(IAnimationSerializable)
 	CRYINTERFACE_END()
 
-	CRYGENERATE_CLASS(CTransformBlender, "AnimationPoseModifier_TransformBlender", 0x92e070d5601b4f9a, 0xa76143e967579958)
+	CRYGENERATE_CLASS_GUID(CTransformBlender, "AnimationPoseModifier_TransformBlender", "92e070d5-601b-4f9a-a761-43e967579958"_cry_guid)
 
 	CTransformBlender();
 	virtual ~CTransformBlender() {}
@@ -1778,7 +1774,6 @@ void CTransformBlender::Draw(const QuatT& targetAbsolute, const QuatT& defaultAb
 	if (!pAuxGeom)
 		return;
 
-	SAuxGeomRenderFlags flags = gEnv->pRenderer->GetIRenderAuxGeom()->GetRenderFlags();
 	pAuxGeom->SetRenderFlags(e_Mode3D | e_AlphaBlended | e_DrawInFrontOn | e_FillModeSolid | e_CullModeNone | e_DepthWriteOff | e_DepthTestOff);
 
 	OBB obb;
@@ -2004,8 +1999,8 @@ void CPoseModifierStack::Synchronize()
 
 bool Serialize(Serialization::IArchive& ar, IAnimationPoseModifierPtr& pointer, const char* name, const char* label)
 {
-	Serialization::CryExtensionSharedPtr<IAnimationPoseModifier, IAnimationSerializable> serializer(pointer);
-	return ar(static_cast<Serialization::IPointer&>(serializer), name, label);
+	Serialization::CryExtensionPointer<IAnimationPoseModifier, IAnimationSerializable> serializer(pointer);
+	return ar(serializer, name, label);
 }
 
 void CPoseModifierSetup::Entry::Serialize(Serialization::IArchive& ar)
@@ -2014,7 +2009,7 @@ void CPoseModifierSetup::Entry::Serialize(Serialization::IArchive& ar)
 	if (!ar(instance, "instance", "^"))
 	{
 		// load old GUID-based name
-		CryClassID classId = { 0, 0 };
+		CryClassID classId = CryClassID::Null();
 		ar(classId.hipart, "guidHiPart");
 		ar(classId.lopart, "guidLoPart");
 		if (classId.hipart != 0 || classId.lopart != 0)

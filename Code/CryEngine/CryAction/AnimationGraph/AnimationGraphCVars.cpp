@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -17,6 +17,7 @@
 #include "AnimationGraphCVars.h"
 #include "../Animation/PoseAligner/PoseAligner.h"
 #include <CryAction.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 CAnimationGraphCVars* CAnimationGraphCVars::s_pThis = 0;
 
@@ -24,9 +25,6 @@ CAnimationGraphCVars::CAnimationGraphCVars()
 {
 	assert(s_pThis == 0);
 	s_pThis = this;
-
-	IConsole* pConsole = gEnv->pConsole;
-	assert(pConsole);
 
 	// TODO: remove once animation graph transition is complete
 	REGISTER_CVAR2("ag_debugExactPos", &m_debugExactPos, 0, VF_CHEAT, "Enable/disable exact positioning debugger");

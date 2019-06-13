@@ -1,7 +1,8 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "RuntimeAreaObject.h"
+#include <Cry3DEngine/ISurfaceType.h>
 
 CRuntimeAreaObject::TAudioControlMap CRuntimeAreaObject::m_audioControls;
 
@@ -42,7 +43,7 @@ bool CRuntimeAreaObject::NetSerialize(TSerialize ser, EEntityAspects aspect, uin
 }
 
 ///////////////////////////////////////////////////////////////////////////
-void CRuntimeAreaObject::ProcessEvent(SEntityEvent& entityEvent)
+void CRuntimeAreaObject::ProcessEvent(const SEntityEvent& entityEvent)
 {
 	switch (entityEvent.event)
 	{
@@ -93,6 +94,12 @@ void CRuntimeAreaObject::ProcessEvent(SEntityEvent& entityEvent)
 			break;
 		}
 	}
+}
+
+///////////////////////////////////////////////////////////////////////////
+Cry::Entity::EventFlags CRuntimeAreaObject::GetEventMask() const
+{
+	return ENTITY_EVENT_ENTERAREA | ENTITY_EVENT_LEAVEAREA | ENTITY_EVENT_MOVEINSIDEAREA;
 }
 
 ///////////////////////////////////////////////////////////////////////////

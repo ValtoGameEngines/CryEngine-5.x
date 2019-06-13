@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "GameObjects/GameObject.h"
@@ -107,7 +107,6 @@ void CGameObjectSystem::Reset()
 	}
 #endif //#if !defined(_RELEASE)
 
-	stl::free_container(m_tempObjects);
 	stl::free_container(m_postUpdateObjects);
 	stl::free_container(m_activatedExtensions_top);
 }
@@ -272,7 +271,7 @@ const char* CGameObjectSystem::GetName(ExtensionID id)
 
 void CGameObjectSystem::BroadcastEvent(const SGameObjectEvent& evt)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	//CryLog("BroadcastEvent called");
 
@@ -326,7 +325,7 @@ IGameObject* CGameObjectSystem::CreateGameObjectForEntity(EntityId entityId)
 	IEntity* pEntity = gEnv->pEntitySystem->GetEntity(entityId);
 	if (pEntity)
 	{
-		auto pGameObject = pEntity->CreateComponentClass<CGameObject>();
+		auto pGameObject = pEntity->GetOrCreateComponentClass<CGameObject>();
 
 		// call sink
 		for (SinkList::iterator si = m_lstSinks.begin(); si != m_lstSinks.end(); ++si)
@@ -342,7 +341,7 @@ IGameObject* CGameObjectSystem::CreateGameObjectForEntity(EntityId entityId)
 
 IEntityComponent* CGameObjectSystem::CreateGameObjectEntityProxy(IEntity& entity, IGameObject** ppGameObject)
 {
-	auto pGameObject = entity.CreateComponentClass<CGameObject>();
+	auto pGameObject = entity.GetOrCreateComponentClass<CGameObject>();
 	if (ppGameObject)
 	{
 		*ppGameObject = pGameObject;
@@ -350,7 +349,7 @@ IEntityComponent* CGameObjectSystem::CreateGameObjectEntityProxy(IEntity& entity
 	return pGameObject;
 }
 
-IGameObjectExtension* CGameObjectSystem::Instantiate(ExtensionID id, IGameObject* pObject, TSerialize* pSpawnSerializer)
+IGameObjectExtension* CGameObjectSystem::Instantiate(ExtensionID id, IGameObject* pObject)
 {
 	if (id > m_extensionInfo.size())
 		return nullptr;
@@ -359,9 +358,6 @@ IGameObjectExtension* CGameObjectSystem::Instantiate(ExtensionID id, IGameObject
 	IGameObjectExtension* pExt = m_extensionInfo[id].pFactory->Create(pEntity);
 	if (!pExt)
 		return nullptr;
-
-	if (pSpawnSerializer)
-		pExt->SerializeSpawnInfo(*pSpawnSerializer);
 
 	if (!pExt->Init(pObject))
 	{
@@ -374,7 +370,7 @@ IGameObjectExtension* CGameObjectSystem::Instantiate(ExtensionID id, IGameObject
 /* static */
 IEntityComponent* CGameObjectSystem::CreateGameObjectWithPreactivatedExtension(IEntity* pEntity, SEntitySpawnParams& params, void* pUserData)
 {
-	auto pGameObject = pEntity->CreateComponentClass<CGameObject>();
+	auto pGameObject = pEntity->GetOrCreateComponentClass<CGameObject>();
 	if (!pGameObject->ActivateExtension(params.pClass->GetName()))
 	{
 		pEntity->RemoveComponent(pGameObject);
@@ -401,19 +397,45 @@ IEntityComponent* CGameObjectSystem::CreateGameObjectWithPreactivatedExtension(I
 
 void CGameObjectSystem::PostUpdate(float frameTime)
 {
-	m_tempObjects = m_postUpdateObjects;
-	for (std::vector<IGameObject*>::const_iterator iter = m_tempObjects.begin(); iter != m_tempObjects.end(); ++iter)
+	m_isPostUpdating = true;
+
+	for(size_t i = 0, n = m_postUpdateObjects.size(); i < n;)
 	{
-		(*iter)->PostUpdate(frameTime);
+		if (m_postUpdateObjects[i] != nullptr)
+		{
+			m_postUpdateObjects[i]->PostUpdate(frameTime);
+			++i;
+		}
+		else
+		{
+			m_postUpdateObjects.erase(m_postUpdateObjects.begin() + i);
+		}
 	}
+
+	m_isPostUpdating = false;
 }
 
 void CGameObjectSystem::SetPostUpdate(IGameObject* pGameObject, bool enable)
 {
 	if (enable)
+	{
 		stl::push_back_unique(m_postUpdateObjects, pGameObject);
+	}
 	else
-		stl::find_and_erase(m_postUpdateObjects, pGameObject);
+	{
+		auto it = std::find(m_postUpdateObjects.begin(), m_postUpdateObjects.end(), pGameObject);
+		if (it != m_postUpdateObjects.end())
+		{
+			if (m_isPostUpdating)
+			{
+				*it = nullptr;
+			}
+			else
+			{
+				m_postUpdateObjects.erase(it);
+			}
+		}
+	}
 }
 
 const SEntitySchedulingProfiles* CGameObjectSystem::GetEntitySchedulerProfiles(IEntity* pEnt)
@@ -445,7 +467,6 @@ void CGameObjectSystem::GetMemoryUsage(ICrySizer* s) const
 	s->AddObject(m_extensionInfo);
 	s->AddObject(m_dispatch);
 	s->AddObject(m_postUpdateObjects);
-	s->AddObject(m_schedulingParams);
 
 	IEntityItPtr pIt = gEnv->pEntitySystem->GetEntityIterator();
 	while (IEntity* pEnt = pIt->Next())

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "SkeletonAnim.h"
@@ -65,7 +65,6 @@ uint32 CSkeletonAnim::BlendManager(f32 fDeltaTime, DynArray<CAnimation>& arrAFIF
 		}
 		else
 		{
-			uint32 counter = 0;
 			uint32 num = pParametric->m_numExamples;
 			for (uint32 a = 0; a < num; a++)
 			{
@@ -207,6 +206,8 @@ uint32 CSkeletonAnim::CheckIsCAFLoaded(CAnimationSet* pAnimationSet, int32 nAnim
 
 void CSkeletonAnim::UpdateParameters(CAnimation* arrAnimFiFo, uint32 nMaxActiveInQueue, uint32 nLayer, f32 fFrameDeltaTime)
 {
+	DEFINE_PROFILER_FUNCTION();
+
 	CAnimationSet* pAnimationSet = m_pInstance->m_pDefaultSkeleton->m_pAnimationSet;
 	for (uint32 a = 0; a < nMaxActiveInQueue; a++)
 	{
@@ -288,7 +289,6 @@ void CSkeletonAnim::UpdateParameters(CAnimation* arrAnimFiFo, uint32 nMaxActiveI
 			if (pAnim->m_nAssetType == AIM_File)
 			{
 				GlobalAnimationHeaderAIM& rAIM = g_AnimationManager.m_arrGlobalAIM[pAnim->m_nGlobalAnimId];
-				const int32 segcount = rCurAnim.m_currentSegmentIndex[0];
 				f32 fSegTime = max(rAIM.m_fTotalDuration, 1.0f / ANIMATION_30Hz);
 				fSegTime = max(fSegTime, 1.0f / ANIMATION_30Hz);
 				rCurAnim.SetCurrentSegmentExpectedDurationSeconds(fSegTime);
@@ -300,6 +300,8 @@ void CSkeletonAnim::UpdateParameters(CAnimation* arrAnimFiFo, uint32 nMaxActiveI
 
 void CSkeletonAnim::UpdateAnimationTime(CAnimation& rAnimation, uint32 nLayer, uint32 NumAnimsInQueue, uint32 AnimNo, uint32 idx)
 {
+	DEFINE_PROFILER_FUNCTION();
+
 	assert(rAnimation.m_fAnimTime[idx] <= 2.0f);
 
 	const bool ManualUpdate = rAnimation.HasStaticFlag(CA_MANUAL_UPDATE);
@@ -432,6 +434,13 @@ void CSkeletonAnim::UpdateAnimationTime(CAnimation& rAnimation, uint32 nLayer, u
 				}
 
 				rAnimation.m_DynFlags[idx] |= CA_LOOPED_THIS_UPDATE;
+				
+				// Update motion parameter for next iteration
+				for (uint32 i{0}; i<MAX_LMG_DIMENSIONS; ++i)
+				{
+					pParametric->m_MotionParameter[i] = pParametric->m_MotionParameterForNextIteration[i];
+					pParametric->m_MotionParameterFlags[i] |= CA_Dim_Initialized;
+				}
 			}
 			else
 			{
@@ -1234,8 +1243,6 @@ void CSkeletonAnim::BlendManagerDebug()
 	for (uint32 nVLayerNo = 0; nVLayerNo < numVIRTUALLAYERS; nVLayerNo++)
 	{
 		DynArray<CAnimation>& rCurLayer = m_layers[nVLayerNo].m_transitionQueue.m_animations;
-		uint32 numAnimsPerLayer = rCurLayer.size();
-
 		BlendManagerDebug(rCurLayer, nVLayerNo);
 	}
 

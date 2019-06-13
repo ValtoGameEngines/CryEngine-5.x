@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "BudgetingSystem.h"
@@ -6,7 +6,7 @@
 #include <CryRenderer/IRenderer.h>
 #include <CryRenderer/IRenderAuxGeom.h>
 #include <CrySystem/ITimer.h>
-#include <CrySystem/IConsole.h>
+#include <CrySystem/ConsoleRegistration.h>
 #include <CrySystem/IStreamEngine.h>
 #include "System.h"
 #include "CrySizerImpl.h"
@@ -28,6 +28,12 @@ const char c_sys_budget_soundCPU[] = "sys_budget_soundCPU";
 const char c_sys_budget_numdrawcalls[] = "sys_budget_numdrawcalls";
 const char c_sys_budget_numpolys[] = "sys_budget_numpolys";
 const char c_sys_budget_streamingthroughput[] = "sys_budget_streamingthroughput";
+
+static int RoundToClosestMB(size_t memSize)
+{
+	// add half a MB and shift down to get closest MB
+	return((int)((memSize + (1 << 19)) >> 20));
+}
 
 CBudgetingSystem::CBudgetingSystem()
 	: m_pRenderer(0)
@@ -70,10 +76,8 @@ CBudgetingSystem::~CBudgetingSystem()
 
 void CBudgetingSystem::RegisterWithPerfHUD()
 {
-	ICryPerfHUDPtr pPerfHUD;
-	CryCreateClassInstanceForInterface(cryiidof<ICryPerfHUD>(), pPerfHUD);
-	minigui::IMiniGUIPtr pGUI;
-	CryCreateClassInstanceForInterface(cryiidof<minigui::IMiniGUI>(), pGUI);
+	ICryPerfHUD* pPerfHUD = gEnv->pSystem->GetPerfHUD();
+	minigui::IMiniGUI* pGUI = gEnv->pSystem->GetMiniGUI();
 
 	if (pPerfHUD && pGUI)
 	{
@@ -229,12 +233,12 @@ CBudgetingSystem::MonitorBudget()
 	}
 
 	// set to 2D mode for font rendering
-	m_pRenderer->Set2DMode(true, m_width, m_height);
+	m_pRenderer->GetIRenderAuxGeom()->SetOrthographicProjection(true, 0.0f, static_cast<float>(m_width), static_cast<float>(m_height), 0.0f);
 
 	Render(60.f, 40.f);
 
 	// set back to 3D mode
-	m_pRenderer->Set2DMode(false, 0, 0);
+	m_pRenderer->GetIRenderAuxGeom()->SetOrthographicProjection(false);
 }
 
 void CBudgetingSystem::Render(float x, float y)
@@ -256,8 +260,8 @@ void CBudgetingSystem::Render(float x, float y)
 		m_pStreamEngine = gEnv->pSystem->GetStreamEngine();
 
 	// get height and width of view port
-	m_width = m_pRenderer->GetWidth();
-	m_height = m_pRenderer->GetHeight();
+	m_width  = m_pRenderer->GetOverlayWidth();
+	m_height = m_pRenderer->GetOverlayHeight();
 
 	//Aux Render setup
 	SAuxGeomRenderFlags oldFlags = m_pAuxRenderer->GetRenderFlags();
@@ -710,14 +714,7 @@ void CBudgetingSystem::MonitorStreaming(float& x, float& y)
 	float color[4];
 	GetColor(scale, color);
 
-	if (scale <= 1.0f)
-	{
-		DrawText(x, y, color, "Streaming throughput: %.2f KB/s (current budget is %.2f KB/s).", thp, m_streamingThroughputLimit);
-	}
-	else
-	{
-		DrawText(x, y, color, "Streaming throughput: %.2f KB/s (current budget is %.2f KB/s).", thp, m_streamingThroughputLimit);
-	}
+	DrawText(x, y, color, "Streaming throughput: %.2f KB/s (current budget is %.2f KB/s).", thp, m_streamingThroughputLimit);
 
 	DrawMeter(x, y, scale);
 #endif

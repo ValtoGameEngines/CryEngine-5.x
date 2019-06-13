@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -18,6 +18,7 @@
 #include "CryActionCVars.h"
 #include "IAnimatedCharacter.h"
 #include <CryGame/IGameFramework.h>
+#include <CryRenderer/IRenderAuxGeom.h>
 
 const static char* COOP_ANIM_NAME = "CoopAnimation";
 const static int MY_ANIM = 54545;
@@ -119,8 +120,7 @@ bool CCooperativeAnimation::AreActorsValid() const
 		return false;
 
 	TCharacterParams::const_iterator itEnd = m_paramsList.end();
-	TCharacterParams::const_iterator it = std::find_if(m_paramsList.begin(), itEnd,
-	                                                   std::not1(std::mem_fun_ref(&SCharacterParams::IsActorValid)));
+	TCharacterParams::const_iterator it = std::find_if(m_paramsList.begin(), itEnd,[](const SCharacterParams& p) { return !p.IsActorValid(); } );
 
 	return (it == itEnd);
 }
@@ -1008,7 +1008,7 @@ QuatT CCooperativeAnimation::GetStartOffset(SCharacterParams& params)
 	// the first key will always be in the center so this helper function will
 	// reconstruct the actual starting location of the character's root from the
 	// original scene
-	const bool success = pAnimSet->GetAnimationDCCWorldSpaceLocation(id, retVal);
+	pAnimSet->GetAnimationDCCWorldSpaceLocation(id, retVal);
 	retVal.q.NormalizeSafe();
 
 	return retVal;
@@ -1021,10 +1021,11 @@ void CCooperativeAnimation::CleanupForFinishedCharacter(SCharacterParams& params
 
 	IAnimatedCharacter* pAC = params.pActor;
 
+#if defined(USE_CRY_ASSERT)
 	const ICooperativeAnimationManager* const pCAManager = gEnv->pGameFramework->GetICooperativeAnimationManager();
 	CRY_ASSERT(pCAManager);
-
 	CRY_ASSERT_MESSAGE(!pCAManager->IsActorBusy(params.pActor, this), "Cleaning up for a character that's already playing a second animation");
+#endif
 
 	// reset the movementOverride for the characters that haven't
 	// finished their animations yet (in case of premature termination)
@@ -1047,14 +1048,15 @@ void CCooperativeAnimation::CleanupForFinishedCharacter(SCharacterParams& params
 		// Release reference
 		if (params.animationState != SCharacterParams::AS_Unrequested)
 		{
+#if defined(USE_CRY_ASSERT)
 			const bool bReleased = gEnv->pCharacterManager->CAF_Release(params.animFilepathCRC);
 			CRY_ASSERT(bReleased);
+#else
+			gEnv->pCharacterManager->CAF_Release(params.animFilepathCRC);
+#endif
 
 			params.animationState = SCharacterParams::AS_Unrequested;
 		}
-
-		ISkeletonAnim* pISkeletonAnim = params.pActor->GetEntity()->GetCharacter(0)->GetISkeletonAnim();
-		CRY_ASSERT(pISkeletonAnim);
 
 		// reactivate animation graph
 		pAC->GetAnimationGraphState()->Pause(false, eAGP_PlayAnimationNode);
@@ -1165,8 +1167,12 @@ bool CCooperativeAnimation::UpdateAnimationsStreaming()
 			case SCharacterParams::AS_Unrequested:
 				{
 					// Request
+#if defined(USE_CRY_ASSERT)
 					const bool bRefAdded = gEnv->pCharacterManager->CAF_AddRef(params->animFilepathCRC);
 					CRY_ASSERT(bRefAdded);
+#else
+				gEnv->pCharacterManager->CAF_AddRef(params->animFilepathCRC);
+#endif
 
 					params->animationState = SCharacterParams::AS_NotReady;
 				}
@@ -1194,7 +1200,7 @@ bool CCooperativeAnimation::UpdateAnimationsStreaming()
 	return (animsReady == m_paramsList.size());
 }
 
-void CCooperativeAnimation::OnEntityEvent(IEntity* pEntity, SEntityEvent& event)
+void CCooperativeAnimation::OnEntityEvent(IEntity* pEntity, const SEntityEvent& event)
 {
 	if (event.event == ENTITY_EVENT_DONE)
 	{

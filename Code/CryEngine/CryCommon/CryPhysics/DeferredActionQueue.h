@@ -1,13 +1,14 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __DeferredActionQueue_h__
 #define __DeferredActionQueue_h__
 
 #pragma once
 
-#include <CryCore/StlUtils.h>
-
 #include "AgePriorityQueue.h"
+
+#include <CryCore/StlUtils.h>
+#include <CryCore/functor.h>
 #include <CryMemory/STLPoolAllocator.h>
 #include <CryMemory/STLPoolAllocator_ManyElems.h>
 
@@ -16,16 +17,17 @@ struct NoContention
 protected:
 	NoContention(uint32 quota) {}
 
-	void PerformedSync()  {}
-	void PerformedAsync() {}
+	uint32 GetQuota() const { return UINT_MAX; }
 
-	bool CanPerformAsync()
-	{
-		return true;
-	}
+	void PerformedImmediate()  {}
+	void PerformedDeferred(const uint32 queuedID) {}
+	void CompletedDeferred(const uint32 queuedID) {}
+	void Canceled(const uint32 queuedID) {}
 
-	void UpdateStart()    {}
-	void UpdateComplete() {}
+	bool CanPerformDeferred() const { return true; }
+
+	void UpdateStart(const uint32 queueSize)    {}
+	void UpdateComplete(const uint32 queueSize) {}
 };
 
 struct DefaultContention
@@ -67,8 +69,7 @@ struct DefaultContention
 		uint32 immSum = 0;
 		uint32 defSum = 0;
 
-		uint32 count = std::min<uint32>(AverageWindowWidth, m_averageHead - 5);
-		for (uint32 i = 0; i < count; ++i)
+		for (uint32 i = 0; i < AverageWindowWidth; ++i)
 		{
 			immSum += m_immWindow[i];
 			defSum += m_defWindow[i];
@@ -123,12 +124,18 @@ protected:
 		++m_immCount;
 	}
 
-	inline void PerformedDeferred()
+	inline void PerformedDeferred(const uint32 queuedID)
 	{
 		++m_defCount;
 	}
 
-	inline bool CanPerformDeferred()
+	inline void CompletedDeferred(const uint32 queuedID) 
+	{}
+
+	inline void Canceled(const uint32 queuedID)
+	{}
+
+	inline bool CanPerformDeferred() const
 	{
 		return m_defCount < m_quota;
 	}
@@ -275,9 +282,15 @@ public:
 
 	inline void Cancel(const uint32& queuedID)
 	{
+		CRY_PROFILE_FUNCTION(PROFILE_PHYSICS);
+		
+		ContentionPolicy::Canceled(queuedID);
+		
 		typename Submitted::iterator it = m_submitted.find(queuedID);
 		if (it == m_submitted.end())
 		{
+			CRY_PROFILE_SECTION_ARG(PROFILE_PHYSICS, "DeferredActionQueue::Cancel::PriorityQueue", CryStringUtils::toString(uint32(m_priorityQueue.size())).c_str());
+			
 			if (m_priorityQueue.has(queuedID))
 			{
 				QueuedRequest& queued = m_priorityQueue[queuedID];
@@ -289,6 +302,8 @@ public:
 		}
 		else
 		{
+			CRY_PROFILE_SECTION_ARG(PROFILE_PHYSICS, "DeferredActionQueue::Cancel::Submitted", CryStringUtils::toString(uint32(m_submitted.size())).c_str());
+
 			m_slots.erase(it->second);
 			m_submitted.erase(it);
 		}
@@ -315,6 +330,8 @@ public:
 
 					if (!queued.submitCallback(queuedID, queued.request))
 					{
+						ContentionPolicy::Canceled(queuedID);
+						
 						Caster::Release(requestCopy);
 
 						m_priorityQueue.pop_front();
@@ -423,7 +440,7 @@ protected:
 
 		SubmitQueuedCast(m_slotGenID, queuedID, queued);
 
-		ContentionPolicy::PerformedDeferred();
+		ContentionPolicy::PerformedDeferred(queuedID);
 	}
 
 	inline void SubmitQueuedCast(uint32 slotID, const uint32& queuedID, const QueuedRequest& queued)
@@ -437,6 +454,8 @@ protected:
 		if (it != m_slots.end())
 		{
 			const Slot& slot = it->second;
+
+			ContentionPolicy::CompletedDeferred(slot.queuedID);
 
 			slot.callback(slot.queuedID, result);
 			m_submitted.erase(slot.queuedID);

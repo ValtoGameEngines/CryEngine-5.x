@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "SocketIOManagerSelect.h"
@@ -89,8 +89,10 @@ bool CSocketIOManagerSelect::Init()
 		}
 		else
 		{
+#if !defined(EXCLUDE_NORMAL_LOG)
 			const char* msg = CNetwork::Get()->EnumerateError(MAKE_NRESULT(NET_FAIL, NET_FACILITY_SOCKET, GetLastError()));
 			NetWarning("[net] socket error: %s", msg);
+#endif
 		}
 	}
 
@@ -108,8 +110,10 @@ bool CSocketIOManagerSelect::Init()
 	saddr.sin_addr.s_addr = htonl(INADDR_ANY);
 	if (CrySock::bind(m_wakeupSender, (const CRYSOCKADDR*)&saddr, sizeof(CRYSOCKADDR_IN)) == CRY_SOCKET_ERROR)
 	{
+#if !defined(EXCLUDE_NORMAL_LOG)
 		const char* msg = ((CNetwork*)(GetISystem()->GetINetwork()))->EnumerateError(MAKE_NRESULT(NET_FAIL, NET_FACILITY_SOCKET, GetLastError()));
 		NetWarning("[net] socket error: %s", msg);
+#endif
 
 		return false;
 	}

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*=============================================================================
    Parser.cpp : Script parser implementations.
@@ -16,13 +16,35 @@ char* pCurCommand;
 void SkipCharacters(char** buf, const char* toSkip)
 {
 	char theChar;
-	char* skip;
+	const char* skip;
 
 	while ((theChar = **buf) != 0)
 	{
 		if (theChar >= 0x20)
 		{
-			skip = (char*) toSkip;
+			skip = (const char*)toSkip;
+			while (*skip)
+			{
+				if (theChar == *skip)
+					break;
+				++skip;
+			}
+			if (*skip == 0)
+				return;
+		}
+		++*buf;
+	}
+}
+void SkipCharacters(const char** buf, const char* toSkip)
+{
+	char theChar;
+	const char* skip;
+
+	while ((theChar = **buf) != 0)
+	{
+		if (theChar >= 0x20)
+		{
+			skip = (const char*)toSkip;
 			while (*skip)
 			{
 				if (theChar == *skip)
@@ -64,22 +86,22 @@ bool SkipChar(unsigned int ch)
 }
 
 // Determine is this preprocessor directive belongs to first pass or second one
-bool fxIsFirstPass(char* buf)
+bool fxIsFirstPass(const char* buf)
 {
 	char com[1024];
 	char tok[256];
-	fxFillCR(&buf, com);
+	fxFillCR((char**)&buf, com);
 	char* s = com;
 	while (*s != 0)
 	{
-		char* pStart = fxFillPr(&s, tok);
+		fxFillPr(&s, tok);
 		if (tok[0] == '%' && tok[1] == '_')
 			return false;
 	}
 	return true;
 }
 
-static void fxAddMacro(char* Name, char* Macro, FXMacro& Macros)
+static void fxAddMacro(const char* Name, char* Macro, FXMacro& Macros)
 {
 	SMacroFX pr;
 
@@ -109,16 +131,6 @@ static void fxAddMacro(char* Name, char* Macro, FXMacro& Macros)
 
 void fxParserInit(void)
 {
-#if defined(D3DX_SDK_VERSION)
-	// Needed for a workaround for the optimization rule problem of DXSDKJune10's HLSL Compiler (9.29.952.3111)
-	// See: http://support.microsoft.com/kb/2448404
-	// Causes cracks in tessellated meshes
-	char sdkVer[4];
-	_itoa_s(D3DX_SDK_VERSION, sdkVer, 4);
-	fxAddMacro("D3DX_SDK_VERSION", sdkVer, sStaticMacros);
-#else
-	fxAddMacro("D3DX_SDK_VERSION", "0", sStaticMacros);
-#endif
 }
 
 void fxRegisterEnv(const char* szStr)
@@ -254,7 +266,7 @@ int fxFillCR(char** buf, char* dst)
 
 //================================================================================
 
-bool shGetBool(char* buf)
+bool shGetBool(const char* buf)
 {
 	if (!buf)
 		return false;
@@ -279,9 +291,7 @@ float shGetFloat(const char* buf)
 	if (!buf)
 		return 0;
 	float f = 0;
-
-	int res = sscanf(buf, "%f", &f);
-	assert(res);
+	CRY_VERIFY(sscanf(buf, "%f", &f) != 0);
 
 	return f;
 }
@@ -313,13 +323,11 @@ int shGetInt(const char* buf)
 
 	if (buf[0] == '0' && buf[1] == 'x')
 	{
-		int res = sscanf(&buf[2], "%x", &i);
-		assert(res);
+		CRY_VERIFY(sscanf(&buf[2], "%x", &i) != 0);
 	}
 	else
 	{
-		int res = sscanf(buf, "%i", &i);
-		assert(res);
+		CRY_VERIFY(sscanf(buf, "%i", &i) != 0);
 	}
 
 	return i;
@@ -330,9 +338,7 @@ int shGetHex(const char* buf)
 	if (!buf)
 		return 0;
 	int i = 0;
-
-	int res = sscanf(buf, "%x", &i);
-	assert(res);
+	CRY_VERIFY(sscanf(buf, "%x", &i) != 0);
 
 	return i;
 }
@@ -341,49 +347,42 @@ uint64 shGetHex64(const char* buf)
 {
 	if (!buf)
 		return 0;
-#if defined(__GNUC__)
-	unsigned long long i = 0;
-	int res = sscanf(buf, "%llx", &i);
-	assert(res);
-	return (uint64)i;
-#else
 	uint64 i = 0;
-	int res = sscanf(buf, "%I64x", &i);
-	assert(res);
-	return i;
+#if defined(CRY_COMPILER_GCC) || defined(CRY_COMPILER_CLANG)
+CRY_VERIFY(sscanf(buf, "%llx", &i) != 0);
+#else
+CRY_VERIFY(sscanf(buf, "%I64x", &i) != 0);
 #endif
+	return i;
 }
 
-void shGetVector(char* buf, Vec3& v)
+void shGetVector(const char* buf, Vec3& v)
 {
 	if (!buf)
 		return;
-	int res = sscanf(buf, "%f %f %f", &v[0], &v[1], &v[2]);
-	assert(res);
+CRY_VERIFY(sscanf(buf, "%f %f %f", &v[0], &v[1], &v[2]) != 0);
 }
 
-void shGetVector(char* buf, float v[3])
+void shGetVector(const char* buf, float v[3])
 {
 	if (!buf)
 		return;
-	int res = sscanf(buf, "%f %f %f", &v[0], &v[1], &v[2]);
-	assert(res);
+CRY_VERIFY(sscanf(buf, "%f %f %f", &v[0], &v[1], &v[2]) != 0);
 }
 
-void shGetVector4(char* buf, Vec4& v)
+void shGetVector4(const char* buf, Vec4& v)
 {
 	if (!buf)
 		return;
-	int res = sscanf(buf, "%f %f %f %f", &v.x, &v.y, &v.z, &v.w);
-	assert(res);
+CRY_VERIFY(sscanf(buf, "%f %f %f %f", &v.x, &v.y, &v.z, &v.w) != 0);
 }
 
 static struct SColAsc
 {
-	char*  nam;
+	const char*  nam;
 	ColorF col;
 
-	SColAsc(char* name, const ColorF& c)
+	SColAsc(const char* name, const ColorF& c)
 	{
 		nam = name;
 		col = c;
@@ -542,7 +541,7 @@ void shGetColor(const char* buf, ColorF& v)
 	//v.Clamp();
 }
 
-void shGetColor(char* buf, float v[4])
+void shGetColor(const char* buf, float v[4])
 {
 	char name[64];
 
@@ -687,15 +686,15 @@ char* GetSubText(char** buf, char open, char close)
 	return result;
 }
 
-inline static int IsComment(char** buf)
+inline static int IsComment(const char* buf)
 {
-	if (!(*buf))
+	if (!buf)
 		return 0;
 
-	if ((*buf)[0] == '/' && (*buf)[1] == '/')
+	if (buf[0] == '/' && buf[1] == '/')
 		return 2;
 
-	if ((*buf)[0] == '/' && (*buf)[1] == '*')
+	if (buf[0] == '/' && buf[1] == '*')
 		return 3;
 
 	return 0;
@@ -706,7 +705,7 @@ void SkipComments(char** buf, bool bSkipWhiteSpace)
 	int n;
 	static int m;
 
-	while (n = IsComment(buf))
+	while ((n = IsComment(*buf)) != 0)
 	{
 		switch (n)
 		{
@@ -751,7 +750,7 @@ void SkipComments(char** buf, bool bSkipWhiteSpace)
 	}
 }
 
-void fxSkipTillCR(char** buf)
+void fxSkipTillCR(const char** buf)
 {
 	char ch;
 	while ((ch = **buf) != 0)
@@ -762,7 +761,7 @@ void fxSkipTillCR(char** buf)
 	}
 }
 
-bool fxCheckMacroses(char** str, int nPass)
+bool fxCheckMacroses(const char** str, int nPass)
 {
 	char tmpBuf[1024];
 	byte bRes[64];
@@ -796,7 +795,7 @@ bool fxCheckMacroses(char** str, int nPass)
 				tmpBuf[nD++] = **str;
 				++*str;
 			}
-			char* s = &tmpBuf[0];
+			const char* s = &tmpBuf[0];
 			bRes[nLevel] = fxCheckMacroses(&s, nPass);
 			nLevel++;
 			bOr[nLevel] = 255;
@@ -816,7 +815,7 @@ bool fxCheckMacroses(char** str, int nPass)
 			tmpBuf[n] = 0;
 			if (tmpBuf[0] != 0)
 			{
-				char* s = tmpBuf;
+				const char* s = tmpBuf;
 				bool bNeg = false;
 				if (s[0] == '!')
 				{
@@ -851,7 +850,7 @@ bool fxCheckMacroses(char** str, int nPass)
 		SkipCharacters(str, kWhiteSpace);
 		if (**str == 0)
 			break;
-		char* s = *str;
+		const char* s = *str;
 		if (s[0] == '|' && s[1] == '|')
 		{
 			bOr[nLevel] = true;
@@ -885,7 +884,6 @@ bool fxCheckMacroses(char** str, int nPass)
 bool fxIgnorePreprBlock(char** buf)
 {
 	int nLevel = 0;
-	char* start = *buf;
 	bool bEnded = false;
 	SkipCharacters(buf, kWhiteSpace);
 	SkipComments(buf, true);
@@ -895,10 +893,9 @@ bool fxIgnorePreprBlock(char** buf)
 		char ch;
 		while ((ch = **buf) && SkipChar((unsigned)ch))
 		{
-			char* b = *buf;
 			while ((ch = **buf) != 0)
 			{
-				if (ch == '/' && IsComment(buf))
+				if (ch == '/' && IsComment(*buf))
 					break;
 				if (!SkipChar(ch))
 					break;
@@ -906,7 +903,6 @@ bool fxIgnorePreprBlock(char** buf)
 			}
 			SkipComments(buf, true);
 		}
-		int n = 0;
 		char* posS = *buf;
 		char* st = posS;
 		PREFAST_ASSUME(posS);
@@ -951,7 +947,7 @@ bool fxIgnorePreprBlock(char** buf)
 		}
 		while ((ch = **buf))
 		{
-			if (ch == '/' && IsComment(buf))
+			if (ch == '/' && IsComment(*buf))
 				break;
 			if (SkipChar((unsigned)ch))
 				break;
@@ -990,7 +986,7 @@ start:
 			bPrepr = true;
 			fxFillPr(buf, nam);
 			fxFillCR(buf, nam);
-			char* s = &nam[0];
+			const char* s = &nam[0];
 			bool bRes = fxCheckMacroses(&s, 0);
 			if (b[2] == 'n')
 				bRes = !bRes;
@@ -1042,7 +1038,7 @@ start:
 			else
 			{
 				fxFillCR(buf, nam);
-				char* s = &nam[0];
+				const char* s = &nam[0];
 				bool bRes = fxCheckMacroses(&s, 0);
 				if (!bRes)
 					fxIgnorePreprBlock(buf);

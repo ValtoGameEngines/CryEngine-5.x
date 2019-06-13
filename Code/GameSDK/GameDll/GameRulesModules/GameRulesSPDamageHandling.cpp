@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "GameRulesSPDamageHandling.h"
@@ -208,7 +208,7 @@ int CollisionFilter(const EventPhysCollision *pEvent)
 
 void CGameRulesSPDamageHandling::Update(float frameTime)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	m_entityLastDamageUpdateTimer += frameTime;
 	if (m_entityLastDamageUpdateTimer > EntityCollisionLatentUpdateTimer)
@@ -285,7 +285,7 @@ void CGameRulesSPDamageHandling::DrawFakeHits(float frameTime)
 // Returns true if entity is killed, false if it is not
 bool CGameRulesSPDamageHandling::SvOnHit(const HitInfo& hit)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	const EntityId victimID = hit.targetId;
 
@@ -299,7 +299,6 @@ bool CGameRulesSPDamageHandling::SvOnHit(const HitInfo& hit)
 
 		if (victimIsLocalClientPlayer)
 		{
-			CPlayer* pPlayer = static_cast<CPlayer*>(pVictimActor);
 			SDamageHandling damageHandling(&hit, 1.0f);
 			
 			HitInfo hitInfo(hit);
@@ -344,7 +343,7 @@ bool CGameRulesSPDamageHandling::SvOnHit(const HitInfo& hit)
 
 bool CGameRulesSPDamageHandling::SvOnHitScaled(const HitInfo& hitInfo)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	bool victimDiedAfterHit = false;
 
@@ -404,7 +403,7 @@ bool CGameRulesSPDamageHandling::SvOnHitScaled(const HitInfo& hitInfo)
 				//
 				// isDead = result from Lua function IsDead in victim entity script
 
-				FRAME_PROFILER("SvOnHitScaled IsDead scope", gEnv->pSystem, PROFILE_GAME);
+				CRY_PROFILE_SECTION(PROFILE_GAME, "SvOnHitScaled IsDead scope");
 
 				HSCRIPTFUNCTION isDeadFunc = NULL;
 				if (victimScript->GetValue("IsDead", isDeadFunc))
@@ -523,7 +522,7 @@ bool CGameRulesSPDamageHandling::SvOnHitScaled(const HitInfo& hitInfo)
 
 void CGameRulesSPDamageHandling::ProcessDeath(IActor* victimActor, const SmartScriptTable& victimScript, const HitInfo& hitInfo)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	const bool ragdoll = !victimActor || !victimActor->GetLinkedVehicle();
 
@@ -551,7 +550,6 @@ void CGameRulesSPDamageHandling::SvOnExplosion(const ExplosionInfo& explosionInf
 	bool bHitActor = false;
 	for ( ; it != affectedEntities.end(); ++it)
 	{
-		bool success = false;
 		IEntity* entity = it->first;
 		float obstruction = 1.0f - it->second;
 
@@ -745,7 +743,7 @@ float CGameRulesSPDamageHandling::CalcExplosionDamage(IEntity* entity, const Exp
 
 void CGameRulesSPDamageHandling::SvOnCollision(const IEntity* pVictimEntity, const CGameRules::SCollisionHitInfo& collisionHitInfo)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 #if !defined(_RELEASE)
 	if (g_pGameCVars->g_DisableCollisionDamage)
@@ -763,13 +761,12 @@ void CGameRulesSPDamageHandling::SvOnCollision(const IEntity* pVictimEntity, con
 	const IEntity* pOffenderEntity = gEnv->pEntitySystem->GetEntity(offenderID);
 
 	IScriptTable* pVictimScript = pVictimEntity ? pVictimEntity->GetScriptTable() : NULL;
-	IScriptTable* pOffenderScript = pOffenderEntity ? pOffenderEntity->GetScriptTable() : NULL;
 
 	const float currentTime = gEnv->pTimer->GetCurrTime();
 
 	if (pOffenderEntity)
 	{
-		FRAME_PROFILER("Filter out recent collisions", gEnv->pSystem, PROFILE_GAME);
+		CRY_PROFILE_SECTION(PROFILE_GAME, "Filter out recent collisions");
 
 		EntityCollisionRecords::const_iterator collisionRecordIter = m_entityCollisionRecords.find(victimID);
 		if (collisionRecordIter != m_entityCollisionRecords.end())
@@ -786,7 +783,7 @@ void CGameRulesSPDamageHandling::SvOnCollision(const IEntity* pVictimEntity, con
 	//Notify object movement to AI
 	if (pVictimEntity)
 	{
-		FRAME_PROFILER("Notify object movement to AI", gEnv->pSystem, PROFILE_GAME);
+		CRY_PROFILE_SECTION(PROFILE_GAME, "Notify object movement to AI");
 	
 		if (stl::find(m_entityClassesWithTrackedMovement, pVictimEntity->GetClass()))
 		{
@@ -1076,7 +1073,7 @@ void CGameRulesSPDamageHandling::SvOnCollision(const IEntity* pVictimEntity, con
 			}	
 			else if (pVictimScript)
 			{
-				FRAME_PROFILER("Call to OnHit", gEnv->pSystem, PROFILE_GAME);
+				CRY_PROFILE_SECTION(PROFILE_GAME, "Call to OnHit");
 
 				if (!IsDead(victimActor, pVictimScript))
 				{
@@ -1093,7 +1090,7 @@ void CGameRulesSPDamageHandling::SvOnCollision(const IEntity* pVictimEntity, con
 
 // float CGameRulesSPDamageHandling::GetCollisionMinVelocity(EntityId victimID, const CGameRules::SCollisionHitInfo& colHitInfo)
 // {
-// 	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_GAME);
+// 	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 // 
 // 	float minVel = 10.0f;
 // 
@@ -1117,7 +1114,7 @@ void CGameRulesSPDamageHandling::SvOnCollision(const IEntity* pVictimEntity, con
 
 float CGameRulesSPDamageHandling::AdjustPlayerCollisionDamage(const IEntity* victimEntity, bool offenderIsVehicle, const CGameRules::SCollisionHitInfo& colHitInfo, float damage)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	if (offenderIsVehicle)
 		return damage;
@@ -1231,7 +1228,7 @@ float CGameRulesSPDamageHandling::AdjustVehicleActorCollisionDamage(IVehicle* pO
 
 //float CGameRulesSPDamageHandling::ProcessPlayerToActorCollision(const IEntity* entity, const IEntity* collider, const CGameRules::SCollisionHitInfo& colHitInfo, float colInfo_damage)
 //{
-//	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_GAME);
+//	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 //
 //	// Cancel out damage if the offender is in a ragdoll state
 //// 	CActor* colliderActor = collider ? static_cast<CActor*>(g_pGame->GetIGameFramework()->GetIActorSystem()->GetActor(collider->GetId())) : NULL;
@@ -1282,7 +1279,7 @@ void CGameRulesSPDamageHandling::DelegateServerHit(IScriptTable* victimScript, c
 				}
 				else // Hit was not deadly
 				{
-					FRAME_PROFILER("Trigger hit reaction", gEnv->pSystem, PROFILE_GAME);
+					CRY_PROFILE_SECTION(PROFILE_GAME, "Trigger hit reaction");
 
 					// Trigger hit reaction
 					bool hitReactionProcessed = false;
@@ -1360,7 +1357,7 @@ bool CGameRulesSPDamageHandling::IsDead(CActor* actor, IScriptTable* actorScript
 		//
 		// isDead = result from Lua function IsDead in victim entity script
 
-		FRAME_PROFILER("SvOnCollision IsDead scope", gEnv->pSystem, PROFILE_GAME);
+		CRY_PROFILE_SECTION(PROFILE_GAME, "SvOnCollision IsDead scope");
 
 		HSCRIPTFUNCTION isDeadFunc = NULL;
 		if (actorScript->GetValue("IsDead", isDeadFunc))

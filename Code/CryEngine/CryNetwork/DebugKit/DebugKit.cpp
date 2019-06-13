@@ -1,10 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "DebugKit.h"
 #include "Network.h"
 
 #if ENABLE_DEBUG_KIT
+
+#include <CryRenderer/IRenderAuxGeom.h>
 
 CryCriticalSection CDebugKit::m_lockThis;
 CDebugKit* volatile CDebugKit::m_pThis = 0;
@@ -56,7 +58,7 @@ void CDebugKit::ThreadEntry()
 		switch (m_state)
 		{
 		case eS_Starting:
-			Sleep(500);
+			CrySleep(500);
 			m_state = eS_Searching;
 			break;
 		case eS_Searching:
@@ -233,7 +235,7 @@ void CDebugKit::RunServer()
 		{
 			CDebugOutput::Run(sock);
 			CrySock::shutdown(sock, SD_BOTH);
-			Sleep(1500);
+			CrySleep(1500);
 		}
 	}
 	CrySock::closesocket(sock);

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef _CONFIG_SCALEFORM_H_
 #define _CONFIG_SCALEFORM_H_
@@ -11,12 +11,9 @@
 #include <CryCore/Project/ProjectDefines.h>
 
 
-/* *********************************************************************
-* ENABLE_GFX_VIDEO disabled by default
-* If needed, contact CryENGINE Support to get latest gfxvideo libs
-* and uncomment this line
-* ******************************************************************* */
-//#define ENABLE_GFX_VIDEO
+// Enable Scaleform Video playback implementation
+// Note: This requires linking against Scaleform Video library
+#define ENABLE_GFX_VIDEO
 
 // Enable Scaleform IME implementation
 // Note: This requires linking against Scaleform IME plugin library

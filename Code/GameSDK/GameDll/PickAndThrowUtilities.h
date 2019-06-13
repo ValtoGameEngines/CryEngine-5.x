@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -14,11 +14,12 @@ Created by Benito G.R., code refactored from PickAndThrow.cpp
 #ifndef _PICKANDTHROW_UTILITIES_H_
 #define _PICKANDTHROW_UTILITIES_H_
 
+#include <Cry3DEngine/IStatObj.h>
+#include <CryEntitySystem/IEntityBasicTypes.h>
+#include <CryPhysics/IntersectionTestQueue.h>
+
 struct IActor;
-struct IStatObj;
-#if !CRY_PLATFORM_LINUX && !CRY_PLATFORM_ANDROID && !CRY_PLATFORM_APPLE && !CRY_PLATFORM_ORBIS
-struct IStatObj::SSubObject;
-#endif
+
 namespace PickAndThrow
 {
 	class CObstructionCheck

@@ -1,10 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
 #include <CryExtension/CryCreateClassInstance.h>
 #include <CryExtension/ClassWeaver.h>
 #include <CryAnimation/ICryAnimation.h>
+#include <CryRenderer/IRenderAuxGeom.h>
 
 #include "PoseAligner.h"
 
@@ -50,7 +51,7 @@ bool CContactRaycastPinger::Update(Vec3& position, Vec3& normal)
 	        SCollisionClass(0, collision_class_living | collision_class_articulated),
 	        &hits[0], totalHits, pSkipEntities, nSkip);
 
-	int hitCount = gEnv->pPhysicalWorld->RayWorldIntersection(rp);
+	gEnv->pPhysicalWorld->RayWorldIntersection(rp);
 
 	// Find best hit. This is the highest contact, that is a viable place to put the foot.
 	//	eg. Not on poles, other Pinger's legs, or other unwanted places.
@@ -156,7 +157,7 @@ ILINE bool InitializePoseAlignerBipedHuman(PoseAligner::CPose& pose, IEntity& en
 	int jointIndexLeftBlend = rIDefaultSkeleton.GetJointIDByName("Bip01 planeWeightLeft");
 	int jointIndexRightBlend = rIDefaultSkeleton.GetJointIDByName("Bip01 planeWeightRight");
 
-	if (!pose.Initialize(entity, jointIndexRoot))
+	if (!pose.Initialize(entity, &character, jointIndexRoot))
 		return false;
 
 	pose.SetRootOffsetMinMax(-0.4f, 0.0f);
@@ -213,7 +214,7 @@ ILINE bool InitializePoseAlignerBipedAlien(PoseAligner::CPose& pose, IEntity& en
 	if (jointIndexFrontRight < 0)
 		return false;
 
-	if (!pose.Initialize(entity, jointIndexRoot))
+	if (!pose.Initialize(entity, &character, jointIndexRoot))
 		return false;
 
 	pose.SetRootOffsetMinMax(-0.5f, 0.0f);
@@ -301,7 +302,7 @@ ILINE bool InitializePoseAlignerPinger(PoseAligner::CPose& pose, IEntity& entity
 	if (jointIndexFrontCenterBlend < 0)
 		return false;
 
-	if (!pose.Initialize(entity, jointIndexRoot))
+	if (!pose.Initialize(entity, &character, jointIndexRoot))
 		return false;
 
 	PoseAligner::SChainDesc chainDesc;
@@ -393,7 +394,7 @@ ILINE bool InitializePoseAlignerScorcher(PoseAligner::CPose& pose, IEntity& enti
 	if (jointIndexFrontRightBlend < 0)
 		return false;
 
-	if (!pose.Initialize(entity, jointIndexRoot))
+	if (!pose.Initialize(entity, &character, jointIndexRoot))
 		return false;
 
 	pose.SetRootOffsetMinMax(-1.0f, 1.0f);
@@ -485,7 +486,7 @@ ILINE bool InitializePoseAlignerDeer(PoseAligner::CPose& pose, IEntity& entity, 
 	if (jointIndexFrontRight < 0)
 		return false;
 
-	if (!pose.Initialize(entity, jointIndexRoot))
+	if (!pose.Initialize(entity, &character, jointIndexRoot))
 		return false;
 
 	pose.SetRootOffsetMinMax(-0.1f, 0.04f);
@@ -578,23 +579,8 @@ ILINE bool InitializePoseAligner(PoseAligner::CPose& pose, IEntity& entity, ICha
 	return pose.GetChainCount() != 0;
 }
 
-class CPoseAlignerC3 :
-	PoseAligner::CPose
+bool CPoseAlignerC3::Initialize(IEntity& entity, ICharacterInstance* pCharacter)
 {
-	CRYGENERATE_CLASS(CPoseAlignerC3, "AnimationPoseAlignerC3", 0xf5381a4c1374ff00, 0x8de19ba730cf572b)
-
-	virtual ~CPoseAlignerC3() {}
-
-public:
-	virtual bool Initialize(IEntity& entity) override;
-};
-
-bool CPoseAlignerC3::Initialize(IEntity& entity)
-{
-	ICharacterInstance* pCharacter = entity.GetCharacter(0);
-	if (!pCharacter)
-		return false;
-
 	return InitializePoseAligner(*this, entity, *pCharacter);
 }
 

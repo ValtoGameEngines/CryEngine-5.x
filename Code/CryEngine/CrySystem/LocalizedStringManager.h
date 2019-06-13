@@ -1,26 +1,16 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// -------------------------------------------------------------------------
-//  File name:   LocalizedStringManager.h
-//  Version:     v1.00
-//  Created:     22/9/2005 by Timur.
-//  Compilers:   Visual Studio.NET 2003
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
-
-#ifndef __LocalizedStringManager_h__
-#define __LocalizedStringManager_h__
 #pragma once
 
 #include <CrySystem/ILocalizationManager.h>
 #include <CryCore/StlUtils.h>
 #include <CryCore/Containers/VectorMap.h>
 #include <CryCore/Containers/CryListenerSet.h>
+#include <CryThreading/CryThread.h>
 
 #include "Huffman.h"
+
+struct IXmlTableReader;
 
 //////////////////////////////////////////////////////////////////////////
 /*
@@ -77,6 +67,9 @@ public:
 	virtual void                                        LocalizeDuration(int seconds, string& outDurationString);
 	virtual void                                        LocalizeNumber(int number, string& outNumberString);
 	virtual void                                        LocalizeNumber(float number, int decimals, string& outNumberString);
+
+	virtual void                                        AddLocalizationEntry(const string& token, const string& translation);
+
 	// ~ILocalizationManager
 
 	// ISystemEventManager
@@ -87,6 +80,8 @@ public:
 
 	void GetLoadedTags(TLocalizationTagVec& tags);
 	void FreeLocalizationData();
+
+	string GetPakSuffix();
 
 #if !defined(_RELEASE)
 	static void LocalizationDumpLoadedInfo(IConsoleCmdArgs* pArgs);
@@ -288,7 +283,7 @@ private:
 	typedef std::set<string> PrototypeSoundEvents;
 	PrototypeSoundEvents m_prototypeEvents;  // this set is purely used for clever string/string assigning to save memory
 
-	struct less_strcmp : public std::binary_function<const string&, const string&, bool>
+	struct less_strcmp
 	{
 		bool operator()(const string& left, const string& right) const
 		{
@@ -302,6 +297,7 @@ private:
 	// CVARs
 	int m_cvarLocalizationDebug;
 	int m_cvarLocalizationEncode; //Encode/Compress translated text to save memory
+	int m_cvarLocalizationTest;
 
 	//The localizations that are available for this SKU. Used for determining what to show on a language select screen or whether to show one at all
 	TLocalizationBitfield m_availableLocalizations;
@@ -310,5 +306,3 @@ private:
 	mutable CryCriticalSection m_cs;
 	typedef CryAutoCriticalSection AutoLock;
 };
-
-#endif // __LocalizedStringManager_h__

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -44,8 +44,11 @@ static const LipSyncID s_InvalidLipSyncId = -1;
 
 struct ISpeakerManager
 {
+	virtual ~ISpeakerManager() = default;
+
 	struct ILipsyncProvider
 	{
+		virtual ~ILipsyncProvider() = default;
 		virtual LipSyncID OnLineStarted(IResponseActor* pSpeaker, const IDialogLine* pLine) = 0;  //Remark: pLine can be a nullptr, if the triggered line does not exist in the database, but still 'started' to display debug text (like: "missing: 'Missing_line_ID'")
 		virtual void      OnLineEnded(LipSyncID lipsyncId, IResponseActor* pSpeaker, const IDialogLine* pLine) = 0;
 		virtual bool      Update(LipSyncID lipsyncId, IResponseActor* pSpeaker, const IDialogLine* pLine) = 0;       //returns if the lip animation has finished
@@ -53,19 +56,19 @@ struct ISpeakerManager
 	};
 	struct IListener
 	{
-		enum eLineEvent
+		enum eLineEvent : uint32
 		{
-			eLineEvent_Started                               = BIT(0), //line started successfully
-			eLineEvent_Finished                              = BIT(1), //line finished successfully
-			eLineEvent_Canceled                              = BIT(2), //was canceled while playing (by calling cancel or by destroying the actor)
-			eLineEvent_Queued                                = BIT(3), //line is waiting to start
+			eLineEvent_Started                               = BIT32(0), //line started successfully
+			eLineEvent_Finished                              = BIT32(1), //line finished successfully
+			eLineEvent_Canceled                              = BIT32(2), //was canceled while playing (by calling cancel or by destroying the actor)
+			eLineEvent_Queued                                = BIT32(3), //line is waiting to start
 
-			eLineEvent_SkippedBecauseOfFaultyData            = BIT(4), //was not started because of incorrect data.
-			eLineEvent_SkippedBecauseOfPriority              = BIT(5), //another more important line was already playing (pLine will hold that line) and the line did not allow queuing
-			eLineEvent_SkippedBecauseOfTimeOut               = BIT(6), //line was queued for some time but could not start in the allowed max-queue time
-			eLineEvent_SkippedBecauseOfNoValidLineVariations = BIT(7), //line used up all his line variations. (most commonly happens with the only-once flag)
-			eLineEvent_SkippedBecauseOfAlreadyRequested      = BIT(8), //the line was already running or queued
-			eLineEvent_SkippedBecauseOfExternalCode          = BIT(9), //a registered listener declined the execution of the line
+			eLineEvent_SkippedBecauseOfFaultyData            = BIT32(4), //was not started because of incorrect data.
+			eLineEvent_SkippedBecauseOfPriority              = BIT32(5), //another more important line was already playing (pLine will hold that line) and the line did not allow queuing
+			eLineEvent_SkippedBecauseOfTimeOut               = BIT32(6), //line was queued for some time but could not start in the allowed max-queue time
+			eLineEvent_SkippedBecauseOfNoValidLineVariations = BIT32(7), //line used up all his line variations. (most commonly happens with the only-once flag)
+			eLineEvent_SkippedBecauseOfAlreadyRequested      = BIT32(8), //the line was already running or queued
+			eLineEvent_SkippedBecauseOfExternalCode          = BIT32(9), //a registered listener declined the execution of the line
 
 			//useful combination, if you are only interested in IF the line has ended and not HOW it happened.
 			eLineEvent_HasEndedInAnyWay          = eLineEvent_Finished | eLineEvent_Canceled,
@@ -109,7 +112,7 @@ struct IVariable
 
 struct IVariableCollection
 {
-	virtual ~IVariableCollection() {}
+	virtual ~IVariableCollection() = default;
 
 	/**
 	 * Creates a new variable in this VariableCollection and sets it to the specified initial value.
@@ -183,7 +186,7 @@ private:
 
 struct IResponseInstance
 {
-	virtual ~IResponseInstance() {}
+	virtual ~IResponseInstance() = default;
 
 	/**
 	 * Will return the ResponseActor that is currently active in the ResponseInstance
@@ -245,10 +248,15 @@ struct IResponseInstance
 
 //////////////////////////////////////////////////////////////////////////
 
+struct IDynamicResponseSystemEngineModule : public Cry::IDefaultModule
+{
+	CRYINTERFACE_DECLARE_GUID(IDynamicResponseSystemEngineModule, "a7c12111-e4d6-413e-afd1-bf5930dd8c6a"_cry_guid);
+};
+
 struct IDynamicResponseSystem
 {
 public:
-	virtual ~IDynamicResponseSystem() {}
+	virtual ~IDynamicResponseSystem() = default;
 
 	/**
 	 * Will load all response definitions from the folder specified in the CVAR "drs_dataPath". Will also create all needed subsystems
@@ -317,7 +325,8 @@ public:
 
 	/**
 	 * Will return a new Variable collection that can be used as a context variable collection for sent signals.
-	 * The DRS will not hold a reference to this created collection. So it will be released, when no one is referencing it anymore on the outside.
+	 * The DRS will not hold a reference to this created collection (after the signal processing is finished). So it will be released, when no one is referencing it anymore on the outside.
+	 * There is no way to find a context collection from the outside e.g. by name, it also won`t be serialized.
 	 *
 	 * Note: pDRS->CreateContextCollection()
 	 * @return returns the empty variable collection.
@@ -339,15 +348,17 @@ public:
 
 	/**
 	 * Will create a new Response Actor. This actor is registered in the DRS.
-	 * All actors that will be used in the DRS needs to be created first, otherwise you wont be able to queue Signals for them or set them as a actor by name
+	 * All actors that will be used in the DRS needs to be created first, otherwise you wont be able to queue Signals for them or set them as an actor by name
 	 *
-	 * Note: pDRS->CreateResponseActor("Bob", myGameSpecificEntityGUID)
-	 * @param pActorName - the unique name of the new actor. if a actor with that name already exist the behavior is undefined
+	 * Note: pDRS->CreateResponseActor("Bob", pEntity->GetId(), true)
+	 * @param szActorName - the name of the new actor. REMARK: The name needs to be unique. if it`s not unique then the DRS will make it unique.
 	 * @param userData - this data will be attached to the actor. it can be obtained from the actor with the getUserData method. This is the link between your game-entity and the DRS-actor.
+ 	   @param szGlobalVariableCollectionToUse - Normally each actor has it`s own local variable collection, that is not accessible via name from the outside and is also not serialized. 
+	                                            With this parameter you can change this behavior so that the actor instead uses a global collection.
 	 * @return return the newly created Actor when successful.
-	 * @see ReleaseResponseActor, IResponseActor::GetUserData
+	 * @see ReleaseResponseActor
 	 */
-	virtual IResponseActor* CreateResponseActor(const CHashedString& actorName, EntityId entityID = INVALID_ENTITYID) = 0;
+	virtual IResponseActor* CreateResponseActor(const char* szActorName, EntityId entityID = INVALID_ENTITYID, const char* szGlobalVariableCollectionToUse = nullptr) = 0;
 
 	/**
 	 * Will release the specified Actor. The actor cannot be used/found by the DRS afterwards.
@@ -376,14 +387,14 @@ public:
 	 */
 	virtual IDataImportHelper* GetCustomDataformatHelper() = 0;
 
-	enum eResetHints
+	enum eResetHints : uint32
 	{
 		eResetHint_Nothing              = 0,
-		eResetHint_StopRunningResponses = BIT(0),
-		eResetHint_ResetAllResponses    = BIT(1),
-		eResetHint_Variables            = BIT(2),
-		eResetHint_Speaker              = BIT(3),
-		eResetHint_DebugInfos           = BIT(4),
+		eResetHint_StopRunningResponses = BIT32(0),
+		eResetHint_ResetAllResponses    = BIT32(1),
+		eResetHint_Variables            = BIT32(2),
+		eResetHint_Speaker              = BIT32(3),
+		eResetHint_DebugInfos           = BIT32(4),
 		//... implementation specifics
 		eResetHint_All                  = 0xFFFFFFFF
 	};
@@ -497,7 +508,7 @@ struct IResponseManager
 		eSF_OnlyWithoutResponses
 	};
 
-	virtual ~IResponseManager() {}
+	virtual ~IResponseManager() = default;
 
 	/**
 	 * will register the given class (derived from DRS.IResponseManager.IListener) as a listener to signal-processing. If a signalInstanceId is provided, only callbacks for that specific instance are sent
@@ -527,16 +538,16 @@ struct IResponseManager
 
 struct IResponseActor
 {
-	virtual ~IResponseActor() {}
+	virtual ~IResponseActor() = default;
 
 	/**
 	 * Will return the name of the Actor in the DRS. This is the name, with which the actor can be found.
 	 *
-	 * Note: string actorNameAsString = pActor->GetName().GetText();
+	 * Note: string actorNameAsString = pActor->GetName();
 	 * @return Returns the identifier that the DRS gave to the Actor.
 	 * @see IDynamicResponseSystem::CreateResponseActor
 	 */
-	virtual const CHashedString& GetName() const = 0;
+	virtual const string& GetName() const = 0;
 
 	/**
 	 * Will return the (local) variable collection for this actor.
@@ -573,6 +584,10 @@ struct IResponseActor
 	 * @see IDynamicResponseSystem::CreateResponseActor
 	 */
 	virtual IEntity* GetLinkedEntity() const = 0;
+
+	// with this method you can specify an aux proxy that should be used by the DRS to use for audio playback (if not called or called with CryAudio::InvalidAuxObjectId, then the Drs::SpeakerManager will create it`s own aux-proxy)
+	virtual void SetAuxAudioObjectID(CryAudio::AuxObjectId overrideAuxProxy) = 0;
+	virtual CryAudio::AuxObjectId GetAuxAudioObjectID() const = 0;
 
 	/**
 	 * Will queue a new signal. it will be handled in the next update of the DRS. The DRS will determine if there is a response for the signal.
@@ -631,23 +646,22 @@ struct SCurrentDrsUserScopeHelper
 
 struct IDialogLine
 {
-	virtual ~IDialogLine() {}
+	virtual ~IDialogLine() = default;
 	virtual const string& GetText() const = 0;
 	virtual const string& GetStartAudioTrigger() const = 0;
 	virtual const string& GetEndAudioTrigger() const = 0;
 	virtual const string& GetLipsyncAnimation() const = 0;
-	virtual const string& GetStandaloneFile() const = 0;
 	virtual float         GetPauseLength() const = 0;
 	virtual const string& GetCustomData() const = 0;
 
 	virtual void          SetText(const string& text) = 0;
 	virtual void          SetStartAudioTrigger(const string& trigger) = 0;
 	virtual void          SetEndAudioTrigger(const string& trigger) = 0;
-	virtual void          Serialize(Serialization::IArchive& ar) = 0;
 	virtual void          SetLipsyncAnimation(const string& lipsyncAnimation) = 0;
-	virtual void          SetStandaloneFile(const string& standAlonefile) = 0;
 	virtual void          SetPauseLength(float length) = 0;
 	virtual void          SetCustomData(const string& data) = 0;
+
+	virtual void          Serialize(Serialization::IArchive& ar) = 0;
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -665,7 +679,7 @@ struct IDialogLineSet
 		Any = EPickModeFlags_RandomVariation | EPickModeFlags_SequentialVariationRepeat | EPickModeFlags_SequentialVariationClamp | EPickModeFlags_SequentialAllSuccessively | EPickModeFlags_SequentialVariationOnlyOnce
 	};
 
-	virtual ~IDialogLineSet() {}
+	virtual ~IDialogLineSet() = default;
 	virtual void          SetLineId(const CHashedString& lineId) = 0;
 	virtual void          SetPriority(int priority) = 0;
 	virtual void          SetFlags(uint32 flags) = 0;
@@ -674,32 +688,37 @@ struct IDialogLineSet
 	virtual int           GetPriority() const = 0;
 	virtual uint32        GetFlags() const = 0;
 	virtual float         GetMaxQueuingDuration() const = 0;
+	virtual void          Serialize(Serialization::IArchive& ar) = 0;
+
+	//mainly for the editor
 	virtual uint32        GetLineCount() const = 0;
 	virtual IDialogLine*  GetLineByIndex(uint32 index) = 0;
-	virtual IDialogLine*  InsertLine(uint32 index) = 0;
-	virtual void          RemoveLine(uint32 index) = 0;
-	virtual void          Serialize(Serialization::IArchive& ar) = 0;
+	virtual IDialogLine*  InsertLine(uint32 index = -1) = 0;
+	virtual bool          RemoveLine(uint32 index) = 0;
 };
 
 //////////////////////////////////////////////////////////////////////////
 
 struct IDialogLineDatabase
 {
-	virtual ~IDialogLineDatabase() {}
+	virtual ~IDialogLineDatabase() = default;
 	virtual bool                  Save(const char* szFilePath) = 0;
+	virtual IDialogLineSet*       GetLineSetById(const CHashedString& lineID) = 0;
+	virtual void                  Serialize(Serialization::IArchive& ar) = 0;
+
+	//mainly for the editor
 	virtual uint32                GetLineSetCount() const = 0;
 	virtual IDialogLineSet*       GetLineSetByIndex(uint32 index) = 0;
-	virtual const IDialogLineSet* GetLineSetById(const CHashedString& lineID) const = 0;
-	virtual IDialogLineSet*       InsertLineSet(uint32 index) = 0;
-	virtual void                  RemoveLineSet(uint32 index) = 0;
+	virtual IDialogLineSet*       InsertLineSet(uint32 index = -1) = 0;
+	virtual bool                  RemoveLineSet(uint32 index) = 0;
 	virtual bool                  ExecuteScript(uint32 index) = 0;
-	virtual void                  Serialize(Serialization::IArchive& ar) = 0;
 	virtual void                  SerializeLinesHistory(Serialization::IArchive& ar) = 0;
 };
 
 //! WIP
 struct IDataImportHelper
 {
+	virtual ~IDataImportHelper() = default;
 	typedef IConditionSharedPtr (*      CondtionCreatorFct)(const string&, const char* szFormatName);
 	typedef IResponseActionSharedPtr (* ActionCreatorFct)(const string&, const char* szFormatName);
 

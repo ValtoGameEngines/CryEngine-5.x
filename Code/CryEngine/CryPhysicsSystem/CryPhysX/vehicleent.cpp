@@ -1,3 +1,5 @@
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
 #include "StdAfx.h"
 
 #include "geometries.h"
@@ -51,7 +53,6 @@ int PhysXVehicle::AddGeometry(phys_geometry* pgeom, pe_geomparams* _params, int 
 int PhysXVehicle::SetParams(pe_params* _params, int bThreadSafe)
 {
 	if (_params->type==pe_params_wheel::type_id) {
-		pe_params_wheel *params = (pe_params_wheel*)_params;
 		return 1;
 	}	else
 		SetupPxVehicle();
@@ -150,10 +151,11 @@ PxQueryHitType::Enum WheelRaycastPreFilter(PxFilterData fdWheel, PxFilterData fd
 
 bool PhysXVehicle::SetupPxVehicle()
 {
-	if (!m_vehicle && m_wheels.size() != 4) // at the moment, only allow 4-wheeled vehicles
+	if (!m_vehicle && m_wheels.size() < 4) // at the moment, only allow 4 or more-wheeled vehicles
 		return false;
 	if (m_vehicle)
 		return true;
+
 	int nwheels=m_wheels.size(), driveMask=0;
 	m_vehicle = PxVehicleDrive4W::allocate(nwheels);
 	PxVehicleWheelsSimData *wsd = PxVehicleWheelsSimData::allocate(nwheels);
@@ -166,6 +168,7 @@ bool PhysXVehicle::SetupPxVehicle()
 	Vec3 wpos[4];
 	for(int i=0; i<nwheels; i++) 
 		ptsusp[i] = V(m_wheels[i].pivot);
+
 	PxVehicleComputeSprungMasses(m_wheels.size(), ptsusp, pRD->getCMassLocalPose().p, pRD->getMass(), 2, wmass);
 	m_fric = PxVehicleDrivableSurfaceToTireFrictionPairs::allocate(nwheels,1);
 	PxVehicleDrivableSurfaceType surf; surf.mType=0;
@@ -236,9 +239,9 @@ bool PhysXVehicle::SetupPxVehicle()
 	m_vehicle->setup(g_cryPhysX.Physics(), pRD, *wsd, dsd, max(nwheels-4,0));
 	wsd->free();
 	m_vehicle->mDriveDynData.setUseAutoGears(true);
-	PxBatchQueryDesc sqDesc(4,0,0);
-	m_rayHits.resize(4);
-	m_wheelsQuery.resize(4);
+	PxBatchQueryDesc sqDesc(nwheels,0,0);
+	m_rayHits.resize(nwheels);
+	m_wheelsQuery.resize(nwheels);
 	sqDesc.queryMemory.userRaycastResultBuffer = &m_rayHits[0];
 	sqDesc.preFilterShader = WheelRaycastPreFilter;
 	m_rayCaster = g_cryPhysX.Scene()->createBatchQuery(sqDesc);

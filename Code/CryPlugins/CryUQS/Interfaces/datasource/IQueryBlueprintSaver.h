@@ -1,12 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
-namespace uqs
+namespace UQS
 {
-	namespace datasource
+	namespace DataSource
 	{
 
 		//===================================================================================
@@ -18,7 +18,7 @@ namespace uqs
 		struct IQueryBlueprintSaver
 		{
 			virtual                        ~IQueryBlueprintSaver() {}
-			virtual bool                   SaveTextualQueryBlueprint(const core::ITextualQueryBlueprint& queryBlueprintToSave, shared::IUqsString& error) = 0;
+			virtual bool                   SaveTextualQueryBlueprint(const Core::ITextualQueryBlueprint& queryBlueprintToSave, Shared::IUqsString& error) = 0;
 		};
 
 	}

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __GAMEOBJECTSYSTEM_H__
 #define __GAMEOBJECTSYSTEM_H__
@@ -14,14 +14,6 @@
 #include <vector>
 #include <map>
 
-struct SEntitySchedulingProfiles
-{
-	uint32 normal;
-	uint32 owned;
-
-	void   GetMemoryUsage(ICrySizer* pSizer) const { /*nothing*/ }
-};
-
 class CGameObjectSystem : public IGameObjectSystem
 {
 public:
@@ -30,7 +22,7 @@ public:
 	IGameObjectSystem::ExtensionID                     GetID(const char* name) override;
 	const char*                                        GetName(IGameObjectSystem::ExtensionID id) override;
 	uint32                                             GetExtensionSerializationPriority(IGameObjectSystem::ExtensionID id) override;
-	IGameObjectExtension*                            Instantiate(IGameObjectSystem::ExtensionID id, IGameObject* pObject, TSerialize* pSpawnSerializer) override;
+	IGameObjectExtension*                              Instantiate(IGameObjectSystem::ExtensionID id, IGameObject* pObject) override;
 	virtual void                                       RegisterExtension(const char* szName, IGameObjectExtensionCreatorBase* pCreator, IEntityClassRegistry::SEntityClassDesc* pClsDesc) override;
 	virtual void                                       RegisterSchedulingProfile(const char* szEntityClassName, const char* szNormalPolicy, const char* szOwnedPolicy) override;
 	virtual void                                       DefineProtocol(bool server, IProtocolBuilder* pBuilder) override;
@@ -62,8 +54,7 @@ public:
 	virtual void                                       RemoveSink(IGameObjectSystemSink* pSink) override;
 private:
 	void                                               LoadSerializationOrderFile();
-	TSerialize*                                        GetSpawnSerializerForEntity(const EntityId entityId) const;
-
+	
 	std::map<string, ExtensionID> m_nameToID;
 
 	struct SExtensionInfo
@@ -85,6 +76,8 @@ private:
 	CGameObjectDispatch       m_dispatch;
 
 	std::vector<IGameObject*> m_postUpdateObjects;
+	bool                      m_isPostUpdating = false;
+
 	IEntityClass*             m_pClassPlayerProximityTrigger;
 
 	typedef std::map<string, SEntitySchedulingProfiles> TSchedulingProfiles;
@@ -97,8 +90,6 @@ private:
 	//
 	typedef std::list<IGameObjectSystemSink*> SinkList;
 	SinkList                                    m_lstSinks; // registered sinks get callbacks
-
-	std::vector<IGameObject*>                   m_tempObjects;
 
 	std::vector<IGameObjectSystem::ExtensionID> m_activatedExtensions_top;
 	std::vector<string>                         m_serializationOrderList; // defines serialization order for extensions

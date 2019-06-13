@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -21,7 +21,7 @@ History:
 #include "ActorImpulseHandler.h"
 #include "GameCodeCoverage/GameCodeCoverageTracker.h"
 
-#include <CryAnimation/ICryAnimation.h>
+#include <Cry3DEngine/ISurfaceType.h>
 
 void CMeleeCollisionHelper::OnRayCastDataReceived( const QueuedRayID& rayID, const RayCastResult& result )
 {

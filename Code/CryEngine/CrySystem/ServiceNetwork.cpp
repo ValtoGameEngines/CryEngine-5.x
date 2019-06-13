@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -12,6 +12,8 @@
 #include "ServiceNetwork.h"
 #include "RemoteCommandHelpers.h"
 #include <CryNetwork/CrySocks.h>
+#include <CryCore/CryEndian.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 //-----------------------------------------------------------------------------
 
@@ -266,7 +268,7 @@ void CServiceNetworkConnection::FlushAndWait()
 	// Wait for the connection to be empty
 	while (IsAlive() && !m_pSendQueue.empty())
 	{
-		Sleep(1);
+		CrySleep(1);
 	}
 
 	// Resume communication layer
@@ -336,10 +338,9 @@ void CServiceNetworkConnection::Shutdown()
 	}
 
 	// Release all pending messages (they wont be sent anyway)
-	while (!m_pSendQueue.empty())
+	for (CServiceNetworkMessage* pMessage : m_pSendQueue.pop_all())
 	{
-		CServiceNetworkMessage* message = m_pSendQueue.pop();
-		message->Release();
+		pMessage->Release();
 	}
 
 	// release current in-flight message
@@ -655,8 +656,7 @@ void CServiceNetworkConnection::ProcessSendingQueue()
 	// Get the top message from the send queue
 	if (NULL == m_pSendedMessages)
 	{
-		m_pSendedMessages = m_pSendQueue.pop();
-		if (NULL == m_pSendedMessages)
+		if (!m_pSendQueue.try_pop(m_pSendedMessages))
 		{
 			return;
 		}
@@ -1097,12 +1097,9 @@ bool CServiceNetworkConnection::SendMsg(IServiceNetworkMessage* message)
 
 IServiceNetworkMessage* CServiceNetworkConnection::ReceiveMsg()
 {
-	// Anything on the queue ?
-	IServiceNetworkMessage* message = NULL;
-	if (!m_pReceiveQueue.empty())
+	CServiceNetworkMessage* message = NULL;
+	if (m_pReceiveQueue.try_pop(message))
 	{
-		message = m_pReceiveQueue.pop();
-
 		// Report connection problems
 		LOG_VERBOSE(3, "Connection local='%s', remote='%s', this=%p: message ID %d (size=%d) popped by receive end",
 		            m_localAddress.ToString().c_str(),
@@ -1538,6 +1535,16 @@ void CServiceNetworkListener::ProcessPendingConnections()
 	}
 }
 
+const uint32 CServiceNetwork::GetReceivedDataQueueLimit() const
+{
+	return m_pReceiveDataQueueLimit->GetIVal();
+}
+
+const uint32 CServiceNetwork::GetSendDataQueueLimit() const
+{
+	return m_pSendDataQueueLimit->GetIVal();
+}
+
 //-----------------------------------------------------------------------------
 
 CServiceNetwork::CServiceNetwork()
@@ -1546,11 +1553,11 @@ CServiceNetwork::CServiceNetwork()
 	, m_bufferID(1)
 {
 	// Create the CVAR
-	m_pVerboseLevel = gEnv->pConsole->RegisterInt("net_debugVerboseLevel", 0, VF_DEV_ONLY);
+	m_pVerboseLevel = REGISTER_INT("net_debugVerboseLevel", 0, VF_DEV_ONLY, "");
 
 	// Send/receive Queue size limits
-	m_pReceiveDataQueueLimit = gEnv->pConsole->RegisterInt("net_receiveQueueSize", 20 << 20, VF_DEV_ONLY);
-	m_pSendDataQueueLimit = gEnv->pConsole->RegisterInt("net_sendQueueSize", 5 << 20, VF_DEV_ONLY);
+	m_pReceiveDataQueueLimit = REGISTER_INT("net_receiveQueueSize", 20 << 20, VF_DEV_ONLY, "");
+	m_pSendDataQueueLimit = REGISTER_INT("net_sendQueueSize", 5 << 20, VF_DEV_ONLY, "");
 
 	// Reinitialize the random number generator with independent seed value
 	m_guidGenerator.Seed((uint32)GetNetworkTime());
@@ -1720,7 +1727,7 @@ void CServiceNetwork::ThreadEntry()
 
 		// Internal delay
 		// TODO: this is guess work right now
-		Sleep(5);
+		CrySleep(5);
 	}
 }
 

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   UIEntityTag.cpp
@@ -18,6 +18,7 @@
 #include <CryGame/IGameFramework.h>
 #include <IViewSystem.h>
 #include <CryFlowGraph/IFlowBaseNode.h>
+#include <CryMath/Cry_Camera.h>
 
 ////////////////////////////////////////////////////////////////////////////
 void CUIEntityTag::InitEventSystem()
@@ -164,7 +165,7 @@ const CUIEntityTag::STagInfo* CUIEntityTag::GetTagInfo(EntityId entityId, const 
 }
 
 ////////////////////////////////////////////////////////////////////////////
-void CUIEntityTag::OnEntityEvent(IEntity* pEntity, SEntityEvent& event)
+void CUIEntityTag::OnEntityEvent(IEntity* pEntity, const SEntityEvent& event)
 {
 	assert(event.event == ENTITY_EVENT_DONE);
 	RemoveAllEntityTags(pEntity->GetId(), false);

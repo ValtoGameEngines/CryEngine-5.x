@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   UIMultiPlayer.cpp
@@ -217,8 +217,12 @@ void CUIMultiPlayer::PlayerLeft(EntityId playerid, const string& name)
 		}
 	}
 
+#if defined(USE_CRY_ASSERT)
 	const bool ok = stl::member_find_and_erase(m_Players, playerid);
  	assert( ok );
+#else
+	stl::member_find_and_erase(m_Players, playerid);
+#endif
 
 	m_eventSender.SendEvent<eUIE_PlayerLeft>(playerid, name);
 }

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include <CrySystem/XML/IXml.h>
@@ -460,7 +460,6 @@ bool CPlayerProfileImplFSDir::LoginUser(SUserEntry* pEntry)
 
 	std::multimap<time_t, SLocalProfileInfo> profiles;
 
-	ICryPak* pCryPak = gEnv->pCryPak;
 	_finddata_t fd;
 
 	path.TrimRight("/\\");
@@ -1290,15 +1289,13 @@ private:
 
 ILevelRotationFile* CCommonSaveGameHelper::GetLevelRotationFile(CPlayerProfileManager::SUserEntry* pEntry, const char* name)
 {
-	string filename = gEnv->pSystem->GetRootFolder();
-	if (filename.empty())
-	{
-		m_pImpl->InternalMakeFSPath(pEntry, pEntry->pCurrentProfile->GetName(), filename);
-		filename.append("levelrotation/");
-	}
+	string rootFolder;
+	m_pImpl->InternalMakeFSPath(pEntry, pEntry->pCurrentProfile->GetName(), rootFolder);
+	rootFolder = PathUtil::Make(rootFolder, "levelrotation/");
+
 	string strippedName = PathUtil::GetFile(name);
-	filename.append(strippedName);
-	filename.append(".xml");
+	strippedName = PathUtil::ReplaceExtension(strippedName, ".xml");
+	string filename = PathUtil::Make(rootFolder, strippedName);
 	return new CLevelRotationFile(filename);
 }
 
@@ -1388,7 +1385,7 @@ XmlNodeRef CSerializerXML::GetSection(CPlayerProfileManager::EPlayerProfileSecti
 // some helpers
 bool SaveXMLFile(const string& filename, const XmlNodeRef& rootNode)
 {
-	LOADING_TIME_PROFILE_SECTION(gEnv->pSystem);
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY)(gEnv->pSystem);
 
 	bool ok = false;
 

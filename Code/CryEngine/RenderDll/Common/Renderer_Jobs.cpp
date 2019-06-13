@@ -1,14 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-//
-//	File:Renderer.cpp
-//  Description: Abstract renderer API
-//
-//	History:
-//	-Feb 05,2001:Originally Created by Marco Corbetta
-//	-: taken over by Andrey Honich
-//.
-//////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -105,7 +95,7 @@ static inline void AddEf_HandleForceFlags(int& nList, int& nAW, uint32& nBatchFl
 		nBatchFlags |= FB_Z;
 
 	{
-		// below branchlessw version of:
+		// below branchless version of:
 		//if      (nShaderFlags2 & EF2_FORCE_TRANSPASS  ) nList = EFSLIST_TRANSP;
 		//else if (nShaderFlags2 & EF2_FORCE_GENERALPASS) nList = EFSLIST_GENERAL;
 		//else if (nShaderFlags2 & EF2_FORCE_WATERPASS  ) nList = EFSLIST_WATER;
@@ -259,6 +249,7 @@ void CRenderer::EF_AddEf_NotVirtual(CRenderElement* re, SShaderItem& SH, CRender
 	nList = (nBatchFlags & FB_SKIN) ? EFSLIST_SKIN : nList;
 	nList = (nBatchFlags & FB_EYE_OVERLAY) ? EFSLIST_EYE_OVERLAY : nList;
 
+	const EShaderDrawType shaderDrawType = pSH->m_eSHDType;
 	const uint32 nShaderFlags2 = pSH->m_Flags2;
 	const uint64 ObjDecalFlag = obj->m_ObjFlags & FOB_DECAL;
 
@@ -274,6 +265,7 @@ void CRenderer::EF_AddEf_NotVirtual(CRenderElement* re, SShaderItem& SH, CRender
 
 		//SShaderTechnique *pTech = SH.GetTechnique();
 		//if (pTech && pTech->m_nTechnique[TTYPE_Z] > 0 && ((nShaderFlags2 & EF2_FORCE_ZPASS) || CV_r_deferredshading)) // deferred shading always enabled
+		if (nShaderFlags & EF_SUPPORTSDEFERREDSHADING_FULL)
 		{
 			nBatchFlags |= FB_Z;
 		}
@@ -366,9 +358,11 @@ void CRenderer::EF_AddEf_NotVirtual(CRenderElement* re, SShaderItem& SH, CRender
 	// No need to sort opaque passes by water/after water. Ensure always on same list for more coherent sorting
 	nAW |= nz2one((nList == EFSLIST_GENERAL) | (nList == EFSLIST_TERRAINLAYER) | (nList == EFSLIST_DECAL));
 
+#ifndef _RELEASE
+	nList = (shaderDrawType == eSHDT_DebugHelper) ? EFSLIST_DEBUG_HELPER : nList;
+#endif
+
 	passInfo.GetRenderView()->AddRenderItem(re, obj, SH, nList, nBatchFlags, passInfo.GetRendItemSorter(), false, passInfo.IsAuxWindow());
-
-
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -412,16 +406,16 @@ void CRenderer::GetFogVolumeContribution(uint16 idx, ColorF& rColor) const
 //////////////////////////////////////////////////////////////////////////
 uint32 CRenderer::EF_BatchFlags(SShaderItem& SH, CRenderObject* pObj, CRenderElement* re, const SRenderingPassInfo& passInfo, int nAboveWater)
 {
-
 	uint32 nFlags = SH.m_nPreprocessFlags & FB_MASK;
 	if (SH.m_nPreprocessFlags & FSPR_GENSPRITES)
 		nFlags |= FB_PREPROCESS;
+
 	SShaderTechnique* const __restrict pTech = SH.GetTechnique();
 	CShaderResources* const __restrict pR = (CShaderResources*)SH.m_pShaderResources;
 	CShader* const __restrict pS = (CShader*)SH.m_pShader;
 
 	float fAlpha = pObj->m_fAlpha;
-	uint32 uTransparent = (bool)(fAlpha < 1.0f);
+	uint32 uTransparent = 0; //(bool)(fAlpha < 1.0f); Not supported in new rendering pipeline 
 	const uint64 ObjFlags = pObj->m_ObjFlags;
 
 	if (!passInfo.IsRecursivePass() && pTech)
@@ -435,7 +429,7 @@ uint32 CRenderer::EF_BatchFlags(SShaderItem& SH, CRenderObject* pObj, CRenderEle
 		if (!((nFlags & FB_Z) && (!(pObj->m_RState & OS_NODEPTH_WRITE) || (pS->m_Flags2 & EF2_FORCE_ZPASS))))
 			nFlags &= ~FB_Z;
 
-		if ((ObjFlags & FOB_DISSOLVE) || (ObjFlags & FOB_DECAL) || CRenderer::CV_r_usezpass != 2 || pObj->m_fDistance > CRenderer::CV_r_ZPrepassMaxDist)
+		if (ObjFlags & FOB_DECAL)
 			nFlags &= ~FB_ZPREPASS;
 
 		pObj->m_ObjFlags |= (nFlags & FB_ZPREPASS) ? FOB_ZPREPASS : 0;
@@ -515,7 +509,8 @@ uint32 CRenderer::EF_BatchFlags(SShaderItem& SH, CRenderObject* pObj, CRenderEle
 	else if (passInfo.IsRecursivePass() && pTech && m_RP.m_TI[passInfo.ThreadID()].m_PersFlags & RBPF_MIRRORCAMERA)
 	{
 		nFlags &= (FB_TRANSPARENT | FB_GENERAL);
-		nFlags |= FB_TRANSPARENT * uTransparent;                                      // if (pObj->m_fAlpha < 1.0f)                   nFlags |= FB_TRANSPARENT;
+		nFlags |= FB_TRANSPARENT * uTransparent;
+		// if (pObj->m_fAlpha < 1.0f) nFlags |= FB_TRANSPARENT;
 	}
 
 	{
@@ -598,7 +593,6 @@ CRenderObject* CRenderer::EF_DuplicateRO(CRenderObject* pSrc, const SRenderingPa
 			WriteLock lock(pObjSrc->m_accessLock);
 			pObjNew->m_pNextPermanent = pObjSrc->m_pNextPermanent;
 			pObjSrc->m_pNextPermanent = pObjNew;
-			;
 		}
 
 		return pObjNew;
@@ -620,11 +614,11 @@ struct CShaderPublicParams : public IShaderPublicParams
 		m_nRefCount = 0;
 	}
 
-	virtual void          AddRef()                  { m_nRefCount++; };
-	virtual void          Release()                 { if (--m_nRefCount <= 0) delete this; };
+	virtual void          AddRef()                  { m_nRefCount++; }
+	virtual void          Release()                 { if (--m_nRefCount <= 0) delete this; }
 
 	virtual void          SetParamCount(int nParam) { m_shaderParams.resize(nParam); }
-	virtual int           GetParamCount() const     { return m_shaderParams.size(); };
+	virtual int           GetParamCount() const     { return m_shaderParams.size(); }
 
 	virtual SShaderParam& GetParam(int nIndex)
 	{

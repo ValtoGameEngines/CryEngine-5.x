@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -116,6 +116,7 @@ CSoftEntity::~CSoftEntity()
 	if (m_pTetrQueue) { delete[] m_pTetrQueue; m_pTetrQueue=0; }
 	RemoveCore();
 	m_nVtx=m_nEdges = 0; 
+	delete[] m_hbuf;
 }
 
 void CSoftEntity::RemoveCore() 
@@ -299,6 +300,17 @@ int CSoftEntity::AddGeometry(phys_geometry *pgeom, pe_geomparams* params, int id
 	}
 
 	memset(pInfo=new int[pMesh->m_nTris][3],-1,pMesh->m_nTris*sizeof(pInfo[0]));
+	bool skipLongest = m_flags & se_skip_longest_edges;
+	if (skipLongest) {
+		float ratio = 0;
+		for(i=0;i<pMesh->m_nTris;i++) {
+			for(j=0;j<3;j++)
+				len[j] = (pMesh->m_pVertices[pMesh->m_pIndices[i*3+j]]-pMesh->m_pVertices[pMesh->m_pIndices[i*3+inc_mod3[j]]]).len2();
+			ratio += len[idxmin3(len)] / max(1e-8f,len[idxmax3(len)]);
+		}
+		ratio /= pMesh->m_nTris;
+		skipLongest = ratio<0.7f;
+	}
 	// count the number of edges - for each tri, mark each edge, unless buddy already did it
 	for(i=m_nEdges=0;i<pMesh->m_nTris;i++) {
 		for(j=bDegen=0;j<3;j++) {
@@ -308,7 +320,7 @@ int CSoftEntity::AddGeometry(phys_geometry *pgeom, pe_geomparams* params, int id
 		}
 		iedge = idxmax3(len); j = iedge&-bDegen;
 		do {
-			if (pInfo[i][j]<0 && !(m_flags&se_skip_longest_edges && j==iedge && !bDegen)) {
+			if (pInfo[i][j]<0 && !(skipLongest && j==iedge && !bDegen)) {
 				if (pMesh->m_pTopology[i].ibuddy[j]>=0)
 					pInfo[ pMesh->m_pTopology[i].ibuddy[j] ][ pMesh->GetEdgeByBuddy(pMesh->m_pTopology[i].ibuddy[j],i) ] = m_nEdges;
 				pInfo[i][j] = m_nEdges++;
@@ -321,6 +333,7 @@ int CSoftEntity::AddGeometry(phys_geometry *pgeom, pe_geomparams* params, int id
 		i0 = m_edges[iedge].ivtx[0] = pMesh->m_pIndices[i*3+j];
 		i1 = m_edges[iedge].ivtx[1] = pMesh->m_pIndices[i*3+inc_mod3[j]];
 		m_edges[iedge].len=m_edges[iedge].len0 = (pMesh->m_pVertices[i0]-pMesh->m_pVertices[i1]).len()*params->scale;
+		m_edges[iedge].kmass = vtxmass*0.5f;
 		m_edges[iedge].len = 0;
 	}
 
@@ -359,8 +372,13 @@ int CSoftEntity::AddGeometry(phys_geometry *pgeom, pe_geomparams* params, int id
 		m_BBox[0] = min(m_BBox[0], m_vtx[ivtx].pos);
 		m_BBox[1] = max(m_BBox[1], m_vtx[ivtx].pos);
 	}
+	for(i=m_nConnectedVtx=0;i<m_nVtx;i++)	if (m_vtx[i].iEndEdge>=m_vtx[i].iStartEdge)	{
+		m_vtx[m_nConnectedVtx].idx = m_vtx[m_nConnectedVtx].idx0 = i;
+		m_nConnectedVtx++;
+	}
+	m_V0 = 0;
 	delete[] pInfo;
-	m_coverage = m_flags&se_skip_longest_edges ? 0.5f: 1.0f/3;
+	m_coverage = skipLongest ? 0.5f: 1.0f/3;
 	m_BBox[0] += m_pos+m_offs0; m_BBox[1] += m_pos+m_offs0;
 
 	BakeCurrentPose();
@@ -380,8 +398,16 @@ int CSoftEntity::AddGeometry(phys_geometry *pgeom, pe_geomparams* params, int id
 	(pMesh->m_flags &= ~(mesh_OBB|mesh_AABB|mesh_AABB_rotated|mesh_force_AABB)) |= mesh_SingleBB;
 	m_flags |= pef_use_geom_callbacks;
 	m_bMeshUpdated = 0;
-	m_nConnectedVtx=m_nAttachedVtx = 0;
+	m_nAttachedVtx = 0;
 	m_maxAllowedDist = max(max(bbox.size.x,bbox.size.y),bbox.size.z)*params->scale*10.0f;
+
+	if (pMesh->m_flags & mesh_transient) {
+		pMesh->m_flags &= ~mesh_transient;
+		EventPhysPostStep epps; InitEvent(&epps,this,get_iCaller());
+		epps.pos = m_pos; epps.q = m_qrot;
+		epps.dt = 0; epps.idStep = m_pWorld->m_idStep;
+		m_pWorld->OnEvent(pef_log_poststep, &epps);
+	}
 
 	return res;
 }
@@ -448,7 +474,7 @@ int CSoftEntity::SetParams(pe_params *_params, int bThreadSafe)
 				}
 				/*if (!(m_flags & sef_skeleton))*/ for(j=0;j<m_nAttachedVtx;j++) {
 					Vec3 offs; quaternionf q; float scale; i=m_vtx[j].idx;
-					m_vtx[i].pContactEnt->GetLocTransform(m_vtx[i].iContactPart, offs,q,scale);
+					m_vtx[i].pContactEnt->GetLocTransform(m_vtx[i].iContactPart, offs,q,scale, this);
 					m_vtx[i].ptAttach = (m_vtx[i].pos+m_pos-offs)*q;
 				}
 				m_offs0 = m_vtx[m_vtx[0].idx].pos;
@@ -509,11 +535,15 @@ int CSoftEntity::SetParams(pe_params *_params, int bThreadSafe)
 			for(i=0;i<m_nVtx;i++) imaxLvl = max(imaxLvl,m_vtx[i].iSorted);
 			float rvtxmass = m_nVtx/m_parts[0].mass;
 			float kmass = (m_massDecay+1)/(float)(imaxLvl+1);
-			for(i=0;i<m_nVtx;i++) if (m_vtx[i].massinv>0.0f)
-				m_vtx[i].mass = 1.0f/(m_vtx[i].massinv = rvtxmass*(1.0f+m_vtx[i].iSorted*kmass));
-			for(i=0;i<m_nEdges;i++)
-				m_edges[i].kmass = 1.0f/max(1E-10f,m_vtx[m_edges[i].ivtx[0]].massinv+m_vtx[m_edges[i].ivtx[1]].massinv);
+			if (m_nAttachedVtx) {
+				for(i=0;i<m_nVtx;i++) if (m_vtx[i].massinv>0.0f)
+					m_vtx[i].mass = 1.0f/(m_vtx[i].massinv = rvtxmass*(1.0f+m_vtx[i].iSorted*kmass));
+				for(i=0;i<m_nEdges;i++)
+					m_edges[i].kmass = 1.0f/max(1E-10f,m_vtx[m_edges[i].ivtx[0]].massinv+m_vtx[m_edges[i].ivtx[1]].massinv);
+			}
 		}
+		if (!is_unused(params->pressure)) m_pressure = params->pressure;
+		if (!is_unused(params->densityInside)) m_densityInside = params->densityInside;
 		if (!is_unused(params->shapeStiffnessNorm)) m_kShapeStiffnessNorm = params->shapeStiffnessNorm;
 		if (!is_unused(params->shapeStiffnessTang)) m_kShapeStiffnessTang = params->shapeStiffnessTang;
 		if (!is_unused(params->stiffnessAnim)) m_stiffnessAnim = params->stiffnessAnim;
@@ -561,6 +591,8 @@ int CSoftEntity::GetParams(pe_params *_params) const
 		params->maxCollisionImpulse = m_maxCollImpulse;
 		params->collTypes = m_collTypes;
 		params->massDecay = m_massDecay;
+		params->pressure = m_pressure;
+		params->densityInside = m_densityInside;
 		params->shapeStiffnessNorm = m_kShapeStiffnessNorm;
 		params->shapeStiffnessTang = m_kShapeStiffnessTang;
 		params->stiffnessAnim = m_stiffnessAnim;
@@ -674,7 +706,7 @@ void CSoftEntity::AttachPoints(pe_action_attach_points *action, CPhysicalEntity 
 				int ismin = -isneg(dist.x*mindist.y-mindist.x*dist.y);
 				ipart += j-ipart & ismin; mindist.x -= (dist.x-mindist.x)*ismin; mindist.y -= (dist.y-mindist.y)*ismin;
 			}
-			pent->GetLocTransform(ipart,offs,q,dist.x);
+			pent->GetLocTransform(ipart,offs,q,dist.x,this);
 		}
 		m_vtx[action->piVtx[i]].iContactPart = ipart;
 		if (m_vtx[action->piVtx[i]].bAttached = bAttached) {
@@ -763,8 +795,7 @@ int CSoftEntity::Action(pe_action *_action, int bThreadSafe)
 			bAttached = 2;
 		float rvtxmass=0,vtxmass=0;
 		Vec3 offs; quaternionf q; float scale;
-		if (!pent || action->nPoints==0)
-			vtxmass = 1.0f/(rvtxmass = m_nVtx/m_parts[0].mass);
+		vtxmass = 1.0f/(rvtxmass = m_nVtx/m_parts[0].mass);
 
 		if (is_unused(action->nPoints) && pent) {
 			for(i=0;i<m_nVtx;i++) if (m_vtx[i].bAttached && m_vtx[i].pContactEnt) {
@@ -776,18 +807,28 @@ int CSoftEntity::Action(pe_action *_action, int bThreadSafe)
 			int iCaller=get_iCaller(), nents=pent && action->pEntity!=WORLD_ENTITY ? 1 :
 				m_pWorld->GetEntitiesAround(m_BBox[0],m_BBox[1],pents,ent_terrain|ent_static|ent_sleeping_rigid|ent_rigid,0,0,iCaller), npt=0;
 			action->piVtx = new int[m_nVtx];
+			float mindist=1e10f;
+			int ipartBest,ivtxBest=-1;
 			for(int ient=0;ient<nents;ient++) for(int j=0;j<pents[ient]->GetUsedPartsCount(iCaller);j++) {
 				ipart = pents[ient]->GetUsedPart(iCaller,j);
-				pents[ient]->GetLocTransform(ipart, offs,q,scale);
+				pents[ient]->GetLocTransform(ipart, offs,q,scale, this);
+				Vec3 ptc = q*pents[ient]->m_parts[ipart].pPhysGeomProxy->origin*scale + offs - m_pos-m_offs0;
 				float rscale = 1.0f/scale;
-				for(i=action->nPoints=0;i<m_nVtx;i++) if (!m_vtx[i].bAttached) {
-					action->piVtx[action->nPoints] = i;
+				action->nPoints = 0;
+				for(int i0=m_nAttachedVtx; i0<m_nConnectedVtx; i0++) {
+					action->piVtx[action->nPoints] = (i=m_vtx[i0].idx);
 					action->nPoints += pents[ient]->m_parts[ipart].pPhysGeomProxy->pGeom->PointInsideStatus((m_vtx[i].pos+m_pos+m_offs0-offs)*q*rscale);
+					float dist = (ptc-m_vtx[i].pos).len2();
+					if (dist<mindist)
+						mindist=dist, ivtxBest=i, ipartBest=ipart;
 				}
-				
 				if (action->nPoints>0)
 					AttachPoints(action,pents[ient],ipart, rvtxmass,vtxmass, bAttached, offs,q);
 				npt += action->nPoints;
+			}
+			if (!npt && action->pEntity!=WORLD_ENTITY && ivtxBest>=0) {
+				action->nPoints=npt = 1; action->piVtx[0] = ivtxBest;
+				AttachPoints(action,pent,ipartBest, rvtxmass,vtxmass, bAttached, offs,q);
 			}
 			delete[] action->piVtx; action->piVtx=0; action->nPoints = -1;
 			if (!npt)
@@ -809,7 +850,7 @@ int CSoftEntity::Action(pe_action *_action, int bThreadSafe)
 			if (pent && pent->m_iSimClass==4 && pent->GetType()!=PE_ROPE)
 				(m_collTypes &= ~ent_living) |= ent_independent;
 			if (bAttached)
-				pent->GetLocTransform(ipart, offs,q,scale);
+				pent->GetLocTransform(ipart, offs,q,scale, this);
 
 			if (pent && action->nPoints==0)	{
 				for(i=0;i<m_nVtx;i++) if (m_vtx[i].bAttached && m_vtx[i].pContactEnt==pent) {
@@ -834,8 +875,10 @@ int CSoftEntity::Action(pe_action *_action, int bThreadSafe)
 				i1=m_vtx[j].idx; m_vtx[j].idx=m_vtx[j-1].idx; m_vtx[j-1].idx=i1;
 			}
 		m_nAttachedVtx = ihead;
+		if (!ihead)
+			m_vtx[ihead++].idx=m_vtx[0].idx, m_vtx[m_vtx[0].idx].iSorted=0;
 
-		for(itail=0;itail!=ihead;)	for(j=m_vtx[i=m_vtx[itail++].idx].iStartEdge; j<=m_vtx[i].iEndEdge; j++)
+		for(itail=0;itail!=ihead;) for(j=m_vtx[i=m_vtx[itail++].idx].iStartEdge; j<=m_vtx[i].iEndEdge; j++)
 			if (m_vtx[i1 = m_edges[m_pVtxEdges[j]].ivtx[0]+m_edges[m_pVtxEdges[j]].ivtx[1]-i].iSorted<0)
 				m_vtx[ihead++].idx = i1, imaxLvl = max(imaxLvl, m_vtx[i1].iSorted = m_vtx[i].iSorted+1);
 		for(i=0,i1=ihead; i<m_nVtx; i++) {
@@ -844,9 +887,7 @@ int CSoftEntity::Action(pe_action *_action, int bThreadSafe)
 			}
 			m_vtx[m_vtx[i].idx].idx0 = i;
 		}
-		m_nConnectedVtx = ihead;
-		if (!ihead && m_flags & sef_volumetric)
-			m_nConnectedVtx = m_nVtx;
+		m_nConnectedVtx = i1;
 		m_maxLevelDenom = 1.0f/max(1,imaxLvl);
 
 		Vec3 pos0 = m_vtx[m_vtx[0].idx].pos;
@@ -871,8 +912,8 @@ int CSoftEntity::Action(pe_action *_action, int bThreadSafe)
 		pe_action_target_vtx *action = (pe_action_target_vtx*)_action;
 		if (is_unused(action->points) || !action->points)	{
 			float scale=1.0f;
-			if (is_unused(action->posHost) && m_vtx[m_vtx[0].idx].pContactEnt)
-				m_vtx[m_vtx[0].idx].pContactEnt->GetLocTransform(m_vtx[m_vtx[0].idx].iContactPart,action->posHost,action->qHost,scale);
+			if (is_unused(action->posHost) && m_nVtx && m_vtx[m_vtx[0].idx].pContactEnt)
+				m_vtx[m_vtx[0].idx].pContactEnt->GetLocTransform(m_vtx[m_vtx[0].idx].iContactPart,action->posHost,action->qHost,scale,this);
 			for(int i=0; i<m_nVtx; i++) if (!m_vtx[i].bAttached) 
 				m_vtx[i].ptAttach = (m_vtx[i].pos-action->posHost)*action->qHost;
 		} else {
@@ -920,6 +961,8 @@ int CSoftEntity::Action(pe_action *_action, int bThreadSafe)
 				BakeCurrentPose();
 				m_bMeshUpdated = 0;
 			}
+			if (!(m_flags & sef_skeleton))
+				pMesh->m_flags |= mesh_transient;	// mark the mesh as modified so that cloth will send a poststep on its reusage
 			m_windTimer = 0;
 		}
 		return 1;
@@ -948,7 +991,7 @@ int CSoftEntity::Action(pe_action *_action, int bThreadSafe)
 
 		if (pMesh->Slice(&triCut,0.01f,0.05f)) {
 			pe_action_attach_points asp; asp.nPoints = m_nAttachedVtx;
-			asp.piVtx = new int[m_nAttachedVtx];
+			asp.piVtx = new int[m_nAttachedVtx+1];
 			for(int i=0;i<m_nAttachedVtx;i++) asp.piVtx[i] = m_vtx[i].idx;
 			if ((asp.pEntity=m_vtx[m_vtx[0].idx].pContactEnt) && ((CPhysicalEntity*)asp.pEntity)->m_nParts>0)
 				asp.partid = ((CPhysicalEntity*)asp.pEntity)->m_parts[m_vtx[m_vtx[0].idx].iContactPart].id;
@@ -960,7 +1003,8 @@ int CSoftEntity::Action(pe_action *_action, int bThreadSafe)
 			float maxAllowedDist = m_maxAllowedDist;
 			AddGeometry(pGeom,&gp,id); --pGeom->nRefCount;
 			m_maxAllowedDist = maxAllowedDist;
-			Action(&asp);
+			if (asp.nPoints)
+				Action(&asp);
 			int nSimVtx = pMesh->m_nVertices;
 			for(int i=nSimVtx-1; i>=m_nConnectedVtx; i--)
 				if (m_vtx[m_vtx[i].idx].iStartEdge > m_vtx[m_vtx[i].idx].iEndEdge)
@@ -979,6 +1023,7 @@ int CSoftEntity::Action(pe_action *_action, int bThreadSafe)
 						m_edges[m_pVtxEdges[j1]].len0 = edges[pVtxEdges[j0]].len0;
 			}
 			delete[] vtx; delete[] edges; delete[] pVtxEdges;
+			m_dpressure = -m_pressure;
 
 			if (pMesh->m_pMeshUpdate) {
 				EventPhysUpdateMesh epum;
@@ -1015,7 +1060,7 @@ float CSoftEntity::GetMaxTimeStep(float time_interval)
 
 
 void CSoftEntity::StepInner(float time_interval, int bCollMode, check_part *checkParts,int nCheckParts, 
-														const plane &waterPlane,const Vec3 &waterFlow,float waterDensity,
+														const plane &waterPlane,const Vec3 &waterFlow,float waterDensity,	float airDensity,
 														const Vec3 &lastposHost, const quaternionf &lastqHost,
                             se_vertex *pvtx)
 {
@@ -1216,7 +1261,27 @@ void CSoftEntity::StepInner(float time_interval, int bCollMode, check_part *chec
 			m_edges[i].rlen = isqrt_fast_tpl(len);
 		}
 
-	for(i=0,area=0; i<m_nVtx; i++) {
+	float V=m_V0,kPressure=0;
+	if (m_pressure) {
+		MARK_UNUSED ((CTriMesh*)m_parts[0].pPhysGeom->pGeom)->m_V;
+		V = m_parts[0].pPhysGeom->pGeom->GetVolume();
+		if (!m_V0)
+			m_V0 = max(V,1e-6f);
+		kPressure = m_V0/max(V,m_V0*0.05f);
+		m_pressure = max(0.0f, m_pressure+m_dpressure*time_interval);
+	}
+	Vec3 gdir,gax[2];
+	Vec3 gBBox[2] = { Vec2(ZERO), Vec2(ZERO) };
+	grid3d grid[2];
+	uchar *hbuf[2];
+	gdir = m_gravity.normalized();
+	gax[0].zero()[idxmin3(gdir.abs())] = 1;
+	gax[1] = gdir^(gax[0] = (gdir^gax[0]).normalized());
+	for(j=0;j<2;j++) grid[0].Basis.SetRow(j,gax[j]);
+	grid[0].Basis.SetRow(2,gdir);
+
+	for(i0=0,area=0; i0<m_nConnectedVtx; i0++) {
+		i = m_vtx[i0].idx;
 		// calculate normal
 		for(j=m_vtx[i].iStartEdge,m_vtx[i].n.zero(); j<m_vtx[i].iEndEdge+m_vtx[i].bFullFan; j++) {
 			imask = j-m_vtx[i].iEndEdge>>31; j1 = j+1&imask | m_vtx[i].iStartEdge&~imask;
@@ -1229,24 +1294,61 @@ void CSoftEntity::StepInner(float time_interval, int bCollMode, check_part *chec
 			m_vtx[i].n /= m_vtx[i].area; m_vtx[i].area *= m_coverage*0.5f;
 			area += m_vtx[i].area;
 		}
+		Vec3 ptg = grid[0].Basis*(m_vtx[i].pos-m_vtx[0].pos);
+		gBBox[0] = min(gBBox[0],ptg);
+		gBBox[1] = max(gBBox[1],ptg);
 	}
 	if (area>0)
 		area = m_nVtx/area;
 
-	for(i=0; i<m_nVtx; i++) {	// apply gravity, buoyancy, wind (or water resistance)
-		if (!m_vtx[i].bAttached) {
-			if ((l0=(m_vtx[i].pos+m_pos-waterPlane.origin)*waterPlane.n)<0) {
-				m_vtx[i].vel -= m_gravity*(waterDensity*m_vtxvol*time_interval*min(1.0f,-l0*rthickness));
-				kr = m_waterResistance;	w = waterFlow;
-			}	else {
-				kr = m_airResistance;	w = m_wind0*m_windTimer+m_wind1*(1.0f-m_windTimer);
-			}
-			for(j=m_vtx[i].iStartEdge,windage=0; j<=m_vtx[i].iEndEdge; j++)
-				windage += ((m_vtx[m_edges[m_pVtxEdges[j]].ivtx[1]].pos-m_vtx[m_edges[m_pVtxEdges[j]].ivtx[0]].pos)*m_vtx[i].n)*
-					(iszero(i^m_edges[m_pVtxEdges[j]].ivtx[0])*2-1)*m_edges[m_pVtxEdges[j]].rlen;
-			m_vtx[i].vel += m_vtx[i].n*((m_vtx[i].n*(w-m_vtx[i].vel))*m_vtx[i].area*area*(windage*m_vtx[i].rnEdges+1)*kr*time_interval);
-			m_vtx[i].vel += m_gravity*time_interval;
+	float densityInside=m_densityInside>=0 ? m_densityInside:airDensity, diffDensity=0;
+	if (m_pressure > 0 && airDensity*V*cube(m_parts[0].scale) > (m_parts[0].mass+densityInside*kPressure*V*cube(m_parts[0].scale))*0.1f) {
+		Vec3 gsz = gBBox[1]-gBBox[0];
+		grid[0].origin = gBBox[0]*grid[0].Basis+m_vtx[0].pos+m_pos+m_offs0;
+		j=isneg(gsz.y-gsz.x);
+		rmax = sqrt(m_nVtx*gsz[j]/gsz[j^1]);
+		grid[0].size[j] = float2int(rmax+0.5f);
+		grid[0].size[j^1] = float2int(m_nVtx/rmax+0.5f);
+		grid[0].size.z = 256;
+		grid[0].stride = Vec2(1,grid[0].size.x);
+		for(j=0;j<3;j++)
+			grid[0].stepr[j] = 1/(grid[0].step[j] = gsz[j]/grid[0].size[j]);
+		grid[1] = grid[0];
+		grid[1].origin += Vec3(gsz.x,0,gsz.z)*grid[0].Basis;
+		grid[1].Basis = Diag33(-1,1,-1)*grid[0].Basis;
+		if (grid[0].size.x*grid[0].size.y*2>m_nhbufAlloc)
+			ReallocateList(m_hbuf,0,m_nhbufAlloc=grid[0].size.x*grid[0].size.y*2);
+		SyncMeshVtx(true);
+		for(j=0;j<2;j++) {
+			m_pWorld->RasterizeEntities(grid[j], hbuf[j]=m_hbuf+grid[0].size.x*grid[0].size.y*j, 0, 1e10f, Vec3(ZERO),Vec3(1e5f), 0,this);
+			grid[j].origin -= m_vtx[0].pos+m_pos+m_offs0;
 		}
+		diffDensity = min(100.0f,airDensity/max(1e-6f,densityInside*kPressure)) * time_interval;
+	}
+
+	for(i0=m_nAttachedVtx; i0<m_nConnectedVtx; i0++) { // apply gravity, buoyancy, wind (or water resistance), and internal pressure
+		i = m_vtx[i0].idx;
+		if ((l0=(m_vtx[i].pos+m_pos-waterPlane.origin)*waterPlane.n)<0) {
+			m_vtx[i].vel -= m_gravity*(waterDensity*m_vtxvol*time_interval*min(1.0f,-l0*rthickness));
+			kr = m_waterResistance;	w = waterFlow;
+		}	else {
+			kr = m_airResistance;	w = m_wind0*m_windTimer+m_wind1*(1.0f-m_windTimer);
+		}
+		for(j=m_vtx[i].iStartEdge,windage=0; j<=m_vtx[i].iEndEdge; j++)
+			windage += ((m_vtx[m_edges[m_pVtxEdges[j]].ivtx[1]].pos-m_vtx[m_edges[m_pVtxEdges[j]].ivtx[0]].pos)*m_vtx[i].n)*
+				(iszero(i^m_edges[m_pVtxEdges[j]].ivtx[0])*2-1)*m_edges[m_pVtxEdges[j]].rlen;
+		m_vtx[i].vel += m_vtx[i].n*((m_vtx[i].n*(w-m_vtx[i].vel))*m_vtx[i].area*area*(windage*m_vtx[i].rnEdges+1)*kr*time_interval);
+		m_vtx[i].vel += m_vtx[i].n*(m_vtx[i].area*m_pressure*kPressure*m_vtx[i].bFullFan);
+		m_vtx[i].vel += m_gravity*time_interval;
+	}
+
+	if (diffDensity) for(i0=m_nAttachedVtx; i0<m_nConnectedVtx; i0++) {	// apply buoyancy from internal medium
+		j = 1^isneg(m_vtx[i = m_vtx[i0].idx].n*gdir);
+		Vec3 ptg = grid[j].Basis*(m_vtx[i].pos-grid[j].origin);
+		Vec2i ptgi(max(0,min(grid[j].size.x-1,float2int(ptg.x*grid[j].stepr.x-0.5f))), max(0,min(grid[j].size.y-1,float2int(ptg.y*grid[j].stepr.y-0.5f))));
+		float h = fabs((hbuf[j][ptgi*grid[j].stride]+0.5f)*grid[j].step.z-ptg.z);
+		float dS = m_vtx[i].area*fabs(m_vtx[i].n*gdir);
+		m_vtx[i].vel -= m_gravity*(diffDensity*crymath::rcp_fast(1+2*crymath::rcp_fast(m_vtx[i].massinv*dS*h)));
 	}
 
 	if (m_kShapeStiffnessTang+m_kShapeStiffnessNorm>0) { // apply shape-preserving forces
@@ -1416,20 +1518,20 @@ void CSoftEntity::StepInner(float time_interval, int bCollMode, check_part *chec
 
 int CSoftEntity::Step(float time_interval)
 {
-	if (m_nVtx<=0 || !m_bAwake || !m_nConnectedVtx)
+	if (m_nVtx<=0 || !m_bAwake || !m_nConnectedVtx && !m_pressure)
 		return 1;
 
+	int iCaller = get_iCaller_int();
 	if (m_flags & (pef_invisible|pef_disabled)) {
 	report_step0:
-		EventPhysPostStep event;
-		event.pEntity=this; event.pForeignData=m_pForeignData; event.iForeignData=m_iForeignData;
+		EventPhysPostStep event; InitEvent(&event,this,iCaller);
 		event.dt=time_interval; event.pos=m_pos; event.q=m_qrot; event.idStep=m_pWorld->m_idStep;
 		m_pWorld->OnEvent(m_flags,&event);
 		return 1;
 	}
 
-	int i,j,nEnts=0,i0,i1,nCheckParts=0,bGridLocked=0,nhostPt=0,ijob=-2;
-	Vec3 v,w,d,center,BBox0[2],BBox[2],lastposHost(ZERO),vHost(ZERO),wHost(ZERO),pos0;
+	int i,j,nEnts=0,i0,i1,nCheckParts=0,bGridLocked=0,nhostPt=0;
+	Vec3 v,w,d,center,BBox[2],lastposHost(ZERO),vHost(ZERO),wHost(ZERO),pos0;
 	quaternionf lastqHost(IDENTITY);
 	RigidBody rbody;
 	float rmax,kr;
@@ -1442,11 +1544,10 @@ int CSoftEntity::Step(float time_interval)
 	pe_params_buoyancy pb[4];
 	plane waterPlane; 
 	Vec3 waterFlow(ZERO);
-	float waterDensity=0,ktimeBack;
-	int iCaller = get_iCaller_int();
+	float waterDensity=0,airDensity=1,ktimeBack;
 	{ ReadLock lock(m_lockSoftBody);
 
-	FUNCTION_PROFILER( GetISystem(),PROFILE_PHYSICS );
+	CRY_PROFILE_FUNCTION(PROFILE_PHYSICS );
 	PHYS_ENTITY_PROFILER
 
 	if ((g_lastqHost|g_lastqHost)>0) {
@@ -1487,12 +1588,14 @@ int CSoftEntity::Step(float time_interval)
 	waterPlane.origin.Set(0,0,-1000); waterPlane.n.Set(0,0,1);
 	if ((nEnts=m_pWorld->CheckAreas(this,w,pb,4)) && !is_unused(w) && (w-m_pWorld->m_vars.gravity).len2()>w.len2()*1E-4f)
 		m_gravity = w;
-	for(i=0,w=m_wind;i<nEnts;i++) if (pb[i].iMedium)
-		w += pb[i].waterFlow;
-	else {
+	for(i=0,w=m_wind;i<nEnts;i++) if (pb[i].iMedium) {
+		w += pb[i].waterFlow; airDensity = pb[i].waterDensity;
+	} else {
 		waterPlane.origin = pb[i].waterPlane.origin; waterPlane.n = pb[i].waterPlane.n;
 		waterFlow = pb[i].waterFlow; waterDensity=pb[i].waterDensity;
 	}
+	if (!m_wind0.len2())
+		m_wind0 = m_wind1 = w;
 
 	if ((m_windTimer+=time_interval*4)>1.0f) {
 		m_windTimer = 0; m_wind0 = m_wind1;
@@ -1504,7 +1607,7 @@ int CSoftEntity::Step(float time_interval)
 		if (!m_collTypes && m_nAttachedVtx && (pentHost=m_vtx[m_vtx[0].idx].pContactEnt)) {
 			pentlist=&pentHost; nEnts=1; 
 			if (pentHost->m_flags & pef_parts_traceable)
-				pentHost->m_nUsedParts |= 15<<iCaller*4;
+				CryInterlockedAdd((int64*)&pentHost->m_nUsedParts, (15ull<<iCaller*4) - (pentHost->m_nUsedParts & 15ull<<iCaller*4));
 		}	else
 			nEnts = m_pWorld->GetEntitiesAround(m_BBox[0]-Vec3(m_thickness,m_thickness,m_thickness)*2,
 				m_BBox[1]+Vec3(m_thickness,m_thickness,m_thickness)*2, pentlist, 
@@ -1521,7 +1624,7 @@ int CSoftEntity::Step(float time_interval)
 	for(i1=0,pentlist[i]->m_bProcessed_aux=nCheckParts<<24; i1<pentlist[i]->GetUsedPartsCount(iCaller); i1++) 
 	if (pentlist[i]->m_parts[j=pentlist[i]->GetUsedPart(iCaller,i1)].flags & m_parts[0].flagsCollider &&
 			!(pentlist[i]->m_parts[j].flags & geom_no_coll_response)) 
-	{	pentlist[i]->GetLocTransformLerped(j, checkParts[nCheckParts].offset,lastqHost,kr,ktimeBack);
+	{	pentlist[i]->GetLocTransformLerped(j, checkParts[nCheckParts].offset,lastqHost,kr,ktimeBack,this);
 		boxent.Basis = Matrix33(lastqHost);
 		boxent.center = (center-checkParts[nCheckParts].offset)*boxent.Basis;
 		if (pentlist[i]->m_parts[j].pPhysGeomProxy->pGeom->GetType()!=GEOM_HEIGHTFIELD) {
@@ -1544,7 +1647,7 @@ int CSoftEntity::Step(float time_interval)
 				1.0f/checkParts[nCheckParts].scale;
 			checkParts[nCheckParts].pGeom->PrepareForRayTest(m_thickness*2*checkParts[nCheckParts].rscale);
 			checkParts[nCheckParts].offset -= m_pos+m_offs0;
-			pbody = pentlist[i]->GetRigidBodyData(&rbody,j);
+			pbody = pentlist[i]->GetRigidBodyTrans(&rbody,j,this,2);
 			checkParts[nCheckParts].vbody = pbody->v-(pbody->w^pbody->pos);
 			checkParts[nCheckParts].wbody = pbody->w;
 			checkParts[nCheckParts].posBody = pbody->pos;
@@ -1602,8 +1705,8 @@ int CSoftEntity::Step(float time_interval)
 	for(i0=i1=0,center.zero(); i0<m_nAttachedVtx; i0++) {
 		i = m_vtx[i0].idx;
 		if (m_vtx[i1].pContactEnt!=m_vtx[i].pContactEnt || m_vtx[i1].iContactPart!=(m_vtx[i].iContactPart|nhostPt-1>>31)) {
-			pbody = m_vtx[i].pContactEnt->GetRigidBodyData(&rbody,m_vtx[i].iContactPart);
-			m_vtx[i].pContactEnt->GetLocTransformLerped(m_vtx[i].iContactPart, lastposHost,lastqHost,kr,ktimeBack);
+			pbody = m_vtx[i].pContactEnt->GetRigidBodyTrans(&rbody,m_vtx[i].iContactPart,this,2);
+			m_vtx[i].pContactEnt->GetLocTransformLerped(m_vtx[i].iContactPart, lastposHost,lastqHost,kr,ktimeBack, this);
 			vHost+=pbody->v; wHost+=pbody->w;	center+=pbody->pos; i1=i; nhostPt++;
 		}
 		m_vtx[i].pos = lastposHost+lastqHost*m_vtx[i].ptAttach;
@@ -1634,14 +1737,14 @@ int CSoftEntity::Step(float time_interval)
 		}
 	}
 
-	StepInner(time_interval,0, checkParts,nCheckParts, waterPlane,waterFlow,waterDensity, lastposHost,lastqHost, m_vtx);
+	StepInner(time_interval,0, checkParts,nCheckParts, waterPlane,waterFlow,waterDensity, airDensity, lastposHost,lastqHost, m_vtx);
 	stepdone:
 
 	pos0 = m_vtx[m_vtx[0].idx].pos;
 	rmax = m_maxMove/sqr(max(0.0001f,time_interval));
 	BBox[0].zero(); BBox[1].zero();	
-	for(i=0; i<m_nVtx; i++) {
-		v = vHost + (wHost ^ m_vtx[i].pos+m_pos+m_offs0-lastposHost);
+	for(i0=0; i0<m_nConnectedVtx; i0++) {
+		v = vHost + (wHost ^ m_vtx[i=m_vtx[i0].idx].pos+m_pos+m_offs0-lastposHost);
 		kr = min(1.0f,m_damping*time_interval)*(1+(-m_vtx[i].bAttached>>31));
 		m_vtx[i].vel = m_vtx[i].vel*(1.0f-kr) + v*kr;
 		m_vtx[i].pos -= pos0;
@@ -1649,7 +1752,7 @@ int CSoftEntity::Step(float time_interval)
 		BBox[0] = min(BBox[0], m_vtx[i].pos);
 		BBox[1] = max(BBox[1], m_vtx[i].pos);
 	}
-	if (m_wind.len2()*m_airResistance>0 || rmax>m_Emin) {
+	if ((m_wind0+m_wind1).len2()*m_airResistance>0 || rmax>m_Emin) {
 		m_nSlowFrames = 0; m_bAwake = 1;
 	} else if (++m_nSlowFrames>=3) {
 		m_bAwake = 0;
@@ -1679,24 +1782,17 @@ int CSoftEntity::Step(float time_interval)
 		CTriMesh *pMesh = (CTriMesh*)m_parts[0].pPhysGeomProxy->pGeom;
 		if (pMesh->m_pTree->GetType()==BVT_SINGLEBOX)
 			((CSingleBoxTree*)pMesh->m_pTree)->SetBox(&bbox);
-		if (m_parts[0].scale==1.0f && m_parts[0].q.w==1.0f)	for(i=0;i<m_nVtx;i++) {
-			pMesh->m_pVertices[i] = (m_vtx[i].pos + m_offs0) * m_qrot - m_parts[0].pos;
-			m_vtx[i].nmesh = m_vtx[i].n*m_qrot;
-		} else for(i=0;i<m_nVtx;i++) {
-			pMesh->m_pVertices[i] = ((m_vtx[i].pos + m_offs0) * m_qrot - m_parts[0].pos) * rscale * m_parts[0].q ;
-			m_vtx[i].nmesh = m_vtx[i].n*m_qrot;
-		}
+		SyncMeshVtx();
 		m_bMeshUpdated = 1;
 		m_bSkinReady = 0;
-		AtomicAdd(&m_pWorld->m_lockGrid,-bGridLocked);
+		m_pWorld->UnlockGrid(this,-bGridLocked);
 		m_lastposHost=lastposHost-m_pos; m_lastqHost=lastqHost;
 		m_lastPos = m_pos;
 	}
 	//for(i=0;i<pMesh->m_nTris;i++)
 	//	MARK_UNUSED pMesh->m_pNormals[i];
 
-	EventPhysPostStep epps;
-	epps.pEntity=this; epps.pForeignData=m_pForeignData; epps.iForeignData=m_iForeignData;
+	EventPhysPostStep epps;	InitEvent(&epps,this,iCaller);
 	epps.dt=time_interval; epps.pos=m_pos; epps.q=m_qrot; epps.idStep=m_pWorld->m_idStep;
 	m_pWorld->OnEvent(m_flags&pef_monitor_poststep, &epps);
 	if (m_pWorld->m_iLastLogPump==m_iLastLog && m_pEvent) {
@@ -1711,6 +1807,21 @@ int CSoftEntity::Step(float time_interval)
 	}
 
 	return isneg(m_timeStepFull-m_timeStepPerformed-0.001f);
+}
+
+void CSoftEntity::SyncMeshVtx(bool recalcNormals)
+{
+	float rscale = m_parts[0].scale==1.0f ? 1.0f:1.0f/m_parts[0].scale;
+	CTriMesh *pMesh = (CTriMesh*)m_parts[0].pPhysGeomProxy->pGeom;
+	if (m_parts[0].scale==1.0f && m_parts[0].q.w==1.0f)	for(int i=0;i<m_nVtx;i++) {
+		pMesh->m_pVertices[i] = (m_vtx[i].pos+m_offs0)*m_qrot-m_parts[0].pos;
+		m_vtx[i].nmesh = m_vtx[i].n*m_qrot;
+	} else for(int i=0;i<m_nVtx;i++) {
+		pMesh->m_pVertices[i] = ((m_vtx[i].pos+m_offs0)*m_qrot-m_parts[0].pos)*rscale*m_parts[0].q;
+		m_vtx[i].nmesh = m_vtx[i].n*m_qrot;
+	}
+	if (recalcNormals)
+		for(int i=0;i<pMesh->m_nTris;i++)	pMesh->RecalcTriNormal(i);
 }
 
 
@@ -1747,7 +1858,7 @@ void CSoftEntity::ApplyVolumetricPressure(const Vec3 &epicenter, float kr, float
 	}
 }
 
-static geom_contact g_SoftContact[MAX_PHYS_THREADS+1];
+static geom_contact g_SoftContact[MAX_TOT_THREADS];
 
 int CSoftEntity::RayTrace(SRayTraceRes& rtr)
 {
@@ -1756,20 +1867,21 @@ int CSoftEntity::RayTrace(SRayTraceRes& rtr)
 		prim_inters inters;
 		triangle atri;
 		int i,j;
+		float mindist=1e10f, dist;
 
 		for(i=0;i<pMesh->m_nTris;i++) {
 			for(j=0;j<3;j++) atri.pt[j] = m_vtx[pMesh->m_pIndices[i*3+j]].pos+m_pos+m_offs0;
 			atri.n = atri.pt[1]-atri.pt[0] ^ atri.pt[2]-atri.pt[0];
-			if (ray_tri_intersection(&rtr.pRay->m_ray,&atri,&inters)) {
+			if (ray_tri_intersection(&rtr.pRay->m_ray,&atri,&inters) && (dist = (inters.pt[0]-rtr.pRay->m_ray.origin)*rtr.pRay->m_dirn) < mindist) {
 				rtr.pcontacts = &g_SoftContact[get_iCaller()];
 				rtr.pcontacts->pt = inters.pt[0];
-				rtr.pcontacts->t = (inters.pt[0]-rtr.pRay->m_ray.origin)*rtr.pRay->m_dirn;
+				rtr.pcontacts->t = mindist = dist;
 				rtr.pcontacts->id[0] = pMesh->m_pIds ? pMesh->m_pIds[i] : m_parts[0].surface_idx;
 				rtr.pcontacts->iNode[0] = i;
 				rtr.pcontacts->n = atri.n.normalized()*-sgnnz(atri.n*rtr.pRay->m_dirn);
-				return 1;
 			}
 		}
+		return mindist < 1e10f;
 	}
 
 	return 0;
@@ -1807,14 +1919,18 @@ int CSoftEntity::SetStateFromSnapshot(CStream &stm, int flags)
 
 int CSoftEntity::GetStateSnapshot(TSerialize ser, float time_back, int flags)
 {
-	if (m_flags & sef_skeleton)
+	if (m_flags & sef_skeleton || flags & 16)
 		if (ser.BeginOptionalGroup("updated", m_bMeshUpdated != 0)) {
 			ser.Value("pos", m_pos);
 			ser.Value("q", m_qrot);
 			ser.Value("q0", m_qrot0);
+			bool awake = m_bAwake!=0;
+			ser.Value("awake", awake);
 			for(int i=0; i<m_nVtx; i++) {
 				ser.BeginGroup("vtx");
 				ser.Value("pos",m_vtx[i].pos);
+				if (m_bAwake)
+					ser.Value("vel",m_vtx[i].vel);
 				ser.EndGroup();
 			}
 			ser.EndGroup();
@@ -1824,14 +1940,18 @@ int CSoftEntity::GetStateSnapshot(TSerialize ser, float time_back, int flags)
 
 int CSoftEntity::SetStateFromSnapshot(TSerialize ser, int flags)
 {
-	if (m_flags & sef_skeleton) {
+	if (m_flags & sef_skeleton || flags & 16) {
 		if (m_bMeshUpdated = ser.BeginOptionalGroup("updated", true)) {
 			ser.Value("pos", m_pos);
 			ser.Value("q", m_qrot);
 			ser.Value("q0", m_qrot0);
+			bool awake; ser.Value("awake", awake);
+			m_bAwake = awake ? 1:0;
 			int i; for(i=0; i<m_nVtx; i++) {
 				ser.BeginGroup("vtx");
 				ser.Value("pos",m_vtx[i].pos);
+				if (m_bAwake)
+					ser.Value("vel",m_vtx[i].vel);
 				ser.EndGroup();
 			}
 			CTriMesh *pMesh = (CTriMesh*)m_parts[0].pPhysGeomProxy->pGeom;
@@ -1879,12 +1999,16 @@ void CSoftEntity::DrawHelperInformation(IPhysRenderer *pRenderer, int flags)
 
 void CSoftEntity::GetMemoryStatistics(ICrySizer *pSizer) const
 {
-	CPhysicalEntity::GetMemoryStatistics(pSizer);
 	if (GetType()==PE_SOFT)
 		pSizer->AddObject((CSoftEntity*)this, sizeof(CSoftEntity));
+	CPhysicalEntity::GetMemoryStatistics(pSizer);
 	pSizer->AddObject(m_vtx, m_nVtx*sizeof(m_vtx[0]));
 	pSizer->AddObject(m_edges, m_nEdges*sizeof(m_edges[0]));
 	pSizer->AddObject(m_pVtxEdges, m_nEdges*2*sizeof(m_pVtxEdges[0]));
+	if (m_parts[0].pLattice) {
+		pSizer->AddObject(m_pTetrEdges, m_parts[0].pLattice->m_nTetr*6*sizeof(m_pTetrEdges[0]));
+		pSizer->AddObject(m_pTetrQueue, m_parts[0].pLattice->m_nTetr*sizeof(m_pTetrQueue[0]));
+	}
 }
 
 #undef CMemStream

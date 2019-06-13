@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    -------------------------------------------------------------------------
@@ -670,7 +670,7 @@ bool CAIShape::IntersectLineSeg(const Vec3& start, const Vec3& end, float& tmin,
 	if (intersect && outNormal)
 	{
 		Vec3 polyseg = *isb - *isa;
-		Vec3 intSeg = end - start;
+		//Vec3 intSeg = end - start;
 		outNormal->x = polyseg.y;
 		outNormal->y = -polyseg.x;
 		outNormal->z = 0;

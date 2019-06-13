@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   IPlatformOS.h
@@ -15,6 +15,7 @@
 #include <CryString/CryFixedString.h>
 #include <CrySystem/ILocalizationManager.h>
 #include <CrySystem/ITimer.h>
+#include <CryInput/IInput.h>
 
 #if CRY_PLATFORM_ORBIS
 	#include <system_service.h>
@@ -126,10 +127,9 @@ struct IPlatformOS
 {
 	virtual const char* GetPlatformName() const = 0;
 
-	enum ECreateFlags
+	enum ECreateFlags : uint32
 	{
-		eCF_EarlyCorruptionDetected = BIT(1),
-		eCF_NoDialogs               = BIT(2)
+		eCF_EarlyCorruptionDetected = BIT32(1)
 	};
 
 	enum
@@ -220,13 +220,6 @@ struct IPlatformOS
 		eFOC_ReadMask  = 0x10,          //!< Error reading.
 		eFOC_WriteMask = 0x20,          //!< Error writing.
 		eFOC_OpenMask  = 0x02,          //!< Error opening files/content.
-	};
-
-	enum EMsgBoxResult
-	{
-		eMsgBox_OK,
-		eMsgBox_Cancel,
-		eMsgBoxNumButtons
 	};
 
 	enum
@@ -528,6 +521,61 @@ struct IPlatformOS
 		// </interfuscator:shuffle>
 	};
 
+	struct IUserManagerListener;
+
+	//! User manager handles the signed-in platform users
+	struct IUserManager
+	{
+		struct SGamepadInfo
+		{
+			// CryEngine input device info
+			int index = 0;
+			EInputDeviceType type = eIDT_Unknown;
+			// Platform gamepad id
+			TInputDeviceId gamepadId = InvalidInputDeviceId;
+		};
+
+		//! Add IUserManagerListener event listener
+		virtual void AddListener(IUserManagerListener& listener, const char* szName) = 0;
+
+		//! Remove IUserManagerListener event listener
+		virtual void RemoveListener(IUserManagerListener& listener) = 0;
+
+		//! Obtain information about assigned gamepad
+		virtual const SGamepadInfo* GetUserGamepadInfo(uint32 userIndex) const = 0;
+
+		//! Initiates the procedure to sign-in user: waits for user engagement, shows account picker, etc.
+		virtual bool RequestSignIn() = 0;
+		
+		//! Sign-out the user.
+		virtual bool RequestSignOut() = 0;
+
+	protected:
+		~IUserManager() = default;
+	};
+
+	//! User manager event listener
+	struct IUserManagerListener
+	{
+		//! Called on "sign-in" user state change
+		virtual void OnUserSignIn(uint32 userIndex) {}
+
+		//! Called on "sign-out" user state change
+		virtual void OnUserSignOut(uint32 userIndex) {}
+
+		//! Called on starting user selection procedures.
+		virtual void OnStartSelectingUser() {}
+
+		//! Called when the gamapad assigned to the user is lost.
+		virtual void OnGamepadLost(uint32 userIndex, const IUserManager::SGamepadInfo& gamepad) {}
+
+		//! Called when the new gamepad is assigned to the user.
+		virtual void OnGamepadRestored(uint32 userIndex, const IUserManager::SGamepadInfo& gamepad) {}
+
+	protected:
+		~IUserManagerListener() = default;
+	};
+
 	struct SDebugDump
 	{
 		bool (* OpenFile)(const char* filename, bool append);
@@ -578,6 +626,9 @@ struct IPlatformOS
 
 	//! Get the XUID name of a user. Returns true on success.
 	virtual bool UserGetXUID(unsigned int userIndex, SUserXUID&) const = 0;
+
+	//! Provides access to the IUserManager
+	virtual IUserManager& GetUserManager() = 0;
 #endif
 	//! Get the online name of a user. Returns true on success.
 	virtual bool UserGetOnlineName(unsigned int userIndex, IPlatformOS::TUserName& outName) const = 0;
@@ -743,13 +794,6 @@ struct IPlatformOS
 	//! Some platforms like the PS3 have TRCs relating to whether or not you should show a language select screen based on this information.
 	virtual ILocalizationManager::TLocalizationBitfield GetSystemSupportedLanguages() = 0;
 
-	//! Displays an OS dialog box for debugging messages.
-	//! A modal (blocking) dialog box with OK and Cancel options.
-	//! \param body   Text body of the message.
-	//! \param title  Title text of the message.
-	//! \param flags  Reserved for future use.
-	virtual IPlatformOS::EMsgBoxResult DebugMessageBox(const char* body, const char* title, unsigned int flags = 0) const = 0;
-
 	//! Begin platform specific boot checks to meet TRCs/TCRs.
 	//! Call after localization has been initialized and chosen to meet TCG's guidance.
 	//! This should tend to throw fatal errors using platform specific APIs in order to meet TRCs robustly.
@@ -890,7 +934,7 @@ struct IPlatformOS
 	unsigned int TextToUIP(const char* fromString)  const
 	{
 		unsigned int ip1, ip2, ip3, ip4;
-		int numScanned = sscanf(fromString, "%u.%u.%u.%u", &ip1, &ip2, &ip3, &ip4);
+		sscanf(fromString, "%u.%u.%u.%u", &ip1, &ip2, &ip3, &ip4);
 		unsigned int ip = 0;
 		ip |= ip4;
 		ip |= ip3 << 8;
@@ -940,7 +984,7 @@ protected:
 		virtual int  FindNext(intptr_t handle, _finddata_t* fd) { return gEnv->pCryPak->FindNext(handle, fd); }
 		virtual void GetMemoryUsage(ICrySizer* pSizer) const    { pSizer->Add(*this); }
 	private:
-		CDebugAllowFileAccess m_allowFileAccess;
+		CScopedAllowFileAccessFromThisThread m_allowFileAccess;
 	};
 
 	//! Class to watch FPS until it becomes stable.

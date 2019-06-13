@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -31,8 +31,9 @@ float CAABBTree::Build(CGeometry *pMeshIn)
 	m_pNodes[0].ntris = m_pNodes[min(m_nNodesAlloc-1,1)].ntris = 0;
 
 	Vec3 (*bbtri)[3] = (Vec3(*)[3]) new Vec3[nTris*3];
-	Vec3 ptmin,ptmax,pt;
-	ptmin = ptmax = m_Basis*pMesh->m_pVertices[pMesh->m_pIndices[0]];
+	Vec3 ptmin(ZERO),ptmax(ZERO),pt;
+	if (nTris)
+		ptmin = ptmax = m_Basis*pMesh->m_pVertices[pMesh->m_pIndices[0]];
 	int i;
 	
 	// Calculate an aabb for each tri, upfront, including the basis transformation
@@ -157,7 +158,7 @@ float CAABBTree::BuildNode(int iNode, int iTriStart,int nTris, Vec3 center,Vec3 
 		return size.GetVolume();
 	}
 
-#if (CRY_PLATFORM_WINDOWS && CRY_PLATFORM_64BIT) || (CRY_PLATFORM_LINUX && CRY_PLATFORM_64BIT) || CRY_PLATFORM_APPLE
+#if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_LINUX || CRY_PLATFORM_APPLE
 	volatile // compiler bug workaround?
 #endif
 	int iAxis, allowedAxis=-1;
@@ -628,7 +629,7 @@ void CAABBTree::Load(CMemStream &stm, CGeometry *pGeom)
 
 int CAABBTree::SanityCheck()
 {
-	int iCaller = MAX_PHYS_THREADS;
+	const int iCaller = MAX_PHYS_THREADS;
 	const int maxDepth1 = (CRY_ARRAY_COUNT(g_BBoxBuf)-1)/4;
 	const int maxDepth2 = (CRY_ARRAY_COUNT(g_BBoxExtBuf)-1)/2;
 	return SanityCheckTree(this, min(maxDepth1, maxDepth2));

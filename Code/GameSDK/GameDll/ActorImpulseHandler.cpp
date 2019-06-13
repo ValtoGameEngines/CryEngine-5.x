@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ActorImpulseHandler.h"
@@ -66,7 +66,7 @@ bool CActorImpulseHandler::SImpulseSet::MatchesHitInfo(const HitInfo& hitInfo) c
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-struct CActorImpulseHandler::SFindMatchingSet : public std::unary_function<bool, const SImpulseSet&>
+struct CActorImpulseHandler::SFindMatchingSet
 {
 	SFindMatchingSet(const HitInfo& hitInfo) : hitInfo(hitInfo) {}
 
@@ -92,7 +92,7 @@ CActorImpulseHandler::CActorImpulseHandler(CActor& actor) : m_actor(actor)
 	, m_currentDebugImpulse(0)
 #endif //_RELEASE
 {
-	CryCreateClassInstance("AnimationPoseModifier_OperatorQueue", m_poseModifier);
+	CryCreateClassInstanceForInterface(cryiidof<IAnimationOperatorQueue>(), m_poseModifier);
 	m_impulseState = Imp_None;
 	m_delayedDeathImpulse = false;
 	m_onRagdollizeEventImpulseQueued = false;

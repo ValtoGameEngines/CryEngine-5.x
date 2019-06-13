@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __LOCALDATAGRAMSOCKET_H__
 #define __LOCALDATAGRAMSOCKET_H__
@@ -94,9 +94,11 @@ private:
 		}
 
 	private:
+		typedef std::map<TLocalNetAddress, CLocalDatagramSocket*> TSocketsMap;
+
 		static const TLocalNetAddress                     MAX_FREE_ADDRESSES = 16;
 		std::vector<TLocalNetAddress>                     m_freeAddresses;
-		std::map<TLocalNetAddress, CLocalDatagramSocket*> m_sockets;
+		TSocketsMap                                       m_sockets;
 		std::vector<SPacket*>                             m_freePackets;
 	};
 	static CManager* m_pManager;

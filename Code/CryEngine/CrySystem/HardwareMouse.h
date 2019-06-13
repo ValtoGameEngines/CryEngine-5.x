@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -21,20 +21,15 @@
 
 //-----------------------------------------------------------------------------------------------------
 
-#include <CryRenderer/IRenderer.h>
+#include <CrySystem/ISystem.h>
 #include <CryInput/IHardwareMouse.h>
 #include <CryCore/Platform/CryWindows.h>
 
 //-----------------------------------------------------------------------------------------------------
 
-class CHardwareMouse : public IRendererEventListener, public IInputEventListener, public IHardwareMouse, public ISystemEventListener
+class CHardwareMouse : public IInputEventListener, public IHardwareMouse, public ISystemEventListener
 {
 public:
-
-	// IRendererEventListener
-	virtual void OnPostCreateDevice();
-	virtual void OnPostResetDevice();
-	// ~IRendererEventListener
 
 	// IInputEventListener
 	virtual bool OnInputEvent(const SInputEvent& rInputEvent);
@@ -46,7 +41,7 @@ public:
 
 	// IHardwareMouse
 	virtual void                         Release();
-	virtual void                         OnPreInitRenderer();
+	virtual void                         OnPostInitRenderer();
 	virtual void                         OnPostInitInput();
 	virtual void                         Event(int iX, int iY, EHARDWAREMOUSEEVENT eHardwareMouseEvent, int wheelDelta = 0);
 	virtual void                         AddListener(IHardwareMouseEventListener* pHardwareMouseEventListener);
@@ -54,9 +49,11 @@ public:
 	virtual bool                         SetExclusiveEventListener(IHardwareMouseEventListener* pExclusiveEventListener);
 	virtual void                         RemoveExclusiveEventListener(IHardwareMouseEventListener* pExclusiveEventListener);
 	virtual IHardwareMouseEventListener* GetCurrentExclusiveEventListener() { return m_pExclusiveEventListener; }
+	virtual void                         SetConfinedWnd(CRY_HWND wnd);
 	virtual void                         SetGameMode(bool bGameMode);
 	virtual void                         IncrementCounter();
 	virtual void                         DecrementCounter();
+	virtual bool                         IsCursorVisible() const;
 	virtual void                         GetHardwareMousePosition(float* pfX, float* pfY);
 	virtual void                         SetHardwareMousePosition(float fX, float fY);
 	virtual void                         GetHardwareMouseClientPosition(float* pfX, float* pfY);
@@ -87,36 +84,41 @@ private:
 	void        EvaluateCursorConfinement();
 	//! respond to focus-in, focus-out events
 	void        HandleFocusEvent(bool bFocus);
+	CRY_HWND    GetConfinedWindowHandle() const;
 
 	typedef std::list<IHardwareMouseEventListener*> TListHardwareMouseEventListeners;
 	TListHardwareMouseEventListeners m_listHardwareMouseEventListeners;
 	IHardwareMouseEventListener*     m_pExclusiveEventListener;
 
-	ITexture*                        m_pCursorTexture;
-	int                              m_iReferenceCounter;
-	float                            m_fCursorX;
-	float                            m_fCursorY;
-	float                            m_fIncX;
-	float                            m_fIncY;
-	bool                             m_bFocus;
-	bool                             m_bPrevShowState;
-	const bool                       m_allowConfine;
+	ITexture*  m_pCursorTexture;
+	int        m_iReferenceCounter;
+	float      m_fCursorX;
+	float      m_fCursorY;
+	float      m_fIncX;
+	float      m_fIncY;
+	bool       m_bFocus;
+	bool       m_bPrevShowState;
+	const bool m_allowConfine;
+	string     m_curCursorPath;
+	bool       m_shouldUseSystemCursor;
+	bool       m_usingSystemCursor;
+	CRY_HWND   m_confinedWnd;
 
-	string                           m_curCursorPath;
-
-	bool                             m_shouldUseSystemCursor;
-	bool                             m_usingSystemCursor;
 #if CRY_PLATFORM_WINDOWS
-	HCURSOR                          m_hCursor;
-	int                              m_nCurIDCCursorId;
+	HCURSOR    m_hCursor;
+	int        m_nCurIDCCursorId;
 #else
-	float                            m_fVirtualX;
-	float                            m_fVirtualY;
+	float      m_fVirtualX;
+	float      m_fVirtualY;
 #endif
 
-	bool m_hide;
-	bool m_calledShowHWMouse;
-	int  m_debugHardwareMouse;
+	bool       m_hide;
+	bool       m_calledShowHWMouse;
+	int        m_debugHardwareMouse;
+
+	static float s_MouseCursorSoftwareOffsetX;
+	static float s_MouseCursorSoftwareOffsetY;
+	static int   s_MouseControllerEmulation;
 };
 
 //-----------------------------------------------------------------------------------------------------

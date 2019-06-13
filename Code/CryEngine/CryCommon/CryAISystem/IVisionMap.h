@@ -1,11 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-#ifndef __IVisionMap_h__
-#define __IVisionMap_h__
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <CryPhysics/physinterface.h>
+#include <CryEntitySystem/IEntity.h>
+#include <CryCore/functor.h>
 
 //! This pierceability level (10) will still allow AI to see through leaves and such.
 #define AI_VISION_RAY_CAST_PIERCEABILITY (10)
@@ -38,6 +37,7 @@ enum EChangeHint
 	eChangedEntityId              = 1 << 12,
 	eChangedUserCondition         = 1 << 13,
 	eChangedUserConditionCallback = 1 << 14,
+	eChangedObservableMode        = 1 << 15,
 	eChangedAll                   = 0xffffffff,
 };
 
@@ -47,6 +47,13 @@ enum EVisionPriority
 	eMediumPriority   = 1,
 	eHighPriority     = 2,
 	eVeryHighPriority = 3,
+};
+
+enum class EObservableMode
+{
+	Default = 0,
+	Statistical,
+	Count            
 };
 
 #define VISION_MAP_ALL_TYPES    uint32(-1)
@@ -59,7 +66,7 @@ struct PriorityMapEntry
 		, fromFactionMask(VISION_MAP_ALL_FACTIONS)
 		, toTypeMask(VISION_MAP_ALL_TYPES)
 		, toFactionMask(VISION_MAP_ALL_FACTIONS)
-		, priority(eMediumPriority) {};
+		, priority(eMediumPriority) {}
 
 	uint32          fromTypeMask;
 	uint32          fromFactionMask;
@@ -75,7 +82,7 @@ struct PriorityMapEntry
 struct VisionID
 {
 	VisionID()
-		: m_id(0) {};
+		: m_id(0) {}
 
 	operator uint32() const
 	{
@@ -89,11 +96,11 @@ private:
 
 #ifndef VISION_MAP_STORE_DEBUG_NAMES_FOR_VISION_ID
 	VisionID(uint32 id, const char* name)
-		: m_id(id) {};
+		: m_id(id) {}
 #else
 	VisionID(uint32 id, const char* name)
 		: m_id(id)
-		, m_debugName(name) {};
+		, m_debugName(name) {}
 
 	string m_debugName;
 #endif
@@ -186,6 +193,9 @@ struct ObservableParams
 		, observablePositionsCount(0)
 		, skipListSize(0)
 		, entityId(0)
+		, mode(EObservableMode::Default)
+		, collectFullStatisticsOnObservableMaxRange(1.0f)
+
 	{
 		memset(observablePositions, 0, sizeof(observablePositions));
 	}
@@ -210,14 +220,17 @@ struct ObservableParams
 	//! Its purpose is to help the the users identify the entities involved on a change of visibility.
 	//! Not to be used internally in the vision map.
 	EntityId entityId;
+
+	//! Define the way in which an observer is evaluated (seen/not seen or percentage of points that are seen)
+	EObservableMode mode;
+	float collectFullStatisticsOnObservableMaxRange;
 };
 
 typedef VisionID ObserverID;
 typedef VisionID ObservableID;
 
-class IVisionMap
+struct IVisionMap
 {
-public:
 	// <interfuscator:shuffle>
 	virtual ~IVisionMap() {}
 
@@ -237,11 +250,12 @@ public:
 	virtual void                    ClearPriorityMap() = 0;
 
 	virtual bool                    IsVisible(const ObserverID& observerID, const ObservableID& observableID) const = 0;
+	virtual float                   GetNormalizedVisibiliy(const ObserverID& observerID, const ObservableID& observableID) const = 0;
 
 	virtual const ObserverParams*   GetObserverParams(const ObserverID& observerID) const = 0;
 	virtual const ObservableParams* GetObservableParams(const ObservableID& observableID) const = 0;
 
-	virtual void                    Update(float frameTime) = 0;
+	virtual void                    Update(const CTimeValue frameStartTime, const float frameTime) = 0;
 	// </interfuscator:shuffle>
 };
 
@@ -280,5 +294,3 @@ struct VisionMapHelpers
 		return true;
 	}
 };
-
-#endif // __IVisionMap_h__

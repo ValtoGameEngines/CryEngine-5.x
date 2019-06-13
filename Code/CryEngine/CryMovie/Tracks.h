@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -17,13 +17,13 @@ public:
 	{
 		if (bLoading)
 		{
-			const char* pSelection = keyNode->getAttr("node");
-			cry_strcpy(key.m_selection, pSelection);
+			const char* pCameraDesc = keyNode->getAttr("node");
+			cry_strcpy(key.m_cameraDesc, pCameraDesc);
 			keyNode->getAttr("BlendTime", key.m_blendTime);
 		}
 		else
 		{
-			keyNode->setAttr("node", key.m_selection);
+			keyNode->setAttr("node", key.m_cameraDesc);
 			keyNode->setAttr("BlendTime", key.m_blendTime);
 		}
 	}
@@ -102,8 +102,8 @@ public:
 		{
 			key.m_startTriggerName = keyNode->getAttr("startTrigger");
 			key.m_stopTriggerName = keyNode->getAttr("stopTrigger");
-			gEnv->pAudioSystem->GetAudioTriggerId(key.m_startTriggerName, key.m_startTriggerId);
-			gEnv->pAudioSystem->GetAudioTriggerId(key.m_stopTriggerName, key.m_stopTriggerId);
+			key.m_startTriggerId = CryAudio::StringToId(key.m_startTriggerName.c_str());
+			key.m_stopTriggerId = CryAudio::StringToId(key.m_stopTriggerName.c_str());
 
 			int32 durationTicks;
 			if (!keyNode->getAttr("durationTicks", durationTicks))
@@ -138,49 +138,6 @@ public:
 	}
 };
 
-class CAudioFileTrack final : public TAnimTrack<SAudioFileKey>
-{
-public:
-	virtual CAnimParamType GetParameterType() const override { return eAnimParamType_AudioFile; }
-
-	virtual void           SerializeKey(SAudioFileKey& key, XmlNodeRef& keyNode, bool bLoading) override
-	{
-		if (bLoading)
-		{
-			keyNode->getAttr("isLocalized", key.m_bIsLocalized);
-			key.m_audioFile = keyNode->getAttr("file");
-		}
-		else
-		{
-			bool bIsLocalized = key.m_bIsLocalized;
-			string audioFilePath = key.m_audioFile;
-
-			if (bIsLocalized)
-			{
-				const char* szLanguage = gEnv->pSystem->GetLocalizationManager()->GetLanguage();
-				int pathLength = audioFilePath.find(szLanguage);
-				if (pathLength > 0)
-				{
-					audioFilePath = audioFilePath.substr(pathLength + strlen(szLanguage) + 1, audioFilePath.length() - (pathLength + strlen(szLanguage)));
-				}
-			}
-
-			keyNode->setAttr("isLocalized", bIsLocalized);
-			keyNode->setAttr("file", audioFilePath);
-		}
-
-		if (!PathUtil::GetFileName(key.m_audioFile).empty())
-		{
-			int pathLength = key.m_audioFile.find(PathUtil::GetGameFolder());
-			const string tempFilePath = (pathLength == -1) ? PathUtil::GetGameFolder() + CRY_NATIVE_PATH_SEPSTR + key.m_audioFile : key.m_audioFile;
-
-			CryAudio::SFileData audioData;
-			gEnv->pAudioSystem->GetAudioFileData(tempFilePath.c_str(), audioData);
-			key.m_duration = audioData.duration;
-		}
-	}
-};
-
 class CAudioSwitchTrack final : public TAnimTrack<SAudioSwitchKey>
 {
 public:
@@ -192,8 +149,8 @@ public:
 		{
 			key.m_audioSwitchName = keyNode->getAttr("switch_name");
 			key.m_audioSwitchStateName = keyNode->getAttr("switch_state");
-			gEnv->pAudioSystem->GetAudioSwitchId(key.m_audioSwitchName, key.m_audioSwitchId);
-			gEnv->pAudioSystem->GetAudioSwitchStateId(key.m_audioSwitchId, key.m_audioSwitchStateName, key.m_audioSwitchStateId);
+			key.m_audioSwitchId = CryAudio::StringToId(key.m_audioSwitchName.c_str());
+			key.m_audioSwitchStateId = CryAudio::StringToId(key.m_audioSwitchStateName.c_str());
 		}
 		else
 		{
@@ -215,11 +172,11 @@ public:
 
 	virtual void           Serialize(Serialization::IArchive& ar) override
 	{
-		ar(Serialization::AudioRTPC(m_audioParameterName), "AudioParameterName", "Parameter Name");
+		ar(Serialization::AudioParameter(m_audioParameterName), "AudioParameterName", "Parameter Name");
 
 		if (ar.isInput())
 		{
-			gEnv->pAudioSystem->GetAudioParameterId(m_audioParameterName.c_str(), m_audioParameterId);
+			m_audioParameterId = CryAudio::StringToId(m_audioParameterName.c_str());
 		}
 	}
 
@@ -230,7 +187,7 @@ public:
 		if (bLoading)
 		{
 			m_audioParameterName = xmlNode->getAttr("AudioParameterName");
-			gEnv->pAudioSystem->GetAudioParameterId(m_audioParameterName, m_audioParameterId);
+			m_audioParameterId = CryAudio::StringToId(m_audioParameterName.c_str());
 		}
 		else
 		{
@@ -496,13 +453,14 @@ public:
 			key.m_captureFormat = SCaptureFormatInfo::GetCaptureFormatByExtension(desc);
 
 			desc = keyNode->getAttr("folder");
-			cry_strcpy(key.m_folder, desc);
-			keyNode->getAttr("once", key.m_bOnce);
-			desc = keyNode->getAttr("prefix");
+			key.m_folder = desc;
 
+			keyNode->getAttr("once", key.m_bOnce);
+
+			desc = keyNode->getAttr("prefix");
 			if (desc)
 			{
-				cry_strcpy(key.m_prefix, desc);
+				key.m_prefix = desc;
 			}
 
 			keyNode->getAttr("bufferToCapture", reinterpret_cast<int&>(key.m_bufferToCapture));

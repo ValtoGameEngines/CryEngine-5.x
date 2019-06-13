@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -19,6 +19,7 @@
 #pragma once
 
 #include <CryCore/Platform/platform.h>
+#include <CryThreading/CryThread.h>
 
 #if CRY_PLATFORM_DURANGO
 	#include "KinectInputWinRT.h"
@@ -55,7 +56,7 @@ public:
 	// stub implementation
 	virtual bool                Init();
 	virtual void                PostInit();
-	virtual void                Update(bool bFocus);
+	virtual void                Update(bool bHasFocus);
 	virtual void                ShutDown();
 	virtual void                SetExclusiveMode(EInputDeviceType deviceType, bool exclusive, void* pUser);
 	virtual bool                InputState(const TKeyName& keyName, EInputState state);
@@ -84,6 +85,7 @@ public:
 	virtual void                 SetExclusiveListener(IInputEventListener* pListener);
 	virtual IInputEventListener* GetExclusiveListener();
 	virtual bool                 AddInputDevice(IInputDevice* pDevice);
+	virtual bool                 RemoveInputDevice(IInputDevice* pDevice);
 	virtual void                 EnableEventPosting(bool bEnable);
 	virtual bool                 IsEventPostingEnabled() const;
 	virtual void                 PostInputEvent(const SInputEvent& event, bool bForce = false);
@@ -92,7 +94,7 @@ public:
 	virtual void                 ForceFeedbackEvent(const SFFOutputEvent& event);
 	virtual void                 ForceFeedbackSetDeviceIndex(int index);
 	virtual void                 EnableDevice(EInputDeviceType deviceType, bool enable);
-	virtual void                 ProcessKey(uint32 key, bool pressed, wchar_t unicode, bool repeat) {};
+	virtual void                 ProcessKey(uint32 key, bool pressed, wchar_t unicode, bool repeat) {}
 	// ~IInput
 
 	// ISystemEventListener

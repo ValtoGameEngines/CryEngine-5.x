@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -9,6 +9,8 @@ Description: Helper to calculate a value that represents AI awareness toward the
 
 #ifndef __AIAWARENESSTOPLAYERHELPER_H__
 #define __AIAWARENESSTOPLAYERHELPER_H__
+
+#include <CryEntitySystem/IEntityBasicTypes.h>
 
 struct IAIActor;
 struct IAIObject;

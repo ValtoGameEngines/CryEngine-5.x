@@ -1,11 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef PAGEMAPPINGHEAP_H
 #define PAGEMAPPINGHEAP_H
 
 #include "MemoryAddressRange.h"
-
 #include <CryMemory/IMemory.h>
+#include <CryThreading/CryThread.h>
 
 class CPageMappingHeap : public IPageMappingHeap
 {

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -211,8 +211,6 @@ bool CBinocular::ShouldUseSoundAttenuation( const CActor& ownerActor ) const
 {
 	if ((ownerActor.GetActorClass() == CPlayer::GetActorClassType()))
 	{
-		const  CPlayer& ownerPlayer = static_cast<const CPlayer&>(ownerActor);
-
 		return gEnv->bMultiplayer;
 	}
 

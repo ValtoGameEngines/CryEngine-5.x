@@ -1,20 +1,7 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-/********************************************************************
-   -------------------------------------------------------------------------
-   File name:   IAIGroup.h
-   $Id$
-   Description:
-
-   -------------------------------------------------------------------------
-   History:
-   - 2 Mar 2009			 : Evgeny Adamenkov: Removed IRenderer
-
- *********************************************************************/
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
-#include "AIFormationDescriptor.h"
 #include <CryAISystem/IAISystem.h> // <> required for Interfuscator
 #include <CryNetwork/SerializeFwd.h>
 
@@ -46,7 +33,7 @@ struct IAIGroup
 	//! Sets specified unit's properties, see EUnitProperties.
 	virtual void       SetUnitProperties(const IAIObject* obj, uint32 properties) = 0;
 	virtual IAIObject* GetAttentionTarget(bool bHostileOnly, bool bLiveOnly) const = 0;
-	virtual Vec3       GetAveragePosition(eAvPositionMode mode = AVMODE_ANY, uint32 unitClass = UNIT_ALL) const = 0;
+	virtual Vec3       GetAveragePosition(eAvPositionMode mode = AVMODE_ANY, uint32 unitClassOrProperties = -1) const = 0;
 	virtual int        GetUnitCount(uint32 unitPropMask = UPR_ALL) const = 0;
 
 	//! Gets the number of attention targets in the group.
@@ -125,7 +112,7 @@ enum EGroupUnitType
 struct IAIGroupTactic
 {
 	// <interfuscator:shuffle>
-	virtual ~IAIGroupTactic() {};
+	virtual ~IAIGroupTactic() {}
 
 	//! Updates the group tactic.
 	virtual void Update(float dt) = 0;

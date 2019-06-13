@@ -1,8 +1,9 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "AutoConfigDownloader.h"
 #include <CryNetwork/INetwork.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 CAutoConfigDownloader* CAutoConfigDownloader::m_pThis = 0;
 

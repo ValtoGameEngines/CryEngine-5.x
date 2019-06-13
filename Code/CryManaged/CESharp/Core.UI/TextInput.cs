@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 using CryEngine.UI.Components;
 
@@ -9,13 +9,22 @@ namespace CryEngine.UI
 	/// </summary>
 	public class TextInput : Panel
 	{
-		public Text Text { get; private set; } ///< The current content.
-		public TextCtrl Ctrl { get; private set; } ///< The input controller for this element.
+		/// <summary>
+		/// The current content.
+		/// </summary>
+		/// <value>The text.</value>
+		public Text Text { get; private set; }
+
+		/// <summary>
+		/// The input controller for this element.
+		/// </summary>
+		/// <value>The ctrl.</value>
+		public TextCtrl Ctrl { get; private set; }
 
 		/// <summary>
 		/// Called by framework. Do not call directly.
 		/// </summary>
-		public override void OnAwake()
+		protected override void OnAwake()
 		{
 			base.OnAwake();
 			Background.Color = Color.Black.WithAlpha(0.75f);

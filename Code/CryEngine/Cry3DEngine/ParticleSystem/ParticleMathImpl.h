@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 namespace pfx2
 {
@@ -8,17 +8,17 @@ namespace pfx2
 ILINE Vec3 HMin(const Vec3v& v0)
 {
 	return Vec3(
-	  HMin(v0.x),
-	  HMin(v0.y),
-	  HMin(v0.z));
+	  hmin(v0.x),
+		hmin(v0.y),
+		hmin(v0.z));
 }
 
 ILINE Vec3 HMax(const Vec3v& v0)
 {
 	return Vec3(
-	  HMax(v0.x),
-	  HMax(v0.y),
-	  HMax(v0.z));
+	  hmax(v0.x),
+		hmax(v0.y),
+		hmax(v0.z));
 }
 
 ILINE Vec3v Add(const Vec3v& a, floatv b)
@@ -48,38 +48,47 @@ ILINE Vec3_tpl<T> MAdd(const Vec3_tpl<T>& a, T b, const Vec3_tpl<T>& c)
 	  MAdd(a.z, b, c.z));
 }
 
-ILINE float DeltaTime(float normAge, float frameTime)
+template<typename T>
+ILINE T DeltaTime(T frameTime, T normAge, T lifeTime)
 {
-	return __fsel(normAge, frameTime, -(normAge * frameTime));
+	// Birth time = -age * life
+	// Death time = -age * life + life
+	// Delta time = min(- age * life + life, 0) - max(-age * life, -dT)
+	T age = normAge * lifeTime;
+	T startTime = -min(age, frameTime);
+	T endTime = min(lifeTime - age, convert<T>());
+	T deltaTime = max(endTime - startTime, convert<T>());
+	return deltaTime;
 }
+
+template<typename T>
+ILINE T StartTime(T curTime, T frameTime, T absAge)
+{
+	// Birth time = T - age*life
+	// Start time = T - min(age*life, dT)
+	return curTime - min(absAge, frameTime);
+}
+
 
 ILINE uint8 FloatToUFrac8Saturate(float v)
 {
 	return uint8(saturate(v) * 255.0f + 0.5f);
 }
 
-ILINE ColorF ToColorF(UCol color)
+ILINE Vec3 ToVec3(UCol color)
 {
-	return ColorF(
+	return Vec3(
 	  ufrac8_to_float(color.r),
 	  ufrac8_to_float(color.g),
 	  ufrac8_to_float(color.b));
 }
 
-ILINE ColorFv ToColorFv(ColorF color)
-{
-	return ColorFv(
-	  ToFloatv(color.r),
-	  ToFloatv(color.g),
-	  ToFloatv(color.b));
-}
-
-ILINE UCol ColorFToUCol(const ColorF& color)
+ILINE UCol ToUCol(const Vec3& color)
 {
 	UCol result;
-	result.r = float_to_ufrac8(color.r);
-	result.g = float_to_ufrac8(color.g);
-	result.b = float_to_ufrac8(color.b);
+	result.r = float_to_ufrac8(color.x);
+	result.g = float_to_ufrac8(color.y);
+	result.b = float_to_ufrac8(color.z);
 	result.a = 0xff;
 	return result;
 }
@@ -99,9 +108,51 @@ ILINE Vec3 PolarCoordToVec3(float azimuth, float altitude)
 {
 	float azc, azs;
 	float alc, als;
-	sincos_tpl(azimuth, &azs, &azc);
-	sincos_tpl(altitude, &als, &alc);
+	sincos(azimuth, &azs, &azc);
+	sincos(altitude, &als, &alc);
 	return Vec3(azc*alc, azs*alc, als);
+}
+
+ILINE Vec2 CirclePoint(float a)
+{
+	Vec2 p;
+	sincos(a, &p.y, &p.x);
+	return p;
+}
+
+ILINE Vec2 DiskPoint(float a, float r2)
+{
+	Vec2 p = CirclePoint(a);
+	float r = sqrt(r2);
+	return p * r;
+}
+
+inline Vec3 SpherePoint(float a, float z)
+{
+	Vec3 p;
+	sincos(a, &p.y, &p.x);
+	float h = sqrt(1.0f - sqr(z));
+	p.x *= h;
+	p.y *= h;
+	p.z = z;
+	return p;
+}
+
+inline Vec3 BallPoint(float a, float z, float r3)
+{
+	static CubeRootApprox cubeRootApprox(0.125f);
+
+	Vec3 p = SpherePoint(a, z);
+	float r = cubeRootApprox(r3);
+	return p * r;
+}
+
+
+inline Quat AddAngularVelocity(Quat const& initial, Vec3 const& angularVel, float deltaTime)
+{
+	const float haldDt = deltaTime * 0.5f;
+	const Quat rotated = Quat::exp(angularVel * haldDt) * initial;
+	return rotated.GetNormalized();
 }
 
 }
@@ -114,74 +165,22 @@ ILINE Vec3 PolarCoordToVec3(float azimuth, float altitude)
 namespace pfx2
 {
 
-ILINE floatv ToFloatv(float v)
+ILINE Vec3v ToVec3v(UColv color)
 {
-	return v;
-}
-
-ILINE uint32v ToUint32v(uint32 v)
-{
-	return v;
-}
-
-ILINE floatv ToFloatv(int32v v)
-{
-	return floatv(v);
-}
-
-ILINE Vec3v ToVec3v(Vec3 v)
-{
-	return v;
-}
-
-ILINE Vec4v ToVec4v(Vec4 v)
-{
-	return v;
-}
-
-ILINE Planev ToPlanev(Plane v)
-{
-	return v;
-}
-
-ILINE float HMin(floatv v0)
-{
-	return v0;
-}
-
-ILINE float HMax(floatv v0)
-{
-	return v0;
-}
-
-ILINE ColorFv ToColorFv(UColv color)
-{
-	return ColorFv(
+	return Vec3v(
 	  ufrac8_to_float(color.r),
 	  ufrac8_to_float(color.g),
 	  ufrac8_to_float(color.b));
 }
 
-ILINE UColv ColorFvToUColv(const ColorFv& color)
+ILINE UColv ToUColv(const Vec3v& color)
 {
 	UColv result;
-	result.r = float_to_ufrac8(color.r);
-	result.g = float_to_ufrac8(color.g);
-	result.b = float_to_ufrac8(color.b);
+	result.r = float_to_ufrac8(color.x);
+	result.g = float_to_ufrac8(color.y);
+	result.b = float_to_ufrac8(color.z);
 	result.a = 0xff;
 	return result;
-}
-
-ILINE UColv ToUColv(UCol color)
-{
-	return color;
-}
-
-ILINE Quat AddAngularVelocity(Quat initial, Vec3 angularVel, float deltaTime)
-{
-	const float haldDt = deltaTime * 0.5f;
-	const Quat rotated = Quat::exp(angularVel * haldDt) * initial;
-	return rotated.GetNormalized();
 }
 
 

@@ -1,11 +1,8 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-#ifndef _INTRUSIVE_LIST_HPP
-#define _INTRUSIVE_LIST_HPP
+#pragma once
 
 #include <stdint.h>
-
-#pragma warning(disable: 4355)
 
 namespace util
 {
@@ -18,10 +15,13 @@ struct list
 	list* next;
 	list* prev;
 
+#pragma warning(push)
+#pragma warning(disable: 4355) // 'this' : used in base member initializer list 
 	list()
 		: next(this)
 		, prev(this)
 	{}
+#pragma warning(pop)
 
 	//! Inserts this list into a given list item between  prev and next (note: they need to be sequential!).
 	void insert(list* _prev, list* _next)
@@ -158,4 +158,3 @@ struct list_value_type
        pos = n, n = ((n->*(member)).next->item<member>()))
 
 }      // end namespace util
-#endif // ifndef _INTRUSIVE_LIST_HPP

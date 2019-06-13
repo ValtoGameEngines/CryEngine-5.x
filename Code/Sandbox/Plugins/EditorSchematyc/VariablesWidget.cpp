@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "VariablesWidget.h"
@@ -9,18 +9,20 @@
 
 #include <QtUtil.h>
 #include <QSearchBox.h>
-#include <QAdvancedPropertyTree.h>
+#include <QAdvancedPropertyTreeLegacy.h>
+#include <QCollapsibleFrame.h>
 #include <ProxyModels/DeepFilterProxyModel.h>
 #include <Controls/QPopupWidget.h>
 #include <Controls/DictionaryWidget.h>
-#include <ICommandManager.h>
+#include <Commands/ICommandManager.h>
 #include <EditorFramework/BroadcastManager.h>
 #include <EditorFramework/Events.h>
+#include <EditorFramework/InspectorLegacy.h>
 
 #include <QAbstractItemModel>
 #include <QStyledItemDelegate>
 #include <QVBoxLayout>
-#include <QTreeView>
+#include <QAdvancedTreeView.h>
 #include <QLabel>
 #include <QString>
 #include <QHelpEvent>
@@ -281,7 +283,7 @@ CVariablesWidget::CVariablesWidget(QString label, QWidget* pParent)
 	pToolBar->addWidget(pSpacer);
 	pToolBar->addWidget(m_pAddButton);
 
-	m_pVariablesList = new QTreeView();
+	m_pVariablesList = new QAdvancedTreeView();
 	m_pVariablesList->setContextMenuPolicy(Qt::CustomContextMenu);
 	m_pVariablesList->setSelectionMode(QAbstractItemView::SingleSelection);
 	m_pVariablesList->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -419,13 +421,14 @@ void CVariablesWidget::OnSelectionChanged(const QItemSelection& selected, const 
 
 			if (CBroadcastManager* pBroadcastManager = CBroadcastManager::Get(this))
 			{
-				CrySchematycEditor::CPropertiesWidget* pPropertiesWidget = new CrySchematycEditor::CPropertiesWidget(*pItem);
-				auto populateInspector = [pPropertiesWidget](const PopulateInspectorEvent&)
+				CrySchematycEditor::CPropertiesWidget* pPropertiesWidget = nullptr /*new CrySchematycEditor::CPropertiesWidget(*pItem)*/;
+				PopulateLegacyInspectorEvent popEvent([pPropertiesWidget](CInspectorLegacy& inspector)
 				{
-					return pPropertiesWidget;
-				};
-				PopulateInspectorEvent populateEvent(populateInspector, "Properties");
-				pBroadcastManager->Broadcast(populateEvent);
+					QCollapsibleFrame* pInspectorWidget = new QCollapsibleFrame("Properties");
+					pInspectorWidget->SetWidget(pPropertiesWidget);
+					inspector.AddWidget(pInspectorWidget);
+				});
+				pBroadcastManager->Broadcast(popEvent);
 			}
 
 			SignalEntrySelected(*pItem);
@@ -458,7 +461,7 @@ void CVariablesWidget::OnContextMenu(const QPoint& point)
 				QObject::connect(pAction, &QAction::triggered, this, [this, index]()
 					{
 						m_pVariablesList->edit(index);
-				  });
+					});
 			}
 
 			menu.addAction(pCommandManager->GetAction("general.delete"));

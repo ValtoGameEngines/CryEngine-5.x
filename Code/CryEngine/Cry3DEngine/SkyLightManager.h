@@ -1,23 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-/*************************************************************************
-   -------------------------------------------------------------------------
-   $Id$
-   $DateTime$
-
-   -------------------------------------------------------------------------
-   History:
-   - 09:05:2005   14:32 : Created by Carsten Wenzel
-
-*************************************************************************/
-
-#ifndef _SKY_LIGHT_MANAGER_H_
-#define _SKY_LIGHT_MANAGER_H_
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <memory>
 #include <vector>
+
+#include <CryCore/optional.h>
 
 class CSkyLightNishita;
 struct ITimer;
@@ -63,9 +51,6 @@ public:
 
 	void GetMemoryUsage(ICrySizer * pSizer) const;
 
-	void InitSkyDomeMesh();
-	void ReleaseSkyDomeMesh();
-
 	void UpdateInternal(int32 newFrameID, int32 numUpdates, int callerIsFullUpdate = 0);
 private:
 	typedef std::vector<CryHalf4> SkyDomeTextureData;
@@ -92,12 +77,10 @@ private:
 
 	bool m_bFlushFullUpdate;
 
-	_smart_ptr<IRenderMesh> m_pSkyDomeMesh;
-
 	int32 m_numSkyDomeColorsComputed;
 	int32 m_curBackBuffer;
 
-	int32 m_lastFrameID;
+	stl::optional<int32> m_lastFrameID;
 	int32 m_needRenderParamUpdate;
 
 	Vec3 m_curSkyHemiColor[5];
@@ -112,5 +95,3 @@ private:
 
 	CRY_ALIGN(16) SSkyLightRenderParams m_renderParams;
 };
-
-#endif // #ifndef _SKY_LIGHT_MANAGER_H_

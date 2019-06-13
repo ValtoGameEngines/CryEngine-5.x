@@ -1,9 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ThreadConfigManager.h"
-#include <CrySystem/IConsole.h>
 #include "System.h"
+#include "CPUDetect.h"
+#include <CrySystem/IConsole.h>
 #include <CryString/StringUtils.h>
 #include <CryCore/CryCustomTypes.h>
 
@@ -91,11 +92,11 @@ const SThreadConfig* CThreadConfigManager::GetDefaultThreadConfig() const
 bool CThreadConfigManager::LoadConfig(const char* pcPath)
 {
 	// Adjust filename for OnDisk or in .pak file loading
-	char szFullPathBuf[ICryPak::g_nMaxPath];
-	gEnv->pCryPak->AdjustFileName(pcPath, szFullPathBuf, 0);
+	CryPathString fullPath;
+	gEnv->pCryPak->AdjustFileName(pcPath, fullPath, 0);
 
 	// Open file
-	XmlNodeRef xmlRoot = GetISystem()->LoadXmlFromFile(szFullPathBuf);
+	XmlNodeRef xmlRoot = GetISystem()->LoadXmlFromFile(fullPath);
 	if (!xmlRoot)
 	{
 		CryWarning(VALIDATOR_MODULE_SYSTEM, VALIDATOR_WARNING, "<ThreadConfigInfo>: File \"%s\" not found!", pcPath);
@@ -106,11 +107,16 @@ bool CThreadConfigManager::LoadConfig(const char* pcPath)
 	sCurThreadConfigFilename = pcPath;
 	const char* strPlatformId = IdentifyPlatform();
 	CryFixedStringT<32> tmpPlatformStr;
-	bool retValue = false;
+	bool retValueCommon = false;
+	bool retValueCPU = false;
 
 	// Try load common platform settings
 	tmpPlatformStr.Format("%s_Common", strPlatformId);
-	LoadPlatformConfig(xmlRoot, tmpPlatformStr.c_str());
+	retValueCommon = LoadPlatformConfig(xmlRoot, tmpPlatformStr.c_str());
+	if (retValueCommon)
+	{
+		CryLogAlways("<ThreadConfigInfo>: Thread profile loaded: \"%s\" (%s)  ", tmpPlatformStr.c_str(), pcPath);
+	}
 
 #if defined(CRY_PLATFORM_DESKTOP)
 	// Handle PC specifically as we do not know the core setup of the executing machine.
@@ -122,14 +128,14 @@ bool CThreadConfigManager::LoadConfig(const char* pcPath)
 	for (; i > 0; --i)
 	{
 		tmpPlatformStr.Format("%s_%i", strPlatformId, i);
-		retValue = LoadPlatformConfig(xmlRoot, tmpPlatformStr.c_str());
-		if (retValue)
+		retValueCPU = LoadPlatformConfig(xmlRoot, tmpPlatformStr.c_str());
+		if (retValueCPU)
 		{
 			break;
 		}
 	}
 
-	if (retValue && i != numCPUs)
+	if (retValueCPU && i != numCPUs)
 	{
 		CryWarning(VALIDATOR_MODULE_SYSTEM, VALIDATOR_WARNING, "<ThreadConfigInfo>: (%s: %u core) Unable to find platform config \"%s\". Next valid config found was %s_%u.",
 		           strPlatformId, numCPUs, tmpPlatformStr.c_str(), strPlatformId, i);
@@ -137,22 +143,23 @@ bool CThreadConfigManager::LoadConfig(const char* pcPath)
 
 #else
 	tmpPlatformStr.Format("%s", strPlatformId);
-	retValue = LoadPlatformConfig(xmlRoot, strPlatformId);
+	retValueCPU = LoadPlatformConfig(xmlRoot, strPlatformId);
 #endif
 
 	// Print out info
-	if (retValue)
+	if (retValueCPU)
 	{
 		CryLogAlways("<ThreadConfigInfo>: Thread profile loaded: \"%s\" (%s)  ", tmpPlatformStr.c_str(), pcPath);
 	}
-	else
+	
+	if (!retValueCommon && !retValueCPU)
 	{
 		// Could not find any matching platform
 		CryWarning(VALIDATOR_MODULE_SYSTEM, VALIDATOR_WARNING, "<ThreadConfigInfo>: Active platform identifier string \"%s\" not found in config \"%s\".", strPlatformId, sCurThreadConfigFilename);
 	}
 
 	sCurThreadConfigFilename = "";
-	return retValue;
+	return (retValueCommon || retValueCPU);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -426,8 +433,6 @@ void CThreadConfigManager::LoadPriority(const XmlNodeRef& rXmlThreadRef, int32& 
 //////////////////////////////////////////////////////////////////////////
 void CThreadConfigManager::LoadDisablePriorityBoost(const XmlNodeRef& rXmlThreadRef, bool& rPriorityBoost, SThreadConfig::TThreadParamFlag& rParamActivityFlag)
 {
-	const char* sValidCharacters = "-,0123456789";
-
 	// Validate node
 	if (!rXmlThreadRef->haveAttr("DisablePriorityBoost"))
 	{
@@ -468,8 +473,6 @@ void CThreadConfigManager::LoadStackSize(const XmlNodeRef& rXmlThreadRef, uint32
 
 	if (rXmlThreadRef->haveAttr("StackSizeKB"))
 	{
-		int32 nPos = 0;
-
 		// Read stack size
 		CryFixedStringT<32> stackSize(rXmlThreadRef->getAttr("StackSizeKB"));
 

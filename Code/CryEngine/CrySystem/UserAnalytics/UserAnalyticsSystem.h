@@ -1,15 +1,15 @@
-// Copyright 2001 - 2016 Crytek GmbH / Crytek Group.All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <CrySystem/UserAnalytics/IUserAnalytics.h>
 
 #if !defined(_RELEASE) && CRY_PLATFORM_WINDOWS
-	#include <CryExtension/ICryPluginManager.h>
+#include <CrySystem/ICryPluginManager.h>
 
 struct ICryUserAnalyticsPlugin;
 
-class CUserAnalyticsSystem : public IUserAnalyticsSystem, public IPluginEventListener
+class CUserAnalyticsSystem : public IUserAnalyticsSystem, public Cry::IPluginManager::IEventListener
 {
 public:
 	CUserAnalyticsSystem();
@@ -17,12 +17,11 @@ public:
 
 	virtual void TriggerEvent(const char* szEventName, UserAnalytics::Attributes* attributes) override;
 
+	void         Initialize();
 	void         RegisterCVars();
 
 private:
-	void         Initialize();
-
-	virtual void OnPluginEvent(const CryClassID& pluginClassId, IPluginEventListener::EPluginEvent event) override;
+	virtual void OnPluginEvent(const CryClassID& pluginClassId, Cry::IPluginManager::IEventListener::EEvent event) override;
 
 	ICryUserAnalyticsPlugin* m_pUserAnalyticsPlugin;
 	IUserAnalytics*          m_pUserAnalytics;
@@ -37,8 +36,9 @@ public:
 	CUserAnalyticsSystem() {};
 	~CUserAnalyticsSystem() {};
 
-	virtual void TriggerEvent(const char* szEventName, UserAnalytics::Attributes* attributes) override {};
+	virtual void TriggerEvent(const char* szEventName, UserAnalytics::Attributes* attributes) override {}
 
-	void         RegisterCVars()                                                                       {};
+	void         Initialize()                                                                          {}
+	void         RegisterCVars()                                                                       {}
 };
 #endif

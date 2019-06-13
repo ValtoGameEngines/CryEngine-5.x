@@ -1,4 +1,6 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
+//! \cond INTERNAL
 
 // Some excerpts explaining basic ideas behind streaming design here:
 
@@ -12,8 +14,7 @@
  * file system in a pak file, because the directory should be preloaded in memory
  */
 
-#ifndef _CRY_COMMON_STREAM_ENGINE_HDR_
-#define _CRY_COMMON_STREAM_ENGINE_HDR_
+#pragma once
 
 #include <list>
 #include <CryCore/smartptr.h>
@@ -158,16 +159,16 @@ public:
 	};
 
 	//! General purpose flags.
-	enum EFlags
+	enum EFlags : uint32
 	{
 		//! If this is set only asynchronous callback will be called.
-		FLAGS_NO_SYNC_CALLBACK           = BIT(0),
+		FLAGS_NO_SYNC_CALLBACK           = BIT32(0),
 		//! If this is set the file will be read from disc directly, instead of from the pak system.
-		FLAGS_FILE_ON_DISK               = BIT(1),
+		FLAGS_FILE_ON_DISK               = BIT32(1),
 		//! Ignore the tmp out of streaming memory for this request
-		FLAGS_IGNORE_TMP_OUT_OF_MEM      = BIT(2),
+		FLAGS_IGNORE_TMP_OUT_OF_MEM      = BIT32(2),
 		//! External buffer is write only
-		FLAGS_WRITE_ONLY_EXTERNAL_BUFFER = BIT(3),
+		FLAGS_WRITE_ONLY_EXTERNAL_BUFFER = BIT32(3),
 	};
 
 	// <interfuscator:shuffle>
@@ -395,4 +396,4 @@ public:
 	// </interfuscator:shuffle>
 };
 
-#endif //_CRY_COMMON_STREAM_ENGINE_HDR_
+//! \endcond

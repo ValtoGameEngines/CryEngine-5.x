@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 *************************************************************************/
@@ -421,8 +421,12 @@ CAttrReader CNodeLiveReader::ObtainAttr(const char* pAttrName) const
 {
 	CAttrReader attr(m_Reader);
 
+#if defined(USE_CRY_ASSERT)
 	bool found = FindAttr(pAttrName, attr);
 	assert(found);
+#else
+	FindAttr(pAttrName, attr);
+#endif
 
 	return attr;
 }

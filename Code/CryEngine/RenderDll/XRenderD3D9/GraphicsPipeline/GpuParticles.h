@@ -1,23 +1,34 @@
-// Copyright 2001-2016 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include "Common/GraphicsPipelineStage.h"
 
-class CGpuParticlesStage : public CGraphicsPipelineStage
+class CComputeParticlesStage : public CGraphicsPipelineStage
 {
 public:
-	CGpuParticlesStage();
-	~CGpuParticlesStage();
-	virtual void Init() override;
-	virtual void Prepare(CRenderView* pRenderView) override;
+	static const EGraphicsPipelineStage StageID = eStage_ComputeParticles;
 
-	void         Execute(CRenderView* pRenderView);
-	void         PostDraw(CRenderView* pRenderView);
+	CComputeParticlesStage(CGraphicsPipeline& graphicsPipeline);
+	~CComputeParticlesStage();
 
-	gpu_pfx2::CManager* GetGpuParticleManager() { return m_pGpuParticleManager.get(); }
+	// TODO: Rework gpu particles to allow usage on multiple pipelines
+	bool IsStageActive(EShaderRenderingFlags flags) const final
+	{
+		if (flags & EShaderRenderingFlags::SHDF_FORWARD_MINIMAL)
+			return false;
+
+		return true;
+	}
+
+	void Init() final;
+
+	void Update() override;
+	void PreDraw();
+	void PostDraw();
+
 private:
-	std::unique_ptr<gpu_pfx2::CManager> m_pGpuParticleManager;
 	int m_oldFrameIdExecute;
+	int m_oldFrameIdPreDraw;
 	int m_oldFrameIdPostDraw;
 };

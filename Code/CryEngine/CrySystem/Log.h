@@ -1,20 +1,45 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <CrySystem/ILog.h>
 #include <CryThreading/CryAtomics.h>
 #include <CryThreading/MultiThread_Containers.h>
+#include <CryThreading/IThreadManager.h>
+#include <3rdParty/concqueue/concqueue-mpsc.hpp>
+
+struct ISystem;
+struct ICVar;
+struct IConsole;
+struct IConsoleCmdArgs;
 
 //////////////////////////////////////////////////////////////////////
 
 #define MAX_FILENAME_SIZE 256
 
-#if defined(DEDICATED_SERVER)
+#if defined(DEDICATED_SERVER) || defined (CRY_PLATFORM_WINDOWS) || (defined(CRY_PLATFORM_DURANGO) && !defined(EXCLUDE_NORMAL_LOG))
 	#define KEEP_LOG_FILE_OPEN 1
 #else
 	#define KEEP_LOG_FILE_OPEN 0
 #endif
+
+class CLogThread : public IThread
+{
+public:
+
+	CLogThread(concqueue::mpsc_queue_t<string>& logQueue);
+	virtual ~CLogThread();
+	virtual void ThreadEntry() override;
+	void SignalStopWork();
+	void SignalStartWork();
+	void AddLog(const string& str) { m_logQueue.enqueue(str); }
+	bool IsRunning() const         { return m_bIsRunning; }
+
+private:
+
+	bool m_bIsRunning;
+	concqueue::mpsc_queue_t<string>& m_logQueue;
+};
 
 struct SExclusiveThreadAccessLock
 {
@@ -24,7 +49,7 @@ struct SExclusiveThreadAccessLock
 };
 
 //////////////////////////////////////////////////////////////////////
-class CLog : public ILog
+class CLog : public ILog, public ISystemEventListener
 {
 public:
 	typedef std::list<ILogCallback*>   Callbacks;
@@ -35,11 +60,16 @@ public:
 	// destructor
 	~CLog();
 
+	// interface ISystemEventListener -------------------------------------------
+
+	virtual void OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR lparam);
+
 	// interface ILog, IMiniLog -------------------------------------------------
 
 	virtual void        Release() { delete this; };
 	virtual bool        SetFileName(const char* filename);
 	virtual const char* GetFileName() const;
+	virtual const char* GetFilePath() const;
 	virtual const char* GetBackupFileName() const;
 #if !defined(EXCLUDE_NORMAL_LOG)
 	virtual void        Log(const char* command, ...) PRINTF_PARAMS(2, 3);
@@ -80,6 +110,8 @@ public:
 	virtual ELogMode    GetLogMode() const;
 
 	virtual void        ThreadExclusiveLogAccess(bool state);
+	
+	void				SetLogFormat(const char* format);
 
 private: // -------------------------------------------------------------------
 
@@ -96,6 +128,7 @@ private: // -------------------------------------------------------------------
 
 	// will format the message into m_szTemp
 	void FormatMessage(const char* szCommand, ...) PRINTF_PARAMS(2, 3);
+	void FormatTimestampInternal(stack_string& timeStr, const string & logFormat);
 
 #if defined(SUPPORT_LOG_IDENTER)
 	void                Indent(CLogIndenter* indenter);
@@ -106,15 +139,23 @@ private: // -------------------------------------------------------------------
 	virtual const char* GetAssetScopeString();
 #endif
 
-	ISystem*                  m_pSystem;                  //
-	float                     m_fLastLoadingUpdateTime;   // for non-frequent streamingEngine update
-	//char						m_szTemp[MAX_TEMP_LENGTH_SIZE];				//
-	char                      m_szFilename[MAX_FILENAME_SIZE];      // can be with path
-	mutable char              m_sBackupFilename[MAX_FILENAME_SIZE]; // can be with path
+	static void OnUseLogThreadChange(ICVar* var);
+
+	CLogThread*                     m_pLogThread;
+	ICVar*                          m_pUseLogThread;
+	concqueue::mpsc_queue_t<string> m_logQueue;
+	bool                            m_bIsPostSystemInit;
+
+	ISystem*                  m_pSystem;
+	float                     m_fLastLoadingUpdateTime; // for non-frequent streamingEngine update
+	string                    m_filename;               // Contains exactly what was passed in SetFileName
+	string                    m_filePath;               // Contains full path to the log file
+	string                    m_backupFilePath;
 	FILE*                     m_pLogFile;
-	CryStackStringT<char, 32> m_LogMode;                            //mode m_pLogFile has been opened with
+	CryStackStringT<char, 32> m_LogMode;                // mode m_pLogFile has been opened with
 	FILE*                     m_pErrFile;
 	int                       m_nErrCount;
+	string                    m_logFormat;              // Time logging format
 
 #if defined(SUPPORT_LOG_IDENTER)
 	uint8               m_indentation;
@@ -132,9 +173,8 @@ private: // -------------------------------------------------------------------
 	string                       m_assetScopeString;
 #endif
 
-	ICVar*             m_pLogIncludeTime;                 //
-
-	IConsole*          m_pConsole;                        //
+	ICVar*             m_pLogIncludeTime;
+	IConsole*          m_pConsole;
 
 	CryCriticalSection m_logCriticalSection;
 
@@ -157,21 +197,12 @@ private: // -------------------------------------------------------------------
 	static void LogFlushFile(IConsoleCmdArgs* pArgs);
 
 	bool m_bFirstLine;
-	char m_logBuffer[0x200000];
+	char m_logBuffer[256 * 1024];
 #endif
 
 public: // -------------------------------------------------------------------
 
-	void GetMemoryUsage(ICrySizer* pSizer) const
-	{
-		pSizer->AddObject(this, sizeof(*this));
-		pSizer->AddObject(m_pLogVerbosity);
-		pSizer->AddObject(m_pLogWriteToFile);
-		pSizer->AddObject(m_pLogWriteToFileVerbosity);
-		pSizer->AddObject(m_pLogVerbosityOverridesWriteToFile);
-		pSizer->AddObject(m_pLogSpamDelay);
-		pSizer->AddObject(m_threadSafeMsgQueue);
-	}
+	void GetMemoryUsage(ICrySizer* pSizer) const;
 	// checks the verbosity of the message and returns NULL if the message must NOT be
 	// logged, or the pointer to the part of the message that should be logged
 	const char* CheckAgainstVerbosity(const char* pText, bool& logtofile, bool& logtoconsole, const uint8 DefaultVerbosity = 2);

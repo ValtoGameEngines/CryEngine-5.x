@@ -1,11 +1,25 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "QueryListProvider.h"
 
 #include <Explorer/Explorer.h>
+#include <QMessageBox>
 
 #include "Document.h"
+
+
+static bool AskForDeletionOfQueryDocument(const CUqsQueryDocument& queryDocToDelete)
+{
+	const QMessageBox::StandardButton answer = QMessageBox::warning(
+		nullptr,
+		"Delete document",
+		QString::asprintf("Do you really want to to delete the document '%s' from disk?", queryDocToDelete.GetName().c_str()),
+		QMessageBox::Yes | QMessageBox::No,
+		QMessageBox::No);
+
+	return (answer == QMessageBox::Yes);
+}
 
 //////////////////////////////////////////////////////////////////////////
 // CUqsQueryEntry
@@ -88,7 +102,7 @@ CQueryListProvider::~CQueryListProvider()
 	RemoveAllNeverSavedQueries();
 }
 
-struct SListQueriesVisitor : public uqs::datasource::IEditorLibraryProvider::IListQueriesVisitor
+struct SListQueriesVisitor : public UQS::DataSource::IEditorLibraryProvider::IListQueriesVisitor
 {
 	SListQueriesVisitor(Explorer::CEntryList<SUqsQueryEntry>& entries)
 		: m_entries(entries)
@@ -109,9 +123,9 @@ void CQueryListProvider::Populate()
 {
 	m_queries.Clear();
 
-	if (uqs::core::IHub* pHub = uqs::core::IHubPlugin::GetHubPtr())
+	if (UQS::Core::IHub* pHub = UQS::Core::IHubPlugin::GetHubPtr())
 	{
-		if (uqs::datasource::IEditorLibraryProvider* pProvider = pHub->GetEditorLibraryProvider())
+		if (UQS::DataSource::IEditorLibraryProvider* pProvider = pHub->GetEditorLibraryProvider())
 		{
 			SListQueriesVisitor visitor(m_queries);
 			pProvider->GetQueriesList(visitor);
@@ -197,7 +211,7 @@ void CQueryListProvider::GetEntryActions(std::vector<Explorer::ExplorerAction>* 
 
 		pActions->push_back(Explorer::ExplorerAction("Delete", 0,
 		                                             [=](Explorer::ActionContext& x) { ActionDeleteQuery(x); },
-		                                             "General/Element_Remove.ico",
+		                                             "icons:General/Element_Remove.ico",
 		                                             "Remove query"));
 
 		pActions->push_back(Explorer::ExplorerAction("Show in Explorer", Explorer::ACTION_NOT_STACKABLE,
@@ -364,9 +378,13 @@ void CQueryListProvider::RemoveAllNeverSavedQueries()
 			{
 				if (pDoc->IsNeverSaved())
 				{
-					DocumentAboutToBeRemoved(pDoc);
-					pDoc->Delete();
-					// TODO pavloi 2016.07.01: no signal about deletion, fine for now
+					if (AskForDeletionOfQueryDocument(*pDoc))
+					{
+						// user clicked "Yes"
+						DocumentAboutToBeRemoved(pDoc);
+						pDoc->Delete();
+						// TODO pavloi 2016.07.01: no signal about deletion, fine for now
+					}
 				}
 			}
 		}
@@ -379,6 +397,9 @@ void CQueryListProvider::DeleteQueryByEntryId(uint id)
 	{
 		if (pEntry->content.GetDocument())
 		{
+			if (!AskForDeletionOfQueryDocument(*pEntry->content.GetDocument()))
+				return;	// user clicked "No"
+
 			DocumentAboutToBeRemoved(pEntry->content.GetDocument());
 		}
 

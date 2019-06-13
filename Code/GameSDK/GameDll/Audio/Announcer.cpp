@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -21,6 +21,7 @@ History:
 #include <GameXmlParamReader.h>
 #include "GameRulesModules/IGameRulesRoundsModule.h"
 #include "GameRulesModules/IGameRulesStateModule.h"
+#include <CrySystem/ConsoleRegistration.h>
 
 #define ANNOUNCER_FILENAME "Scripts/Sounds/cw2_Annoucements.xml"
 
@@ -306,16 +307,24 @@ void CAnnouncer::LoadAnnouncements(const EGameMode gamemode)
 							{
 								const char * gamemodeOptionName = gamemodeOptionXML->getTag();
 
+#if DESIGNER_WARNING_ENABLED
 								bool loaded = LoadAnnouncementOption(gamemodeOptionName, gamemodeOptionXML, conditions, storedName, onScreenMessage, noRepeatTime, numAnnouncementsAdded);
 								DesignerWarning(loaded, "While reading '%s' found an unexpected tag '%s' inside an announcement (name='%s' condition='%s')", filename, optionName, name, conStr);
+#else
+								LoadAnnouncementOption(gamemodeOptionName, gamemodeOptionXML, conditions, storedName, onScreenMessage, noRepeatTime, numAnnouncementsAdded);
+#endif
 							}
 						}
 					}
 				}
 				else
 				{
+#if DESIGNER_WARNING_ENABLED
 					bool loaded = LoadAnnouncementOption(optionName, optionXML, conditions, storedName, onScreenMessage, noRepeatTime, numAnnouncementsAdded);
 					DesignerWarning(loaded, "While reading '%s' found an unexpected tag '%s' inside an announcement (name='%s' condition='%s')", filename, optionName, name, conStr);
+#else
+					LoadAnnouncementOption(optionName, optionXML, conditions, storedName, onScreenMessage, noRepeatTime, numAnnouncementsAdded);
+#endif
 				}
 			}
 

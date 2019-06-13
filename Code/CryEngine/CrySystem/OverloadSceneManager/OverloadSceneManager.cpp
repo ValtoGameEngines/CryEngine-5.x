@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // Includes
 #include "StdAfx.h"
@@ -7,6 +7,8 @@
 #include <CryGame/IGameFramework.h>
 #include <CrySystem/Profilers/IStatoscope.h>
 #include <CryRenderer/IRenderAuxGeom.h>
+#include <CryMath/Random.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 #if ENABLE_STATOSCOPE
 class COverloadDG : public IStatoscopeDataGroup
@@ -116,7 +118,7 @@ static void cmd_setFBScale(IConsoleCmdArgs* pParams)
 		newScale = gEnv->pRenderer->SetViewportDownscale(newScale.x, newScale.y);
 	}
 
-	int nWidth = gEnv->pRenderer->GetWidth();
+	int nWidth  = gEnv->pRenderer->GetWidth();
 	int nHeight = gEnv->pRenderer->GetHeight();
 
 	gEnv->pLog->LogWithType(ILog::eInputResponse, "Current Viewport Resolution: %dx%d",

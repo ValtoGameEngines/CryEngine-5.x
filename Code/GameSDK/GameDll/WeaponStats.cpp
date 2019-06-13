@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -18,9 +18,7 @@ History:
 #include "GameXmlParamReader.h"
 
 #define MAX_STAT_VALUE 10
-
-//////////////////////////////////////////////////////////////////////////
-
+static const char* s_weaponStatNames[eWeaponStat_NumStats] = { "stat_accuracy", "stat_rate_of_fire", "stat_mobility", "stat_damage", "stat_range", "stat_recoil" };
 
 SWeaponStatsData::SWeaponStatsData()
 {

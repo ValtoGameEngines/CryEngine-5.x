@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef _SCENEBLUR_GAME_EFFECT_
 #define _SCENEBLUR_GAME_EFFECT_
@@ -8,6 +8,7 @@
 // Includes
 #include "GameEffect.h"
 #include "Effects/GameEffectsSystem.h"
+#include <CryCore/Containers/CryFixedArray.h>
 
 // Forward declarations
 

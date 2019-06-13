@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 //
 ////////////////////////////////////////////////////////////////////////////
@@ -132,7 +132,6 @@ public:
 			{
 				m_attachedEntityId = 0;
 				m_attachmentCRC = params.attachmentName.crc;
-				IAttachmentObject* pNewAttachment = NULL;
 
 				EntityId attachEntityId = 0;
 

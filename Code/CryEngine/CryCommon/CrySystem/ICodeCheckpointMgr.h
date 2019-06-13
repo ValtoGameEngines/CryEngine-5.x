@@ -1,15 +1,6 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// -------------------------------------------------------------------------
-//  Created:     08/04/2010 by Will W (based on work by Matthew J)
-//  Description: Interface to track code checkpoint registration
-// -------------------------------------------------------------------------
-//  History: Created by Will Wilson based on work by Matthew Jack.
-//
-////////////////////////////////////////////////////////////////////////////
-
-#ifndef __ICODE_CHECKPOINT_MGR_H_
-#define __ICODE_CHECKPOINT_MGR_H_
+//! \cond INTERNAL
 
 #pragma once
 
@@ -54,6 +45,8 @@ struct ICodeCheckpointMgr
 	virtual void Release() = 0;
 	// </interfuscator:shuffle>
 };
+
+#include <CrySystem/ISystem.h>
 
 //! Inline helper class used for registration and update of code checkpoint state.
 class CCodeCheckpoint
@@ -102,4 +95,4 @@ private:
 
 #endif  // defined CODECHECKPOINT_ENABLED
 
-#endif // __ICODE_CHECKPOINT_MGR_H_
+//! \endcond

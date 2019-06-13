@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   GLCrossPlatform.hpp
@@ -20,7 +20,7 @@ using namespace std;
 
 #if defined(_MSC_VER)
 	#define ILINE __forceinline
-#elif defined(__GNUC__) || defined(__clang__)
+#elif CRY_COMPILER_GCC || CRY_COMPILER_CLANG
 	#define ILINE __attribute__((always_inline))
 #else
 	#define ILINE inline

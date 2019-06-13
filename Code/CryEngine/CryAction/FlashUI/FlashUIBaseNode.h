@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   FlashUIBaseNode.h
@@ -185,39 +185,6 @@ public:
 
 protected:
 	IUIElement* m_pElement;
-};
-
-// ---------------------------------------------------------------
-// -------------- auto register ui flow node ---------------------
-// ---------------------------------------------------------------
-class CAutoRegUIFlowNode : public CAutoRegFlowNodeBase
-{
-public:
-	CAutoRegUIFlowNode(const char* sClassName, IFlowNodePtr pFlowNode) : CAutoRegFlowNodeBase(sClassName), m_iRefs(1) { m_pFlowNode = pFlowNode; }
-	IFlowNodePtr Create(IFlowNode::SActivationInfo* pActInfo) { return m_pFlowNode->Clone(pActInfo); }
-	void         GetMemoryUsage(ICrySizer* s) const           { SIZER_SUBCOMPONENT_NAME(s, "CAutoRegUIFlowNode"); }
-	void         Reset()                                      {}
-	virtual void AddRef()                                     { m_iRefs++; }
-	virtual void Release()                                    { if (--m_iRefs == 0) delete this; }
-
-private:
-	IFlowNodePtr m_pFlowNode;
-	int          m_iRefs;
-};
-
-// ---------------------------------------------------------------
-class CAutoRegUIFlowNodeSingleton : public CAutoRegFlowNodeBase
-{
-public:
-	CAutoRegUIFlowNodeSingleton(const char* sClassName, IFlowNodePtr pFlowNode) : CAutoRegFlowNodeBase(sClassName), m_refs(1) { m_pFlowNode = pFlowNode; }
-	IFlowNodePtr Create(IFlowNode::SActivationInfo* pActInfo) { return m_pFlowNode; }
-	void         GetMemoryUsage(ICrySizer* s) const           { SIZER_SUBCOMPONENT_NAME(s, "CAutoRegUIFlowNodeSingleton"); }
-	virtual void AddRef()                                     { m_refs++; }
-	virtual void Release()                                    { if (--m_refs == 0) delete this; }
-
-private:
-	IFlowNodePtr m_pFlowNode;
-	int          m_refs;
 };
 
 // ---------------------------------------------------------------

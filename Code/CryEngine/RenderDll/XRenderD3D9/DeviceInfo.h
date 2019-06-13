@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -20,54 +20,36 @@ typedef std::vector<MsgQueueItem> MsgQueue;
 	#endif
 
 typedef HRESULT (CALLBACK * OnCreateDeviceCallback)(D3DDevice*);
-typedef HWND (*             CreateWindowCallback)();
+typedef CRY_HWND (*         CreateWindowCallback)();
 
 struct DeviceInfo
 {
 	DeviceInfo();
-	bool IsOk() const { return m_pFactory != 0 && m_pAdapter != 0 && m_pDevice != 0 && m_pContext != 0 && m_pSwapChain != 0 && m_pBackbufferRTV != 0; }
+	bool IsOk() const { return m_pFactory != nullptr && m_pAdapter != nullptr && m_pDevice != nullptr && m_pContext != nullptr; }
 	void Release();
 
-	bool CreateDevice(bool windowed, int width, int height, int backbufferWidth, int backbufferHeight, int zbpp, OnCreateDeviceCallback pCreateDeviceCallback, CreateWindowCallback pCreateWindowCallback);
-	bool CreateViews();
-	void SnapSettings();
-	void ResizeDXGIBuffers();
-
+	bool CreateDevice(int zbpp, OnCreateDeviceCallback pCreateDeviceCallback, CreateWindowCallback pCreateWindowCallback);
+	
 	#if defined(SUPPORT_DEVICE_INFO_MSG_PROCESSING)
-	void OnActivate(UINT_PTR wParam, UINT_PTR lParam);
 	void PushSystemEvent(ESystemEvent event, UINT_PTR wParam, UINT_PTR lParam);
 	void ProcessSystemEventQueue();
-	#endif
-
-	#if CRY_PLATFORM_WINDOWS
-	void EnforceFullscreenPreemption();
 	#endif
 
 	// Properties
 	DXGIFactory*                        Factory() const                   { return m_pFactory; }
 	DXGIAdapter*                        Adapter() const                   { return m_pAdapter; }
-	DXGIOutput*                         Output() const                    { return m_pOutput; }
 	D3DDevice*                          Device() const                    { return m_pDevice; }
 	D3DDeviceContext*                   Context() const                   { return m_pContext; }
 
-	DXGISwapChain*                      SwapChain() const                 { return m_pSwapChain; }
-	D3DTexture*                         BackbufferTex2D() const           { return m_pBackbufferTex2D; }
-	D3DSurface*                         BackbufferRTV() const             { return m_pBackbufferRTV; }
-	std::vector<_smart_ptr<D3DSurface>> BackbufferRTVs() const            { return m_pBackbufferRTVs; }
-	unsigned int                        GetCurrentBackBufferIndex() const { return m_pCurrentBackBufferRTVIndex; }
-
 	const DXGI_ADAPTER_DESC1&           AdapterDesc()                     { return m_adapterDesc; }
-	DXGI_SWAP_CHAIN_DESC&               SwapChainDesc()                   { return m_swapChainDesc; }
-	const DXGI_RATIONAL&                RefreshRate() const               { return m_refreshRate; }
 
 	D3D_DRIVER_TYPE                     DriverType() const                { return m_driverType; }
 	unsigned int                        CreationFlags() const             { return m_creationFlags; }
 	D3D_FEATURE_LEVEL                   FeatureLevel() const              { return m_featureLevel; }
 	D3DFormat                           AutoDepthStencilFmt() const       { return m_autoDepthStencilFmt; }
 
-	unsigned int                        OutputIndex()                     { return m_outputIndex; }
-	unsigned int&                       SyncInterval()                    { return m_syncInterval; }
-	unsigned int                        PresentFlags() const              { return m_presentFlags; }
+	unsigned long                       DriverVersion() const             { return m_driverVersion; }
+	const char*                         DriverBuildNumber() const         { return m_buildBranchVersion; }
 
 protected:
 	#if defined(SUPPORT_DEVICE_INFO_MSG_PROCESSING)
@@ -77,37 +59,50 @@ protected:
 protected:
 	DXGIFactory*                        m_pFactory;
 	DXGIAdapter*                        m_pAdapter;
-	DXGIOutput*                         m_pOutput;
 	D3DDevice*                          m_pDevice;
 	D3DDeviceContext*                   m_pContext;
 
-	DXGISwapChain*                      m_pSwapChain;
-	D3DTexture*                         m_pBackbufferTex2D;
-	std::vector<_smart_ptr<D3DSurface>> m_pBackbufferRTVs;
-	D3DSurface*                         m_pBackbufferRTV;
-	unsigned int                        m_pCurrentBackBufferRTVIndex;
-
 	DXGI_ADAPTER_DESC1                  m_adapterDesc;
-	DXGI_SWAP_CHAIN_DESC                m_swapChainDesc;
-	DXGI_RATIONAL                       m_refreshRate;
-	DXGI_RATIONAL                       m_desktopRefreshRate;
 
 	D3D_DRIVER_TYPE                     m_driverType;
 	unsigned int                        m_creationFlags;
 	D3D_FEATURE_LEVEL                   m_featureLevel;
 	D3DFormat                           m_autoDepthStencilFmt;
 
-	unsigned int                        m_outputIndex;
-	unsigned int                        m_syncInterval;
-	unsigned int                        m_presentFlags;
+#if !CRY_RENDERER_OPENGL && !CRY_RENDERER_VULKAN && !CRY_RENDERER_GNM
+	#if CRY_RENDERER_DIRECT3D >= 120
+		D3D12_FEATURE_DATA_D3D12_OPTIONS    m_D3D120aOptions;
+		D3D12_FEATURE_DATA_D3D12_OPTIONS1   m_D3D120bOptions;
+		#if NTDDI_WIN10_RS2 && (WDK_NTDDI_VERSION >= NTDDI_WIN10_RS2)
+		D3D12_FEATURE_DATA_D3D12_OPTIONS2   m_D3D120cOptions;
+		#if NTDDI_WIN10_RS3 && (WDK_NTDDI_VERSION >= NTDDI_WIN10_RS3)
+		D3D12_FEATURE_DATA_D3D12_OPTIONS3   m_D3D120dOptions;
+		#endif
+		#endif
+	#elif CRY_RENDERER_DIRECT3D >= 110
+		D3D11_FEATURE_DATA_D3D11_OPTIONS    m_D3D110aOptions;
+		#if CRY_RENDERER_DIRECT3D >= 112
+		D3D11_FEATURE_DATA_D3D11_OPTIONS1   m_D3D112aOptions;
+		#if CRY_RENDERER_DIRECT3D >= 113
+		D3D11_FEATURE_DATA_D3D11_OPTIONS2   m_D3D113aOptions;
+		#if CRY_RENDERER_DIRECT3D >= 114
+		D3D11_FEATURE_DATA_D3D11_OPTIONS3   m_D3D114aOptions;
+		D3D11_FEATURE_DATA_D3D11_OPTIONS4   m_D3D114bOptions;
+		#endif
+		#endif
+		#endif
+	#endif
+#endif
 
 	bool                                m_activated;
-	bool                                m_activatedMT;
 
-	#if defined(SUPPORT_DEVICE_INFO_MSG_PROCESSING)
+#if defined(SUPPORT_DEVICE_INFO_MSG_PROCESSING)
 	CryCriticalSection           m_msgQueueLock;
 	DeviceInfoInternal::MsgQueue m_msgQueue;
-	#endif
+#endif
+
+	unsigned long m_driverVersion;
+	char m_buildBranchVersion[64];
 };
 
 #endif // #if defined(SUPPORT_DEVICE_INFO)

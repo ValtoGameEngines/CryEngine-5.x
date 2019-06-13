@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ProceduralWeaponContext.h"
@@ -57,7 +57,6 @@ void CProceduralWeaponAnimationContext::Update(float timePassed)
 	const IAnimationOperatorQueue::EOp set = IAnimationOperatorQueue::eOp_OverrideRelative;
 	const IAnimationOperatorQueue::EOp additive = IAnimationOperatorQueue::eOp_Additive;
 
-	ISkeletonPose* pPose = pCharacter->GetISkeletonPose();
 	Vec3 relBlendPos = Vec3(1.0f, 0.0f, 0.0f);
 	m_pPoseModifier->PushPosition(m_params.m_rightBlendIkIdx, set, relBlendPos);
 
@@ -97,7 +96,7 @@ void CProceduralWeaponAnimationContext::Initialize(IScope* pScope)
 	ICharacterInstance* pCharacter = m_pScope->GetCharInst();
 	if (pCharacter)
 	{
-		CryCreateClassInstance("AnimationPoseModifier_OperatorQueue", m_pPoseModifier);
+		CryCreateClassInstanceForInterface(cryiidof<IAnimationOperatorQueue>(), m_pPoseModifier);
 		m_params = SParams(pCharacter->GetIDefaultSkeleton());
 	}
 }

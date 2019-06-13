@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   UnitTestExcelReporter.cpp
@@ -14,68 +14,25 @@
 
 #include <CrySystem/ISystem.h>
 #include <CrySystem/IConsole.h>
+#include <CrySystem/File/ICryPak.h>
 
 #include <CryCore/Platform/CryLibrary.h>
+#include <CrySerialization/IArchiveHost.h>
 
 #if CRY_PLATFORM_WINDOWS
 	#include <shellapi.h> // requires <windows.h>
 #endif
 
-using namespace CryUnitTest;
-
-#define OUTPUT_FILE_NAME       "%USER%/TestResultsUnitTest.xml"
-#define OUTPUT_FILE_NAME_JUNIT "%USER%/TestResults/UnitTestJUnit.xml"
-
-#if CRY_PLATFORM_WINDOWS
-HWND hwndEdit = 0;
-#endif
-
-void CUnitTestExcelReporter::OnStartTesting(UnitTestRunContext& context)
+namespace CryTest
 {
-	//gEnv->pConsole->SetScrollMax(600);
-	//gEnv->pConsole->ShowConsole(true);
+constexpr char kOutputFileName[] = "%USER%/TestResults/CryTest.xml";
 
-#if CRY_PLATFORM_WINDOWS
-	ICVar* pVar = gEnv->pConsole->GetCVar("ats_window");
-	if (pVar && pVar->GetIVal())
-	{
-		const char* szWindowClass = "UNIT_TEST_CLASS_WNDCLASS";
-		// Register the window class
-		WNDCLASS wndClass = { 0, ::DefWindowProc, 0, DLGWINDOWEXTRA, CryGetCurrentModule(), NULL, LoadCursor(NULL, IDC_ARROW), (HBRUSH)COLOR_BTNSHADOW, NULL, szWindowClass };
-		RegisterClass(&wndClass);
-
-		int cwX = CW_USEDEFAULT;
-		int cwY = CW_USEDEFAULT;
-		int cwW = 800;
-		int cwH = 600;
-
-		HWND hWnd = CreateWindowEx(WS_EX_TOOLWINDOW | WS_EX_CONTROLPARENT, szWindowClass, "CryENGINE Settings", WS_BORDER | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-		                           cwX, cwY, cwW, cwH, 0, NULL, CryGetCurrentModule(), NULL);
-
-		hwndEdit = CreateWindow("EDIT", NULL, WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL,
-		                        0, 0, 800, 600, // set size in WM_SIZE message
-		                        hWnd,           // parent window
-		                        (HMENU)1,       // edit control ID
-		                        CryGetCurrentModule(),
-		                        NULL); // pointer not needed
-
-		/*
-		   DWORD dwStyle = WS_POPUP | WS_CAPTION | WS_VISIBLE | WS_CLIPSIBLINGS | DS_3DLOOK | DS_SETFONT | DS_MODALFRAME;
-		   DWORD dwStyleEx = WS_EX_LEFT | WS_EX_LTRREADING | WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE;
-
-		   HINSTANCE hInstance = CryGetCurrentModule();
-		   HWND hWnd = CreateWindowEx( dwStyleEx, "CustomModelessDialog", "Unit Testing", dwStyle, 200,200,500,500, NULL, NULL, hInstance, NULL );
-		 */
-	}
-#endif
-}
-
-void CUnitTestExcelReporter::OnFinishTesting(UnitTestRunContext& context)
+void CTestExcelReporter::OnFinishTesting(const SRunContext& context, bool openReport)
 {
 	// Generate report.
 	XmlNodeRef Workbook = GetISystem()->CreateXmlNode("Workbook");
 	InitExcelWorkbook(Workbook);
-	NewWorksheet("UnitTests");
+	NewWorksheet("Tests");
 
 	XmlNodeRef Column;
 	Column = m_CurrTable->newChild("Column");
@@ -85,7 +42,7 @@ void CUnitTestExcelReporter::OnFinishTesting(UnitTestRunContext& context)
 	Column = m_CurrTable->newChild("Column");
 	Column->setAttr("ss:Width", 80);
 	Column = m_CurrTable->newChild("Column");
-	Column->setAttr("ss:Width", 200);
+	Column->setAttr("ss:Width", 300);
 	Column = m_CurrTable->newChild("Column");
 	Column->setAttr("ss:Width", 200);
 	Column = m_CurrTable->newChild("Column");
@@ -95,19 +52,25 @@ void CUnitTestExcelReporter::OnFinishTesting(UnitTestRunContext& context)
 	AddCell("Run Tests", CELL_BOLD);
 	AddCell(context.testCount);
 	AddRow();
-	AddCell("Successed Tests", CELL_BOLD);
+	AddCell("Succeeded Tests", CELL_BOLD);
 	AddCell(context.succedTestCount);
 	AddRow();
 	AddCell("Failed Tests", CELL_BOLD);
 	AddCell(context.failedTestCount);
 	if (context.failedTestCount != 0)
+	{
 		SetCellFlags(m_CurrCell, CELL_BOLD | CELL_CENTERED);
+	}
 	AddRow();
 	AddCell("Success Ratio %", CELL_BOLD);
 	if (context.testCount > 0)
+	{
 		AddCell(100 * context.succedTestCount / context.testCount);
+	}
 	else
+	{
 		AddCell(0);
+	}
 
 	AddRow();
 	AddRow();
@@ -117,29 +80,58 @@ void CUnitTestExcelReporter::OnFinishTesting(UnitTestRunContext& context)
 	AddCell("Test Name");
 	AddCell("Status");
 	AddCell("Run Time(ms)");
-	AddCell("Failure Description");
+	AddCell("Failures");
 	AddCell("File");
 	AddCell("Line");
 
 	string name;
 
-	for (uint32 i = 0; i < m_results.size(); i++)
+	for (const STestResult& res : m_results)
 	{
-		TestResult& res = m_results[i];
-		if (res.bSuccess)
+		if (res.isSuccessful)
+		{
 			continue;
+		}
 
 		AddRow();
-		if (res.autoTestInfo.szTaskName != 0)
-			name.Format("[%s] %s:%s.%s", res.testInfo.module, res.testInfo.suite, res.testInfo.name, res.autoTestInfo.szTaskName);
-		else
-			name.Format("[%s] %s:%s", res.testInfo.module, res.testInfo.suite, res.testInfo.name);
+		name.Format("[%s] %s:%s", res.testInfo.module.c_str(), res.testInfo.suite.c_str(), res.testInfo.name.c_str());
 		AddCell(name);
 		AddCell("FAIL", CELL_CENTERED);
-		AddCell((int)res.fRunTimeInMs);
-		AddCell(res.failureDescription, CELL_CENTERED);
-		AddCell(res.testInfo.filename);
+		AddCell((int)res.runTimeInMs);
+		AddCell((uint64)res.failures.size());
+		AddCell(res.testInfo.fileName.c_str());
 		AddCell(res.testInfo.lineNumber);
+
+		// failures from assertion may contain too many lines to be readable in the sheet.
+		// combine the failures if they have the same file name, line number and message.
+		struct CompareSError
+		{
+			bool operator()(const SError& lhs, const SError& rhs) const
+			{
+				if (lhs.lineNumber < rhs.lineNumber)
+					return true;
+				if (lhs.lineNumber == rhs.lineNumber && lhs.fileName < rhs.fileName)
+					return true;
+				if (lhs.lineNumber == rhs.lineNumber && lhs.fileName == rhs.fileName && lhs.message < rhs.message)
+					return true;
+				return false;
+			}
+		};
+		std::set<SError, CompareSError> combinedFailures;
+
+		for (auto& failure : res.failures)
+		{
+			combinedFailures.insert(failure);
+		}
+
+		// Create a row for each unique failure
+		for (auto& failure : combinedFailures)
+		{
+			AddRow();
+			AddCellAtIndex(4, failure.message);
+			AddCell(failure.fileName);
+			AddCell(failure.lineNumber);
+		}
 	}
 
 	/////////////////////////////////////////////////////////////////////////////
@@ -152,7 +144,7 @@ void CUnitTestExcelReporter::OnFinishTesting(UnitTestRunContext& context)
 	Column = m_CurrTable->newChild("Column");
 	Column->setAttr("ss:Width", 80);
 	Column = m_CurrTable->newChild("Column");
-	Column->setAttr("ss:Width", 200);
+	Column->setAttr("ss:Width", 60);
 	Column = m_CurrTable->newChild("Column");
 	Column->setAttr("ss:Width", 200);
 	Column = m_CurrTable->newChild("Column");
@@ -163,136 +155,112 @@ void CUnitTestExcelReporter::OnFinishTesting(UnitTestRunContext& context)
 	AddCell("Test Name");
 	AddCell("Status");
 	AddCell("Run Time(ms)");
-	AddCell("Failure Description");
+	AddCell("Failures");
 	AddCell("File");
 	AddCell("Line");
 
-	for (uint32 i = 0; i < m_results.size(); i++)
+	for (const STestResult& res : m_results)
 	{
-		TestResult& res = m_results[i];
-
 		AddRow();
-		if (res.autoTestInfo.szTaskName != 0)
-			name.Format("[%s] %s:%s.%s", res.testInfo.module, res.testInfo.suite, res.testInfo.name, res.autoTestInfo.szTaskName);
-		else
-			name.Format("[%s] %s:%s", res.testInfo.module, res.testInfo.suite, res.testInfo.name);
+		name.Format("[%s] %s:%s", res.testInfo.module.c_str(), res.testInfo.suite.c_str(), res.testInfo.name.c_str());
 		AddCell(name);
-		if (res.bSuccess)
+		if (res.isSuccessful)
+		{
 			AddCell("OK", CELL_CENTERED);
+		}
 		else
+		{
 			AddCell("FAIL", CELL_CENTERED);
-		AddCell((int)res.fRunTimeInMs);
-		AddCell(res.failureDescription, CELL_CENTERED);
-		AddCell(res.testInfo.filename);
+		}
+		AddCell(static_cast<int>(res.runTimeInMs));
+		AddCell(static_cast<uint32>(res.failures.size()));
+		AddCell(res.testInfo.fileName.c_str());
 		AddCell(res.testInfo.lineNumber);
 	}
 
-	//const char *filename = OUTPUT_FILE_NAME;
-	//SaveToFile( OUTPUT_FILE_NAME );
-	char buf[128];
-	time_t ltime;
-	string filename = "%USER%/TestResults/UnitTest_";
-
-	time(&ltime);
-	tm* today = localtime(&ltime);
-	strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", today);
-	filename += buf;
-	filename += ".xml";
-	SaveToFile(filename.c_str());
-
-	SaveJUnitCompatableXml();
-
 #if CRY_PLATFORM_WINDOWS
-	ICVar* pVar = gEnv->pConsole->GetCVar("ats_show_report");
-	if (pVar && pVar->GetIVal())
+	bool bSaveSucceed = SaveToFile(kOutputFileName);
+
+	if (openReport)
 	{
-		::ShellExecute(NULL, "open", filename.c_str(), NULL, NULL, SW_SHOW);
+		if (!bSaveSucceed)
+		{
+			// For local testing notify user to close previously opened report.
+			// Use primitive windows msgbox because we are supposed to hide all pop-ups during auto testing.
+			CryMessageBox("Cry Test failed to save one or more report documents, make sure the file is writable!", "Cry Test", eMB_Error);
+		}
+		else
+		{
+			//Open report file if any test failed. Since the notification is used for local testing only, we only need Windows
+			if (context.failedTestCount > 0)
+			{
+				m_log.Log("%d Tests failed, opening report...", context.failedTestCount);
+				CryPathString path;
+				gEnv->pCryPak->AdjustFileName(kOutputFileName, path, /*nAdjustFlags=*/ 0);
+				if (!path.empty())
+				{
+					//should open it with Excel
+					int err = (int)::ShellExecute(NULL, "open", path.c_str(), NULL, NULL, SW_SHOW);
+					if (err <= 32)  //returns a value greater than 32 if succeeds.
+					{
+						m_log.Log("Failed to open report %s, error code: %d", path.c_str(), err);
+					}
+				}
+			}
+		}
 	}
+#else
+	SaveToFile(kOutputFileName);
 #endif
 }
 
-//////////////////////////////////////////////////////////////////////////
-void CUnitTestExcelReporter::SaveJUnitCompatableXml()
+void CTestExcelReporter::OnSingleTestStart(const STestInfo& testInfo)
 {
-	XmlNodeRef root = GetISystem()->CreateXmlNode("testsuite");
+	string text;
+	text.Format("Test Started: [%s] %s:%s", testInfo.module.c_str(), testInfo.suite.c_str(), testInfo.name.c_str());
+	m_log.Log(text);
+}
 
-	//<testsuite failures="0" time="0.289" errors="0" tests="3" skipped="0"	name="UnitTests.MainClassTest">
-
-	int errors = 0;
-	int skipped = 0;
-	int failures = 0;
-	float totalTime = 0;
-	int numTests = (int)m_results.size();
-	for (int i = 0; i < numTests; i++)
+void CTestExcelReporter::OnSingleTestFinish(const STestInfo& testInfo, float fRunTimeInMs, bool bSuccess, const std::vector<SError>& failures)
+{
+	if (bSuccess)
 	{
-		TestResult& res = m_results[i];
-		totalTime += res.fRunTimeInMs;
-		failures += (res.bSuccess) ? 0 : 1;
+		m_log.Log("Test result: [%s]%s:%s | OK (%3.2fms)", testInfo.module.c_str(), testInfo.suite.c_str(), testInfo.name.c_str(), fRunTimeInMs);
 	}
-	XmlNodeRef suiteNode = root;
-	suiteNode->setAttr("time", totalTime);
-	suiteNode->setAttr("errors", errors);
-	suiteNode->setAttr("failures", failures);
-	suiteNode->setAttr("tests", numTests);
-	suiteNode->setAttr("skipped", skipped);
-	suiteNode->setAttr("name", "UnitTests");
-
-	for (int i = 0; i < numTests; i++)
+	else
 	{
-		TestResult& res = m_results[i];
-
-		XmlNodeRef testNode = suiteNode->newChild("testcase");
-		testNode->setAttr("time", res.fRunTimeInMs);
-		testNode->setAttr("name", res.testInfo.name);
-		//<testcase time="0.146" name="TestPropertyValue"	classname="UnitTests.MainClassTest"/>
-
-		if (!res.bSuccess)
+		m_log.Log("Test result: [%s]%s:%s | %d failures:", testInfo.module.c_str(), testInfo.suite.c_str(), testInfo.name.c_str(), failures.size());
+		for (const SError& err : failures)
 		{
-			XmlNodeRef failNode = testNode->newChild("failure");
-			failNode->setAttr("type", res.testInfo.module);
-			failNode->setAttr("message", res.failureDescription);
-			string err;
-			err.Format("%s at line %d", res.testInfo.filename, res.testInfo.lineNumber);
-			failNode->setContent(err);
+			m_log.Log("at %s line %d:\t%s", err.fileName.c_str(), err.lineNumber, err.message.c_str());
 		}
 	}
 
-	root->saveToFile(OUTPUT_FILE_NAME_JUNIT);
+	m_results.push_back(STestResult { testInfo, fRunTimeInMs, bSuccess, failures });
 }
 
-void CUnitTestExcelReporter::OnTestStart(IUnitTest* pTest)
+static constexpr const char* szExcelReporterSave = "%USER%/TestResults/CryTestTemp.json";
+
+void CTestExcelReporter::SaveTemporaryReport()
 {
-	CryUnitTest::UnitTestInfo testInfo;
-	pTest->GetInfo(testInfo);
-
-	string text;
-	text.Format("Test Started: [%s] %s:%s", testInfo.module, testInfo.suite, testInfo.name);
-
-#if CRY_PLATFORM_WINDOWS
-	if (hwndEdit)
-		SendMessage(hwndEdit, WM_SETTEXT, 0, (LPARAM) text.c_str());
-#endif
+	Serialization::SaveJsonFile(szExcelReporterSave, *this);
 }
 
-void CUnitTestExcelReporter::OnTestFinish(IUnitTest* pTest, float fRunTimeInMs, bool bSuccess, char const* failureDescription)
+void CTestExcelReporter::RecoverTemporaryReport()
 {
-	TestResult res;
+	Serialization::LoadJsonFile(*this, szExcelReporterSave);
+	gEnv->pCryPak->RemoveFile(szExcelReporterSave);
+}
 
-	pTest->GetInfo(res.testInfo);
-	pTest->GetAutoTestInfo(res.autoTestInfo);
-	res.fRunTimeInMs = fRunTimeInMs;
-	res.bSuccess = bSuccess;
-	res.failureDescription = failureDescription;
-
-	m_results.push_back(res);
-
-	string text;
-	text.Format("Test Finished: [%s] %s:%s", res.testInfo.module, res.testInfo.suite, res.testInfo.name);
-
-#if CRY_PLATFORM_WINDOWS
-	if (hwndEdit)
-		SendMessage(hwndEdit, WM_SETTEXT, 0, (LPARAM) text.c_str());
-
-	gEnv->pLog->UpdateLoadingScreen(text);
-#endif
+bool CTestExcelReporter::HasTest(const STestInfo& testInfo) const
+{
+	for (const STestResult& result : m_results)
+	{
+		if (result.testInfo.name == testInfo.name)
+		{
+			return true;
+		}
+	}
+	return false;
+}
 }

@@ -1,22 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  Created:     06/02/2015 by Filipe amim
-//  Description:
-// -------------------------------------------------------------------------
-//
-////////////////////////////////////////////////////////////////////////////
-
-#ifndef PARTICLEDEBUG_H
-#define PARTICLEDEBUG_H
+// Copyright 2015-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
+
+#include "ParticleSystem.h"
 
 namespace pfx2
 {
 
-void DebugParticleSystem(const std::vector<_smart_ptr<CParticleEmitter>>& activeEmitters);
+void DebugParticleSystem(const TParticleEmitters& activeEmitters);
 
 }
-
-#endif // PARTICLEDEBUG_H

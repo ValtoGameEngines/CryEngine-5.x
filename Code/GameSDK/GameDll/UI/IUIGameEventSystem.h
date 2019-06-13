@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   IGameUIEventSystem.h
@@ -62,7 +62,7 @@ private:
 template <class T>
 struct SAutoRegUIEventSystem : public IUIEventSystemFactory
 {
-	virtual TUIEventSystemPtr Create() { return TUIEventSystemPtr(new T); }
+	virtual TUIEventSystemPtr Create() { return std::make_shared<T>(); }
 };
 
 #define UIEVENTSYSTEM(name) \

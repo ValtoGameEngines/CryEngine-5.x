@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -143,8 +143,7 @@ bool CVehicleMovementHelicopter::Init(IVehicle* pVehicle, const CVehicleParams& 
 	}
 
 	// high-level controller
-	Ang3 angles				= m_pEntity->GetWorldAngles();
-	m_enginePower			= 0.0f;
+	m_enginePower = 0.0f;
 
 	if (table.haveAttr("rotorPartName"))
 		m_pRotorPart = m_pVehicle->GetPart(table.getAttr("rotorPartName"));
@@ -300,19 +299,17 @@ void CVehicleMovementHelicopter::OnEvent(EVehicleMovementEvent event, const SVeh
     }
     break;
 
-	case eVME_GroundCollision:
+	/*case eVME_GroundCollision:
 		{
 			const float stopOver = 1.0f;
 		}
-		break;
+		break;*/
 
 	case eVME_Damage:
 		{
       if (!m_pVehicle->IsIndestructable())
       {
-			  const float stopOver = 1.0f;
-
-			  m_damage = params.fValue;
+				m_damage = params.fValue;
 
         if (m_damage > 0.95f)
         {
@@ -461,7 +458,7 @@ float CVehicleMovementHelicopter::GetAdditionalSlopePitch(const Vec3 &desiredMov
 
 void CVehicleMovementHelicopter::ProcessAI(const float deltaTime)
 {
-	FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	CryAutoCriticalSection lk(m_lock);
 	SVehiclePhysicsStatus* physStatus = &m_physStatus[k_physicsThread];
@@ -501,7 +498,6 @@ void CVehicleMovementHelicopter::ProcessAI(const float deltaTime)
 	const Matrix33 worldMat( physStatus->q);
 	const Matrix33 localMat( physStatus->q.GetInverted());
 	const Ang3 worldAngles = Ang3::GetAnglesXYZ(worldMat);
-	const Ang3 localAngles = Ang3::GetAnglesXYZ(localMat);
 
 	const Vec3 currentVel = physStatus->v;
 	const Vec3 currentVel2D(currentVel.x, currentVel.y, 0.0f);
@@ -513,7 +509,6 @@ void CVehicleMovementHelicopter::ProcessAI(const float deltaTime)
 
 	// to avoid singularity
 	const Vec3 vWorldDir = worldMat.GetRow(1);
-	const Vec3 vSideWays = worldMat.GetRow(0);
 	const Vec3 vWorldDir2D =  Vec3( vWorldDir.x,  vWorldDir.y, 0.0f ).GetNormalizedSafe();
 
 	// Our inputs
@@ -523,8 +518,6 @@ void CVehicleMovementHelicopter::ProcessAI(const float deltaTime)
 	const Vec3 desiredMoveDir = m_aiRequest.HasMoveTarget() ? (m_aiRequest.GetMoveTarget() - worldPos).GetNormalizedSafe() : vWorldDir;
 	Vec3 desiredMoveDir2D = Vec3(desiredMoveDir.x, desiredMoveDir.y, 0.0f);
 	desiredMoveDir2D = desiredMoveDir2D.GetNormalizedSafe(desiredMoveDir2D);
-
-	const Vec3 desiredVel = desiredMoveDir * desiredSpeed; 
 
   Vec3 desiredLookDir(desiredMoveDir);
 
@@ -637,9 +630,7 @@ void CVehicleMovementHelicopter::ProcessAI(const float deltaTime)
 
 	rollSpeed *= deltaTime;
 	rollSpeed		= (float)__fsel(absDiff - rollSpeed, rollSpeed, absDiff);
-	float roll		=(float) __fsel(dirDiff.z, -rollSpeed, rollSpeed);
 
-	float speedPerUnit	   = 1.5f;
 	float desiredRollSpeed = (-m_actionYaw * 2.5f) + m_steeringDamage.y;
 
 	m_actionRoll = m_actionRoll + deltaTime * (desiredRollSpeed - m_actionRoll);
@@ -676,7 +667,7 @@ void CVehicleMovementHelicopter::PreProcessMovement(const float deltaTime)
 // NOTE: This function must be thread-safe. Before adding stuff contact MarcoC.
 void CVehicleMovementHelicopter::ProcessMovement(const float deltaTime)
 {
-	FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	IPhysicalEntity* pPhysics = GetPhysics();
 	assert(pPhysics);
@@ -784,7 +775,7 @@ void CVehicleMovementHelicopter::UpdateEngine(float deltaTime)
 //------------------------------------------------------------------------
 void CVehicleMovementHelicopter::Update(const float deltaTime)
 {
-  FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+  CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	CVehicleMovementBase::Update(deltaTime);
 
@@ -839,7 +830,7 @@ float CVehicleMovementHelicopter::GetEnginePower()
 //------------------------------------------------------------------------
 bool CVehicleMovementHelicopter::RequestMovement(CMovementRequest& movementRequest)
 {
-	FUNCTION_PROFILER( gEnv->pSystem, PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
  
 	m_movementAction.isAI = true;
 
@@ -953,7 +944,7 @@ void CVehicleMovementHelicopter::PostSerialize()
   {
     if (IEntity *entity = m_pVehicle->GetEntity())
     {
-      if (entity->IsActive() && !entity->IsHidden() && m_isEnginePowered)
+      if (entity->IsActivatedForUpdates() && !entity->IsHidden() && m_isEnginePowered)
       {
         StartExhaust();
       }

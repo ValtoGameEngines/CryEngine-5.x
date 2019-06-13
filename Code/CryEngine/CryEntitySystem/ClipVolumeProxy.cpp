@@ -1,9 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 
 #include "ClipVolumeProxy.h"
 #include <Cry3DEngine/CGF/CGFContent.h>
+#include <Cry3DEngine/I3DEngine.h>
 
 CRYREGISTER_CLASS(CEntityComponentClipVolume);
 
@@ -12,7 +13,9 @@ CEntityComponentClipVolume::CEntityComponentClipVolume()
 	: m_pClipVolume(NULL)
 	, m_pBspTree(NULL)
 	, m_nFlags(IClipVolume::eClipVolumeAffectedBySun)
+	, m_viewDistRatio(100)
 {
+	m_componentFlags.Add(EEntityComponentFlags::Legacy);
 }
 
 CEntityComponentClipVolume::~CEntityComponentClipVolume()
@@ -26,7 +29,7 @@ CEntityComponentClipVolume::~CEntityComponentClipVolume()
 	m_pRenderMesh = NULL;
 	if (m_pBspTree)
 	{
-		gEnv->pEntitySystem->ReleaseBSPTree3D(m_pBspTree);
+		g_pIEntitySystem->ReleaseBSPTree3D(m_pBspTree);
 		m_pBspTree = nullptr;
 	}
 
@@ -38,26 +41,26 @@ void CEntityComponentClipVolume::Initialize()
 	m_pClipVolume = gEnv->p3DEngine->CreateClipVolume();
 }
 
-void CEntityComponentClipVolume::ProcessEvent(SEntityEvent& event)
+void CEntityComponentClipVolume::ProcessEvent(const SEntityEvent& event)
 {
 	if (event.event == ENTITY_EVENT_XFORM ||
 	    event.event == ENTITY_EVENT_HIDE ||
 	    event.event == ENTITY_EVENT_UNHIDE)
 	{
-		gEnv->p3DEngine->UpdateClipVolume(m_pClipVolume, m_pRenderMesh, m_pBspTree, m_pEntity->GetWorldTM(), !m_pEntity->IsHidden(), m_nFlags, m_pEntity->GetName());
+		gEnv->p3DEngine->UpdateClipVolume(m_pClipVolume, m_pRenderMesh, m_pBspTree, m_pEntity->GetWorldTM(), m_viewDistRatio, !m_pEntity->IsHidden(), m_nFlags, m_pEntity->GetName());
 	}
 }
 
 //////////////////////////////////////////////////////////////////////////
-uint64 CEntityComponentClipVolume::GetEventMask() const
+Cry::Entity::EventFlags CEntityComponentClipVolume::GetEventMask() const
 {
-	return BIT64(ENTITY_EVENT_XFORM) | BIT64(ENTITY_EVENT_HIDE) | BIT64(ENTITY_EVENT_UNHIDE);
+	return ENTITY_EVENT_XFORM | ENTITY_EVENT_HIDE | ENTITY_EVENT_UNHIDE;
 }
 
 void CEntityComponentClipVolume::UpdateRenderMesh(IRenderMesh* pRenderMesh, const DynArray<Vec3>& meshFaces)
 {
 	m_pRenderMesh = pRenderMesh;
-	gEnv->pEntitySystem->ReleaseBSPTree3D(m_pBspTree);
+	g_pIEntitySystem->ReleaseBSPTree3D(m_pBspTree);
 
 	const size_t nFaceCount = meshFaces.size() / 3;
 	if (nFaceCount > 0)
@@ -75,21 +78,24 @@ void CEntityComponentClipVolume::UpdateRenderMesh(IRenderMesh* pRenderMesh, cons
 			faceList.push_back(face);
 		}
 
-		m_pBspTree = gEnv->pEntitySystem->CreateBSPTree3D(faceList);
+		m_pBspTree = g_pIEntitySystem->CreateBSPTree3D(faceList);
 	}
 
 	if (m_pEntity && m_pClipVolume)
-		gEnv->p3DEngine->UpdateClipVolume(m_pClipVolume, m_pRenderMesh, m_pBspTree, m_pEntity->GetWorldTM(), !m_pEntity->IsHidden(), m_nFlags, m_pEntity->GetName());
+	{
+		gEnv->p3DEngine->UpdateClipVolume(m_pClipVolume, m_pRenderMesh, m_pBspTree, m_pEntity->GetWorldTM(), m_viewDistRatio, !m_pEntity->IsHidden(), m_nFlags, m_pEntity->GetName());
+	}
 }
 
-void CEntityComponentClipVolume::SetProperties(bool bIgnoresOutdoorAO)
+void CEntityComponentClipVolume::SetProperties(bool bIgnoresOutdoorAO, uint8 viewDistRatio)
 {
 	if (m_pEntity && m_pClipVolume)
 	{
 		m_nFlags &= ~IClipVolume::eClipVolumeIgnoreOutdoorAO;
 		m_nFlags |= bIgnoresOutdoorAO ? IClipVolume::eClipVolumeIgnoreOutdoorAO : 0;
+		m_viewDistRatio = viewDistRatio;
 
-		gEnv->p3DEngine->UpdateClipVolume(m_pClipVolume, m_pRenderMesh, m_pBspTree, m_pEntity->GetWorldTM(), !m_pEntity->IsHidden(), m_nFlags, m_pEntity->GetName());
+		gEnv->p3DEngine->UpdateClipVolume(m_pClipVolume, m_pRenderMesh, m_pBspTree, m_pEntity->GetWorldTM(), m_viewDistRatio, !m_pEntity->IsHidden(), m_nFlags, m_pEntity->GetName());
 	}
 }
 
@@ -97,7 +103,7 @@ void CEntityComponentClipVolume::LegacySerializeXML(XmlNodeRef& entityNode, XmlN
 {
 	if (bLoading)
 	{
-		LOADING_TIME_PROFILE_SECTION;
+		CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 		XmlNodeRef volumeNode = componentNode->findChild("ClipVolume");
 		if (!volumeNode)
@@ -118,7 +124,9 @@ void CEntityComponentClipVolume::LegacySerializeXML(XmlNodeRef& entityNode, XmlN
 				cry_strcpy(szFilePath, gEnv->p3DEngine->GetLevelFilePath(szFileName + nAliasNameLen));
 
 				if (m_pEntity && LoadFromFile(szFilePath))
-					gEnv->p3DEngine->UpdateClipVolume(m_pClipVolume, m_pRenderMesh, m_pBspTree, m_pEntity->GetWorldTM(), !m_pEntity->IsHidden(), m_nFlags, m_pEntity->GetName());
+				{
+					gEnv->p3DEngine->UpdateClipVolume(m_pClipVolume, m_pRenderMesh, m_pBspTree, m_pEntity->GetWorldTM(), m_viewDistRatio, !m_pEntity->IsHidden(), m_nFlags, m_pEntity->GetName());
+				}
 			}
 		}
 	}
@@ -146,7 +154,7 @@ bool CEntityComponentClipVolume::LoadFromFile(const char* szFilePath)
 		{
 			if (IChunkFile::ChunkDesc* pBspTreeDataChunk = pChunkFile->FindChunkByType(ChunkType_BspTreeData))
 			{
-				m_pBspTree = gEnv->pEntitySystem->CreateBSPTree3D(IBSPTree3D::FaceList());
+				m_pBspTree = g_pIEntitySystem->CreateBSPTree3D(IBSPTree3D::FaceList());
 				m_pBspTree->ReadFromBuffer(static_cast<uint8*>(pBspTreeDataChunk->data));
 			}
 			else
@@ -188,7 +196,7 @@ void CEntityComponentClipVolume::GetMemoryUsage(ICrySizer* pSizer) const
 	pSizer->AddObject(m_pBspTree);
 }
 
-void CEntityComponentClipVolume::SetGeometryFilename(const char *sFilename)
+void CEntityComponentClipVolume::SetGeometryFilename(const char* sFilename)
 {
 	m_GeometryFileName = sFilename;
 }

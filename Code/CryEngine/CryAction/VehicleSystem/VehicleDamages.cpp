@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -117,7 +117,6 @@ void CVehicleDamages::ParseDamageMultipliers(TDamageMultipliers& multipliersByHi
 			string ammoType = multiplierTable.getAttr("ammoType");
 			if (!ammoType.empty())
 			{
-				int projectileType = 0;
 				if (pGR && ammoType != "default")
 				{
 					uint16 classId(~uint16(0));
@@ -155,7 +154,7 @@ void CVehicleDamages::ResetDamages()
 //------------------------------------------------------------------------
 void CVehicleDamages::UpdateDamages(float frameTime)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	for (TVehicleDamagesGroupVector::iterator ite = m_damagesGroups.begin(), end = m_damagesGroups.end(); ite != end; ++ite)
 	{

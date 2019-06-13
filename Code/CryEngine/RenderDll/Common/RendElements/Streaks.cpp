@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "Streaks.h"
@@ -29,12 +29,12 @@ void Streaks::InitEditorParamGroups(DynArray<FuncVariableGroup>& groups)
 
 Streaks::Streaks(const char* name)
 	: COpticsElement(name, 0.5f)
-	, m_fThickness(0.3f)
-	, m_nNoiseSeed(81)
+	, m_bUseSpectrumTex(false)
 	, m_fSizeNoiseStrength(0.8f)
 	, m_fThicknessNoiseStrength(0.6f)
 	, m_fSpacingNoiseStrength(0.2f)
-	, m_bUseSpectrumTex(false)
+	, m_fThickness(0.3f)
+	, m_nNoiseSeed(81)
 {
 	m_vMovement.x = 1.f;
 	m_vMovement.y = 1.f;
@@ -48,6 +48,7 @@ Streaks::Streaks(const char* name)
 	m_meshDirty = true;
 
 	m_constantBuffer = gcpRendD3D->m_DevBufMan.CreateConstantBuffer(sizeof(SShaderParams), true, true);
+	if (m_constantBuffer) m_constantBuffer->SetDebugName("Streaks Per-Primitive CB");
 	m_indexBuffer = ~0u;
 }
 
@@ -74,8 +75,9 @@ void Streaks::Load(IXmlNode* pNode)
 		{
 			if (gradientTexName && gradientTexName[0])
 			{
-				ITexture* pTexture = std::move(gEnv->pRenderer->EF_LoadTexture(gradientTexName));
-				SetSpectrumTex((CTexture*)pTexture);
+				ITexture* pTexture = gEnv->pRenderer->EF_LoadTexture(gradientTexName);
+				m_pSpectrumTex.reset();
+				m_pSpectrumTex.Assign_NoAddRef(static_cast<CTexture*>(pTexture));
 			}
 		}
 
@@ -111,13 +113,13 @@ CTexture* Streaks::GetTexture()
 	{
 		if (m_pSpectrumTex == nullptr)
 		{
-			m_pSpectrumTex = std::move(CTexture::ForName("EngineAssets/Textures/flares/spectrum_full.tif", FT_DONT_STREAM, eTF_Unknown));
+			m_pSpectrumTex = CTexture::ForName("%ENGINE%/EngineAssets/Textures/flares/spectrum_full.tif", FT_DONT_STREAM, eTF_Unknown);
 		}
 
 		return m_pSpectrumTex;
 	}
 
-	return CTexture::s_ptexBlack;
+	return CRendererResources::s_ptexBlack;
 }
 
 void Streaks::UpdateMeshes()
@@ -141,7 +143,7 @@ void Streaks::UpdateMeshes()
 
 		mesh.MarkDirty();
 		mesh.ValidateMesh();
-		mesh.primitive.SetInlineConstantBuffer(eConstantBufferShaderSlot_PerBatch, m_constantBuffer, EShaderStage_Vertex | EShaderStage_Pixel);
+		mesh.primitive.SetInlineConstantBuffer(eConstantBufferShaderSlot_PerPrimitive, m_constantBuffer, EShaderStage_Vertex | EShaderStage_Pixel);
 	}
 
 	// index buffer is shared
@@ -166,7 +168,7 @@ bool Streaks::PreparePrimitives(const SPreparePrimitivesContext& context)
 	// update shared constant buffer
 	{
 		auto& firstPrimitive = m_separatedMeshList.front().primitive;
-		auto constants = firstPrimitive.GetConstantManager().BeginTypedConstantUpdate<SShaderParams>(eConstantBufferShaderSlot_PerBatch, EShaderStage_Vertex | EShaderStage_Pixel);
+		auto constants = firstPrimitive.GetConstantManager().BeginTypedConstantUpdate<SShaderParams>(eConstantBufferShaderSlot_PerPrimitive, EShaderStage_Vertex | EShaderStage_Pixel);
 
 		for (int i = 0; i < context.viewInfoCount; ++i)
 		{
@@ -197,11 +199,12 @@ bool Streaks::PreparePrimitives(const SPreparePrimitivesContext& context)
 		prim.SetTechnique(CShaderMan::s_ShaderLensOptics, techName, rtFlags);
 		prim.SetRenderState(GS_NODEPTHTEST | GS_BLSRC_ONE | GS_BLDST_ONE);
 		prim.SetTexture(0, GetTexture());
-		prim.SetSampler(0, m_samplerBilinearBorderBlack);
+		prim.SetSampler(0, EDefaultSamplerStates::LinearBorder_Black);
 
-		prim.SetCustomVertexStream(mesh.GetVertexBuffer(), eVF_P3F_C4B_T2F, sizeof(SVF_P3F_C4B_T2F));
+		prim.SetCustomVertexStream(mesh.GetVertexBuffer(), EDefaultInputLayouts::P3F_C4B_T2F, sizeof(SVF_P3F_C4B_T2F));
 		prim.SetCustomIndexStream(m_indexBuffer, Index16);
 		prim.SetDrawInfo(eptTriangleList, 0, 0, m_meshIndices.size());
+		prim.Compile(context.pass);
 
 		context.pass.AddPrimitive(&prim);
 	}

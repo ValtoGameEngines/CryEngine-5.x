@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -56,7 +56,6 @@ void CDedicatedInput::PreUpdate()
 	bool shouldFire = (g_pGameCVars->g_dummyPlayersFire != 0);
 	bool shouldFireNoExplosives = (g_pGameCVars->g_dummyPlayersFire == 2);
 	bool shouldMove = (g_pGameCVars->g_dummyPlayersMove != 0);
-	bool shouldToggleSuitMode = (g_pGameCVars->g_dummyPlayersMove == 1);
 	bool shouldChangeWeapon = (g_pGameCVars->g_dummyPlayersChangeWeapon != 0);
 
 	if (m_fire != eDB_Default)
@@ -356,8 +355,6 @@ void CDedicatedInput::Update()
 			}
 			if (shouldFire)
 			{
-				CWeapon *pcweap = (CWeapon*) pWeapon;
-
 				bool currWeaponExplosive = false; 
 				IInventory::EInventorySlots inventorySlot = IInventory::eInventorySlot_Last;
 				IItem *pCurrentItem = m_pPlayer->GetCurrentItem(false);
@@ -528,7 +525,7 @@ void CDedicatedInput::HandleDeathAndSuicide(CGameRules* const pGameRules)
 
 			IGameRulesSpawningModule *pSpawningModule = pGameRules->GetSpawningModule();
 
-			if (pSpawningModule)
+			if (pSpawningModule && pSpawningModule->GetRemainingLives(m_pPlayer->GetEntityId()) > 0)
 			{
 				pSpawningModule->ClRequestRevive(m_pPlayer->GetEntityId());
 			}

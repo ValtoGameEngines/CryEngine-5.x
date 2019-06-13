@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   brush.cpp
@@ -13,6 +13,7 @@
 
 #include "StdAfx.h"
 #include "StatObj.h"
+#include "StatObjFoliage.h"
 #include "ObjMan.h"
 #include "VisAreas.h"
 #include "terrain_sector.h"
@@ -21,8 +22,7 @@
 #include "IndexedMesh.h"
 #include "Brush.h"
 #include "terrain.h"
-
-#include <CryEntitySystem/IEntity.h>
+#include <Cry3DEngine/ISurfaceType.h>
 
 CBrush::CBrush()
 	: m_bVehicleOnlyPhysics(0)
@@ -60,18 +60,6 @@ CBrush::~CBrush()
 	if (m_pDeform)
 		delete m_pDeform;
 
-	if (m_pCameraSpacePos)
-	{
-		delete m_pCameraSpacePos;
-		m_pCameraSpacePos = nullptr;
-	}
-
-	if (m_pTempData)
-	{
-		m_pTempData->MarkForDelete();
-		m_pTempData = nullptr;
-	}
-
 	GetInstCount(GetRenderNodeType())--;
 }
 
@@ -92,7 +80,7 @@ bool CBrush::HasChanged()
 	return false;
 }
 
-#if CRY_PLATFORM_WINDOWS && CRY_PLATFORM_64BIT
+#if CRY_PLATFORM_WINDOWS
 	#pragma warning( push )               //AMD Port
 	#pragma warning( disable : 4311 )
 #endif
@@ -110,12 +98,15 @@ CLodValue CBrush::ComputeLod(int wantedLod, const SRenderingPassInfo& passInfo)
 		if (passInfo.IsGeneralPass() && passInfo.IsZoomActive())
 		{
 			wantedLod = CObjManager::GetObjectLOD(this, fEntDistance);
+
+			if (m_pTempData)
+				m_pTempData->userData.nWantedLod = wantedLod;
 		}
 
 		nLodA = CLAMP(wantedLod, pStatObj->GetMinUsableLod(), (int)pStatObj->m_nMaxUsableLod);
 
 		if (!(pStatObj->m_nFlags & STATIC_OBJECT_COMPOUND))
-			nLodA = pStatObj->FindNearesLoadedLOD(nLodA, true);
+			nLodA = pStatObj->FindNearestLoadedLOD(nLodA, true);
 	}
 
 	return CLodValue(nLodA, 0, -1);
@@ -125,7 +116,9 @@ void CBrush::Render(const struct SRendParams& _EntDrawParams, const SRenderingPa
 {
 	FUNCTION_PROFILER_3DENGINE;
 
-	if (!m_pStatObj || m_dwRndFlags & ERF_HIDDEN)
+	DBG_LOCK_TO_THREAD(this);
+
+	if (!m_pStatObj)
 		return; //false;
 
 	if (m_dwRndFlags & ERF_COLLISION_PROXY || m_dwRndFlags & ERF_RAYCAST_PROXY)
@@ -148,36 +141,73 @@ void CBrush::Render(const struct SRendParams& _EntDrawParams, const SRenderingPa
 	rParms.pMaterial = m_pMaterial;
 	rParms.nEditorSelectionID = m_nEditorSelectionID;
 
-	rParms.dwFObjFlags |= (m_dwRndFlags & ERF_FOB_RENDER_AFTER_POSTPROCESSING) ? FOB_RENDER_AFTER_POSTPROCESSING : 0;
-	//rParms.dwFObjFlags |= (m_dwRndFlags & ERF_FOB_NEAREST) ? FOB_NEAREST : 0;
+	rParms.dwFObjFlags |= (m_dwRndFlags & ERF_FOB_RENDER_AFTER_POSTPROCESSING) ? FOB_RENDER_AFTER_POSTPROCESSING : FOB_NONE;
 	rParms.dwFObjFlags |= FOB_TRANS_MASK;
+	rParms.dwFObjFlags |= (m_dwRndFlags & ERF_FOB_ALLOW_TERRAIN_LAYER_BLEND) ? FOB_ALLOW_TERRAIN_LAYER_BLEND : FOB_NONE;
+	rParms.dwFObjFlags |= (m_dwRndFlags & ERF_FOB_ALLOW_DECAL_BLEND) ? FOB_ALLOW_DECAL_BLEND : FOB_NONE;
+
+	rParms.nHUDSilhouettesParams = m_nHUDSilhouettesParam;
+	rParms.nSubObjHideMask = m_nSubObjHideMask;
+
+	if ((m_dwRndFlags & (ERF_NO_DECALNODE_DECALS | ERF_MOVES_EVERY_FRAME)) ||
+	    (gEnv->nMainFrameID - m_lastMoveFrameId < 3))
+	{
+		rParms.dwFObjFlags |= FOB_DYNAMIC_OBJECT;
+	}
+
+	if (!passInfo.IsShadowPass() && !passInfo.IsRecursivePass())
+	{
+		const uint64 camTest = (ERF_HIDDEN_FROM_CAMERA);
+		if ((m_dwRndFlags & camTest) != 0)
+			return;
+	}
+
+	if (passInfo.IsRecursivePass())
+	{
+		// Nearest objects are not rendered in the recursive passes.
+		const uint64 recTest = (ERF_HIDDEN_FROM_RECURSION | ERF_FOB_NEAREST);
+		if ((m_dwRndFlags & recTest) != 0)
+			return;
+	}
+
+	if ((m_dwRndFlags & ERF_FOB_NEAREST) != 0)
+	{
+		rParms.dwFObjFlags |= FOB_NEAREST;
+		if (rParms.dwFObjFlags & FOB_DYNAMIC_OBJECT)
+		{
+			rParms.pInstance = this;
+		}
+
+		// Nearest objects recalculate instance matrix every frame
+		CalcNearestTransform(m_Matrix, passInfo);
+	}
 
 	m_pStatObj->Render(rParms, passInfo);
 }
 
-#if CRY_PLATFORM_WINDOWS && CRY_PLATFORM_64BIT
+#if CRY_PLATFORM_WINDOWS
 	#pragma warning( pop )                //AMD Port
 #endif
 
 void CBrush::SetMatrix(const Matrix34& mat)
 {
-	Get3DEngine()->UnRegisterEntityAsJob(this);
-
-	bool replacePhys = false;
-
 	if (!IsMatrixValid(mat))
 	{
-		Warning("Error: IRenderNode::SetMatrix: Invalid matrix passed from the editor - ignored, reset to identity: %s", GetName());
-		replacePhys = true;
-		m_Matrix.SetIdentity();
+		const Vec3 pos = mat.GetTranslation();
+		stack_string message;
+		message.Format("Error: IRenderNode::SetMatrix: Invalid matrix ignored (name=\"%s\", position=[%.2f,%.2f,%.2f])", GetName(), pos.x, pos.y, pos.z);
+		Warning(message.c_str());
+		return;
 	}
-	else
-	{
-		replacePhys = fabs(mat.GetColumn(0).len() - m_Matrix.GetColumn(0).len())
-		              + fabs(mat.GetColumn(1).len() - m_Matrix.GetColumn(1).len())
-		              + fabs(mat.GetColumn(2).len() - m_Matrix.GetColumn(2).len()) > FLT_EPSILON;
-		m_Matrix = mat;
-	}
+
+	if (m_Matrix == mat)
+		return;
+
+	bool replacePhys = fabs(mat.GetColumn(0).len() - m_Matrix.GetColumn(0).len())
+	                   + fabs(mat.GetColumn(1).len() - m_Matrix.GetColumn(1).len())
+	                   + fabs(mat.GetColumn(2).len() - m_Matrix.GetColumn(2).len()) > FLT_EPSILON;
+	m_Matrix = mat;
+
 	InvalidatePermanentRenderObjectMatrix();
 
 	pe_params_foreign_data foreignData;
@@ -190,7 +220,13 @@ void CBrush::SetMatrix(const Matrix34& mat)
 
 	CalcBBox();
 
-	Get3DEngine()->RegisterEntity(this);
+	// TODO: implement this on a lower level (3DEngine's registration interface) to uniformly support this across all IRenderNode implementations
+	if (!(m_dwRndFlags & ERF_NO_3DENGINE_REGISTRATION))
+	{
+		Get3DEngine()->UnRegisterEntityAsJob(this);
+		Get3DEngine()->RegisterEntity(this);
+	}
+
 	if (replacePhys)
 		Dephysicalize();
 	if (!m_pPhysEnt)
@@ -265,7 +301,7 @@ void CBrush::Physicalize(bool bInstant)
 
 void CBrush::PhysicalizeOnHeap(IGeneralMemoryHeap* pHeap, bool bInstant)
 {
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Physics, 0, "Brush: %s", m_pStatObj ? m_pStatObj->GetFilePath() : "(unknown)");
+	MEMSTAT_CONTEXT_FMT(EMemStatContextType::Physics, "Brush: %s", m_pStatObj ? m_pStatObj->GetFilePath() : "(unknown)");
 
 	if (m_pStatObj && (m_pStatObj->GetBreakableByGame() || m_pStatObj->GetIDMatBreakable() != -1))
 	{
@@ -349,23 +385,32 @@ void CBrush::PhysicalizeOnHeap(IGeneralMemoryHeap* pHeap, bool bInstant)
 	}
 
 	Matrix34 mtxScale;
-	mtxScale.SetScale(Vec3(fScaleX, fScaleY, fScaleZ));
+	Matrix33 mtxNoScale = Matrix33(m_Matrix) * Diag33(fScaleX, fScaleY, fScaleZ).invert();
 	params.pMtx3x4 = &mtxScale;
+	pe_params_pos par_pos;
+	par_pos.pos = m_Matrix.GetTranslation();
+	if (mtxNoScale.IsOrthonormalRH())
+	{	// if scale is cleanly separatable into pre-scale, apply scale to geometry and rotation+translation to the entity
+		mtxScale.SetScale(Vec3(fScaleX, fScaleY, fScaleZ));
+		par_pos.q = Quat(mtxNoScale);
+	}	
+	else
+	{	// otherwise apply merged rotation+scale to geometry and traslantion to the entity
+		mtxScale = Matrix33(m_Matrix);
+	}
 	m_pStatObj->Physicalize(m_pPhysEnt, &params);
 
-	if (m_dwRndFlags & (ERF_HIDABLE | ERF_HIDABLE_SECONDARY | ERF_EXCLUDE_FROM_TRIANGULATION | ERF_NODYNWATER))
-	{
+	{ // Update foreign data flags based on render flags
 		pe_params_foreign_data foreignData;
-		m_pPhysEnt->GetParams(&foreignData);
+		foreignData.iForeignFlagsAND = ~(PFF_HIDABLE | PFF_HIDABLE_SECONDARY | PFF_EXCLUDE_FROM_STATIC | PFF_OUTDOOR_AREA);
 		if (m_dwRndFlags & ERF_HIDABLE)
-			foreignData.iForeignFlags |= PFF_HIDABLE;
+			foreignData.iForeignFlagsOR |= PFF_HIDABLE;
 		if (m_dwRndFlags & ERF_HIDABLE_SECONDARY)
-			foreignData.iForeignFlags |= PFF_HIDABLE_SECONDARY;
-		//[PETAR] new flag to exclude from triangulation
+			foreignData.iForeignFlagsOR |= PFF_HIDABLE_SECONDARY;
 		if (m_dwRndFlags & ERF_EXCLUDE_FROM_TRIANGULATION)
-			foreignData.iForeignFlags |= PFF_EXCLUDE_FROM_STATIC;
+			foreignData.iForeignFlagsOR |= PFF_EXCLUDE_FROM_STATIC;
 		if (m_dwRndFlags & ERF_NODYNWATER)
-			foreignData.iForeignFlags |= PFF_OUTDOOR_AREA;
+			foreignData.iForeignFlagsOR |= PFF_OUTDOOR_AREA;
 		m_pPhysEnt->SetParams(&foreignData);
 	}
 
@@ -373,9 +418,6 @@ void CBrush::PhysicalizeOnHeap(IGeneralMemoryHeap* pHeap, bool bInstant)
 	par_flags.flagsOR = pef_never_affect_triggers | pef_log_state_changes;
 	m_pPhysEnt->SetParams(&par_flags);
 
-	pe_params_pos par_pos;
-	par_pos.pos = m_Matrix.GetTranslation();
-	par_pos.q = Quat(Matrix33(m_Matrix) * Diag33(fScaleX, fScaleY, fScaleZ).invert());
 	par_pos.bEntGridUseOBB = 1;
 	m_pPhysEnt->SetParams(&par_pos);
 
@@ -520,8 +562,6 @@ void CBrush::UpdatePhysicalMaterials(int bThreadSafe)
 
 void CBrush::Dephysicalize(bool bKeepIfReferenced)
 {
-	AABB WSBBox = GetBBox();
-
 	// delete old physics
 	if (m_pPhysEnt && 0 != GetSystem()->GetIPhysicalWorld()->DestroyPhysicalEntity(m_pPhysEnt, ((int)bKeepIfReferenced) * 4))
 		m_pPhysEnt = 0;
@@ -588,9 +628,6 @@ void CBrush::SetMaterial(IMaterial* pMat)
 
 	UpdatePhysicalMaterials();
 
-	// register and get brush material id
-	m_pMaterial = pMat;
-
 	InvalidatePermanentRenderObject();
 }
 
@@ -608,7 +645,7 @@ void CBrush::GetMemoryUsage(ICrySizer* pSizer) const
 	pSizer->AddObject(this, sizeof(*this));
 }
 
-void CBrush::SetEntityStatObj(unsigned int nSlot, IStatObj* pStatObj, const Matrix34A* pMatrix)
+void CBrush::SetEntityStatObj(IStatObj* pStatObj, const Matrix34A* pMatrix)
 {
 	//assert(pStatObj);
 
@@ -637,32 +674,18 @@ void CBrush::SetStatObj(IStatObj* pStatObj)
 	if (pStatObj == m_pStatObj)
 		return;
 
-	if (m_pTempData)
-	{
-		m_pTempData->MarkForDelete();
-		m_pTempData = nullptr;
-	}
-
 	m_pStatObj = (CStatObj*)pStatObj;
 	if (m_pStatObj && m_pStatObj->IsDeformable())
 	{
 		if (!m_pDeform)
-			m_pDeform = new CDeformableNode(m_nSID);
+			m_pDeform = new CDeformableNode();
 		m_pDeform->SetStatObj(static_cast<CStatObj*>(m_pStatObj.get()));
 		m_pDeform->BakeDeform(GetMatrix());
 	}
 	else
 		SAFE_DELETE(m_pDeform);
 
-	if (m_pTempData)
-	{
-		m_pTempData->MarkForDelete();
-		m_pTempData = nullptr;
-	}
-
 	m_nInternalFlags |= UPDATE_DECALS;
-
-	InvalidatePermanentRenderObject();
 }
 
 IRenderNode* CBrush::Clone() const
@@ -700,7 +723,7 @@ void CBrush::SetLayerId(uint16 nLayerId)
 	InvalidatePermanentRenderObject();
 }
 
-IRenderMesh* CBrush::GetRenderMesh(int nLod)
+IRenderMesh* CBrush::GetRenderMesh(int nLod) const
 {
 	IStatObj* pStatObj = m_pStatObj ? m_pStatObj->GetLodObject(nLod) : NULL;
 	return pStatObj ? pStatObj->GetRenderMesh() : NULL;
@@ -722,19 +745,14 @@ void CBrush::OffsetPosition(const Vec3& delta)
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CBrush::SetCameraSpacePos(Vec3* pCameraSpacePos)
+void CBrush::SetCameraSpaceParams(stl::optional<SCameraSpaceParams> cameraSpaceParams)
 {
-	if (pCameraSpacePos)
-	{
-		if (!m_pCameraSpacePos)
-			m_pCameraSpacePos = new Vec3;
-		*m_pCameraSpacePos = *pCameraSpacePos;
-	}
-	else
-	{
-		delete m_pCameraSpacePos;
-		m_pCameraSpacePos = nullptr;
-	}
+	m_cameraSpaceParams = cameraSpaceParams;
+}
+
+stl::optional<SCameraSpaceParams> CBrush::GetCameraSpaceParams() const
+{
+	return m_cameraSpaceParams;
 }
 
 void CBrush::SetSubObjectHideMask(hidemask subObjHideMask)
@@ -768,9 +786,11 @@ bool CBrush::GetLodDistances(const SFrameLodInfo& frameLodInfo, float* distances
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInfo, SSectorTextureSet* pTerrainTexInfo, PodArray<CDLight*>* pAffectingLights)
+void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInfo, SSectorTextureSet* pTerrainTexInfo, PodArray<SRenderLight*>* pAffectingLights)
 {
 	FUNCTION_PROFILER_3DENGINE;
+
+	DBG_LOCK_TO_THREAD(this);
 
 	// Collision proxy is visible in Editor while in editing mode.
 	if (m_dwRndFlags & (ERF_COLLISION_PROXY | ERF_RAYCAST_PROXY))
@@ -780,7 +800,7 @@ void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInf
 				return;
 	}
 
-	if (!m_pStatObj || m_dwRndFlags & ERF_HIDDEN)
+	if (!m_pStatObj)
 		return;
 
 	/*
@@ -797,65 +817,105 @@ void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInf
 	   }
 	 */
 
-	Matrix34 transformMatrix = m_Matrix;
-
-	if (GetRndFlags() & ERF_FOB_NEAREST)
+	if (!passInfo.IsShadowPass() && !passInfo.IsRecursivePass())
 	{
-		if (passInfo.IsRecursivePass()) // Nearest objects are not rendered in the recursive passes.
+		const uint64 camTest = (ERF_HIDDEN_FROM_CAMERA);
+		if ((m_dwRndFlags & camTest) != 0)
 			return;
-
-		// Nearest objects recalculate instance matrix every frame
-		CalcNearestTransform(transformMatrix, passInfo);
 	}
 
-	CRenderObject* pObj = 0;
+	if (passInfo.IsRecursivePass())
+	{
+		// Nearest objects are not rendered in the recursive passes.
+		const uint64 recTest = (ERF_HIDDEN_FROM_RECURSION | ERF_FOB_NEAREST);
+		if ((m_dwRndFlags & recTest) != 0)
+			return;
+	}
 
-	if (m_pFoliage || m_pDeform)
+	const uint8 nMaterialLayers = IRenderNode::GetMaterialLayers();
+	Matrix34 transformMatrix = m_Matrix;
+	const Vec3 vCamPos = passInfo.GetCamera().GetPosition();
+	bool isNearestObject = (GetRndFlags() & ERF_FOB_NEAREST) != 0;
+	if (isNearestObject)
+	{
+		bool isNearestShadowPass = passInfo.IsShadowPass() && passInfo.GetIRenderView()->GetShadowFrustumOwner()->m_eFrustumType == ShadowMapFrustum::e_Nearest;
+		if (passInfo.IsGeneralPass() || isNearestShadowPass)
+		{
+			// Nearest objects recalculate instance matrix every frame
+			CalcNearestTransform(transformMatrix, passInfo);
+		}
+	}
+
+	auto pTempData = m_pTempData;
+	if (!pTempData)
+	{
+		CRY_ASSERT(false);
+		return;
+	}
+
+	CRenderObject* pObj = nullptr;
+	if (m_pFoliage || m_pDeform || (m_dwRndFlags & (ERF_HUD | ERF_MOVES_EVERY_FRAME)) || isNearestObject)
 	{
 		// Foliage and deform do not support permanent render objects
-		pObj = gEnv->pRenderer->EF_GetObject_Temp(passInfo.ThreadID());
+		// HUD is managed in custom render-lists and also doesn't support it
+		pObj = passInfo.GetIRenderView()->AllocateTemporaryRenderObject();
+		pObj->SetMatrix(transformMatrix, passInfo);
 	}
-
 	if (!pObj)
 	{
-		if (GetObjManager()->AddOrCreatePersistentRenderObject(m_pTempData, pObj, &lodValue, passInfo))
+		if (GetObjManager()->AddOrCreatePersistentRenderObject(pTempData, pObj, &lodValue, transformMatrix, passInfo))
 		{
-			if (pObj && pObj->m_bInstanceDataDirty)
+			if (pObj && !passInfo.IsShadowPass())
 			{
-				pObj->m_II.m_Matrix = transformMatrix;
+				const float fObjDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, CBrush::GetBBox())) * passInfo.GetZoomFactor();
+				CRY_ASSERT(fObjDistance * 2.0f <= std::numeric_limits<decltype(CRenderObject::m_nSort)>::max());
+
+ 				pObj->m_fDistance = fObjDistance;
+				IF(!m_bDrawLast, 1)
+					pObj->m_nSort = HalfFlip(CryConvertFloatToHalf(pObj->m_fDistance * 2.0f));
+				else
+					pObj->m_nSort = 0xFFFF;
 			}
 			return;
 		}
 	}
 
-	SRenderNodeTempData::SUserData& userData = m_pTempData->userData;
+	const auto& userData = pTempData->userData;
 
-	const Vec3 vCamPos = passInfo.GetCamera().GetPosition();
 	const Vec3 vObjCenter = CBrush::GetBBox().GetCenter();
-	const Vec3 vObjPos = CBrush::GetPos();
 
-	pObj->m_fDistance = pObj->m_bPermanent ? 0 : sqrt_tpl(Distance::Point_AABBSq(vCamPos, CBrush::GetBBox())) * passInfo.GetZoomFactor();
+	const float fObjDistance = sqrt_tpl(Distance::Point_AABBSq(vCamPos, CBrush::GetBBox())) * passInfo.GetZoomFactor();
+	CRY_ASSERT(fObjDistance * 2.0f <= std::numeric_limits<decltype(CRenderObject::m_nSort)>::max());
 
 	pObj->m_pRenderNode = this;
-	pObj->m_II.m_Matrix = transformMatrix;
 	pObj->m_fAlpha = 1.f;
+
+	pObj->m_fDistance = fObjDistance;
 	IF (!m_bDrawLast, 1)
-		pObj->m_nSort = fastround_positive(pObj->m_fDistance * 2.0f);
+		pObj->m_nSort = HalfFlip(CryConvertFloatToHalf(pObj->m_fDistance * 2.0f));
 	else
-		pObj->m_fSort = 10000.0f;
+		pObj->m_nSort = 0xFFFF;
 
 	IMaterial* pMat = pObj->m_pCurrMaterial = CBrush::GetMaterial();
 	pObj->m_ObjFlags |= FOB_INSHADOW | FOB_TRANS_MASK;
 
-	pObj->m_ObjFlags |= (m_dwRndFlags & ERF_FOB_RENDER_AFTER_POSTPROCESSING) ? FOB_RENDER_AFTER_POSTPROCESSING : 0;
-	pObj->m_ObjFlags |= (m_dwRndFlags & ERF_FOB_NEAREST) ? FOB_NEAREST : 0;
+	pObj->m_ObjFlags |= (m_dwRndFlags & ERF_FOB_RENDER_AFTER_POSTPROCESSING) ? FOB_RENDER_AFTER_POSTPROCESSING : FOB_NONE;
+	pObj->m_ObjFlags |= (m_dwRndFlags & ERF_FOB_NEAREST                    ) ? FOB_NEAREST                     : FOB_NONE;
+	pObj->m_ObjFlags |= (m_dwRndFlags & ERF_FOB_ALLOW_TERRAIN_LAYER_BLEND  ) ? FOB_ALLOW_TERRAIN_LAYER_BLEND   : FOB_NONE;
+	pObj->m_ObjFlags |= (m_dwRndFlags & ERF_FOB_ALLOW_DECAL_BLEND          ) ? FOB_ALLOW_DECAL_BLEND           : FOB_NONE;
 
-	if (m_dwRndFlags & ERF_NO_DECALNODE_DECALS && !(gEnv->nMainFrameID - m_lastMoveFrameId < 3))
+	if ((m_dwRndFlags & (ERF_NO_DECALNODE_DECALS | ERF_MOVES_EVERY_FRAME)) ||
+		(gEnv->nMainFrameID - m_lastMoveFrameId < 3))
 	{
 		pObj->m_ObjFlags |= FOB_DYNAMIC_OBJECT;
 	}
 
-	if (uint8 nMaterialLayers = IRenderNode::GetMaterialLayers())
+	if (m_dwRndFlags & ERF_HUD_REQUIRE_DEPTHTEST)
+	{
+		pObj->m_ObjFlags |= FOB_HUD_REQUIRE_DEPTHTEST;
+	}
+
+	if (nMaterialLayers)
 	{
 		uint8 nFrozenLayer = (nMaterialLayers & MTL_LAYER_FROZEN) ? MTL_LAYER_FROZEN_MASK : 0;
 		uint8 nWetLayer = (nMaterialLayers & MTL_LAYER_WET) ? MTL_LAYER_WET_MASK : 0;
@@ -867,18 +927,18 @@ void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInf
 	if (!passInfo.IsShadowPass() && m_nInternalFlags & IRenderNode::REQUIRES_NEAREST_CUBEMAP)
 	{
 		if (!(pObj->m_nTextureID = GetObjManager()->CheckCachedNearestCubeProbe(this)) || !GetCVars()->e_CacheNearestCubePicking)
-			pObj->m_nTextureID = GetObjManager()->GetNearestCubeProbe(pAffectingLights, m_pOcNode->m_pVisArea, CBrush::GetBBox());
+			pObj->m_nTextureID = GetObjManager()->GetNearestCubeProbe(pAffectingLights, GetEntityVisArea(), CBrush::GetBBox());
 
-		m_pTempData->userData.nCubeMapId = pObj->m_nTextureID;
+		pTempData->userData.nCubeMapId = pObj->m_nTextureID;
 	}
 
 	//////////////////////////////////////////////////////////////////////////
 	// temp fix to update ambient color (Vlad please review!)
 	pObj->m_nClipVolumeStencilRef = userData.m_pClipVolume ? userData.m_pClipVolume->GetStencilRef() : 0;
-	if (m_pOcNode && m_pOcNode->m_pVisArea)
-		pObj->m_II.m_AmbColor = m_pOcNode->m_pVisArea->GetFinalAmbientColor();
+	if (auto pVisArea = GetEntityVisArea())
+		pObj->SetAmbientColor(pVisArea->GetFinalAmbientColor(), passInfo);
 	else
-		pObj->m_II.m_AmbColor = Get3DEngine()->GetSkyColor();
+		pObj->SetAmbientColor(Get3DEngine()->GetSkyColor(), passInfo);
 	//////////////////////////////////////////////////////////////////////////
 	pObj->m_editorSelectionID = m_nEditorSelectionID;
 
@@ -893,7 +953,8 @@ void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInf
 
 		if (bUseTerrainColor)
 		{
-			m_pTempData->userData.bTerrainColorWasUsed = true;
+			pTempData->userData.bTerrainColorWasUsed = true;
+
 			pObj->m_ObjFlags |= FOB_BLEND_WITH_TERRAIN_COLOR;
 
 			pObj->m_data.m_pTerrainSectorTextureInfo = pTerrainTexInfo;
@@ -926,6 +987,17 @@ void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInf
 	else
 		pObj->m_ObjFlags &= ~FOB_AFTER_WATER;
 
+	if ((GetRndFlags() & ERF_RECVWIND) && GetCVars()->e_VegetationBending)
+	{
+		// this is default value for vegetation if bending in veg group is set to 1
+		pObj->SetBendingData({ 0.1f, m_pStatObj->m_fRadiusVert }, passInfo);
+		pObj->m_ObjFlags |= FOB_BENDED | FOB_DYNAMIC_OBJECT;
+	}
+	else
+	{
+		pObj->SetBendingData({ 0.0f, 0.0f }, passInfo);
+	}
+
 	//IFoliage* pFoliage = GetFoliage(-1);
 	if (m_pFoliage)
 	{
@@ -955,7 +1027,7 @@ void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInf
 
 		if (lodValue.LodA() <= 0 && Cry3DEngineBase::GetCVars()->e_MergedMeshes != 0 && m_pDeform && m_pDeform->HasDeformableData())
 		{
-			if (GetCVars()->e_StatObjBufferRenderTasks == 1 && passInfo.IsGeneralPass() && JobManager::InvokeAsJob("CheckOcclusion"))
+			if (Get3DEngine()->IsStatObjBufferRenderTasksAllowed() && passInfo.IsGeneralPass())
 			{
 				GetObjManager()->PushIntoCullOutputQueue(SCheckOcclusionOutput::CreateDeformableBrushOutput(this, gEnv->pRenderer->EF_DuplicateRO(pObj, passInfo), lodValue.LodA(), passInfo));
 			}
@@ -965,16 +1037,16 @@ void CBrush::Render(const CLodValue& lodValue, const SRenderingPassInfo& passInf
 			}
 		}
 
+		pObj->m_data.m_nHUDSilhouetteParams = m_nHUDSilhouettesParam;
+		pObj->m_data.m_uniqueObjectId = reinterpret_cast<uintptr_t>(this);
+
 		m_pStatObj->RenderInternal(pObj, m_nSubObjHideMask, lodValue, passInfo);
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-IStatObj* CBrush::GetEntityStatObj(unsigned int nPartId, unsigned int nSubPartId, Matrix34A* pMatrix, bool bReturnOnlyVisible)
+IStatObj* CBrush::GetEntityStatObj(unsigned int nSubPartId, Matrix34A* pMatrix, bool bReturnOnlyVisible)
 {
-	if (nPartId != 0)
-		return 0;
-
 	if (pMatrix)
 		*pMatrix = m_Matrix;
 
@@ -982,10 +1054,10 @@ IStatObj* CBrush::GetEntityStatObj(unsigned int nPartId, unsigned int nSubPartId
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-void CBrush::OnRenderNodeBecomeVisible(const SRenderingPassInfo& passInfo)
+void CBrush::OnRenderNodeBecomeVisibleAsync(SRenderNodeTempData* pTempData, const SRenderingPassInfo& passInfo)
 {
-	assert(m_pTempData);
-	SRenderNodeTempData::SUserData& userData = m_pTempData->userData;
+	// Not reentrant, multiple simultaneous calls to this method on the same Render Node from multiple threads is not supported
+	SRenderNodeTempData::SUserData& userData = pTempData->userData;
 
 	userData.objMat = m_Matrix;
 	const Vec3 vCamPos = passInfo.GetCamera().GetPosition();
@@ -995,17 +1067,7 @@ void CBrush::OnRenderNodeBecomeVisible(const SRenderingPassInfo& passInfo)
 
 	if (GetOwnerEntity() && (GetRndFlags() & ERF_ENABLE_ENTITY_RENDER_CALLBACK))
 	{
-		// When render node becomes visible notify our owner render node that it is now visible.
 		GetOwnerEntity()->OnRenderNodeVisibilityChange(true);
-	}
-}
-
-void CBrush::OnRenderNodeBecomeInvisible()
-{
-	if (GetOwnerEntity() && (GetRndFlags() & ERF_ENABLE_ENTITY_RENDER_CALLBACK))
-	{
-		// When render node becomes invisible notify our owner render node that it is now invisible.
-		GetOwnerEntity()->OnRenderNodeVisibilityChange(false);
 	}
 }
 
@@ -1013,10 +1075,11 @@ void CBrush::OnRenderNodeBecomeInvisible()
 void CBrush::CalcNearestTransform(Matrix34& transformMatrix, const SRenderingPassInfo& passInfo)
 {
 	// Camera space
-	if (m_pCameraSpacePos)
+	if (m_cameraSpaceParams)
 	{
 		// Use camera space relative position
-		transformMatrix.SetTranslation(*m_pCameraSpacePos);
+		const Matrix33 cameraRotation = Matrix33(passInfo.GetCamera().GetViewMatrix());
+		transformMatrix.SetTranslation((m_cameraSpaceParams->cameraSpacePosition * cameraRotation) + m_cameraSpaceParams->worldSpaceOffset);
 	}
 	else
 	{
@@ -1024,6 +1087,7 @@ void CBrush::CalcNearestTransform(Matrix34& transformMatrix, const SRenderingPas
 		// (This will not have the precision advantages of camera space rendering)
 		transformMatrix.AddTranslation(-passInfo.GetCamera().GetPosition());
 	}
+
 	InvalidatePermanentRenderObjectMatrix();
 }
 
@@ -1042,9 +1106,10 @@ void CBrush::InvalidatePermanentRenderObjectMatrix()
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-bool CBrush::CanExecuteRenderAsJob()
+bool CBrush::CanExecuteRenderAsJob() const
 {
-	return false;
+	return (GetCVars()->e_ExecuteRenderAsJobMask & BIT(GetRenderNodeType())) != 0 &&
+	       (m_dwRndFlags & ERF_RENDER_ALWAYS) == 0;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -1054,19 +1119,7 @@ void CBrush::DisablePhysicalization(bool bDisable)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-void CBrush::FillBBox(AABB& aabb)
-{
-	aabb = CBrush::GetBBox();
-}
-
-///////////////////////////////////////////////////////////////////////////////
-EERType CBrush::GetRenderNodeType()
-{
-	return eERType_Brush;
-}
-
-///////////////////////////////////////////////////////////////////////////////
-float CBrush::GetMaxViewDist()
+float CBrush::GetMaxViewDist() const
 {
 	if (GetRndFlags() & ERF_FORCE_POST_3D_RENDER)
 	{

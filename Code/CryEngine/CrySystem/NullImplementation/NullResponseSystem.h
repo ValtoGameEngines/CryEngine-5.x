@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /************************************************************************
 
@@ -20,9 +20,9 @@ namespace NullDRS
 		virtual bool Save(const char* szFilePath) override { return false; }
 		virtual uint32 GetLineSetCount() const override { return 0; }
 		virtual DRS::IDialogLineSet* GetLineSetByIndex(uint32 index) override { return nullptr; }
-		virtual const DRS::IDialogLineSet* GetLineSetById(const CHashedString& lineID) const override { return nullptr; }
+		virtual DRS::IDialogLineSet* GetLineSetById(const CHashedString& lineID) override { return nullptr; }
 		virtual DRS::IDialogLineSet* InsertLineSet(uint32 index) override { return nullptr; }
-		virtual void RemoveLineSet(uint32 index) override {}
+		virtual bool RemoveLineSet(uint32 index) override { return false; }
 		virtual bool ExecuteScript(uint32 index) override { return false; }
 		virtual void Serialize(Serialization::IArchive& ar) override {}
 		virtual void SerializeLinesHistory(Serialization::IArchive& ar) override {}
@@ -83,15 +83,17 @@ namespace NullDRS
 	class CResponseActor final : public DRS::IResponseActor
 	{
 	public:
-		virtual const CHashedString&            GetName() const override { return m_name; }
+		virtual const string&                   GetName() const override { return m_name; }
 		virtual DRS::IVariableCollection*       GetLocalVariables() override { return static_cast<DRS::IVariableCollection*>(&m_pLocalVariables); }
 		virtual const DRS::IVariableCollection* GetLocalVariables() const override { return static_cast<const DRS::IVariableCollection*>(&m_pLocalVariables); }
 		virtual EntityId                        GetLinkedEntityID() const override { return INVALID_ENTITYID; }
 		virtual IEntity*                        GetLinkedEntity() const override { return nullptr; }
+		virtual void                            SetAuxAudioObjectID(CryAudio::AuxObjectId overrideAuxProxy) override {}
+		virtual CryAudio::AuxObjectId           GetAuxAudioObjectID() const override { return CryAudio::InvalidAuxObjectId; }
 		virtual DRS::SignalInstanceId           QueueSignal(const CHashedString& signalName, DRS::IVariableCollectionSharedPtr pSignalContext = nullptr, DRS::IResponseManager::IListener* pSignalListener = nullptr) override { return DRS::s_InvalidSignalId; }
 
 	private:
-		const CHashedString m_name = "NullResponseActor";
+		const string m_name = "NullResponseActor";
 		CVariableCollection m_pLocalVariables;
 	};
 
@@ -113,7 +115,7 @@ namespace NullDRS
 		virtual DRS::IVariableCollection*                GetCollection(const CHashedString& name, DRS::IResponseInstance* pResponseInstance) override { return &m_nullVariableCollection; }
 		virtual DRS::IVariableCollectionSharedPtr        CreateContextCollection() override { return m_nullVariableCollectionSharedPtr; }
 		virtual bool                                     CancelSignalProcessing(const CHashedString& signalName, DRS::IResponseActor* pSender, DRS::SignalInstanceId instanceToSkip) override { return true; }
-		virtual DRS::IResponseActor*                     CreateResponseActor(const CHashedString& pActorName, EntityId entityID = INVALID_ENTITYID) override { return &m_nullActor; }
+		virtual DRS::IResponseActor*                     CreateResponseActor(const char* szActorName, EntityId entityID = INVALID_ENTITYID, const char* szGlobalVariableCollectionToUse = nullptr) override { return &m_nullActor; }
 		virtual bool                                     ReleaseResponseActor(DRS::IResponseActor* pActorToFree) override { return true; }
 		virtual DRS::IResponseActor*                     GetResponseActor(const CHashedString& pActorName) override { return nullptr; }
 		virtual void                                     Reset(uint32 resetHint = -1) override {}

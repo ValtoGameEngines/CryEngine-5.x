@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -35,19 +35,19 @@ public:
 
 	void OnAlloc(const GMemoryHeap* heap, UPInt size, UPInt align, unsigned sid, const void* ptr)
 	{
-		MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CryMalloc);
+		MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CryMalloc);
 		MEMREPLAY_SCOPE_ALLOC(ptr, size, align);
 	}
 
 	void OnRealloc(const GMemoryHeap* heap, const void* oldPtr, UPInt newSize, const void* newPtr)
 	{
-		MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CryMalloc);
+		MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CryMalloc);
 		MEMREPLAY_SCOPE_REALLOC(oldPtr, newPtr, newSize, 0);
 	}
 
 	void OnFree(const GMemoryHeap* heap, const void* ptr)
 	{
-		MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CryMalloc);
+		MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CryMalloc);
 		MEMREPLAY_SCOPE_FREE(ptr);
 	}
 };
@@ -171,7 +171,7 @@ CSharedFlashPlayerResources::CSharedFlashPlayerResources()
 	, m_pImeHelper(0)
 	#endif
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	gEnv->pLog->Log("Using Scaleform GFx " GFC_FX_VERSION_STRING);
 	m_pGSystemInit = new GSystemInitWrapper();
@@ -197,10 +197,11 @@ CSharedFlashPlayerResources::~CSharedFlashPlayerResources()
 	#endif
 
 	CFlashPlayer::DumpAndFixLeaks();
+	m_pRecorder->ReleaseResources();
+
 	SAFE_DELETE(m_pMeshCacheResetThread);
 	assert(!m_pLoader || m_pLoader->GetRefCount() == 1);
 	SAFE_RELEASE(m_pLoader);
-	m_pRecorder->ReleaseResources();
 	assert(!m_pRecorder || m_pRecorder->GetRefCount() == 1);
 	SAFE_RELEASE(m_pRecorder);
 	SAFE_DELETE(m_pGSystemInit);
@@ -208,7 +209,7 @@ CSharedFlashPlayerResources::~CSharedFlashPlayerResources()
 
 void CSharedFlashPlayerResources::Init()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	assert(!ms_pSharedFlashPlayerResources);
 	static char s_sharedFlashPlayerResourcesStorage[sizeof(CSharedFlashPlayerResources)] = { 0 };
 	if (!ms_pSharedFlashPlayerResources)
@@ -360,6 +361,22 @@ GFxLoader2::GFxLoader2()
 
 GFxLoader2::~GFxLoader2()
 {
+	SetLog(nullptr);
+	//SetFileOpener(nullptr);
+	SetURLBuilder(nullptr);
+	SetImageCreator(nullptr);
+	SetImageLoader(nullptr);
+	SetTranslator(nullptr);
+	SetTextClipboard(nullptr);
+
+	CryGFxLog::GetAccess().Release();
+	//CryGFxFileOpener::GetAccess().Release();
+	CryGFxURLBuilder::GetAccess().Release();
+	CryGFxImageCreator::GetAccess().Release();
+	CryGFxImageLoader::GetAccess().Release();
+	CryGFxTranslator::GetAccess().Release();
+	CryGFxTextClipboard::GetAccess().Release();
+
 	SetParseControl(0);
 }
 
@@ -431,5 +448,10 @@ void MeshCacheResetThread::IssueReset()
 {
 	m_awakeThread.Set();
 }
+
+#if defined(USE_GFX_VIDEO) && CRY_COMPILER_MSVC && CRY_COMPILER_VERSION >= 1900 && defined(CRY_FEATURE_SCALEFORM_HELPER)
+// We need this to link the CRI library inside GfxVideo when using compiler VC14 or newer.
+auto* g_ignore = static_cast<int(*)(char*, size_t, const char*, va_list)>(&vsprintf_s);
+#endif
 
 #endif // #ifdef INCLUDE_SCALEFORM_SDK

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -29,6 +29,7 @@ History:
 #include "DLCManager.h"
 #include "PlaylistManager.h"
 #include <CryString/UnicodeFunctions.h>
+#include <CrySystem/CryVersion.h>
 
 static AUTOENUM_BUILDNAMEARRAY(s_standardLevelNames, NOTDLCLevelList);
 static AUTOENUM_BUILDNAMEARRAY(s_standardGameModes, NOTDLCGameModeList);
@@ -95,7 +96,10 @@ CDLCManager::CDLCManager()
 
 CDLCManager::~CDLCManager()
 {
-	gEnv->pSystem->GetPlatformOS()->RemoveListener(this);
+	if (IPlatformOS* pPlatformOS = gEnv->pSystem->GetPlatformOS())
+	{
+		pPlatformOS->RemoveListener(this);
+	}
 }
 
 void CDLCManager::LoadDownloadableContent( uint32 userIdOveride /*= INVALID_CONTROLLER_INDEX*/ )
@@ -226,7 +230,7 @@ void CDLCManager::OnDLCMounted(const XmlNodeRef &rootNode, const char* sDLCRootF
 							DoDLCUnlocks( unlocksXml, dlcId);
 						}						
 
-						CryFixedStringT<ICryPak::g_nMaxPath> path;
+						CryPathString path;
 
 						//Level Extras pak contains things which need to be accessed relative to the Level Path
 						//eg. Level meta data, icons and mini maps
@@ -369,7 +373,7 @@ void CDLCManager::OnDLCRemoved(const char* sDLCRootFolder)
 				m_allowedDLCs &= ~BIT(iDLC);
 
 				//close the paks
-				CryFixedStringT<ICryPak::g_nMaxPath> path;
+				CryPathString path;
 
 				path.Format("%s/dlcLevelExtras.pak", sDLCRootFolder);
 				CryLog( "DLC: Closing %s", path.c_str() );
@@ -387,7 +391,7 @@ void CDLCManager::OnDLCRemoved(const char* sDLCRootFolder)
 bool CDLCManager::VerifyCRCs(const XmlNodeRef &crcNode, const char* sDLCRootFolder)
 {
 	bool success = true;
-	CryFixedStringT<ICryPak::g_nMaxPath> path;
+	CryPathString path;
 	int numFiles = crcNode->getChildCount();
 	XmlString fileName;
 	uint32 storedCrc;

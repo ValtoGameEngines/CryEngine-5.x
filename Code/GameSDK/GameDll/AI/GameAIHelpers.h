@@ -1,18 +1,21 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #ifndef GameAIHelpers_h
 #define GameAIHelpers_h
 
-
+#include <CryEntitySystem/IEntityBasicTypes.h>
+#include <CryEntitySystem/IEntitySystem.h>
 #include "IGameAIModule.h"
 
 // For an overview of the GameAISystem take a look in GameAISystem.cpp
 
-struct IAISignalExtraData;
-
-
+namespace AISignals
+{
+	struct IAISignalExtraData;
+	class ISignalDescription;
+}
 
 class CGameAIInstanceBase
 {
@@ -22,8 +25,8 @@ public:
 	void Init(EntityId entityID);
 	void Destroy() {}
 	void Update(float frameTime) {}
-	void SendSignal(const char* signal, IAISignalExtraData* data = NULL);
-	void SendSignal(const char* signal, IAISignalExtraData* data, int nSignalID);
+	void SendSignal(const AISignals::ISignalDescription& signalDescription, AISignals::IAISignalExtraData* data = NULL);
+	void SendSignal(const AISignals::ISignalDescription& signalDescription, AISignals::IAISignalExtraData* data, int nSignalID);
 	IEntity* GetEntity() const { return gEnv->pEntitySystem->GetEntity(m_entityID); }
 	EntityId GetEntityID() const { return m_entityID; }
 
@@ -111,7 +114,7 @@ public:
 
 	virtual void EntityEnter(EntityId entityID)
 	{
-		FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+		CRY_PROFILE_FUNCTION(PROFILE_AI);
 		if (IEntity* entity = gEnv->pEntitySystem->GetEntity(entityID))
 		{
 			EntityLeave(entityID);
@@ -137,7 +140,7 @@ public:
 
 	virtual void EntityLeave(EntityId entityID)
 	{
-		FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+		CRY_PROFILE_FUNCTION(PROFILE_AI);
 
  		EntityLeaveFrom(*m_running, entityID);
  		EntityLeaveFrom(*m_paused, entityID);
@@ -218,7 +221,7 @@ private:
 private:
 	InstanceID AllocateInstance(EntityId entityID, Instance** instanceOut)
 	{
-		FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+		CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 		Instance* instance = NULL;
 		InstanceID instanceID;
@@ -271,7 +274,7 @@ private:
 
 	void DeallocateInstance(InstanceID instanceID)
 	{
-		FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+		CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 		Instance* instance = GetInstanceFromID(instanceID);
 
@@ -328,7 +331,7 @@ private:
 
 	void LeaveAllInstances()
 	{
-		FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+		CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 		typename Instances::iterator it;
 		typename Instances::iterator end;
@@ -392,7 +395,7 @@ protected:
 private:
 	virtual void Update(float frameTime)
 	{
-		FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+		CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 		if (BaseClass::m_running.get())
 		{

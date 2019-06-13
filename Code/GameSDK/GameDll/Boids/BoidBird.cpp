@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   BoidBird.cpp
@@ -14,8 +14,13 @@
 #include "StdAfx.h"
 #include "BoidBird.h"
 #include "BirdsFlock.h"
+#include <Cry3DEngine/I3DEngine.h>
 #include <CryAnimation/ICryAnimation.h>
 #include <CryEntitySystem/IBreakableManager.h>
+#include <Cry3DEngine/ISurfaceType.h>
+#include <CryMath/Random.h>
+#include <CryGame/GameUtils.h>
+#include <CryParticleSystem/IParticles.h>
 
 #define MAX_BIRDS_DISTANCE 300
 
@@ -43,6 +48,8 @@ CBoidBird::CBoidBird(SBoidContext &bc)
 	, m_playingTakeOffAnim(0)
 	, m_attractedToPt(false)
 	, m_spawnFromPt(false)
+	, m_loadedParticleEffects(false)
+	, m_pDestroyParticleEffect(nullptr)
 {
 	m_floorCollisionInfo.Reset();
 	SetStatus(Bird::FLYING);
@@ -54,10 +61,14 @@ CBoidBird::CBoidBird(SBoidContext &bc)
 	m_takeOffStartTime = gEnv->pTimer->GetFrameStartTime();
 	m_orientation.zero();
 	m_walkSpeed = bc.walkSpeed > 0 ? bc.walkSpeed * (1 + Boid::Frand()*0.2f) :0;
+
+	LoadParticleEffects();
 }
 
 CBoidBird::~CBoidBird()
 {
+	ReleaseParticleEffects();
+
 	m_floorCollisionInfo.Reset();
 }
 
@@ -329,10 +340,8 @@ void CBoidBird::CalcMovementBird(float dt,SBoidContext& bc,bool banking)
 			Interpolate(m_pos,m_landingPoint, 2.0f,dt);
 			return;
 		}
-		// Avoid obstacles & terrain.
-		IPhysicalWorld *physWorld = bc.physics;
 
-		Vec3 vDir0 = m_heading*bc.fBoidRadius*0.5f;
+		// Avoid obstacles & terrain.
 		Vec3 vPos = m_pos;
 		vPos.z += bc.fBoidRadius*0.5f;
 		Vec3 vDir(0,0,bc.fBoidRadius*1.5f);
@@ -735,16 +744,6 @@ void CBoidBird::ThinkWalk( float dt,SBoidContext &bc )
 
 		m_accel += (m_birdOriginPos - m_pos) * bc.factorAttractToOriginGround;
 	}
-
-
-	// Avoid collision with Terrain and Static objects.
-	float fCollisionAvoidanceWeight = 10.0f;
-
-	// Do walk sounds.
-// 	if ((cry_rand()&0xFF) == 0)
-// 		PlaySound(CHICKEN_SOUND_CLUCK);
-
-
 	
 	m_accel.z = 0;
 
@@ -904,6 +903,33 @@ bool CBoidBird::ShouldUpdateCollisionInfo(const CTimeValue& t)
 	if(m_status == Bird::LANDING && m_landDecelerating  )
 		return false;
 	return CBoidObject::ShouldUpdateCollisionInfo(t);
+}
+
+/////////////////////////////////////////////////////////////
+
+void CBoidBird::LoadParticleEffects()
+{
+	if (!m_loadedParticleEffects)
+	{
+		m_pDestroyParticleEffect = gEnv->pParticleManager->FindEffect("breakable_objects.Shatter.destroy", string("Surface Effect ") + "mat_flesh");
+		if (m_pDestroyParticleEffect)
+		{
+			m_pDestroyParticleEffect->AddRef();
+		}
+		else
+		{
+			CryLog("###### CBoidBird DestroyParticleEffect not found");
+		}
+
+		m_loadedParticleEffects = true;
+	}
+}
+
+/////////////////////////////////////////////////////////////
+
+void CBoidBird::ReleaseParticleEffects()
+{
+	SAFE_RELEASE(m_pDestroyParticleEffect);
 }
 
 /////////////////////////////////////////////////////////////

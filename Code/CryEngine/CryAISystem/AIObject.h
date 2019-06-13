@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef AIOBJECT_H
 #define AIOBJECT_H
@@ -7,7 +7,6 @@
 	#pragma once
 #endif // _MSC_VER > 1000
 
-#include "AStarSolver.h"
 #include <CryPhysics/IPhysics.h>
 #include <CryAISystem/IAIObject.h>
 #include "Reference.h"
@@ -48,7 +47,7 @@ public:
 	virtual void Reset(EObjectResetType type) override;
 	virtual void Release() override;
 
-	// "true" if method Update(EObjectUpdate type) has been invoked AT LEAST once
+	// "true" if method Update(EUpdateType type) has been invoked AT LEAST once
 	virtual bool IsUpdatedOnce() const override;
 
 	virtual bool IsEnabled() const override;
@@ -90,7 +89,6 @@ public:
 
 	virtual const Vec3&        GetViewDir() const override;
 	virtual void               SetViewDir(const Vec3& dir) override;
-	virtual EFieldOfViewResult IsPointInFOV(const Vec3& pos, float distanceScale = 1.0f) const override;
 
 	virtual const Vec3& GetEntityDir() const override;
 	virtual void        SetEntityDir(const Vec3& dir) override;
@@ -99,9 +97,11 @@ public:
 	virtual void        SetMoveDir(const Vec3& dir) override;
 	virtual Vec3        GetVelocity() const override;
 
-	virtual size_t      GetNavNodeIndex() const;
 	//Basic properties//////////////////////////////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////////////////
+
+	virtual EFieldOfViewResult IsObjectInFOV(const IAIObject* pTarget, float distanceStale = 1.f) const override;
+	virtual EFieldOfViewResult IsPointInFOV(const Vec3& pos, float distanceScale = 1.0f) const override;
 
 	////////////////////////////////////////////////////////////////////////////////////////
 	//Serialize/////////////////////////////////////////////////////////////////////////////
@@ -139,7 +139,7 @@ public:
 	virtual bool         IsTargetable() const;
 
 	// Returns the EntityId to be used by the perception manager when this AIObject is perceived by another.
-	virtual EntityId       GetPerceivedEntityID() const;
+	virtual EntityId       GetPerceivedEntityID() const override;
 
 	virtual void           SetProxy(IAIActorProxy* proxy);
 	virtual IAIActorProxy* GetProxy() const override;
@@ -258,9 +258,6 @@ private:
 	Vec3                m_vBodyDir; // direction of AI body, animated body direction if available
 	Vec3                m_vMoveDir; // last move direction of the entity
 	Vec3                m_vView;    // view direction (where my head is looking at, tank turret turned, etc)
-
-protected:
-	mutable size_t m_lastNavNodeIndex;
 
 public:
 	bool         m_bUpdatedOnce;

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    -------------------------------------------------------------------------
@@ -168,7 +168,6 @@ void CAILightManager::Update(bool forceUpdate)
 
 	CTimeValue t = GetAISystem()->GetFrameStartTime();
 	int64 dt = (t - m_lastUpdateTime).GetMilliSecondsAsInt64();
-	int nDynLightsAtStart = m_dynLights.size();     // Just for debugging - the vector can shrink
 
 	//	if (dt > 0.25f || forceUpdate)
 	{
@@ -216,7 +215,7 @@ void CAILightManager::Update(bool forceUpdate)
 //===================================================================
 void CAILightManager::DebugDraw()
 {
-	int mode = gAIEnv.CVars.DebugDrawLightLevel;
+	int mode = gAIEnv.CVars.legacyDebugDraw.DebugDrawLightLevel;
 	if (mode == 0)
 		return;
 
@@ -346,7 +345,7 @@ void CAILightManager::DebugDraw()
 			Vec3 conePos = light.pos + light.dir * coneHeight;
 			dc->DrawLine(light.pos, c, light.pos + light.dir * light.radius, c);
 			dc->DrawCone(conePos, -light.dir, coneRadius, coneHeight, ct);
-			dc->DrawWireFOVCone(light.pos, light.dir, light.radius, light.fov, c);
+			dc->DrawWireFOVCone(light.pos, light.dir, light.radius, light.fov * 2.0f, c);
 		}
 
 		dc->Draw3dLabel(light.pos, 1.1f, "DYN %s\n%s", g_szLightLevels[(int)light.level], g_szLightType[(int)light.type]);
@@ -361,25 +360,6 @@ void CAILightManager::DebugDraw()
 
 	CDebugDrawContext dc1;
 	dc1->SetBackFaceCulling(false);
-
-	// Navigation modifiers
-	for (SpecialAreas::const_iterator di = gAIEnv.pNavigation->GetSpecialAreas().begin(), dend = gAIEnv.pNavigation->GetSpecialAreas().end(); di != dend; ++di)
-	{
-		const SpecialArea& sa = *di;
-		if (sa.nBuildingID >= 0)
-		{
-			if (sa.lightLevel == AILL_NONE)
-				continue;
-
-			if (sa.fHeight < 0.0001f)
-				continue;
-
-			DebugDrawArea(sa.GetPolygon(), sa.fMinZ, sa.fMaxZ, lightCols[(int)sa.lightLevel]);
-			Vec3 pos(sa.GetPolygon().front());
-			pos.z = (sa.fMinZ + sa.fMaxZ) / 2;
-			dc1->Draw3dLabel(pos, 1.1f, "%s\n%s", gAIEnv.pNavigation->GetSpecialAreaName(sa.nBuildingID), g_szLightLevels[(int)sa.lightLevel]);
-		}
-	}
 
 	// AIShapes
 	for (ShapeMap::const_iterator di = GetAISystem()->GetGenericShapes().begin(), dend = GetAISystem()->GetGenericShapes().end(); di != dend; ++di)
@@ -445,34 +425,12 @@ void CAILightManager::DebugDrawArea(const ListPositions& poly, float zmin, float
 EAILightLevel CAILightManager::GetLightLevelAt(const Vec3& pos, const CAIActor* pAgent, bool* outUsingCombatLight)
 {
 	CCCPOINT(CAILightManager_GetLightLevelAt);
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	// Find ambient light level.
 
 	// Start from time-of-day.
 	EAILightLevel lightLevel = AILL_NONE;
-
-	// Override from Navigation modifiers
-	for (SpecialAreas::const_iterator di = gAIEnv.pNavigation->GetSpecialAreas().begin(), dend = gAIEnv.pNavigation->GetSpecialAreas().end(); di != dend; ++di)
-	{
-		const SpecialArea& sa = *di;
-
-		if (sa.nBuildingID >= 0)
-		{
-			if (sa.lightLevel <= lightLevel)
-				continue;
-
-			if (sa.fHeight < 0.0001f)
-				continue;
-
-			AABB aabb = sa.GetAABB();
-			aabb.min.z = sa.fMinZ;
-			aabb.max.z = sa.fMaxZ;
-
-			if (Overlap::Point_Polygon2D(pos, sa.GetPolygon(), &aabb))
-				lightLevel = sa.lightLevel;
-		}
-	}
 
 	// Override from AIShapes
 	for (ShapeMap::const_iterator di = GetAISystem()->GetGenericShapes().begin(), dend = GetAISystem()->GetGenericShapes().end(); di != dend; ++di)
@@ -609,7 +567,7 @@ void CAILightManager::UpdateLights()
 	   for (unsigned i = 0, ni = pLightEnts->size(); i < ni; ++i)
 	   {
 	    ILightSource* pLightSource = *pLightEnts->Get(i);
-	    CDLight& light = pLightSource->GetLightProperties();
+	    SRenderLight& light = pLightSource->GetLightProperties();
 	    if ((light.m_Flags & DLF_FAKE) || (light.m_Flags & DLF_DIRECTIONAL))
 	      continue;
 

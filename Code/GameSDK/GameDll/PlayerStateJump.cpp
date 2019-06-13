@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -37,6 +37,8 @@
 
 #include "MovementAction.h"
 #include "PersistantStats.h"
+
+#include <IPerceptionManager.h>
 
 using namespace crymath;
 
@@ -82,8 +84,6 @@ void CPlayerStateJump::OnFall(CPlayer& player)
 void CPlayerStateJump::StartJump(CPlayer& player, const bool isHeavyWeapon, const float fVerticalSpeedModifier)
 {
 	const SActorPhysics& actorPhysics = player.GetActorPhysics();
-	const SPlayerStats& stats = *player.GetActorStats();
-	const float onGroundTime = 0.2f;
 
 	float g = actorPhysics.gravity.len();
 
@@ -118,13 +118,10 @@ void CPlayerStateJump::StartJump(CPlayer& player, const bool isHeavyWeapon, cons
 	}
 
 	//this is used to easily find steep ground
-	float slopeDelta = (Vec3Constants<float>::fVec3_OneZ - actorPhysics.groundNormal).len();
 
 	SetJumpState(player, JState_Jump);
 
 	Vec3 jumpVec(ZERO);
-
-	bool bNormalJump = true;
 
 	player.PlaySound(CPlayer::ESound_Jump);
 
@@ -310,7 +307,6 @@ void CPlayerStateJump::SetJumpState(CPlayer& player, EJumpState jumpState)
 	if (jumpState != m_jumpState)
 	{
 		CRY_ASSERT(m_jumpState >= JState_None && m_jumpState < JState_Total);
-		const EJumpState previousJumpState = m_jumpState;
 
 		m_jumpState = jumpState;
 
@@ -363,14 +359,10 @@ void CPlayerStateJump::Landed(CPlayer& player, const bool isHeavyWeapon, float f
 	const SPlayerStats& stats = player.m_stats;
 
 	Vec3 playerPosition = player.GetEntity()->GetWorldPos();
-	IPhysicalEntity* phys = player.GetEntity()->GetPhysics();
 	IMaterialEffects* mfx = gEnv->pGameFramework->GetIMaterialEffects();
 
 	const SActorPhysics& actorPhysics = player.GetActorPhysics();
 	int matID = actorPhysics.groundMaterialIdx != -1 ? actorPhysics.groundMaterialIdx : mfx->GetDefaultSurfaceIndex();
-
-	const float fHeightofEntity = playerPosition.z;
-	const float worldWaterLevel = player.m_playerStateSwim_WaterTestProxy.GetWaterLevel();
 
 	TMFXEffectId effectId = mfx->GetEffectId("bodyfall", matID);
 	if (effectId != InvalidEffectId)
@@ -450,7 +442,7 @@ void CPlayerStateJump::Landed(CPlayer& player, const bool isHeavyWeapon, float f
 		CCCPOINT(PlayerMovement_LocalPlayerLanded);
 	}
 
-	if (gEnv->pAISystem)
+	if (IPerceptionManager::GetInstance())
 	{
 		// Notify AI
 		//If silent feet active, ignore here
@@ -458,7 +450,7 @@ void CPlayerStateJump::Landed(CPlayer& player, const bool isHeavyWeapon, float f
 		const float fAISoundRadius = (g_pGameCVars->ai_perception.landed_baseRadius + (g_pGameCVars->ai_perception.landed_speedMultiplier * fallSpeed)) * (1.0f - noiseSupression);
 		SAIStimulus stim(AISTIM_SOUND, AISOUND_MOVEMENT_LOUD, player.GetEntityId(), 0,
 		                 player.GetEntity()->GetWorldPos() + player.GetEyeOffset(), ZERO, fAISoundRadius);
-		gEnv->pAISystem->RegisterStimulus(stim);
+		IPerceptionManager::GetInstance()->RegisterStimulus(stim);
 	}
 
 	// Record 'Land' telemetry stats.
@@ -473,7 +465,6 @@ void CPlayerStateJump::Landed(CPlayer& player, const bool isHeavyWeapon, float f
 
 const Vec3 CPlayerStateJump::CalculateInAirJumpExtraVelocity(const CPlayer& player, const Vec3& desiredVelocity) const
 {
-	const SPlayerStats& stats = player.m_stats;
 	const float speedUpFactor = 0.175f;
 
 	Vec3 jumpExtraVelocity(0.0f, 0.0f, 0.0f);
@@ -606,7 +597,6 @@ void CPlayerStateJump::Land(CPlayer& player, const bool isHeavyWeapon, float fra
 	}
 
 	// TODO: Physics sync.
-	const float fallSpeed = player.m_stats.fallSpeed;
 	Landed(player, isHeavyWeapon, fabsf(player.GetActorPhysics().velocityDelta.z)); // fallspeed might be incorrect on a dedicated server (pos is synced from client, but also smoothed).
 
 	player.m_stats.wasHit = false;
@@ -622,7 +612,6 @@ void CPlayerStateJump::Land(CPlayer& player, const bool isHeavyWeapon, float fra
 		{
 			player.CreateScriptEvent("jump_splash", worldWaterLevel - fHeightofEntity);
 		}
-
 	}
 }
 
@@ -630,8 +619,6 @@ void CPlayerStateJump::GetDesiredVelocity(const Vec3& move, const CPlayer& playe
 {
 	// Generate jump velocity.
 	const float fMaxMove = 1.0f;
-
-	float fGroundNormalZ = fMaxMove;
 
 	if (move.len2() > 0.01f)
 	{

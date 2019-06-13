@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -11,10 +11,12 @@ History:
 
 #include <IPlayerProfiles.h>
 #include <IVehicleSystem.h>
+#include <CrySystem/ConsoleRegistration.h>
 #include <time.h>
 
 #include <CrySystem/Scaleform/IFlashPlayer.h>
 #include "Player.h"
+#include "GameCVars.h"
 #include "GameRules.h"
 #include "GameRulesModules/IGameRulesStateModule.h"
 #include "GameRulesModules/GameRulesModulesManager.h"
@@ -353,7 +355,7 @@ void CPersistantStats::Init()
 		pProfileMan->AddListener(this, true);
 	}
 
-	gEnv->pSystem->GetISystemEventDispatcher()->RegisterListener(this);
+	gEnv->pSystem->GetISystemEventDispatcher()->RegisterListener(this, "CPersistantStats");
 
 	// we can't just reserve here sadly (deque) so resize will have to do. 
 	m_clientPersistantStatHistory.resize(NUM_HISTORY_ENTRIES); 
@@ -966,10 +968,10 @@ void CPersistantStats::SaveTelemetryInternal(const char* filenameNoExt, const SS
 	
 	int bufferPosition = 0;
 
-	FILE *descFile = NULL;
 	TDescriptionVector descVector;
 
 #ifndef _RELEASE
+	FILE *descFile = NULL;
 	int pos = 0;
 
 	if(description)
@@ -1064,7 +1066,6 @@ void CPersistantStats::SaveTelemetryInternal(const char* filenameNoExt, const SS
 	IGameRulesModulesManager *pGameRulesModulesManager = CGameRulesModulesManager::GetInstance();
 	int rulesDataCount = 0;
 	const int rulesCount = pGameRulesModulesManager->GetRulesCount();
-	const int gamemodeRange = EMPS_GamesLost + 1 - EMPS_Gamemodes;
 	int rulesData[128];
 	CRY_ASSERT(rulesCount < CRY_ARRAY_COUNT(rulesData));
 	for(int i = 0; i < rulesCount; i++)
@@ -2028,12 +2029,6 @@ void CPersistantStats::Update(const float dt)
 							pSessionStats->m_intStats[EIPS_CrouchingOverCorpses]++;
 							memset(&m_crouchToggleTime, 0, sizeof(m_crouchToggleTime));
 
-							CGameRules* pNewGameRules = g_pGame->GetGameRules();
-
-							EntityId localClientId = gEnv->pGameFramework->GetClientActorId();
-							int localClientTeamId = pNewGameRules->GetTeam(localClientId);
-							int corpseTeamId = pNewGameRules->GetTeam(corpseId);
-
 							if (!pClientPlayer->IsFriendlyEntity(corpseId))
 							{
 								{
@@ -2227,9 +2222,12 @@ EntityId CPersistantStats::ClientNearCorpse(CPlayer *pClientPlayer)
 void CPersistantStats::EnteredGame()
 {
 	IGameFramework *pGameFramework = g_pGame->GetIGameFramework();
-
+#if defined(USE_CRY_ASSERT)
 	bool found = pGameFramework->GetNetworkSafeClassId(m_pickAndThrowWeaponClassId, "PickAndThrowWeapon");
 	CRY_ASSERT_MESSAGE(found, "Unable to find PickAndThrowWeapon");
+#else
+	pGameFramework->GetNetworkSafeClassId(m_pickAndThrowWeaponClassId, "PickAndThrowWeapon");
+#endif
 
 	m_clientPreviousKillData.clear();
 	m_sessionStats.clear();
@@ -3271,7 +3269,6 @@ void CPersistantStats::OnEntityKilled(const HitInfo &hitInfo)
 
 						if (pShooterPlayer->IsClient())
 						{
-							float dist2killed = (pTargetActor->GetEntity()->GetWorldPos() - pShooterPlayer->GetEntity()->GetWorldPos()).len2();
 							const float currentTime = gEnv->pTimer->GetCurrTime();
 							float clientPlayerUncloakTime = pShooterPlayer->GetLastUnCloakTime();
 							if ( (currentTime - clientPlayerUncloakTime) < (float)k_warbirdTimeFromCloak)
@@ -3785,7 +3782,6 @@ void CPersistantStats::OnShoot(IWeapon *pWeapon, EntityId shooterId, EntityId am
 
 		if( shooterId == gEnv->pGameFramework->GetClientActorId() )
 		{
-			IActor *pActor = g_pGame->GetIGameFramework()->GetIActorSystem()->GetActor(shooterId);
 			IEntityClass* pClass = pWeaponImpl->GetEntity()->GetClass();
 			g_pGame->GetWeaponSystem()->GetWeaponAlias().UpdateClass(&pClass);
 			BLAZE_REPORT_WEAPON(pClass, pActor, shots, ammoCost);
@@ -5209,7 +5205,7 @@ const SSessionStats* CPersistantStats::GetPreviousGameSessionStatsForClient( uin
 uint32 CPersistantStats::GetAverageDeltaPreviousGameXp( const uint8 desiredNumGamesToAverageOver ) const
 {
 	uint32 totalXp = 0;
-	const uint32 maxCount = MIN(desiredNumGamesToAverageOver, m_clientPersistantStatHistory.size()); 
+	const uint32 maxCount = std::min((size_t)desiredNumGamesToAverageOver, (size_t)m_clientPersistantStatHistory.size()); 
 	for(uint32 i = 0; i < maxCount; ++i)
 	{
 		totalXp += m_clientPersistantStatHistory[i].m_xpHistoryDelta; 

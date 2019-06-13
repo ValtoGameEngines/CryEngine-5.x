@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /************************************************************************
 
@@ -15,10 +15,10 @@ namespace CryDRS
 {
 class CVariableCollection;
 
-class CActionResetTimerVariable final : public IVariableUsingBase, public DRS::IResponseAction
+class CActionResetTimerVariable final : public DRS::IResponseAction, public IVariableUsingBase
 {
 public:
-	CActionResetTimerVariable() {}
+	CActionResetTimerVariable() = default;
 	CActionResetTimerVariable(const CHashedString& collection, const CHashedString& variableName) {}
 
 	//////////////////////////////////////////////////////////

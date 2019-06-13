@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   scriptobjectboids.cpp
@@ -360,9 +360,8 @@ bool CScriptBind_Boids::ReadParamsTable(IScriptTable* pTable, struct SBoidContex
 			str = "";
 			if (audio->GetAt(i, str))
 			{
-				CryAudio::ControlId audioControlID = CryAudio::InvalidControlId;
-				gEnv->pAudioSystem->GetAudioTriggerId(str, audioControlID);
-				bc.audio.push_back(audioControlID);
+				CryAudio::ControlId const triggerId = CryAudio::StringToId(str);
+				bc.audio.push_back(triggerId);
 			}
 		}
 	}
@@ -376,7 +375,7 @@ bool CScriptBind_Boids::ReadParamsTable(IScriptTable* pTable, struct SBoidContex
 			str = "";
 			if (animations->GetAt(i, str))
 			{
-				bc.animations.push_back(str);
+				bc.animations.emplace_back(str);
 			}
 			else
 				break;

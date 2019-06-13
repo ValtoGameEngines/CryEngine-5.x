@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -299,7 +299,7 @@ float CTargetTrackPlayerModifier::GetModValue(const CTargetTrack* pTrack,
 	{
 		CAIObject* owner = ownerWeak.GetAIObject();
 
-		if (CAIActor* ownerActor = owner->CastToCAIActor())
+		if (owner->CastToCAIActor() != nullptr)
 		{
 			CWeakRef<CAIObject> targetWeak = pTrack->GetAITarget();
 

@@ -1,15 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   particleeffect.cpp
-//  Version:     v1.00
-//  Created:     10/7/2003 by Timur.
-//  Compilers:   Visual Studio.NET
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ParticleEffect.h"
@@ -19,9 +8,9 @@
 #include <CryAudio/IAudioSystem.h>
 
 //////////////////////////////////////////////////////////////////////////
-// TypeInfo XML serialisation code
-
+// TypeInfo XML serialization code
 #include <CryParticleSystem/ParticleParams_TypeInfo.h>
+#include <CryCore/TypeInfo_impl.h>
 
 DEFINE_INTRUSIVE_LINKED_LIST(CParticleEffect)
 
@@ -689,6 +678,7 @@ void ResourceParticleParams::ComputeEnvironmentFlags()
 	mConfigSpecMask |=
 	  Platforms.PS4 * BIT(CONFIG_ORBIS)
 	  + Platforms.XBoxOne * BIT(CONFIG_DURANGO)
+	  + Platforms.XBoxOneX * BIT(CONFIG_DURANGO_X)
 	;
 }
 
@@ -710,7 +700,7 @@ bool ResourceParticleParams::IsActive() const
 	if (config_spec <= CONFIG_VERYHIGH_SPEC)
 	{
 		// PC platform. Match DX settings.
-		if (!Platforms.PCDX11)
+		if (!Platforms.PCDX)
 			return false;
 	}
 
@@ -729,7 +719,7 @@ int ResourceParticleParams::LoadResources(const char* pEffectName)
 {
 	// Load only what is not yet loaded. Check everything, but caller may check params.bResourcesLoaded first.
 	// Call UnloadResources to force unload/reload.
-	LOADING_TIME_PROFILE_SECTION(gEnv->pSystem);
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY)(gEnv->pSystem);
 
 	if (!bEnabled)
 	{
@@ -763,7 +753,7 @@ int ResourceParticleParams::LoadResources(const char* pEffectName)
 		else if (!sTexture.empty() && sGeometry.empty())
 		{
 			const uint32 textureLoadFlags = FT_DONT_STREAM;
-			const int nTexId = GetRenderer()->EF_LoadTexture(sTexture.c_str(), textureLoadFlags)->GetTextureID();
+			const int nTexId = GetRenderer()->EF_LoadTexture(sTexture.c_str(), textureLoadFlags)->GetTextureID();			
 			if (nTexId <= 0)
 				CryWarning(VALIDATOR_MODULE_3DENGINE, VALIDATOR_WARNING, "Particle effect texture %s not found", sTexture.c_str());
 			else
@@ -782,6 +772,8 @@ int ResourceParticleParams::LoadResources(const char* pEffectName)
 			pMaterial->SetGetMaterialParamVec3("diffuse", white, false);
 			pMaterial->SetGetMaterialParamFloat("opacity", defaultOpacity, false);
 			pMaterial->RequestTexturesLoading(0.0f);
+			if (nTexId > 0)
+				GetRenderer()->RemoveTexture(nTexId);
 		}
 		else if (sGeometry.empty())
 		{
@@ -862,13 +854,13 @@ void ResourceParticleParams::UnloadResources()
 // Struct and TypeInfo for reading older params
 //
 struct CompatibilityParticleParams
-	: ParticleParams, ZeroInit<CompatibilityParticleParams>, Cry3DEngineBase
+	: ParticleParams, Cry3DEngineBase
 {
-	int    nVersion;
+	int    nVersion = 0;
 	string sSandboxVersion;
 
 	// Version 26
-	float fBounciness;
+	float fBounciness = 0.0f;
 	DEFINE_ENUM(EMoveRelative,
 	            No,
 	            Yes,
@@ -877,31 +869,34 @@ struct CompatibilityParticleParams
 	EMoveRelative eMoveRelEmitter;        // Particle motion is in emitter space
 
 	// Version 25
-	ETrinary tDX11;
-	bool     bGeometryInPieces;
+	ETrinary tDX;
+	bool     bGeometryInPieces = false;
 
 	// Version 24
-	float fAlphaTest;
-	float fCameraDistanceBias;
-	int   nDrawLast;
+	float fAlphaTest = 0.0f;
+	float fCameraDistanceBias = 0.0f;
+	int   nDrawLast = 0;
 
 	// Version 22
-	float  fPosRandomOffset;
-	float  fAlphaScale;
-	float  fGravityScaleBias;
-	float  fCollisionPercentage;
+	float  fPosRandomOffset = 0.0f;
+	float  fAlphaScale = 0.0f;
+	float  fGravityScaleBias = 0.0f;
+	float  fCollisionPercentage = 0.0f;
 
-	bool   bSimpleParticle;
-	bool   bSecondGeneration, bSpawnOnParentCollision, bSpawnOnParentDeath;
+	bool   bSimpleParticle = false;
+	bool   bSecondGeneration = false;
+	bool   bSpawnOnParentCollision = false;
+	bool   bSpawnOnParentDeath = false;
 
 	string sAllowHalfRes;
 
 	// Version 20
-	bool bBindToEmitter;
-	bool bTextureUnstreamable, bGeometryUnstreamable;
+	bool bBindToEmitter = false;
+	bool bTextureUnstreamable = false;
+	bool bGeometryUnstreamable = false;
 
 	// Version 19
-	bool bIgnoreAttractor;
+	bool bIgnoreAttractor = false;
 
 	void Correct(class CParticleEffect* pEffect);
 
@@ -973,8 +968,6 @@ STRUCT_INFO_END(CompatibilityParticleParams)
 //////////////////////////////////////////////////////////////////////////
 void CompatibilityParticleParams::Correct(CParticleEffect* pEffect)
 {
-	CTypeInfo const& info = ::TypeInfo(this);
-
 	// Convert any obsolete parameters set.
 	switch (nVersion)
 	{
@@ -1134,8 +1127,8 @@ void CompatibilityParticleParams::Correct(CParticleEffect* pEffect)
 
 	case 25:
 		// DX11 spec
-		if (tDX11 == ETrinary(false))
-			Platforms.PCDX11 = false;
+		if (tDX == ETrinary(false))
+			Platforms.PCDX = false;
 
 		// Fix reversed PivotY.
 		fPivotY.Set(-fPivotY.GetMaxValue());
@@ -1175,7 +1168,6 @@ void CompatibilityParticleParams::Correct(CParticleEffect* pEffect)
 	case 27:
 		fEmissiveLighting = fEmissiveLighting * 10.0f;
 	}
-	;
 
 	// Universal corrections.
 	if (!fTailLength)
@@ -1550,38 +1542,45 @@ void CParticleEffect::PropagateParticleParams(const ParticleParams& params)
 }
 
 //////////////////////////////////////////////////////////////////////////
-bool CParticleEffect::IsActive(bool bAll) const
+bool CParticleEffect::IsEnabled(uint options) const
 {
-	// Make sure effect and all indirect parents are active in current render context.
-	for (const CParticleEffect* pEffect = this;; pEffect = pEffect->m_parent)
+	bool bEnabled = m_pParticleParams && m_pParticleParams->bEnabled;
+
+	if (bEnabled && (options & eCheckFeatures))
 	{
-		if (!(pEffect && pEffect->m_pParticleParams && pEffect->m_pParticleParams->IsActive()))
-			return false;
-		if (!pEffect->m_pParticleParams->eSpawnIndirection)
-			break;
+		// Check whether effect does anything.
+		if (!(m_pParticleParams->nEnvFlags & (REN_ANY | EFF_ANY)))
+			bEnabled = false;
 	}
 
-	if (m_pParticleParams->nEnvFlags & (REN_ANY | EFF_ANY))
-		// Has visible or other effects.
-		return true;
-
-	for (auto& child : m_children)
-		if (bAll || child.GetIndirectParent())
-			if (child.IsActive(true))
-				return true;
-	return false;
-}
-
-uint32 CParticleEffect::GetEnvironFlags(bool bAll) const
-{
-	uint32 nFlags = m_pParticleParams ? m_pParticleParams->nEnvFlags : 0;
-	if (bAll)
+	if (bEnabled && (options & eCheckConfig))
 	{
+		// Make sure effect and all indirect parents are active in current render context.
+		for (const CParticleEffect* pEffect = this;; pEffect = pEffect->m_parent)
+		{
+			if (!(pEffect && pEffect->m_pParticleParams && pEffect->m_pParticleParams->IsActive()))
+			{
+				bEnabled = false;
+				break;
+			}
+			if (!pEffect->m_pParticleParams->eSpawnIndirection)
+				break;
+		}
+	}
+
+	if (!bEnabled && (options & eCheckChildren))
+	{
+		// Check actual child effects.
 		for (auto& child : m_children)
-			if (child.IsActive())
-				nFlags |= child.GetEnvironFlags(true);
+			if (child.GetIndirectParent())
+				if (child.IsEnabled(options))
+				{
+					bEnabled = true;
+					break;
+				}
 	}
-	return nFlags;
+
+	return bEnabled;
 }
 
 void CParticleEffect::SetParticleParams(const ParticleParams& params)
@@ -1796,21 +1795,16 @@ IParticleAttributes& CParticleEffect::GetAttributes()
 {
 	static class CNullParticleAttributes : public IParticleAttributes
 	{
-		virtual void         UpdateScriptTable(const SmartScriptTable& scriptTable)  {}
+		virtual void         Reset(const IParticleAttributes* pCopySource = nullptr) {}
+		virtual void         Serialize(Serialization::IArchive& ar)                  {}
+		virtual void         TransferInto(IParticleAttributes* pReceiver) const      {}
 		virtual TAttributeId FindAttributeIdByName(cstr name) const                  { return -1; }
 		virtual uint         GetNumAttributes() const                                { return 0; }
 		virtual cstr         GetAttributeName(uint idx) const                        { return nullptr; }
-		virtual EType        GetAttributeType(uint idx) const                        { return ET_Float; }
-		virtual bool         GetAsBoolean(TAttributeId id, bool defaultValue) const  { return defaultValue; }
-		virtual int          GetAsInteger(TAttributeId id, int defaultValue) const   { return defaultValue; }
-		virtual float        GetAsFloat(TAttributeId id, float defaultValue) const   { return defaultValue; }
-		virtual ColorB       GetAsColorB(TAttributeId id, ColorB defaultValue) const { return defaultValue; }
-		virtual ColorF       GetAsColorF(TAttributeId id, ColorF defaultValue) const { return defaultValue; }
-		virtual void         SetAsBoolean(TAttributeId id, bool value)               {}
-		virtual int          SetAsInteger(TAttributeId id, int value)                { return value; }
-		virtual float        SetAsFloat(TAttributeId id, float value)                { return value; }
-		virtual void         SetAsColor(TAttributeId id, ColorB value)               {}
-		virtual void         SetAsColor(TAttributeId id, ColorF value)               {}
+		virtual EType        GetAttributeType(uint idx) const                        { return ET_Boolean; }
+		virtual const TValue& GetValue(TAttributeId idx) const                       { static TValue def; return def; }
+		virtual TValue        GetValue(TAttributeId idx, const TValue& def) const    { return def; }
+		virtual bool          SetValue(TAttributeId idx, const TValue& value)        { return false; }
 	} nullAttributes;
 	return nullAttributes;
 }
@@ -1899,7 +1893,7 @@ float CParticleEffect::GetEquilibriumAge(bool bAll) const
 	if (bAll)
 	{
 		for (auto& child : m_children)
-			if (child.IsEnabled() && !child.GetParams().eSpawnIndirection)
+			if (child.IsEnabled(eCheckFeatures) && !child.GetParams().eSpawnIndirection)
 				fEquilibriumAge = max(fEquilibriumAge, child.GetEquilibriumAge(true));
 	}
 

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /******************************************************************************
 ** GameLobbyData.h
@@ -8,6 +8,9 @@
 #define __GAMELOBBYDATA_H__
 
 #include "AutoEnum.h"
+#include "ICryStats.h"
+
+struct SCrySessionSearchResult;
 
 //------------
 // LOBBY DATA

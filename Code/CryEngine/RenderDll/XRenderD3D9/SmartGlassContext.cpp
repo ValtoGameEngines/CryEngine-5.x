@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 //
 //	File:ISmartGlassManager.h
@@ -232,7 +232,7 @@ void CSmartGlassContext::CreateSwapChain()
 	swapChainDesc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; // this is the most common swapchain format
 	swapChainDesc.SampleDesc.Count = 1;                           // don't use multi-sampling
 	swapChainDesc.SampleDesc.Quality = 0;
-	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+	swapChainDesc.BufferUsage = DXGI_USAGE_SHADER_INPUT | DXGI_USAGE_RENDER_TARGET_OUTPUT;
 	swapChainDesc.BufferCount = 2;                       // use two buffers to enable flip effect
 	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD; // we recommend using this swap effect for all applications
 	swapChainDesc.Flags = 0;
@@ -248,7 +248,7 @@ void CSmartGlassContext::CreateSwapChain()
 	// Ensure that DXGI does not queue more than one frame at a time. This both reduces
 	// latency and ensures that the application will only render after each VSync, minimizing
 	// power consumption.
-	dxgiDevice->SetMaximumFrameLatency(MAX_FRAME_LATENCY);
+	dxgiDevice->SetMaximumFrameLatency(1);
 
 	CreateSwapChainForSmartGlassDevice(m_pDevice, &swapChainDesc, &m_pSwapChain);
 
@@ -271,8 +271,8 @@ void CSmartGlassContext::CreateSwapChain()
 	m_viewport.MinDepth = 0.0f;
 	m_viewport.MaxDepth = 1.0f;
 
-	m_pCryTexture = CTexture::CreateTextureObject("$SmartGlass", (uint32)m_viewport.Width, (uint32)m_viewport.Height, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown, TO_SMARTGLASS);
-	bool bRes = m_pCryTexture->CreateRenderTarget(eTF_R8G8B8A8, Clr_Empty); //
+	m_pCryTexture = CTexture::GetOrCreateTextureObject("$SmartGlass", (uint32)m_viewport.Width, (uint32)m_viewport.Height, 1, eTT_2D, FT_DONT_RELEASE | FT_DONT_STREAM | FT_USAGE_RENDERTARGET, eTF_Unknown, TO_SMARTGLASS);
+	m_pCryTexture->CreateRenderTarget(eTF_R8G8B8A8, Clr_Empty); //
 	m_pPrevRenderTargetView = reinterpret_cast<D3DSurface*>(m_pCryTexture->m_pDeviceRTV);
 	m_pPrevDeviceTexture = m_pCryTexture->m_pDevTexture;
 	m_pCryTexture->m_pDeviceRTV = m_pRenderTargetView;

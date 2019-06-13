@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 //
 //	File: SystemRender.cpp
@@ -30,13 +30,13 @@
 #include <CryMovie/IMovieSystem.h>
 #include <CryThreading/IJobManager.h>
 #include <CryCore/Platform/IPlatformOS.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 #include "CrySizerStats.h"
 #include "CrySizerImpl.h"
-#include <CrySystem/ITestSystem.h>   // ITestSystem
 #include "VisRegTest.h"
-#include "ThreadProfiler.h"
 #include <CrySystem/Profilers/IDiskProfiler.h>
+#include "Profiling/ProfilingRenderer.h"
 #include <CrySystem/ITextModeConsole.h>
 #include "HardwareMouse.h"
 #include <CryEntitySystem/IEntitySystem.h> // <> required for Interfuscator
@@ -49,27 +49,69 @@
 #include <CrySystem/Scaleform/IScaleformHelper.h>
 #include <CrySystem/VR/IHMDManager.h>
 
+#include "Statistics.h"
+
+#if CRY_PLATFORM_WINDOWS
+#	include <psapi.h> // requires <windows.h>
+	LINK_SYSTEM_LIBRARY("psapi.lib")
+#endif
+#if CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID
+#	include <dlfcn.h>
+#endif
+
+class CMTSafeHeap;
+
 extern CMTSafeHeap* g_pPakHeap;
 
 extern int CryMemoryGetAllocatedSize();
 
-/////////////////////////////////////////////////////////////////////////////////
-void CSystem::CreateRendererVars()
+// Remap r_fullscreen to keep legacy functionality, r_WindowType is new desired path
+void OnFullscreenStateChanged(ICVar* pFullscreenCVar)
 {
+	if (ICVar* pCVar = gEnv->pConsole->GetCVar("r_WindowType"))
+	{
+		if (pFullscreenCVar->GetIVal() != 0)
+		{
+			pCVar->Set(3);
+		}
+		else if(pCVar->GetIVal() == 3)
+		{
+			pCVar->Set(0);
+		}
+	}
+}
+
+// Reflect r_windowType changes to the legacy r_fullscreen CVar
+void OnWindowStateChanged(ICVar* pCVar)
+{
+	if (ICVar* pFullscreenCVar = gEnv->pConsole->GetCVar("r_Fullscreen"))
+	{
+		pFullscreenCVar->Set(pCVar->GetIVal() == 3 ? 1 : 0);
+	}
+}
+
+/////////////////////////////////////////////////////////////////////////////////
+void CSystem::CreateRendererVars(const SSystemInitParams& startupParams)
+{
+	m_rIntialWindowSizeRatio = REGISTER_FLOAT("r_InitialWindowSizeRatio", 0.666f, VF_DUMPTODISK,
+	                                          "Sets the size ratio of the initial application window in relation to the primary monitor resolution.\n"
+	                                          "Usage: r_InitialWindowSizeRatio [1.0/0.666/..]");
+
 	int iFullScreenDefault  = 1;
 	int iDisplayInfoDefault = 1;
 	int iWidthDefault       = 1280;
 	int iHeightDefault      = 720;
 #if CRY_PLATFORM_DURANGO
-	iWidthDefault  = 1600;
-	iHeightDefault = 900;
+	iWidthDefault  = 1920;
+	iHeightDefault = 1080;
 #elif CRY_PLATFORM_ORBIS
 	iWidthDefault  = 1920;
 	iHeightDefault = 1080;
 #elif CRY_PLATFORM_WINDOWS
 	iFullScreenDefault = 0;
-	iWidthDefault      = GetSystemMetrics(SM_CXFULLSCREEN) * 2 / 3;
-	iHeightDefault     = GetSystemMetrics(SM_CYFULLSCREEN) * 2 / 3;
+	const float initialWindowSizeRatio = m_rIntialWindowSizeRatio->GetFVal();
+	iWidthDefault = static_cast<int>(GetSystemMetrics(SM_CXSCREEN) * initialWindowSizeRatio);
+	iHeightDefault = static_cast<int>(GetSystemMetrics(SM_CYSCREEN) * initialWindowSizeRatio);
 #elif CRY_PLATFORM_LINUX || CRY_PLATFORM_APPLE
 	iFullScreenDefault = 0;
 #endif
@@ -85,12 +127,12 @@ void CSystem::CreateRendererVars()
 	m_rHeight = REGISTER_INT("r_Height", iHeightDefault, VF_DUMPTODISK,
 		"Sets the display height, in pixels.\n"
 		"Usage: r_Height [600/768/..]");
-	m_rColorBits = REGISTER_INT("r_ColorBits", 32, VF_DUMPTODISK,
+	m_rColorBits = REGISTER_INT("r_ColorBits", 32, VF_DUMPTODISK | VF_REQUIRE_APP_RESTART,
 		"Sets the color resolution, in bits per pixel. Default is 32.\n"
 		"Usage: r_ColorBits [32/24/16/8]");
 	m_rDepthBits = REGISTER_INT("r_DepthBits", 24, VF_DUMPTODISK | VF_REQUIRE_APP_RESTART,
 		"Sets the depth precision, in bits per pixel. Default is 24.\n"
-		"Usage: r_DepthBits [32/24]");
+		"Usage: r_DepthBits [32/24/16]");
 	m_rStencilBits = REGISTER_INT("r_StencilBits", 8, VF_DUMPTODISK,
 		"Sets the stencil precision, in bits per pixel. Default is 8.\n");
 
@@ -100,40 +142,53 @@ void CSystem::CreateRendererVars()
 	  "Use this to resolve which video card to use if more than one DX11 capable GPU is available in the system.");
 #endif
 
-#if CRY_PLATFORM_WINDOWS
-	const char* p_r_DriverDef = "Auto";
-#elif CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID || CRY_PLATFORM_APPLE
-	const char* p_r_DriverDef = "GL";
+#if CRY_PLATFORM_ANDROID
+	const char* p_r_DriverDef = STR_VK_RENDERER;
+#elif CRY_PLATFORM_LINUX || CRY_PLATFORM_APPLE
+	const char* p_r_DriverDef = STR_GL_RENDERER;
+#elif CRY_PLATFORM_DURANGO
+	const char* p_r_DriverDef = STR_DX11_RENDERER;
+#elif CRY_PLATFORM_ORBIS
+	const char* p_r_DriverDef = STR_DX11_RENDERER;
 #else
-	const char* p_r_DriverDef = "DX9";                 // required to be deactivated for final release
+	const char* p_r_DriverDef = STR_AUTO_RENDERER;
 #endif
-	if (m_startupParams.pCvarsDefault)
+
+	if (startupParams.pCvarsDefault)
 	{
 		// hack to customize the default value of r_Driver
-		SCvarsDefault* pCvarsDefault = m_startupParams.pCvarsDefault;
+		SCvarsDefault* pCvarsDefault = startupParams.pCvarsDefault;
 		if (pCvarsDefault->sz_r_DriverDef && pCvarsDefault->sz_r_DriverDef[0])
-			p_r_DriverDef = m_startupParams.pCvarsDefault->sz_r_DriverDef;
+			p_r_DriverDef = startupParams.pCvarsDefault->sz_r_DriverDef;
 	}
 
-	m_rDriver = REGISTER_STRING("r_Driver", p_r_DriverDef, VF_DUMPTODISK,
-		"Sets the renderer driver ( DX11/AUTO/NULL ).\n"
+	m_rDriver = REGISTER_STRING("r_Driver", p_r_DriverDef, VF_DUMPTODISK | VF_REQUIRE_APP_RESTART,
+		"Sets the renderer driver ( DX11/DX12/GL/VK/AUTO ).\n"
 		"Specify in system.cfg like this: r_Driver = \"DX11\"");
 
-	m_rFullscreen = REGISTER_INT("r_Fullscreen", iFullScreenDefault, VF_DUMPTODISK,
+	m_rFullscreen = REGISTER_INT_CB("r_Fullscreen", iFullScreenDefault, VF_DUMPTODISK,
 		"Toggles fullscreen mode. Default is 1 in normal game and 0 in DevMode.\n"
-		"Usage: r_Fullscreen [0=window/1=fullscreen]");
+		"Usage: r_Fullscreen [0=window/1=fullscreen]", OnFullscreenStateChanged);
+
+	m_rWindowState = REGISTER_INT_CB("r_WindowType", m_rFullscreen->GetIVal() != 0 ? 3 : 0, VF_DUMPTODISK,
+		"Changes the type of window for the rendered viewport.\n"
+		"Usage: r_WindowType [0=normal window/1=borderless window/2=borderless full screen/3=exclusive full screen]", OnWindowStateChanged);
 
 	m_rFullsceenNativeRes = REGISTER_INT("r_FullscreenNativeRes", 0, VF_DUMPTODISK,
 		"Toggles native resolution upscaling.\n"
 		"If enabled, scene gets upscaled from specified resolution while UI is rendered in native resolution.");
 
-	m_rFullscreenWindow = REGISTER_INT("r_FullscreenWindow", 0, VF_DUMPTODISK,
-		"Toggles fullscreen-as-window mode. Fills screen but allows seamless switching. Default is 0.\n"
-		"Usage: r_FullscreenWindow [0=locked fullscreen/1=fullscreen as window]");
-
 	m_rDisplayInfo = REGISTER_INT("r_DisplayInfo", iDisplayInfoDefault, VF_RESTRICTEDMODE | VF_DUMPTODISK,
 		"Toggles debugging information display.\n"
 		"Usage: r_DisplayInfo [0=off/1=show/2=enhanced/3=minimal/4=fps bar/5=heartbeat]");
+
+	m_rDisplayInfoTargetPolygons = REGISTER_INT("r_DisplayInfoTargetPolygons", 0, VF_RESTRICTEDMODE | VF_DUMPTODISK,
+		"Specifies the max polygon count where display info will highlight a warning\n"
+		"0 disables the warning");
+
+	m_rDisplayInfoTargetDrawCalls = REGISTER_INT("r_DisplayInfoTargetDrawCalls", 0, VF_RESTRICTEDMODE | VF_DUMPTODISK,
+		"Specifies the max draw call count where display info will highlight a warning\n"
+		"0 disables the warning");
 
 	m_rDisplayInfoTargetFPS = REGISTER_FLOAT("r_displayinfoTargetFPS", 30.0f, VF_RESTRICTEDMODE | VF_DUMPTODISK,
 		"Specifies the aimed number of FPS that is considered ideal for the game.\n"
@@ -145,12 +200,14 @@ void CSystem::CreateRendererVars()
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CSystem::RenderBegin()
+void CSystem::RenderBegin(const SDisplayContextKey& displayContextKey, const SGraphicsPipelineKey& graphicsPipelineKey)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_SYSTEM);
-
 	if (m_bIgnoreUpdates)
 		return;
+
+	CRY_PROFILE_FUNCTION(PROFILE_SYSTEM);
+	CRY_PROFILE_MARKER(PROFILE_SYSTEM, "CSystem::RenderBegin");
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "CSystem::RenderBegin");
 
 	bool rndAvail = m_env.pRenderer != 0;
 
@@ -158,7 +215,7 @@ void CSystem::RenderBegin()
 	//start the rendering pipeline
 	if (rndAvail)
 	{
-		m_env.pRenderer->BeginFrame();
+		m_env.pRenderer->BeginFrame(displayContextKey, graphicsPipelineKey);
 		gEnv->nMainFrameID = m_env.pRenderer->GetFrameID(false);
 	}
 	else
@@ -187,76 +244,72 @@ int   StrToPhysHelpers(const char* strHelpers);
 //////////////////////////////////////////////////////////////////////////
 void CSystem::RenderEnd(bool bRenderStats)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	if (m_bIgnoreUpdates)
+		return;
+
+	CRY_PROFILE_FUNCTION(PROFILE_SYSTEM);
+	CRY_PROFILE_MARKER(PROFILE_SYSTEM, "CSystem::RenderEnd");
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "CSystem::RenderEnd");
+
+	if (!m_env.pRenderer)
 	{
-		FUNCTION_PROFILER(GetISystem(), PROFILE_SYSTEM);
-
-		if (m_bIgnoreUpdates)
-			return;
-
-		if (!m_env.pRenderer)
-		{
-			if (bRenderStats)
-			{
-				RenderStatistics();
-			}
-			if (m_pNULLRenderAuxGeom)
-			{
-#if !defined (_RELEASE)
-				if (m_pPhysRenderer)
-				{
-					RenderPhysicsHelpers();
-				}
-#endif
-				m_pNULLRenderAuxGeom->EndFrame();
-			}
-			return;
-		}
-		/*
-		    if(m_env.pMovieSystem)
-		      m_env.pMovieSystem->Render();
-		 */
-
-		GetPlatformOS()->RenderEnd();
-
-#if !defined (_RELEASE)
-		// Flush render data and swap buffers.
-		m_env.pRenderer->RenderDebug(bRenderStats);
-#endif
-
-		RenderJobStats();
-
-#if defined(USE_PERFHUD)
-		if (m_pPerfHUD)
-			m_pPerfHUD->Draw();
-		if (m_pMiniGUI)
-			m_pMiniGUI->Draw();
-#endif
-
 		if (bRenderStats)
 		{
 			RenderStatistics();
 		}
-
-		if (IConsole* pConsole = GetIConsole())
-			pConsole->Draw();
-
-		m_env.pRenderer->ForceGC(); // XXX Rename this
-		m_env.pRenderer->EndFrame();
-
-		if (IConsole* pConsole = GetIConsole())
+		if (m_pNULLRenderAuxGeom)
 		{
-			// if we have pending cvar calculation, execute it here
-			// since we know cvars will be correct here after ->EndFrame().
-			if (!pConsole->IsHashCalculated())
-				pConsole->CalcCheatVarHash();
+#if !defined (_RELEASE)
+			if (m_pPhysRenderer)
+			{
+				RenderPhysicsHelpers();
+			}
+#endif
+			m_pNULLRenderAuxGeom->EndFrame();
 		}
+		return;
+	}
+	/*
+	   if(m_env.pMovieSystem)
+	   m_env.pMovieSystem->Render();
+	 */
 
+	GetPlatformOS()->RenderEnd();
+
+#if !defined (_RELEASE)
+	// Flush render data and swap buffers.
+	m_env.pRenderer->RenderDebug(bRenderStats);
+#endif
+
+	RenderJobStats();
+
+#if defined(USE_PERFHUD)
+	if (m_pPerfHUD)
+		m_pPerfHUD->Draw();
+	if (m_pMiniGUI)
+		m_pMiniGUI->Draw();
+#endif
+
+	if (bRenderStats)
+	{
+		RenderStatistics();
 	}
 
-#if defined(USE_FRAME_PROFILER)
-	gEnv->bDeepProfiling = m_sys_profile_deep->GetIVal();
-#endif
+	if (IConsole* pConsole = GetIConsole())
+		pConsole->Draw();
+
+	gEnv->GetJobManager()->SetMainDoneTime(m_env.pTimer->GetAsyncTime());
+
+	m_env.pRenderer->ForceGC(); // XXX Rename this
+	m_env.pRenderer->EndFrame();
+
+	if (IConsole* pConsole = GetIConsole())
+	{
+		// if we have pending cvar calculation, execute it here
+		// since we know cvars will be correct here after ->EndFrame().
+		if (!pConsole->IsHashCalculated())
+			pConsole->CalcCheatVarHash();
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -280,7 +333,7 @@ void CSystem::RenderPhysicsHelpers()
 	}
 
 	if (m_env.pAuxGeomRenderer)
-		m_env.pAuxGeomRenderer->Flush();
+		m_env.pAuxGeomRenderer->Submit();
 #endif
 }
 
@@ -298,11 +351,51 @@ void CSystem::RenderPhysicsStatistics(IPhysicalWorld* pWorld)
 		const float fontSize      = 1.3f;
 		ITextModeConsole*  pTMC   = GetITextModeConsole();
 		phys_profile_info* pInfos;
-		phys_job_info* pJobInfos;
 		PhysicsVars* pVars = pWorld->GetPhysVars();
-		int  i             = -2;
+		int  i             = -1;
 		char msgbuf[512];
 
+		if (pVars->bProfileGroups)
+		{
+			int j = 0, mask, nGroups = pWorld->GetGroupProfileInfo(pInfos);
+			float fColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+			if (!pVars->bProfileEntities)
+				j = 12;
+
+			for (++i; j < nGroups; j++, i++)
+			{
+				pInfos[j].nTicksAvg   = (int)(((int64)pInfos[j].nTicksAvg * 15 + pInfos[j].nTicksLast) >> 4);
+				mask                  = (pInfos[j].nTicksPeak - pInfos[j].nTicksLast) >> 31;
+				mask                 |= (70 - pInfos[j].peakAge) >> 31;
+				pInfos[j].nTicksPeak += pInfos[j].nTicksLast - pInfos[j].nTicksPeak & mask;
+				pInfos[j].nCallsPeak += pInfos[j].nCallsLast - pInfos[j].nCallsPeak & mask;
+				float time     = gEnv->pTimer->TicksToSeconds(pInfos[j].nTicksAvg) * 1000.0f;
+				float timeNorm = time * (1.0f / 32);
+				fColor[1] = fColor[2] = 1.0f - (max(0.7f, min(1.0f, timeNorm)) - 0.7f) * (1.0f / 0.3f);
+				IRenderAuxText::Draw2dLabel(renderMarginX, renderMarginY + i * lineSize, fontSize, fColor, false,
+				                            "%s %.2fms/%d (peak %.2fms/%d)", pInfos[j].pName, time, pInfos[j].nCallsLast,
+				                            gEnv->pTimer->TicksToSeconds(pInfos[j].nTicksPeak) * 1000.0f, pInfos[j].nCallsPeak);
+				pInfos[j].peakAge = pInfos[j].peakAge + 1 & ~mask;
+				if (j == nGroups - 3) ++i;
+			}
+		}
+		if (pVars->bProfileFunx)
+		{
+			int j, mask, nFunx = pWorld->GetFuncProfileInfo(pInfos);
+			float fColor[4] = { 0.75f, 0.08f, 0.85f, 1.0f };
+			for (j = 0, ++i; j < nFunx; j++, i++)
+			{
+				mask                  = (pInfos[j].nTicksPeak - pInfos[j].nTicks) >> 31;
+				mask                 |= (70 - pInfos[j].peakAge) >> 31;
+				pInfos[j].nTicksPeak += pInfos[j].nTicks - pInfos[j].nTicksPeak & mask;
+				pInfos[j].nCallsPeak += pInfos[j].nCalls - pInfos[j].nCallsPeak & mask;
+				IRenderAuxText::Draw2dLabel(renderMarginX, renderMarginY + i * lineSize, fontSize, fColor, false,
+				                            "%s %.2fms/%d (peak %.2fms/%d)", pInfos[j].pName, gEnv->pTimer->TicksToSeconds(pInfos[j].nTicks) * 1000.0f, pInfos[j].nCalls,
+				                            gEnv->pTimer->TicksToSeconds(pInfos[j].nTicksPeak) * 1000.0f, pInfos[j].nCallsPeak);
+				pInfos[j].peakAge = pInfos[j].peakAge + 1 & ~mask;
+				pInfos[j].nCalls  = pInfos[j].nTicks = 0;
+			}
+		}
 		if (pVars->bProfileEntities == 1)
 		{
 			pe_status_pos sp;
@@ -320,11 +413,13 @@ void CSystem::RenderPhysicsStatistics(IPhysicalWorld* pWorld)
 			{
 				nMaxEntities = 0;
 			}
-			int j, mask, nEnts = pWorld->GetEntityProfileInfo(pInfos);
+			int j, mask, nEnts = pWorld->GetEntityProfileInfo(pInfos), line0 = ++i;
 			if (nEnts > nMaxEntities)
 			{
 				nEnts = nMaxEntities;
 			}
+			for(; nEnts > 0 && pInfos[nEnts - 1].nCallsLast + pInfos[nEnts - 1].nCallsAvg < 0.2f; nEnts--)
+				;
 
 			if (!pVars->bSingleStepMode)
 			{
@@ -342,7 +437,7 @@ void CSystem::RenderPhysicsStatistics(IPhysicalWorld* pWorld)
 							pInfos[j - 1] = pInfos[j];
 							pInfos[j]     = ppi;
 						}
-					}
+			}
 			for (i = 0; i < nEnts; i++)
 			{
 				mask                  = (pInfos[i].nTicksPeak - pInfos[i].nTicksLast) >> 31;
@@ -351,10 +446,10 @@ void CSystem::RenderPhysicsStatistics(IPhysicalWorld* pWorld)
 				pInfos[i].nTicksPeak += pInfos[i].nTicksLast - pInfos[i].nTicksPeak & mask;
 				pInfos[i].nCallsPeak += pInfos[i].nCallsLast - pInfos[i].nCallsPeak & mask;
 				cry_sprintf(msgbuf, "%.2fms/%.1f (peak %.2fms/%d) %s (id %d)",
-				  dt = gEnv->pTimer->TicksToSeconds(pInfos[i].nTicksAvg) * 1000.0f, pInfos[i].nCallsAvg,
-				  gEnv->pTimer->TicksToSeconds(pInfos[i].nTicksPeak) * 1000.0f, pInfos[i].nCallsPeak,
-				  pInfos[i].pName ? pInfos[i].pName : "", pInfos[i].id);
-				IRenderAuxText::Draw2dLabel(renderMarginX, renderMarginY + i * lineSize, fontSize, fColor, false, "%s", msgbuf);
+				            dt = gEnv->pTimer->TicksToSeconds(pInfos[i].nTicksAvg) * 1000.0f, pInfos[i].nCallsAvg,
+				            gEnv->pTimer->TicksToSeconds(pInfos[i].nTicksPeak) * 1000.0f, pInfos[i].nCallsPeak,
+				            pInfos[i].pName ? pInfos[i].pName : "", pInfos[i].id);
+				IRenderAuxText::Draw2dLabel(renderMarginX, renderMarginY + (i + line0) * lineSize, fontSize, fColor, false, "%s", msgbuf);
 				if (pTMC) pTMC->PutText(0, i, msgbuf);
 				IPhysicalEntity* pent = pWorld->GetPhysicalEntityById(pInfos[i].id);
 				if (dt > 0.1f && pInfos[i].pName && pent && pent->GetStatus(&sp))
@@ -378,47 +473,6 @@ void CSystem::RenderPhysicsStatistics(IPhysicalWorld* pWorld)
 					pPlayerEnt->SetRotation(Quat(IDENTITY));
 				}
 				m_iJumpToPhysProfileEnt = 0;
-			}
-		}
-		if (pVars->bProfileFunx)
-		{
-			int j, mask, nFunx = pWorld->GetFuncProfileInfo(pInfos);
-			float fColor[4] = { 0.75f, 0.08f, 0.85f, 1.0f };
-			for (j = 0, ++i; j < nFunx; j++, i++)
-			{
-				mask                  = (pInfos[j].nTicksPeak - pInfos[j].nTicks) >> 31;
-				mask                 |= (70 - pInfos[j].peakAge) >> 31;
-				pInfos[j].nTicksPeak += pInfos[j].nTicks - pInfos[j].nTicksPeak & mask;
-				pInfos[j].nCallsPeak += pInfos[j].nCalls - pInfos[j].nCallsPeak & mask;
-				IRenderAuxText::Draw2dLabel(renderMarginX, renderMarginY + i * lineSize, fontSize, fColor, false,
-				  "%s %.2fms/%d (peak %.2fms/%d)", pInfos[j].pName, gEnv->pTimer->TicksToSeconds(pInfos[j].nTicks) * 1000.0f, pInfos[j].nCalls,
-				  gEnv->pTimer->TicksToSeconds(pInfos[j].nTicksPeak) * 1000.0f, pInfos[j].nCallsPeak);
-				pInfos[j].peakAge = pInfos[j].peakAge + 1 & ~mask;
-				pInfos[j].nCalls  = pInfos[j].nTicks = 0;
-			}
-		}
-		if (pVars->bProfileGroups)
-		{
-			int j           = 0, mask, nGroups = pWorld->GetGroupProfileInfo(pInfos), nJobs = pWorld->GetJobProfileInfo(pJobInfos);
-			float fColor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-			if (!pVars->bProfileEntities)
-				j = 12;
-
-			for (++i; j < nGroups; j++, i++)
-			{
-				pInfos[j].nTicksAvg   = (int)(((int64)pInfos[j].nTicksAvg * 15 + pInfos[j].nTicksLast) >> 4);
-				mask                  = (pInfos[j].nTicksPeak - pInfos[j].nTicksLast) >> 31;
-				mask                 |= (70 - pInfos[j].peakAge) >> 31;
-				pInfos[j].nTicksPeak += pInfos[j].nTicksLast - pInfos[j].nTicksPeak & mask;
-				pInfos[j].nCallsPeak += pInfos[j].nCallsLast - pInfos[j].nCallsPeak & mask;
-				float time     = gEnv->pTimer->TicksToSeconds(pInfos[j].nTicksAvg) * 1000.0f;
-				float timeNorm = time * (1.0f / 32);
-				fColor[1] = fColor[2] = 1.0f - (max(0.7f, min(1.0f, timeNorm)) - 0.7f) * (1.0f / 0.3f);
-				IRenderAuxText::Draw2dLabel(renderMarginX, renderMarginY + i * lineSize, fontSize, fColor, false,
-				  "%s %.2fms/%d (peak %.2fms/%d)", pInfos[j].pName, time, pInfos[j].nCallsLast,
-				  gEnv->pTimer->TicksToSeconds(pInfos[j].nTicksPeak) * 1000.0f, pInfos[j].nCallsPeak);
-				pInfos[j].peakAge = pInfos[j].peakAge + 1 & ~mask;
-				if (j == nGroups - 3) ++i;
 			}
 		}
 		if (pVars->bProfileEntities == 2)
@@ -450,47 +504,12 @@ void CSystem::RenderJobStats()
 
 	gEnv->GetJobManager()->Update(m_sys_job_system_profiler->GetIVal());
 	gEnv->GetJobManager()->SetJobSystemEnabled(m_sys_job_system_enable->GetIVal());
-
-	JobManager::IBackend* const __restrict pThreadBackEnd   = gEnv->GetJobManager()->GetBackEnd(JobManager::eBET_Thread);
-	JobManager::IBackend* const __restrict pBlockingBackEnd = gEnv->GetJobManager()->GetBackEnd(JobManager::eBET_Blocking);
-
-#if defined(ENABLE_PROFILING_CODE)
-	if (m_sys_profile->GetIVal() != 0)
-	{
-#if defined(JOBMANAGER_SUPPORT_FRAMEPROFILER)
-
-		// Get none-blocking job & worker profile stats
-		if (pThreadBackEnd)
-		{
-			JobManager::IWorkerBackEndProfiler* pWorkerProfiler = pThreadBackEnd->GetBackEndWorkerProfiler();
-
-			if (pWorkerProfiler)
-			{
-				m_FrameProfileSystem.ValThreadFrameStatsCapacity(pWorkerProfiler->GetNumWorkers());
-				pWorkerProfiler->GetFrameStats(*m_FrameProfileSystem.m_ThreadFrameStats, m_FrameProfileSystem.m_ThreadJobFrameStats, JobManager::IWorkerBackEndProfiler::eJobSortOrder_Lexical);
-			}
-		}
-
-		// Get blocking job & worker profile stats
-		if (pBlockingBackEnd)
-		{
-			JobManager::IWorkerBackEndProfiler* pWorkerProfiler = pBlockingBackEnd->GetBackEndWorkerProfiler();
-
-			if (pWorkerProfiler)
-			{
-				m_FrameProfileSystem.ValBlockingFrameStatsCapacity(pWorkerProfiler->GetNumWorkers());
-				pWorkerProfiler->GetFrameStats(*m_FrameProfileSystem.m_BlockingFrameStats, m_FrameProfileSystem.m_BlockingJobFrameStats, JobManager::IWorkerBackEndProfiler::eJobSortOrder_Lexical);
-			}
-		}
-#endif
-	}
-#endif
 }
 
 //! Update screen and call some important tick functions during loading.
 void CSystem::SynchronousLoadingTick(const char* pFunc, int line)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	if (gEnv && gEnv->bMultiplayer && !gEnv->IsEditor())
 	{
 		//UpdateLoadingScreen currently contains a couple of tick functions that need to be called regularly during the synchronous level loading,
@@ -540,16 +559,16 @@ void CSystem::UpdateLoadingScreen()
 		return;
 	}
 #if defined(CHECK_UPDATE_TIMES)
-#if CRY_PLATFORM_DURANGO
+	#if CRY_PLATFORM_DURANGO
 	else if (timeDelta > 1.0f)
 	{
 		CryWarning(VALIDATOR_MODULE_SYSTEM, VALIDATOR_WARNING, "CSystem::UpdateLoadingScreen %f seconds since last tick: this is a long delay and a serious risk for failing XBOX ONE TCR - XR-004-01 \n", timeDelta);
 	}
-#endif
+	#endif
 #endif
 	t0 = t;
 
-	if (!m_bEditor && !m_bQuit)
+	if (!m_env.IsEditor() && !m_bQuit)
 	{
 		if (m_pProgressListener)
 		{
@@ -574,9 +593,9 @@ void CSystem::UpdateLoadingScreen()
 //////////////////////////////////////////////////////////////////////////
 
 void CSystem::DisplayErrorMessage(const char* acMessage,
-  float                                       fTime,
-  const float*                                pfColor,
-  bool                                        bHardError)
+                                  float fTime,
+                                  const float* pfColor,
+                                  bool bHardError)
 {
 	SErrorMessage message;
 	message.m_Message = acMessage;
@@ -592,11 +611,7 @@ void CSystem::DisplayErrorMessage(const char* acMessage,
 		message.m_Color[3] = 1.0f;
 	}
 	message.m_HardFailure = bHardError;
-#ifdef _RELEASE
 	message.m_fTimeToShow = fTime;
-#else
-	message.m_fTimeToShow = 1.0f;
-#endif
 	m_ErrorMessages.push_back(message);
 }
 
@@ -607,11 +622,10 @@ void CSystem::DisplayErrorMessage(const char* acMessage,
 void CSystem::RenderStatistics()
 {
 	RenderStats();
-#if defined(USE_FRAME_PROFILER)
+
 	// Render profile info.
-	m_FrameProfileSystem.Render();
-	if (m_pThreadProfiler)
-		m_pThreadProfiler->Render();
+	if(m_pProfileRenderer && m_pLegacyProfiler)
+		m_pProfileRenderer->Render(m_pLegacyProfiler);
 
 #if defined(USE_DISK_PROFILER)
 	if (m_pDiskProfiler)
@@ -619,59 +633,8 @@ void CSystem::RenderStatistics()
 #endif
 
 	RenderMemStats();
+	RenderMemoryInfo();
 
-	if (m_sys_profile_sampler->GetIVal() > 0)
-	{
-		m_sys_profile_sampler->Set(0);
-		m_FrameProfileSystem.StartSampling(m_sys_profile_sampler_max_samples->GetIVal());
-	}
-
-	// Update frame profiler from sys variable: 1 = enable and display, -1 = just enable
-	int profValue            = m_sys_profile->GetIVal();
-	static int prevProfValue = -100;
-	bool bEnable             = profValue != 0;
-	bool bDisplay            = profValue > 0;
-	if (prevProfValue != profValue)
-	{
-		prevProfValue = profValue;
-		int dispNum = abs(profValue);
-		m_FrameProfileSystem.SetDisplayQuantity((CFrameProfileSystem::EDisplayQuantity)(dispNum - 1));
-	}
-	if (bEnable != m_FrameProfileSystem.IsEnabled() || bDisplay != m_FrameProfileSystem.IsVisible())
-	{
-		m_FrameProfileSystem.Enable(bEnable, bDisplay);
-	}
-	if (m_FrameProfileSystem.IsEnabled())
-	{
-		static string sSysProfileFilter;
-		if (stricmp(m_sys_profile_filter->GetString(), sSysProfileFilter.c_str()) != 0)
-		{
-			sSysProfileFilter = m_sys_profile_filter->GetString();
-			m_FrameProfileSystem.SetSubsystemFilter(sSysProfileFilter.c_str());
-		}
-		static string sSysProfileFilterThread;
-		if (0 != sSysProfileFilterThread.compare(m_sys_profile_filter_thread->GetString()))
-		{
-			sSysProfileFilterThread = m_sys_profile_filter_thread->GetString();
-			m_FrameProfileSystem.SetSubsystemFilterThread(sSysProfileFilterThread.c_str());
-			m_sys_profile_allThreads->Set(1);
-		}
-		m_FrameProfileSystem.SetHistogramScale(m_sys_profile_graphScale->GetFVal());
-		m_FrameProfileSystem.SetDrawGraph(m_sys_profile_graph->GetIVal() != 0);
-		m_FrameProfileSystem.SetNetworkProfiler(m_sys_profile_network->GetIVal() != 0);
-		m_FrameProfileSystem.SetPeakTolerance(m_sys_profile_peak->GetFVal());
-		m_FrameProfileSystem.SetPageFaultsGraph(m_sys_profile_pagefaultsgraph->GetIVal() != 0);
-		m_FrameProfileSystem.SetPeakDisplayDuration(m_sys_profile_peak_time->GetFVal());
-		m_FrameProfileSystem.SetAdditionalSubsystems(m_sys_profile_additionalsub->GetIVal() != 0);
-	}
-	static int memProfileValueOld = 0;
-	int memProfileValue           = m_sys_profile_memory->GetIVal();
-	if (memProfileValue != memProfileValueOld)
-	{
-		memProfileValueOld = memProfileValue;
-		m_FrameProfileSystem.EnableMemoryProfile(memProfileValue != 0);
-	}
-#endif
 	if (gEnv->pScaleformHelper)
 	{
 		gEnv->pScaleformHelper->RenderFlashInfo();
@@ -692,7 +655,7 @@ void CSystem::RenderStatistics()
 }
 
 //////////////////////////////////////////////////////////////////////
-void CSystem::Render()
+void CSystem::Render(const SGraphicsPipelineKey& graphicsPipelineKey)
 {
 	if (m_bIgnoreUpdates)
 		return;
@@ -701,50 +664,37 @@ void CSystem::Render()
 	if (!m_pProcess)
 		return; //should never happen
 
-	FUNCTION_PROFILER(GetISystem(), PROFILE_SYSTEM);
+	CRY_PROFILE_FUNCTION(PROFILE_SYSTEM);
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "CSystem::Render");
 
 	//////////////////////////////////////////////////////////////////////
 	//draw
 	m_env.p3DEngine->PreWorldStreamUpdate(m_ViewCamera);
 
-	if (m_pProcess && !m_bDedicatedServer)
+	const int nRenderingFlags = SHDF_ZPASS | SHDF_ALLOWHDR | SHDF_ALLOWPOSTPROCESS | SHDF_ALLOW_WATER | SHDF_ALLOW_AO | SHDF_ALLOW_SKY;
+
+	if (m_env.pRenderer)
 	{
 		if (m_pProcess->GetFlags() & PROC_3DENGINE)
 		{
 			if (!m_env.IsEditing())  // Editor calls it's own rendering update
 			{
-
-#if !defined(_RELEASE)
-				if (m_pTestSystem)
-					m_pTestSystem->BeforeRender();
-#endif
-
-				if (m_env.pRenderer && m_env.p3DEngine && !m_env.IsFMVPlaying())
+				if (m_env.p3DEngine && !m_env.IsFMVPlaying())
 				{
 					if ((!IsEquivalent(m_ViewCamera.GetPosition(), Vec3(0, 0, 0), VEC_EPSILON) && (!IsLoading())) || // never pass undefined camera to p3DEngine->RenderWorld()
-						m_env.IsDedicated() || m_env.pRenderer->IsPost3DRendererEnabled())
+					    m_env.IsDedicated() || m_env.pRenderer->IsPost3DRendererEnabled())
 					{
-						GetIRenderer()->SetViewport(0, 0, GetIRenderer()->GetWidth(), GetIRenderer()->GetHeight());
-						m_env.p3DEngine->RenderWorld(SHDF_ALLOW_WATER | SHDF_ALLOWPOSTPROCESS | SHDF_ALLOWHDR | SHDF_ZPASS | SHDF_ALLOW_AO, SRenderingPassInfo::CreateGeneralPassRenderingInfo(m_ViewCamera), __FUNCTION__);
+						m_env.p3DEngine->RenderWorld(nRenderingFlags, SRenderingPassInfo::CreateGeneralPassRenderingInfo(graphicsPipelineKey, m_ViewCamera), __FUNCTION__);
 					}
 					else
 					{
-						// force rendering of black screen to be sure we don't only render the clear color (which is the fog color by default)
-						m_env.pRenderer->SetState(GS_BLSRC_SRCALPHA | GS_BLDST_ONEMINUSSRCALPHA | GS_NODEPTHTEST);
-						m_env.pRenderer->Draw2dImage(0, 0, 800, 600, -1, 0.0f, 0.0f, 1.0f, 1.0f, 0.f, 0.0f, 0.0f, 0.0f, 1.0f, 0.f);
+						m_env.pRenderer->FillFrame(Col_Black);
 					}
 				}
 
 #if !defined(_RELEASE)
 				if (m_pVisRegTest)
 					m_pVisRegTest->AfterRender();
-				if (m_pTestSystem)
-					m_pTestSystem->AfterRender();
-
-				//			m_pProcess->Draw();
-
-				if (m_env.pEntitySystem)
-					m_env.pEntitySystem->DebugDraw();
 
 				if (m_env.pAISystem)
 					m_env.pAISystem->DebugDraw();
@@ -756,8 +706,7 @@ void CSystem::Render()
 		}
 		else
 		{
-			GetIRenderer()->SetViewport(0, 0, GetIRenderer()->GetWidth(), GetIRenderer()->GetHeight());
-			m_pProcess->RenderWorld(SHDF_ALLOW_WATER | SHDF_ALLOWPOSTPROCESS | SHDF_ALLOWHDR | SHDF_ZPASS | SHDF_ALLOW_AO, SRenderingPassInfo::CreateGeneralPassRenderingInfo(m_ViewCamera), __FUNCTION__);
+			m_pProcess->RenderWorld(nRenderingFlags, SRenderingPassInfo::CreateGeneralPassRenderingInfo(graphicsPipelineKey, m_ViewCamera), __FUNCTION__);
 		}
 	}
 
@@ -765,10 +714,6 @@ void CSystem::Render()
 #if !defined (_RELEASE) && CRY_PLATFORM_DURANGO
 	RenderPhysicsHelpers();
 #endif
-	if (m_env.pRenderer)
-	{
-		m_env.pRenderer->SwitchToNativeResolutionBackbuffer();
-	}
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -784,11 +729,11 @@ void CSystem::RenderMemStats()
 
 	TickMemStats();
 
-	assert (m_pMemStats);
+	assert(m_pMemStats);
 	m_pMemStats->updateKeys();
 	// render the statistics
 	{
-		CrySizerStatsRenderer StatsRenderer (this, m_pMemStats, m_cvMemStatsMaxDepth->GetIVal(), m_cvMemStatsThreshold->GetIVal());
+		CrySizerStatsRenderer StatsRenderer(this, m_pMemStats, m_cvMemStatsMaxDepth->GetIVal(), m_cvMemStatsThreshold->GetIVal());
 		StatsRenderer.render((m_env.pRenderer->GetFrameID(false) + 2) % m_cvMemStats->GetIVal() <= 1);
 	}
 #endif
@@ -804,7 +749,7 @@ void CSystem::RenderStats()
 	}
 
 #if defined(ENABLE_PROFILING_CODE)
-#ifndef _RELEASE
+	#ifndef _RELEASE
 	// if we rendered an error message on screen during the last frame, then sleep now
 	// to force hard stall for 3sec
 	if (m_bHasRenderedErrorMessage && !gEnv->IsEditor() && !IsLoading())
@@ -812,10 +757,10 @@ void CSystem::RenderStats()
 		// DO NOT REMOVE OR COMMENT THIS OUT!
 		// If you hit this, then you most likely have invalid (synchronous) file accesses
 		// which must be fixed in order to not stall the entire game.
-		Sleep(3000);
+		CrySleep(3000);
 		m_bHasRenderedErrorMessage = false;
 	}
-#endif
+	#endif
 
 	// render info messages on screen
 	float fTextPosX  = 5.0f;
@@ -868,27 +813,7 @@ void CSystem::RenderStats()
 #if defined(ENABLE_LW_PROFILERS)
 		if (m_rDisplayInfo->GetIVal() == 2)
 		{
-			IRenderAuxText::TextToScreenF(nTextPosX, nTextPosY += nTextStepY, "SysMem %.1f mb",
-			  float(DumpMMStats(false)) / 1024.f);
-
-			//if (m_env.pAudioSystem)
-			//{
-			//	SSoundMemoryInfo SoundMemInfo;
-			//	m_env.pAudioSystem->GetInterfaceExtended()->GetMemoryInfo(&SoundMemInfo);
-			//	m_env.pRenderer->TextToScreen( nTextPosX-18, nTextPosY+=nTextStepY, "------------Sound %2.1f/%2.1f mb",
-			//		SoundMemInfo.fSoundBucketPoolUsedInMB + SoundMemInfo.fSoundPrimaryPoolUsedInMB + SoundMemInfo.fSoundSecondaryPoolUsedInMB,
-			//		/*SoundMemInfo.fSoundBucketPoolSizeInMB +*/ SoundMemInfo.fSoundPrimaryPoolSizeInMB + SoundMemInfo.fSoundSecondaryPoolSizeInMB);
-			//}
-		}
-#endif
-
-#if 0
-		for (int i = 0; i < NUM_POOLS; ++i)
-		{
-			int used     = (g_pPakHeap->m_iBigPoolUsed[i] ? (int)g_pPakHeap->m_iBigPoolSize[i] : 0);
-			int size     = (int)g_pPakHeap->m_iBigPoolSize[i];
-			float fC1[4] = {1, 1, 0, 1};
-			m_env.pRenderer->Draw2dLabel(10, 100.0f + i * 16, 2.1f, fC1, false, "BigPool %d: %d bytes of %d bytes used", i, used, size);
+			IRenderAuxText::TextToScreenF(nTextPosX, nTextPosY += nTextStepY, "SysMem %.1f mb", float(DumpMMStats(false)) / 1024.f);
 		}
 #endif
 	}
@@ -903,7 +828,6 @@ void CSystem::RenderOverscanBorders()
 		int iOverscanBordersDrawDebugView = m_rOverscanBordersDrawDebugView->GetIVal();
 		if (iOverscanBordersDrawDebugView)
 		{
-			const int texId          = -1;
 			const float uv           = 0.0f;
 			const float rot          = 0.0f;
 			const int whiteTextureId = m_env.pRenderer->GetWhiteTextureId();
@@ -924,13 +848,13 @@ void CSystem::RenderOverscanBorders()
 			const float width  = VIRTUAL_SCREEN_WIDTH - (2.0f * overscanBorderWidth);
 			const float height = VIRTUAL_SCREEN_HEIGHT - (2.0f * overscanBorderHeight);
 
-			m_env.pRenderer->SetState(GS_BLSRC_SRCALPHA | GS_BLDST_ONEMINUSSRCALPHA | GS_NODEPTHTEST);
-			m_env.pRenderer->Draw2dImage(xPos, yPos,
-			  width, height,
-			  whiteTextureId,
-			  uv, uv, uv, uv,
-			  rot,
-			  r, g, b, a);
+			//m_env.pRenderer->SetState(GS_BLSRC_SRCALPHA | GS_BLDST_ONEMINUSSRCALPHA | GS_NODEPTHTEST);
+			IRenderAuxImage::Draw2dImage(xPos, yPos,
+			                             width, height,
+			                             whiteTextureId,
+			                             uv, uv, uv, uv,
+			                             rot,
+			                             r, g, b, a);
 		}
 	}
 #endif
@@ -982,7 +906,7 @@ void CSystem::RenderThreadInfo()
 		}
 
 		float  nX     = 5, nY = 10, dY = 12, dX = 10;
-		float  fFSize = 1.2;
+		float  fFSize = 1.2f;
 		ColorF col1   = Col_Yellow;
 		ColorF col2   = Col_Red;
 
@@ -1001,3 +925,284 @@ void CSystem::RenderThreadInfo()
 	}
 #endif
 }
+
+#if CRY_PLATFORM_WINDOWS && !defined(_LIB)
+#	define USE_PE_HEADER 1
+#else
+#	define USE_PE_HEADER 0
+#endif
+
+#if USE_PE_HEADER
+#	pragma pack(push,1)
+	const struct PEHeader
+	{
+		DWORD                 signature;
+		IMAGE_FILE_HEADER     _head;
+		IMAGE_OPTIONAL_HEADER opt_head;
+		IMAGE_SECTION_HEADER* section_header;  // actual number in NumberOfSections
+	};
+#	pragma pack(pop)
+#endif
+
+void DrawLabel(float col, float row, const float* fColor, const char* szText)
+{
+	const float ColumnSize = 11;
+	const float RowSize = 11;
+
+	const ColorF color(fColor[0], fColor[1], fColor[2], fColor[3]);
+	const float scale = 1.5f;
+	const int flags = eDrawText_2D | eDrawText_FixedSize | eDrawText_Monospace;
+
+	IRenderAuxText::DrawText(Vec3(ColumnSize * col, RowSize * row, 0.5f), scale, color, flags, szText);
+
+	if (ITextModeConsole* pTC = gEnv->pSystem->GetITextModeConsole())
+	{
+		pTC->PutText((int)col, (int)(row - 1), szText);
+	}
+}
+
+void CSystem::RenderMemoryInfo()
+{
+	// write to log, if just changed (turned on)
+	static int memProfileValueOld = 0;
+	if (memProfileValueOld != profile_meminfo)
+	{
+		m_logMemoryInfo = true;
+		memProfileValueOld = profile_meminfo;
+	}
+	if (!profile_meminfo)
+		return;
+
+#if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID || CRY_PLATFORM_DURANGO
+
+	if (!gEnv->pRenderer)
+		return;
+
+	const float col = 0;
+	const float col1 = col + 20;
+	const float col2 = col1 + 20;
+#if USE_PE_HEADER
+	const float col3 = col2 + 12;
+#else
+	const float col3 = col2;
+#endif
+	float col4 = col3 + 12;
+
+	const float HeaderColor[4] = { 0.3f, 1, 1, 1 };
+	const float ModuleColor[4] = { 1, 1, 1, 1 };
+	const float StaticColor[4] = { 1, 1, 1, 1 };
+	const float NumColor[4] = { 1, 0, 1, 1 };
+	const float TotalColor[4] = { 1, 1, 1, 1 };
+	ILog* pLog = gEnv->pLog;
+
+	float row = 1;
+	char szText[128];
+
+	//////////////////////////////////////////////////////////////////////////
+	// Show memory usage.
+	//////////////////////////////////////////////////////////////////////////
+	uint64 memUsage = 0;//CryMemoryGetAllocatedSize();
+	int64 totalAll = 0;
+	int luaMemUsage = gEnv->pScriptSystem->GetScriptAllocSize();
+
+	row++; // reserve for static.
+	row++;
+	row++;
+
+	cry_sprintf(szText, "Lua Allocated Memory: %d KB", luaMemUsage / 1024);
+	DrawLabel(col, row++, HeaderColor, szText);
+
+	if (m_logMemoryInfo) pLog->Log(szText);
+	//////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////////////////
+
+	DrawLabel(col, row++, HeaderColor, "-----------------------------------------------------------------------------------------------------------------------------------");
+	DrawLabel(col, row, HeaderColor, "Module");
+	DrawLabel(col1, row, HeaderColor, "Dynamic(MB)");
+#if USE_PE_HEADER
+	DrawLabel(col2, row, HeaderColor, "Static(KB)");
+#endif
+	DrawLabel(col3, row, HeaderColor, "Num Allocs");
+	DrawLabel(col4, row, HeaderColor, "Total Allocs(KB)");
+	float col5 = col4 + 20;
+	DrawLabel(col5, row, HeaderColor, "Total Wasted(KB)");
+	int totalUsedInModulesStatic = 0;
+
+	row++;
+
+	uint64 totalUsedInModules = 0;
+	int countedMemoryModules = 0;
+	uint64 totalAllocatedInModules = 0;
+	int totalNumAllocsInModules = 0;
+
+	const std::vector<string>& szModules = GetModuleNames();
+	const int numModules = szModules.size();
+
+	for (int i = 0; i < numModules; i++)
+	{
+#if USE_PE_HEADER
+		PEHeader* header = nullptr;
+#endif
+
+		typedef void(*PFN_MODULEMEMORY)(CryModuleMemoryInfo*);
+#ifndef _LIB
+		const char* szModule = szModules[i];
+#if CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID
+		char path[_MAX_PATH];
+		cry_sprintf(path, "./%s", szModule);
+#if CRY_PLATFORM_ANDROID
+		HMODULE hModule = dlopen(path, RTLD_LAZY);
+#else
+		HMODULE hModule = dlopen(path, RTLD_LAZY | RTLD_NOLOAD);
+#endif
+#else
+		HMODULE hModule = GetModuleHandle(szModule);
+#endif
+		if (!hModule)
+		{
+			continue;
+		}
+		
+		PFN_MODULEMEMORY fpCryModuleGetAllocatedMemory = (PFN_MODULEMEMORY) CryGetProcAddress(hModule, "CryModuleGetMemoryInfo");
+		if (!fpCryModuleGetAllocatedMemory)
+			continue;
+#else // _LIB
+		PFN_MODULEMEMORY fpCryModuleGetAllocatedMemory = &CryModuleGetMemoryInfo;
+		const char* szModule = "Unknown";
+#endif
+
+#if USE_PE_HEADER
+		const IMAGE_DOS_HEADER* dos_head = (IMAGE_DOS_HEADER*)hModule;
+		if (dos_head->e_magic != IMAGE_DOS_SIGNATURE)
+		{
+			// Wrong pointer, not to PE header.
+			continue;
+		}
+		header = (PEHeader*)(const void*)((char*)dos_head + dos_head->e_lfanew);
+#endif
+
+		CryModuleMemoryInfo memInfo;
+		memset(&memInfo, 0, sizeof(memInfo));
+		fpCryModuleGetAllocatedMemory(&memInfo);
+
+		uint64 usedInModule = memInfo.allocated - memInfo.freed;
+
+		uint32 moduleStaticSize = 0;
+#if USE_PE_HEADER
+		PREFAST_SUPPRESS_WARNING(28199);
+		PREFAST_SUPPRESS_WARNING(6001) moduleStaticSize = header->opt_head.SizeOfInitializedData + header->opt_head.SizeOfUninitializedData + header->opt_head.SizeOfCode + header->opt_head.SizeOfHeaders;
+#endif
+#ifndef _LIB
+		if (numModules - 1 == i)
+		{
+			usedInModule = 46 * 1024 * 1024;
+			moduleStaticSize = 0;
+		}
+#endif
+
+		totalNumAllocsInModules += memInfo.num_allocations;
+		totalAllocatedInModules += memInfo.allocated;
+		totalUsedInModules += usedInModule;
+		countedMemoryModules++;
+		memUsage += usedInModule + moduleStaticSize;
+#if USE_PE_HEADER
+		totalUsedInModulesStatic += moduleStaticSize;
+#endif
+		string szModuleName = PathUtil::GetFileName(szModule);
+
+		cry_sprintf(szText, "%.19s", szModuleName.c_str());
+		DrawLabel(col, row, ModuleColor, szText);
+		cry_sprintf(szText, "%9.2f", usedInModule / 1024.0f / 1024.0f);
+		DrawLabel(col1, row, StaticColor, szText);
+#if USE_PE_HEADER
+		cry_sprintf(szText, "%7d", moduleStaticSize / 1024);
+		DrawLabel(col2, row, StaticColor, szText);
+#endif
+		cry_sprintf(szText, "%7d", memInfo.num_allocations);
+		DrawLabel(col3, row, NumColor, szText);
+		cry_sprintf(szText, "%7" PRIu64, memInfo.allocated / 1024u);
+
+		DrawLabel(col4, row, TotalColor, szText);
+#if USE_PE_HEADER
+		cry_sprintf(szText, "%7" PRIu64, (memInfo.allocated - memInfo.requested) / 1024u);
+		DrawLabel(col5, row, TotalColor, szText);
+		if (m_logMemoryInfo)
+		{
+			pLog->Log("    %20s | Alloc: %6d Kb  |  Num: %7d  |  TotalAlloc: %8I64d KB  | StaticTotal: %6d KB  | Code: %6d KB |  Init. Data: %6d KB  |  Uninit. Data: %6d KB | %6d | %6d/%6d",
+				szModule,
+				usedInModule / 1024, memInfo.num_allocations, memInfo.allocated / 1024,
+				moduleStaticSize / 1024,
+				header->opt_head.SizeOfCode / 1024,
+				header->opt_head.SizeOfInitializedData / 1024,
+				header->opt_head.SizeOfUninitializedData / 1024,
+				(uint32)memInfo.CryString_allocated / 1024, (uint32)memInfo.STL_allocated / 1024, (uint32)memInfo.STL_wasted / 1024);
+		}
+#else
+		if (m_logMemoryInfo)
+		{
+			pLog->Log("    %20s | Alloc: %6d Kb  |  Num: %7d  |  TotalAlloc: %" PRIu64 "KB",
+				szModule,
+				usedInModule / 1024, memInfo.num_allocations, memInfo.allocated / 1024u);
+		}
+#endif
+		row++;
+	}
+
+	DrawLabel(col, row++, HeaderColor, "-----------------------------------------------------------------------------------------------------------------------------------");
+	cry_sprintf(szText, "Sum %d Modules", countedMemoryModules);
+	DrawLabel(col, row, HeaderColor, szText);
+	cry_sprintf(szText, "%9d", totalUsedInModules / 1024 / 1024);
+	DrawLabel(col1, row, HeaderColor, szText);
+#if USE_PE_HEADER
+	cry_sprintf(szText, "%7d", totalUsedInModulesStatic / 1024);
+	DrawLabel(col2, row, StaticColor, szText);
+#endif
+	cry_sprintf(szText, "%7d", totalNumAllocsInModules);
+	DrawLabel(col3, row, NumColor, szText);
+
+	cry_sprintf(szText, "%7" PRIu64, totalAllocatedInModules / 1024u);
+	DrawLabel(col4, row, TotalColor, szText);
+	row++;
+
+#if CRY_PLATFORM_WINDOWS
+	PROCESS_MEMORY_COUNTERS ProcessMemoryCounters = { sizeof(ProcessMemoryCounters) };
+	GetProcessMemoryInfo(GetCurrentProcess(), &ProcessMemoryCounters, sizeof(ProcessMemoryCounters));
+	SIZE_T WorkingSetSize = ProcessMemoryCounters.WorkingSetSize;
+	SIZE_T QuotaPagedPoolUsage = ProcessMemoryCounters.QuotaPagedPoolUsage;
+	SIZE_T PagefileUsage = ProcessMemoryCounters.PagefileUsage;
+	SIZE_T PageFaultCount = ProcessMemoryCounters.PageFaultCount;
+
+	cry_sprintf(szText, "WindowsInfo: PagefileUsage: %u WorkingSetSize: %u, QuotaPagedPoolUsage: %u PageFaultCount: %u\n",
+		(uint)PagefileUsage / 1024,
+		(uint)WorkingSetSize / 1024,
+		(uint)QuotaPagedPoolUsage / 1024,
+		(uint)PageFaultCount);
+
+	DrawLabel(col, row++, HeaderColor, "-----------------------------------------------------------------------------------------------------------------------------------");
+	DrawLabel(col, row, HeaderColor, szText);
+#endif
+
+	if (m_logMemoryInfo)
+	{
+		pLog->Log("Sum of %d Modules %6d Kb  (Static: %6d Kb)  (Num: %8d) (TotalAlloc: %8I64d KB)", countedMemoryModules, totalUsedInModules / 1024,
+			totalUsedInModulesStatic / 1024, totalNumAllocsInModules, totalAllocatedInModules / 1024);
+	}
+
+	int memUsageInMB_SysCopyMeshes = 0;
+	int memUsageInMB_SysCopyTextures = 0;
+	gEnv->pRenderer->EF_Query(EFQ_Alloc_APIMesh, memUsageInMB_SysCopyMeshes);
+	gEnv->pRenderer->EF_Query(EFQ_Alloc_APITextures, memUsageInMB_SysCopyTextures);
+
+	totalAll += memUsage;
+	totalAll += memUsageInMB_SysCopyMeshes;
+	totalAll += memUsageInMB_SysCopyTextures;
+
+	cry_sprintf(szText, "Total Allocated Memory: %" PRId64 " KB (DirectX Textures: %d KB, VB: %d Kb)", totalAll / 1024, memUsageInMB_SysCopyTextures / 1024, memUsageInMB_SysCopyMeshes / 1024);
+
+	DrawLabel(col, 1, HeaderColor, szText);
+
+	m_logMemoryInfo = false;
+#endif 
+}
+
+#undef USE_PE_HEADER

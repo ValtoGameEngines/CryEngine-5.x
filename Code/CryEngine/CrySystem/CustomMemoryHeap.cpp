@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include <StdAfx.h>
 #include "CustomMemoryHeap.h"
@@ -6,6 +6,7 @@
 #if CRY_PLATFORM_DURANGO
 	#include <apu.h>
 #endif // CRY_PLATFORM_DURANGO
+#include <CryMemory/CrySizer.h>
 
 //////////////////////////////////////////////////////////////////////////
 CCustomMemoryHeapBlock::CCustomMemoryHeapBlock(CCustomMemoryHeap* pHeap, void* pData, size_t const allocateSize, char const* const szUsage)

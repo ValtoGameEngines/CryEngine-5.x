@@ -1,19 +1,9 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-/*=============================================================================
-   PostEffects.h : Post process effects
-
-   Revision history:
-* 18/06/2005: Re-organized (to minimize code dependencies/less annoying compiling times)
-* Created by Tiago Sousa
-   =============================================================================*/
-
-#ifndef _POSTEFFECTS_H_
-#define _POSTEFFECTS_H_
+#pragma once
 
 #include "PostProcessUtils.h"
 
-struct SColorGradingMergeParams;
 class CSoundEventsListener;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -40,7 +30,7 @@ public:
 	CMotionBlur()
 	{
 		m_nRenderFlags = 0;
-		m_nID = ePFX_eMotionBlur;
+		m_nID = EPostEffectID::MotionBlur;
 
 		// Register technique instance and it's parameters
 		AddParamBool("MotionBlur_Active", m_pActive, 0);
@@ -89,26 +79,25 @@ public:
 		Release();
 	}
 
-	virtual int             Initialize();
-	virtual int             CreateResources();
-	virtual void            Release();
+	virtual int         Initialize();
+	virtual int         CreateResources();
+	virtual void        Release();
 
-	virtual void            Render();
-	void                    RenderObjectsVelocity();
+	virtual void        Render();
+	void                RenderObjectsVelocity();
 
-	virtual void            Reset(bool bOnSpecChange = false);
-	virtual bool            Preprocess();
-	virtual void            OnBeginFrame(const SRenderingPassInfo& passInfo);
+	virtual void        Reset(bool bOnSpecChange = false);
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        OnBeginFrame(const SRenderingPassInfo& passInfo);
 
-	static void             SetupObject(CRenderObject* pObj, const SRenderingPassInfo& passInfo);
-	static bool             GetPrevObjToWorldMat(CRenderObject* pObj, Matrix44A& res);
-	static void             InsertNewElements();
-	static void             FreeData();
-	static const Matrix44A& GetPrevView() { return gRenDev->GetPreviousFrameCameraMatrix(); }
+	static void         SetupObject(CRenderObject* pObj, const SRenderingPassInfo& passInfo);
+	static bool         GetPrevObjToWorldMat(CRenderObject* pObj, uint64 objFlags, Matrix44A& res);
+	static void         InsertNewElements();
+	static void         FreeData();
 
-	virtual const char*     GetName() const
+	virtual const char* GetName() const
 	{
-		return CRenderer::CV_r_UseMergedPosts ? "MotionBlur and Dof" : "MotionBlur";
+		return "MotionBlur";
 	}
 
 private:
@@ -144,7 +133,8 @@ private:
 	typedef VectorMap<uintptr_t, SObjMotionBlurParams> OMBParamsMap;
 	typedef OMBParamsMap::iterator                     OMBParamsMapItor;
 	static OMBParamsMap m_pOMBData[3]; // triple buffering: t0: being written, t-1: current render frame, t-2: previous render frame
-	static CThreadSafeRendererContainer<OMBParamsMap::value_type> m_FillData[RT_COMMAND_BUF_COUNT];
+
+	static CryMT::CThreadSafePushContainer<OMBParamsMap::value_type> m_FillData[RT_COMMAND_BUF_COUNT];
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -152,7 +142,7 @@ private:
 
 struct SDepthOfFieldParams
 {
-	SDepthOfFieldParams() : pMaskTex(0), fMaskBlendAmount(0.0f), bGameMode(false)
+	SDepthOfFieldParams() : bGameMode(false), pMaskTex(0), fMaskBlendAmount(0.0f)
 	{
 	};
 
@@ -170,7 +160,7 @@ public:
 	CDepthOfField()
 	{
 		m_nRenderFlags = 0;
-		m_nID = ePFX_eDepthOfField;
+		m_nID = EPostEffectID::DepthOfField;
 
 		// todo: add user values
 
@@ -178,7 +168,7 @@ public:
 		AddParamBool("Dof_Active", m_pActive, 0);
 		AddParamFloatNoTransition("Dof_FocusDistance", m_pFocusDistance, 3.5f);
 		AddParamFloatNoTransition("Dof_FocusRange", m_pFocusRange, 0.0f);
-		AddParamFloatNoTransition("Dof_FocusMin", m_pFocusMin, 2.0f);
+		AddParamFloatNoTransition("Dof_FocusMin", m_pFocusMin, 0.4f);
 		AddParamFloatNoTransition("Dof_FocusMax", m_pFocusMax, 10.0f);
 		AddParamFloatNoTransition("Dof_FocusLimit", m_pFocusLimit, 100.0f);
 		AddParamFloatNoTransition("Dof_MaxCoC", m_pMaxCoC, 12.0f);
@@ -221,7 +211,7 @@ public:
 
 	SDepthOfFieldParams GetParams();
 
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Reset(bool bOnSpecChange = false);
 
 	virtual const char* GetName() const
@@ -266,7 +256,7 @@ class CSunShafts : public CPostEffect
 public:
 	CSunShafts()
 	{
-		m_nID = ePFX_SunShafts;
+		m_nID = EPostEffectID::SunShafts;
 		m_pOcclQuery[0] = nullptr;
 		m_pOcclQuery[1] = nullptr;
 
@@ -287,7 +277,7 @@ public:
 	virtual int  Initialize();
 	virtual void Release();
 	virtual void OnLostDevice();
-	virtual bool Preprocess();
+	virtual bool Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void Render();
 	virtual void Reset(bool bOnSpecChange = false);
 
@@ -319,18 +309,18 @@ private:
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-class CFilterSharpening : public CPostEffect
+class CSharpening : public CPostEffect
 {
 public:
-	CFilterSharpening()
+	CSharpening()
 	{
-		m_nID = ePFX_FilterSharpening;
+		m_nID = EPostEffectID::Sharpening;
 
 		AddParamInt("FilterSharpening_Type", m_pType, 0);
 		AddParamFloat("FilterSharpening_Amount", m_pAmount, 1.0f);
 	}
 
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
@@ -348,18 +338,18 @@ private:
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-class CFilterBlurring : public CPostEffect
+class CBlurring : public CPostEffect
 {
 public:
-	CFilterBlurring()
+	CBlurring()
 	{
-		m_nID = ePFX_FilterBlurring;
+		m_nID = EPostEffectID::Blurring;
 
 		AddParamInt("FilterBlurring_Type", m_pType, 0);
 		AddParamFloat("FilterBlurring_Amount", m_pAmount, 0.0f);
 	}
 
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
@@ -379,6 +369,8 @@ private:
 
 class CUberGamePostProcess : public CPostEffect
 {
+	friend class CUberGamePostEffectPass;
+
 public:
 
 	// Bitmaks used to enable only certain effects or combinations of most expensive effects
@@ -391,7 +383,7 @@ public:
 
 	CUberGamePostProcess()
 	{
-		m_nID = ePFX_UberGamePostProcess;
+		m_nID = EPostEffectID::UberGamePostProcess;
 		m_nCurrPostEffectsMask = 0;
 
 		AddParamTex("tex_VisualArtifacts_Mask", m_pMask, 0);
@@ -420,7 +412,7 @@ public:
 		AddParamFloatNoTransition("FilterArtifacts_GrainTile", m_pGrainTile, 1.0f);
 	}
 
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
@@ -461,12 +453,21 @@ private:
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+struct SColorGradingMergeParams
+{
+	Vec4   pColorMatrix[3];
+	Vec4   pLevels[2];
+	Vec4   pFilterColor;
+	Vec4   pSelectiveColor[2];
+	uint64 nFlagsShaderRT;
+};
+
 class CColorGrading : public CPostEffect
 {
 public:
 	CColorGrading()
 	{
-		m_nID = ePFX_ColorGrading;
+		m_nID = EPostEffectID::ColorGrading;
 
 		// levels adjustment
 		AddParamFloatNoTransition("ColorGrading_minInput", m_pMinInput, 0.0f);
@@ -503,10 +504,10 @@ public:
 		AddParamFloatNoTransition("ColorGrading_GrainAmount_Offset", m_pGrainAmountOffset, 0.0f);
 	}
 
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
-	bool                UpdateParams(SColorGradingMergeParams& pMergeParams, bool bUpdateChart = true);
+	void                UpdateParams(SColorGradingMergeParams& pMergeParams);
 
 	virtual const char* GetName() const
 	{
@@ -557,14 +558,14 @@ class CUnderwaterGodRays : public CPostEffect
 public:
 	CUnderwaterGodRays()
 	{
-		m_nID = ePFX_eUnderwaterGodRays;
+		m_nID = EPostEffectID::UnderwaterGodRays;
 
 		AddParamFloat("UnderwaterGodRays_Amount", m_pAmount, 1.0f);
 		AddParamInt("UnderwaterGodRays_Quality", m_pQuality, 1); // 0 = low, 1 = med, 2= high, 3= ultra-high, 4= crazy high, and so on
 
 	}
 
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
@@ -587,7 +588,7 @@ class CVolumetricScattering : public CPostEffect
 public:
 	CVolumetricScattering()
 	{
-		m_nID = ePFX_eVolumetricScattering;
+		m_nID = EPostEffectID::VolumetricScattering;
 
 		AddParamFloat("VolumetricScattering_Amount", m_pAmount, 0.0f);
 		AddParamFloat("VolumetricScattering_Tilling", m_pTilling, 1.0f);
@@ -598,7 +599,7 @@ public:
 		AddParamInt("VolumetricScattering_Quality", m_pQuality, 1); // 0 = low, 1 = med, 2= high, 3= ultra-high, 4= crazy high, and so on
 	}
 
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
@@ -622,13 +623,13 @@ class CAlienInterference : public CPostEffect
 public:
 	CAlienInterference()
 	{
-		m_nID = ePFX_eAlienInterference;
+		m_nID = EPostEffectID::AlienInterference;
 
 		AddParamFloat("AlienInterference_Amount", m_pAmount, 0);
 		AddParamVec4NoTransition("clr_AlienInterference_Color", m_pTintColor, Vec4(Vec3(0.85f, 0.95f, 1.25f) * 0.5f, 1.0f));
 	}
 
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
@@ -653,12 +654,12 @@ class CWaterDroplets : public CPostEffect
 public:
 	CWaterDroplets()
 	{
-		m_nID = ePFX_eWaterDroplets;
+		m_nID = EPostEffectID::WaterDroplets;
 
 		AddParamFloat("WaterDroplets_Amount", m_pAmount, 0.0f);
 	}
 
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
@@ -681,12 +682,12 @@ class CWaterFlow : public CPostEffect
 public:
 	CWaterFlow()
 	{
-		m_nID = ePFX_eWaterFlow;
+		m_nID = EPostEffectID::WaterFlow;
 
 		AddParamFloat("WaterFlow_Amount", m_pAmount, 0.0f);
 	}
 
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
@@ -704,41 +705,12 @@ private:
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-class CWaterVolume : public CPostEffect
-{
-public:
-	CWaterVolume()
-	{
-		m_nRenderFlags = 0;
-		m_nID = ePFX_WaterVolume;
-
-		AddParamFloatNoTransition("WaterVolume_Amount", m_pAmount, 0.0f);
-	}
-
-	virtual bool Preprocess();
-	virtual void Render();
-	virtual void Reset(bool bOnSpecChange = false);
-
-	virtual const char* GetName() const
-	{
-		return "WaterVolume";
-	}
-
-private:
-
-	// float
-	CEffectParam* m_pAmount;
-};
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
 class CScreenFrost : public CPostEffect
 {
 public:
 	CScreenFrost()
 	{
-		m_nID = ePFX_eScreenFrost;
+		m_nID = EPostEffectID::ScreenFrost;
 
 		AddParamFloat("ScreenFrost_Amount", m_pAmount, 0.0f);             // amount of visible frost
 		AddParamFloat("ScreenFrost_CenterAmount", m_pCenterAmount, 1.0f); // amount of visible frost in center
@@ -746,7 +718,7 @@ public:
 		m_fRandOffset = 0;
 	}
 
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
@@ -770,7 +742,7 @@ class CRainDrops : public CPostEffect
 public:
 	CRainDrops()
 	{
-		m_nID = ePFX_eRainDrops;
+		m_nID = EPostEffectID::RainDrops;
 
 		AddParamFloat("RainDrops_Amount", m_pAmount, 0.0f);                        // amount of visible droplets
 		AddParamFloat("RainDrops_SpawnTimeDistance", m_pSpawnTimeDistance, 0.35f); // amount of visible droplets
@@ -794,7 +766,7 @@ public:
 	}
 
 	virtual int         CreateResources();
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 	virtual void        Release();
@@ -825,7 +797,7 @@ private:
 		float m_fWeight, m_fWeightVar;
 	};
 
-	//in Preprocess(), check if effect is active
+	//in Preprocess(const SRenderViewInfo& viewInfo), check if effect is active
 	bool IsActiveRain();
 
 	// Compute current interpolated view matrix
@@ -875,7 +847,7 @@ class CNightVision : public CPostEffect
 public:
 	CNightVision()
 	{
-		m_nID = ePFX_NightVision;
+		m_nID = EPostEffectID::NightVision;
 
 		AddParamBool("NightVision_Active", m_pActive, 0);
 		AddParamFloat("NightVision_BlindAmount", m_pAmount, 0.0f);
@@ -892,7 +864,7 @@ public:
 
 	virtual int         CreateResources();
 	virtual void        Release();
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
@@ -924,7 +896,7 @@ class CSonarVision : public CPostEffect
 public:
 	CSonarVision()
 	{
-		m_nID = ePFX_SonarVision;
+		m_nID = EPostEffectID::SonarVision;
 
 		AddParamBool("SonarVision_Active", m_pActive, 0);
 		AddParamFloat("SonarVision_Amount", m_pAmount, 0.0f);
@@ -944,7 +916,7 @@ public:
 
 	virtual int         CreateResources();
 	virtual void        Release();
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
@@ -985,7 +957,7 @@ public:
 	CThermalVision()
 	{
 		m_nRenderFlags = 0; // thermal vision replaces "rendering" , no need to update
-		m_nID = ePFX_ThermalVision;
+		m_nID = EPostEffectID::ThermalVision;
 
 		AddParamBool("ThermalVision_Active", m_pActive, 0);
 		AddParamBool("ThermalVision_RenderOffscreen", m_pRenderOffscreen, 0);
@@ -1011,7 +983,7 @@ public:
 
 	virtual int  CreateResources();
 	virtual void Release();
-	virtual bool Preprocess();
+	virtual bool Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void Render();
 	virtual void Reset(bool bOnSpecChange = false);
 
@@ -1088,7 +1060,7 @@ public:
 	CHudSilhouettes()
 	{
 		m_nRenderFlags = 0;
-		m_nID = ePFX_HUDSilhouettes;
+		m_nID = EPostEffectID::HUDSilhouettes;
 
 		m_deferredSilhouettesOptimisedTech = "DeferredSilhouettesOptimised";
 		m_psParamName = "psParams";
@@ -1105,7 +1077,7 @@ public:
 		FindIfSilhouettesOptimisedTechAvailable();
 	}
 
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
@@ -1145,18 +1117,19 @@ private:
 
 class CFlashBang : public CPostEffect
 {
+	friend class CFlashBangPass;
+
 public:
 	CFlashBang()
 	{
-		m_nID = ePFX_eFlashBang;
+		m_nID = EPostEffectID::FlashBang;
 
 		AddParamBool("FlashBang_Active", m_pActive, 0);
 		AddParamFloat("FlashBang_DifractionAmount", m_pDifractionAmount, 1.0f);
 		AddParamFloat("FlashBang_Time", m_pTime, 2.0f);               // flashbang time duration in seconds
 		AddParamFloat("FlashBang_BlindAmount", m_pBlindAmount, 0.5f); // flashbang blind time (fraction of frashbang time)
 
-		m_pGhostImage = 0;
-		m_fBlindAmount = 1.0f;
+		m_pGhostImage = nullptr;
 		m_fSpawnTime = 0.0f;
 	}
 
@@ -1165,7 +1138,7 @@ public:
 		Release();
 	}
 
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Release();
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
@@ -1179,136 +1152,10 @@ private:
 
 	SDynTexture* m_pGhostImage;
 
-	float        m_fBlindAmount;
 	float        m_fSpawnTime;
 
 	// float, float
 	CEffectParam* m_pTime, * m_pDifractionAmount, * m_pBlindAmount;
-};
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-class CSceneRain : public CPostEffect
-{
-public:
-	CSceneRain()
-	{
-		m_nRenderFlags = 0;
-		m_nID = ePFX_SceneRain;
-
-		m_pConeVB = 0;
-		m_nConeVBSize = 0;
-		m_updateFrameCount = 0;
-		m_bReinit = true;
-
-		AddParamBool("SceneRain_Active", m_pActive, 0);
-	}
-
-	virtual int         CreateResources();
-	virtual void        Release();
-	virtual bool        Preprocess();
-	virtual void        Render();
-	virtual void        Reset(bool bOnSpecChange = false);
-	virtual void        OnLostDevice();
-
-	virtual const char* GetName() const;
-
-	// Rain volume parameters (filled during rain layer/occ generation pass)
-	SRainParams m_RainVolParams;
-
-private:
-	bool   m_bReinit;
-	void*  m_pConeVB;
-	uint16 m_nConeVBSize;
-	uint32 m_updateFrameCount;
-	void CreateBuffers(uint16 nVerts, void*& pINVB, SVF_P3F_C4B_T2F* pVtxList);
-};
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-class CSceneSnow : public CPostEffect
-{
-public:
-	_smart_ptr<IRenderMesh> m_pSnowFlakeMesh;
-	CSceneSnow()
-	{
-		m_nID = ePFX_SceneSnow;
-
-		AddParamBool("SceneSnow_Active", m_pActive, 0);
-
-		m_nAliveClusters = 0;
-		m_pSnowFlakeMesh = NULL;
-		m_nSnowFlakeVertCount = 0;
-		m_nNumClusters = 0;
-		m_nFlakesPerCluster = 0;
-	}
-
-	virtual ~CSceneSnow()
-	{
-		Release();
-	}
-
-	bool                IsActiveSnow();
-
-	virtual int         CreateResources();
-	virtual bool        Preprocess();
-	virtual void        Render();
-	virtual void        Reset(bool bOnSpecChange = false);
-	virtual void        Release();
-
-	virtual const char* GetName() const;
-
-	// Rain volume parameters (filled during rain layer/occ generation pass)
-	// Needed for occlusion.
-	SRainParams m_RainVolParams;
-	SSnowParams m_SnowVolParams;
-
-private:
-
-	// Snow particle properties
-	struct SSnowCluster
-	{
-		// set default data
-		SSnowCluster() : m_pPos(0, 0, 0), m_pPosPrev(0, 0, 0), m_fSpawnTime(0.0f), m_fLifeTime(4.0f), m_fLifeTimeVar(2.5f), m_fWeight(0.3f), m_fWeightVar(0.1f)
-		{
-
-		}
-
-		// World position
-		Vec3  m_pPos, m_pPosPrev;
-		// Spawn time
-		float m_fSpawnTime;
-		// Life time and variation
-		float m_fLifeTime, m_fLifeTimeVar;
-		// Weight and variation
-		float m_fWeight, m_fWeightVar;
-	};
-
-	// Generate particle cluster mesh
-	bool GenerateClusterMesh();
-	// Spawn a cluster
-	void SpawnCluster(SSnowCluster*& pCluster);
-	// Update all clusters
-	void UpdateClusters();
-	// Draw clusters
-	void DrawClusters();
-	// Half resolution composite.
-	void HalfResComposite();
-
-	// float
-	CEffectParam* m_pActive;
-
-	typedef std::vector<SSnowCluster*> SSnowClusterVec;
-	typedef SSnowClusterVec::iterator  SSnowClusterItor;
-	SSnowClusterVec m_pClusterList;
-
-	int             m_nSnowFlakeVertCount;
-
-	int             m_nAliveClusters;
-	int             m_nNumClusters;
-	int             m_nFlakesPerCluster;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1320,74 +1167,18 @@ public:
 	CPostAA()
 	{
 		m_nRenderFlags = 0;
-		m_nID = ePFX_PostAA;
-
-		m_pAreaSMAA = 0;
-		m_pSearchSMAA = 0;
-
-		m_nLastFrameID = -1;
-
-		m_bInit = true;
-		m_nScopeZoomTransition = 0;
-		AddParamBool("PostAA_Scope", m_pScopeZoom, 0);
-
-		m_szPostAATech = "PostAA";
-		m_szCompositesTech = "PostAAComposites";
-		m_szViewProjPrev = "mViewProjPrev";
-		m_szParams = "vParams";
+		m_nID = EPostEffectID::PostAA;
 	}
 
-	virtual int         CreateResources();
-	virtual void        Release();
-	virtual bool        Preprocess();
+	virtual int         CreateResources()                                                                                        { return 1; }
+	virtual void        Release()                                                                                                {}
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo) { return true; }
 	virtual void        Render();
-	virtual void        Reset(bool bOnSpecChange = false);
-	void                ApplySMAA(CTexture*& pCurrRT);
-	void                ApplyComposites(CTexture* pCurrRT);
-	void                UpscaleImage();
+	virtual void        Reset(bool bOnSpecChange = false)                                                                        {}
 
 	virtual const char* GetName() const
 	{
 		return "PostAA";
-	}
-
-private:
-	CCryNameTSCRC m_szPostAATech;
-	CCryNameTSCRC m_szCompositesTech;
-
-	CCryNameR     m_szViewProjPrev;
-	CCryNameR     m_szParams;
-
-	CTexture*     m_pAreaSMAA;
-	CTexture*     m_pSearchSMAA;
-
-	int32         m_nLastFrameID;
-
-	// Flags for iron scope zoom transition
-	CEffectParam* m_pScopeZoom;
-	int8          m_nScopeZoomTransition;
-
-	bool          m_bInit;
-};
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-class CSoftAlphaTest : public CPostEffect
-{
-public:
-	CSoftAlphaTest()
-	{
-		m_nID = ePFX_eSoftAlphaTest;
-		m_nRenderFlags = 0;
-	}
-
-	virtual bool        Preprocess();
-	virtual void        Render();
-	virtual void        Reset(bool bOnSpecChange = false);
-	virtual const char* GetName() const
-	{
-		return "SoftAlphaTest";
 	}
 
 private:
@@ -1402,10 +1193,10 @@ public:
 	CPostStereo()
 	{
 		//		m_nRenderFlags = 0;
-		m_nID = ePFX_PostStereo;
+		m_nID = EPostEffectID::PostStereo;
 	}
 
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 	virtual const char* GetName() const
@@ -1425,12 +1216,12 @@ public:
 	CImageGhosting()
 	{
 		m_nRenderFlags = 0;
-		m_nID = ePFX_ImageGhosting;
+		m_nID = EPostEffectID::ImageGhosting;
 		AddParamFloat("ImageGhosting_Amount", m_pAmount, 0);
 		m_bInit = true;
 	}
 
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 	virtual const char* GetName() const
@@ -1449,42 +1240,39 @@ private:
 struct SHudData
 {
 public:
-	SHudData() : pRE(0), pShaderItem(0), pShaderResources(0), pRO(0), pDiffuse(0), pFlashPlayer(0), nSortVal(0), nFlashWidth(0), nFlashHeight(0)
+	SHudData() : pShaderItem(0), pShaderResources(0), pDiffuse(0), pFlashPlayer(0)
 	{
 	}
 
 	SHudData(const CRenderElement* pInRE, const SShaderItem* pInShaderItem, const CShaderResources* pInShaderResources, CRenderObject* pInRO) :
 		pRE(pInRE),
+		pRO(pInRO),
 		pShaderItem(pInShaderItem),
 		pShaderResources(pInShaderResources),
-		pRO(pInRO),
 		pDiffuse(0),
-		pFlashPlayer(0),
-		nSortVal(0),
-		nFlashWidth(0),
-		nFlashHeight(0)
+		pFlashPlayer(0)
 	{
 	}
 
 public:
-	const CRenderElement* pRE;
-	CRenderObject*          pRO;
+	const CRenderElement*   pRE = nullptr;
+	CRenderObject*          pRO = nullptr;
 	const SShaderItem*      pShaderItem; // to be removed after Alpha MS
 	const CShaderResources* pShaderResources;
 
 	SEfResTexture*          pDiffuse;
 	IFlashPlayer*           pFlashPlayer;
 
-	uint32                  nSortVal;
+	uint32                  nSortVal = 0;
 
-	int16                   nFlashWidth;
-	int16                   nFlashHeight;
+	int16                   nFlashWidth = 0;
+	int16                   nFlashHeight = 0;
 
 	static int16            s_nFlashWidthMax;
 	static int16            s_nFlashHeightMax;
 
 private:
-	friend class C3DHud;
+	friend class CHud3D;
 	void Init();
 };
 
@@ -1498,18 +1286,20 @@ struct HudDataSortCmp
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-class C3DHud : public CPostEffect
+class CHud3D : public CPostEffect
 {
-public:
-
-	typedef CThreadSafeRendererContainer<SHudData> SHudDataVec;
+	friend class CHud3DPass;
 
 public:
 
-	C3DHud()
+	typedef CryMT::CThreadSafePushContainer<SHudData> SHudDataVec;
+
+public:
+
+	CHud3D()
 	{
 		m_nRenderFlags = PSP_REQUIRES_UPDATE;
-		m_nID = ePFX_3DHUD;
+		m_nID = EPostEffectID::HUD3D;
 
 		m_pHUD_RT = 0;
 		m_pHUDScaled_RT = 0;
@@ -1568,29 +1358,19 @@ public:
 #endif
 	}
 
-	virtual int  CreateResources();
-	virtual void Release();
-	virtual bool Preprocess();
+	virtual int         CreateResources();
+	virtual void        Release();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 
-	virtual void Update();
-	virtual void OnBeginFrame(const SRenderingPassInfo& passInfo);
+	virtual void        Update();
+	virtual void        OnBeginFrame(const SRenderingPassInfo& passInfo);
 
-	virtual void Reset(bool bOnSpecChange = false);
-	virtual void AddRE(const CRenderElement* re, const SShaderItem* pShaderItem, CRenderObject* pObj, const SRenderingPassInfo& passInfo);
-	virtual void Render();
-
-	// Shared shader params/textures setup
-	void                CalculateProjMatrix();
-	void                SetShaderParams(SHudData& pData);
-	void                SetTextures(SHudData& pData);
-	void                RenderMesh(const CRenderElement* pRE, SShaderPass* pPass);
+	virtual void        Reset(bool bOnSpecChange = false);
+	virtual void        AddRE(const CRenderElement* re, const SShaderItem* pShaderItem, CRenderObject* pObj, const SRenderingPassInfo& passInfo);
+	virtual void        Render();
 
 	void                FlashUpdateRT();
-	void                DownsampleHud4x4(CTexture* pDstRT);
 	void                UpdateBloomRT(CTexture* pDstRT, CTexture* pBlurDst);
-	void                FinalPass();
-	void                ReleaseFlashPlayerRef(const uint32 nThreadID);
-	void                RenderFinalPass();
 
 	virtual const char* GetName() const
 	{
@@ -1606,6 +1386,18 @@ public:
 	{
 		m_maxParallax = maxParallax;
 	}
+
+private:
+	// Shared shader params/textures setup
+	void CalculateProjMatrix();
+	void SetShaderParams(SHudData& pData);
+	void SetTextures(SHudData& pData);
+	void RenderMesh(const CRenderElement* pRE, SShaderPass* pPass);
+
+	void DownsampleHud4x4(CTexture* pDstRT);
+	void FinalPass();
+	void ReleaseFlashPlayerRef(const uint32 nThreadID);
+	void RenderFinalPass();
 
 private:
 
@@ -1658,11 +1450,13 @@ private:
 
 class CFilterKillCamera : public CPostEffect
 {
+	friend class CKillCameraPass;
+
 public:
 
 	CFilterKillCamera()
 	{
-		m_nID = ePFX_FilterKillCamera;
+		m_nID = EPostEffectID::KillCamera;
 
 		AddParamBool("FilterKillCamera_Active", m_pActive, 0);
 		AddParamInt("FilterKillCamera_Mode", m_pMode, 0);
@@ -1677,7 +1471,7 @@ public:
 	}
 
 	virtual int         Initialize();
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
@@ -1717,12 +1511,12 @@ public:
 		}
 
 		const CRenderElement* pRenderElement;
-		const CRenderObject*    pRenderObject;
+		const CRenderObject*  pRenderObject;
 	};
 
 	CNanoGlass()
 	{
-		m_nID = ePFX_NanoGlass;
+		m_nID = EPostEffectID::NanoGlass;
 		m_pHexOutline = NULL;
 		m_pHexRand = NULL;
 		m_pHexGrad = NULL;
@@ -1757,7 +1551,7 @@ public:
 
 	virtual int         CreateResources();
 	virtual void        Release();
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
@@ -1768,7 +1562,7 @@ public:
 
 	virtual void OnBeginFrame(const SRenderingPassInfo& passInfo)
 	{
-		const threadID nThreadID = gRenDev->m_RP.m_nFillThreadID;
+		const threadID nThreadID = gRenDev->GetMainThreadID();
 		if (!passInfo.IsRecursivePass())
 			m_pRenderData[nThreadID].pRenderElement = NULL;
 	}
@@ -1778,7 +1572,7 @@ public:
 private:
 
 	void RenderPass(bool bDebugPass, bool bIsHudRendering);
-	void CreateHudMask(C3DHud* pHud3D);
+	void CreateHudMask(CHud3D* pHud3D);
 	void DownSampleBackBuffer();
 
 	SRenderData   m_pRenderData[RT_COMMAND_BUF_COUNT];
@@ -1821,12 +1615,12 @@ public:
 	CScreenBlood()
 	{
 		m_nRenderFlags = 0;
-		m_nID = ePFX_eScreenBlood;
+		m_nID = EPostEffectID::ScreenBlood;
 		AddParamFloat("ScreenBlood_Amount", m_pAmount, 0.0f);                        // damage amount
 		AddParamVec4("ScreenBlood_Border", m_pBorder, Vec4(0.0f, 0.0f, 2.0f, 1.0f)); // Border: x=xOffset y=yOffset z=range w=alpha
 	}
 
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 	virtual const char* GetName() const
@@ -1838,6 +1632,32 @@ private:
 
 	CEffectParam* m_pAmount;
 	CEffectParam* m_pBorder;
+};
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+class CScreenFader : public CPostEffect
+{
+public:
+	CScreenFader()
+	{
+		m_nRenderFlags = 0;
+		m_nID = EPostEffectID::ScreenFader;
+		AddParamVec4("ScreenFader_Color", m_pColor, Vec4(0.0f, 0.0f, 0.0f, 0.0f));  // Fader color
+	}
+
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
+	virtual void        Render();
+	virtual void        Reset(bool bOnSpecChange = false);
+	virtual const char* GetName() const
+	{
+		return "ScreenFader";
+	}
+
+private:
+
+	CEffectParam* m_pColor;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1865,7 +1685,7 @@ public:
 
 	CPost3DRenderer()
 	{
-		m_nID = ePFX_Post3DRenderer;
+		m_nID = EPostEffectID::Post3DRenderer;
 
 		AddParamBool("Post3DRenderer_Active", m_pActive, 0);
 		AddParamFloat("Post3DRenderer_FOVScale", m_pFOVScale, 0.5f);
@@ -1896,7 +1716,7 @@ public:
 		m_deferDisableFrameCountDown = 0;
 	}
 
-	virtual bool        Preprocess();
+	virtual bool        Preprocess(const SRenderViewInfo& viewInfo);
 	virtual void        Render();
 	virtual void        Reset(bool bOnSpecChange = false);
 
@@ -1906,31 +1726,18 @@ public:
 	}
 
 private:
+	void   ClearFlashRT();
 
-	ILINE bool HasModelsToRender() const
-	{
-		const uint32 batchMask = SRendItem::BatchFlags(EFSLIST_GENERAL)
-		                         | SRendItem::BatchFlags(EFSLIST_SKIN)
-		                         | SRendItem::BatchFlags(EFSLIST_DECAL)
-		                         | SRendItem::BatchFlags(EFSLIST_TRANSP);
-		return (batchMask & FB_POST_3D_RENDER) ? true : false;
-	}
-
-	void ClearFlashRT();
-
-	void RenderGroup(uint8 groupId);
-	void RenderMeshes(uint8 groupId, float screenRect[4], ERenderMeshMode renderMeshMode = eRMM_Default);
-	void RenderDepth(uint8 groupId, float screenRect[4], bool bCustomRender = false);
-	void AlphaCorrection();
-	void GammaCorrection(float screenRect[4]);
-	void RenderSilhouettes(uint8 groupId, float screenRect[4]);
-	void SilhouetteOutlines(CTexture* pOutlineTex, CTexture* pGlowTex);
-	void SilhouetteGlow(CTexture* pOutlineTex, CTexture* pGlowTex);
-	void SilhouetteCombineBlurAndOutline(CTexture* pOutlineTex, CTexture* pGlowTex);
-	void ApplyShaderQuality(EShaderType shaderType = eST_General);
-
-	void ProcessRenderList(int list, uint32 batchFilter, uint8 groupId, float screenRect[4], bool bCustomRender = false);
-	void ProcessBatchesList(int listStart, int listEnd, uint32 batchFilter, uint8 groupId, float screenRect[4], bool bCustomRender = false);
+	void   RenderGroup(uint8 groupId);
+	void   RenderMeshes(uint8 groupId, float screenRect[4], ERenderMeshMode renderMeshMode = eRMM_Default);
+	void   RenderDepth(uint8 groupId, float screenRect[4], bool bCustomRender = false);
+	void   AlphaCorrection();
+	void   GammaCorrection(float screenRect[4]);
+	void   RenderSilhouettes(uint8 groupId, float screenRect[4]);
+	void   SilhouetteOutlines(CTexture* pOutlineTex, CTexture* pGlowTex);
+	void   SilhouetteGlow(CTexture* pOutlineTex, CTexture* pGlowTex);
+	void   SilhouetteCombineBlurAndOutline(CTexture* pOutlineTex, CTexture* pGlowTex);
+	uint64 ApplyShaderQuality(EShaderType shaderType = eST_General);
 
 	CCryNameTSCRC m_gammaCorrectionTechName;
 	CCryNameTSCRC m_alphaCorrectionTechName;
@@ -1958,8 +1765,3 @@ private:
 	uint8         m_post3DRendererflags;
 	uint8         m_deferDisableFrameCountDown;
 };
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-#endif

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef rigidbody_h
 #define rigidbody_h
@@ -7,10 +7,11 @@
 struct entity_contact;
 const int MAX_CONTACTS = 9984;
 
-enum rbflags { rb_RK4=0x1, rb_articulated=0x10 };
+enum rbflags { rb_RK4=0x1, rb_articulated=0x10, rb_no_mass_decay=0x20 };
 
 class RigidBody {
 public:
+	RigidBody(bool) {} // uninitialized; for tmp data
 	RigidBody();
 	void Create(const Vec3 &center,const Vec3 &Ibody0,const quaternionf &q0, float volume,float mass, 
 							const quaternionf &qframe,const Vec3 &posframe);
@@ -57,6 +58,7 @@ struct ArticulatedBody {
 	Vec3 Pext,Lext;
 
 	void GetContactMatrix(const Vec3& r, Matrix33 &K);
+	void GetContactMatrixRot(Matrix33 &K, ArticulatedBody *buddy=nullptr);
 	void ApplyImpulse(const Vec3& dP, const Vec3& dL, body_helper *bodies, int iCaller);
 };
 
@@ -75,11 +77,10 @@ enum contactflags { contact_count_mask=0x3F, contact_new=0x40, contact_2b_verifi
 struct rope_solver_vtx {
 	Vec3 r,v,P;
 	RigidBody *pbody;
+	class CPhysicalEntity *pent;
 	int iBody;
 	int ivtx;
 };
-
-class CPhysicalEntity;
 
 
 struct entity_contact {
@@ -115,5 +116,6 @@ void CleanupContactSolvers();
 void RegisterContact(entity_contact *pcontact);
 int InvokeContactSolver(float time_interval, SolverSettings *pss, float Ebefore, entity_contact **&pContacts,int &nContacts);
 char *AllocSolverTmpBuf(int size);
+entity_contact **GetContacts(int &nContacts, int iCaller = get_iCaller_int());
 
 #endif

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -157,7 +157,6 @@ void CVehicleViewSteer::Reset()
 	IEntity* pEntity = m_pVehicle->GetEntity();
 	assert(pEntity);
 	m_position = pEntity->GetWorldTM() * m_localSpaceCameraOffset;
-	Vec3 entityPos = pEntity->GetPos();
 	CalcLookAt(pEntity->GetWorldTM());
 	m_lastOffset = m_position - m_lookAt;
 	m_lastOffsetBeforeElev = m_lastOffset;
@@ -224,7 +223,6 @@ void CVehicleViewSteer::Update(float dt)
 	const float pedal = pVehicleMovement->GetEnginePedal();
 	const float maxSpeed = movementState.maxSpeed;
 	const Matrix34& pose = m_pAimPart ? m_pAimPart->GetWorldTM() : pEntity->GetWorldTM();
-	const Vec3 entityPos = pose.GetColumn3();
 	const Vec3 xAxis = pose.GetColumn0();
 	const Vec3 yAxis = pose.GetColumn1();
 	const Vec3 zAxis = pose.GetColumn2();
@@ -400,7 +398,8 @@ void CVehicleViewSteer::Update(float dt)
 			// Calculate camera bounds.
 			AABB localBounds;
 
-			m_pVehicle->GetEntity()->GetLocalBounds(localBounds);
+			//Get the bounding box of the model which is in the first place of the render nodes
+			m_pVehicle->GetEntity()->GetRenderNode()->GetLocalBounds(localBounds);
 
 			const float cameraBoundsScale = 0.75f;
 
@@ -433,8 +432,8 @@ void CVehicleViewSteer::Update(float dt)
 			IPhysicalEntity* pSkipEntities[10];
 
 			float distance = gEnv->pPhysicalWorld->PrimitiveWorldIntersection(sphere.type, &sphere, direction, ent_static | ent_terrain | ent_rigid | ent_sleeping_rigid,
-			                                                                  &pContact, 0, (geom_colltype_player << rwi_colltype_bit) | rwi_stop_at_pierceable, 0, 0, 0,
-			                                                                  pSkipEntities, m_pVehicle->GetSkipEntities(pSkipEntities, 10));
+				&pContact, 0, (geom_colltype_player << rwi_colltype_bit) | rwi_stop_at_pierceable, 0, 0, 0,
+				pSkipEntities, m_pVehicle->GetSkipEntities(pSkipEntities, 10));
 
 			if (distance > 0.0f)
 			{
@@ -502,9 +501,7 @@ void CVehicleViewSteer::Serialize(TSerialize serialize, EEntityAspects aspects)
 
 void CVehicleViewSteer::OffsetPosition(const Vec3& delta)
 {
-#ifdef SEG_WORLD
 	m_position += delta;
-#endif
 }
 
 DEFINE_VEHICLEOBJECT(CVehicleViewSteer);

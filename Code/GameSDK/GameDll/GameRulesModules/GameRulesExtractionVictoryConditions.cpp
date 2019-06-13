@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -20,6 +20,7 @@
 #include "IGameRulesRoundsModule.h"
 #include "Utility/CryDebugLog.h"
 #include "GameRulesTypes.h"
+#include "Game.h"
 
 #define DbgLog(...) CRY_DEBUG_LOG(GAMEMODE_EXTRACTION, __VA_ARGS__)
 #define DbgLogAlways(...) CRY_DEBUG_LOG_ALWAYS(GAMEMODE_EXTRACTION, __VA_ARGS__)
@@ -62,11 +63,12 @@ void CGameRulesExtractionVictoryConditions::TimeLimitExpired()
 			pRoundsModule->OnEnterSuddenDeath();
 			return;
 		}
-
+#if CRY_DEBUG_LOG_ENABLED
 		int  primaryTeam = pRoundsModule->GetPrimaryTeam();	// attacking
 		int secondaryTeam = (primaryTeam == 1) ? 2 : 1;			// defending
 
 		DbgLog("CGameRulesExtractionVictoryConditions::TimeLimitExpired() - secondary team %d has won", secondaryTeam);
+#endif
 
 		//		notify listeners
 		if (pRoundsModule->IsInProgress())

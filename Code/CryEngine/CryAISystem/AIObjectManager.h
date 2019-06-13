@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef AIOBJECTMANAGER
 #define AIOBJECTMANAGER
@@ -7,8 +7,9 @@
 	#pragma once
 #endif
 
-#include <CryAISystem/IAIObjectManager.h>
+#include "AIObject.h"
 
+#include <CryAISystem/IAIObjectManager.h>
 #include <CryMemory/PoolAllocator.h>
 
 typedef std::multimap<short, CCountedRef<CAIObject>> AIObjectOwners;
@@ -57,7 +58,8 @@ public:
 	//IAIObjectManager/////////////////////////////////////////////////////////////////////////////////////////////
 
 	virtual IAIObject* CreateAIObject(const AIObjectParams& params);
-	virtual void       RemoveObject(tAIObjectID objectID);
+	virtual void       RemoveObject(const tAIObjectID objectID);
+	virtual void       RemoveObjectByEntityId(const EntityId entityId);
 
 	virtual IAIObject* GetAIObject(tAIObjectID aiObjectID);
 	virtual IAIObject* GetAIObjectByName(unsigned short type, const char* pName) const;

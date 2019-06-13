@@ -1,11 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "DeflectorShield.h"
 #include "Projectile.h"
 #include "WeaponSystem.h"
 #include <CryAISystem/IAIObjectManager.h>
-
+#include <CryPhysics/IPhysics.h>
+#include <CryMath/Random.h>
 
 void CDeflectorShield::GetMemoryUsage(ICrySizer *pSizer) const {}
 void CDeflectorShield::InitClient(int channelId) {}
@@ -18,9 +19,8 @@ bool CDeflectorShield::NetSerialize(TSerialize ser, EEntityAspects aspect, uint8
 void CDeflectorShield::PostSerialize() {}
 void CDeflectorShield::SerializeSpawnInfo(TSerialize ser) {}
 ISerializableInfoPtr CDeflectorShield::GetSpawnInfo() {return ISerializableInfoPtr();}
-void CDeflectorShield::ProcessEvent(SEntityEvent& event) {}
+void CDeflectorShield::ProcessEvent(const SEntityEvent& event) {}
 void CDeflectorShield::SetChannelId(uint16 id) {}
-void CDeflectorShield::SetAuthority(bool auth ) {}
 const void * CDeflectorShield::GetRMIBase() const {return 0;}
 void CDeflectorShield::PostUpdate(float frameTime) {}
 void CDeflectorShield::PostRemoteSpawn() {}
@@ -353,8 +353,6 @@ void CDeflectorShield::ShootDeflectedEnergy(const CDeflectorShield::SDeflectedEn
 
 	const Vec3 worldSpreadU = worldReflectDir.GetOrthogonal();
 	const Vec3 worldSpreadV = worldReflectDir.Cross(worldSpreadU);
-
-	const float spreadOffset = cry_random(0.0f, m_spread);
 	
 	const Vec3 position = worldReflectPos + worldReflectDir * positionBias;
 	Vec3 direction = 

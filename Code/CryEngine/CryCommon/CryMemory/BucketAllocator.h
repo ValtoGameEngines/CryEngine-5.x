@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef BUCKETALLOCATOR_H
 #define BUCKETALLOCATOR_H
@@ -7,6 +7,14 @@
 
 	#if CRY_PLATFORM_DURANGO
 		#include <CryCore/Assert/CryAssert.h>
+		#ifndef _RELEASE
+			#define PIX_RECORD_ALLOCATION
+		#endif
+	#endif
+
+	#ifdef PIX_RECORD_ALLOCATION
+		#include <pixmemory.h>
+		#define PIX_BUCKET_ALLOCATOR_ID 1
 	#endif
 
 	#ifndef _RELEASE
@@ -16,6 +24,7 @@
 		#define BUCKET_ALLOCATOR_CHECK_DEALLOCATE_ADDRESS
 		#define BUCKET_ALLOCATOR_TRACK_CONSUMED
 		#define BUCKET_ALLOCATOR_TRAP_BAD_SIZE_ALLOCS
+		#define BUCKET_ALLOCATOR_TRAP_CLEANUP_OOM
 	#endif
 
 	#define BUCKET_ALLOCATOR_DEBUG 0
@@ -35,7 +44,7 @@ struct SystemAllocator
 	class CleanupAllocator
 	{
 	public:
-		CleanupAllocator();
+		CleanupAllocator(size_t reserveCapacity);
 		~CleanupAllocator();
 
 		bool  IsValid() const;
@@ -43,19 +52,15 @@ struct SystemAllocator
 		void* Calloc(size_t num, size_t sz);
 		void  Free(void* ptr);
 
-	private:
-		enum
-		{
-			ReserveCapacity = 4 * 1024 * 1024
-		};
 
 	private:
-		CleanupAllocator(const CleanupAllocator&);
-		CleanupAllocator& operator=(const CleanupAllocator&);
+		CleanupAllocator(const CleanupAllocator&) = delete;
+		CleanupAllocator& operator=(const CleanupAllocator&) = delete;
 
 	private:
 		void* m_base;
 		void* m_end;
+		const size_t m_reserveCapacity;
 	};
 
 	static UINT_PTR ReserveAddressSpace(size_t numPages, size_t pageLen);
@@ -66,7 +71,7 @@ struct SystemAllocator
 };
 }
 
-	#if CRY_PLATFORM_WINDOWS && CRY_PLATFORM_64BIT
+	#if CRY_PLATFORM_WINDOWS
 		#define BUCKET_ALLOCATOR_DEFAULT_SIZE (256 * 1024 * 1024)
 	#else
 		#define BUCKET_ALLOCATOR_DEFAULT_SIZE (128 * 1024 * 1024)
@@ -97,7 +102,7 @@ public:
 	{
 		void* ptr = NULL;
 
-		MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CryMalloc);
+		MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CryMalloc);
 
 		if (TraitsT::FallbackOnCRTAllowed && (sz > MaxSize))
 		{
@@ -138,7 +143,7 @@ public:
 	{
 		void* ptr = NULL;
 
-		MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CryMalloc);
+		MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CryMalloc);
 
 		if ((sz > MaxSize) || (SmallBlockLength % align))
 		{
@@ -165,7 +170,7 @@ public:
 	{
 		using namespace BucketAllocatorDetail;
 
-		MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CryMalloc);
+		MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CryMalloc);
 
 		size_t sz = 0;
 
@@ -218,6 +223,10 @@ public:
 
 			this->PushOnto(m_freeLists[bucket * NumGenerations + generation], reinterpret_cast<AllocHeader*>(ptr));
 			m_bucketTouched[bucket] = 1;
+
+	#ifdef PIX_RECORD_ALLOCATION
+			PIXRecordMemoryFreeEvent(static_cast<USHORT>(PIX_BUCKET_ALLOCATOR_ID), ptr, 0, reinterpret_cast<UINT64>(ptr));
+	#endif
 		}
 		else if (TraitsT::FallbackOnCRTAllowed)
 		{
@@ -335,11 +344,7 @@ private:
 	static const UINT_PTR PageAlignMask = ~(PageLength - 1);
 	static const UINT_PTR SmallBlockOffsetMask = SmallBlockLength - 1;
 	static const UINT_PTR PageOffsetMask = PageLength - 1;
-	#if CRY_PLATFORM_64BIT
 	static const UINT_PTR FreeListMagic = 0x63f9ab2df2ee1157;
-	#else
-	static const UINT_PTR FreeListMagic = 0xf2ee1157;
-	#endif
 
 	struct PageSBHot
 	{
@@ -514,6 +519,13 @@ private:
 	#ifdef BUCKET_ALLOCATOR_TRACK_CONSUMED
 		CryInterlockedAdd(&m_consumed, TraitsT::GetSizeForBucket(TraitsT::GetBucketForSize(sz)));
 	#endif // BUCKET_ALLOCATOR_TRACK_CONSUMED
+
+	#ifdef PIX_RECORD_ALLOCATION
+		if (ptr)
+		{
+			PIXRecordMemoryAllocationEvent(static_cast<USHORT>(PIX_BUCKET_ALLOCATOR_ID), ptr, sz, reinterpret_cast<UINT64>(ptr));
+		}
+	#endif
 
 		return ptr;
 	}

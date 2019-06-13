@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -9,8 +9,6 @@ StringUtils.cpp
 #include "StringUtils.h"
 #include "CryWatch.h"
 #include "UI/HUD/HUDUtils.h"
-
-static bool s_stringUtils_assertEnabled = true;
 
 //--------------------------------------------------------------------------------
 size_t cry_copyStringUntilFindChar(char * destination, const char * source, size_t bufferLength, char until)

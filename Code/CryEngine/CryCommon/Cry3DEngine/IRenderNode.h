@@ -1,9 +1,21 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-#ifndef IRenderNodeSTATE_H
-#define IRenderNodeSTATE_H
+#pragma once
+
+#include <atomic>
+#include <CryAudio/IAudioSystem.h>
+#include <CryCore/optional.h>
+#include <CryEntitySystem/IEntity.h>
+#include <CryThreading/Debug.h>
+
+#define TRACK_THREADED_ACCESS_TO_RENDERNODES
+#include "CGF/CryHeaders.h"
+#include <CryRenderer/IRenderer.h>
 
 #define SUPP_HMAP_OCCL
+
+struct IRenderNode;
+template<class T> struct TDoublyLinkedList;
 
 struct IMaterial;
 struct IVisArea;
@@ -14,6 +26,11 @@ struct SFrameLodInfo;
 struct ICharacterInstance;
 struct IStatObj;
 struct IEntity;
+struct pe_articgeomparams;
+struct EventPhysCollision;
+struct pe_params_area;
+struct SRenderNodeChunk;
+struct SLayerVisibility;
 
 enum EERType
 {
@@ -21,7 +38,7 @@ enum EERType
 	eERType_Brush,
 	eERType_Vegetation,
 	eERType_Light,
-	eERType_Cloud,
+	eERType_Dummy_5, //!< Used to be eERType_Cloud, preserve order for compatibility.
 	eERType_Dummy_1, //!< Used to be eERType_VoxelObject, preserve order for compatibility.
 	eERType_FogVolume,
 	eERType_Decal,
@@ -30,13 +47,13 @@ enum EERType
 	eERType_WaterWave,
 	eERType_Road,
 	eERType_DistanceCloud,
-	eERType_VolumeObject,
+	eERType_Dummy_4, // Used to be eERType_VolumeObject, preserve order for compatibility.
 	eERType_Dummy_0, //!< Used to be eERType_AutoCubeMap, preserve order for compatibility.
 	eERType_Rope,
 	eERType_Dummy_3, //!< Used to be  eERType_PrismObject, preserve order for compatibility.
 	eERType_TerrainSector,
 	eERType_Dummy_2, //!< Used to be eERType_LightPropagationVolume, preserve order for compatibility.
-	eERType_RenderProxy,
+	eERType_MovableBrush,
 	eERType_GameEffect,
 	eERType_BreakableGlass,
 	eERType_CloudBlocker,
@@ -54,6 +71,7 @@ enum ERNListType
 	eRNListType_Brush,
 	eRNListType_Vegetation,
 	eRNListType_DecalsAndRoads,
+	eRNListType_Light,
 	eRNListType_ListsNum,
 
 	//! This should be the last member.
@@ -75,7 +93,7 @@ enum EOcclusionObjectType
 
 struct OcclusionTestClient
 {
-	OcclusionTestClient() : nLastOccludedMainFrameID(0), nLastVisibleMainFrameID(0)
+	OcclusionTestClient() : nLastVisibleMainFrameID(0), nLastOccludedMainFrameID(0)
 	{
 #ifdef SUPP_HMAP_OCCL
 		vLastVisPoint.Set(0, 0, 0);
@@ -92,41 +110,98 @@ struct OcclusionTestClient
 #endif
 };
 
+struct SRenderNodeTempData
+{
+	struct SUserData
+	{
+		int                 lastSeenFrame[MAX_RECURSION_LEVELS];             // must be first, see IRenderNode::SetDrawFrame()
+		int                 lastSeenShadowFrame;                             // When was last rendered to shadow
+		CRenderObject*      arrPermanentRenderObjects[MAX_STATOBJ_LODS_NUM];
+		float               arrLodLastTimeUsed[MAX_STATOBJ_LODS_NUM];
+		Matrix34            objMat;
+		OcclusionTestClient m_OcclState;
+		struct IFoliage*    m_pFoliage;
+		struct IClipVolume* m_pClipVolume;
+
+		Vec4                vEnvironmentProbeMults;
+		Vec3                lastClipVolumePosition;
+		uint32              nCubeMapId                  : 16;
+		uint32              nCubeMapIdCacheClearCounter : 16;
+		uint32              nWantedLod                  : 8;
+		uint32              bTerrainColorWasUsed        : 1;
+		uint32              bClipVolumeAssigned         : 1;
+		IRenderNode*        pOwnerNode;
+		uint32              nStatObjLastModificationId;
+	};
+
+public:
+	SUserData           userData;
+
+	std::atomic<uint32> hasValidRenderObjects;
+	std::atomic<uint32> invalidRenderObjects;
+
+public:
+	SRenderNodeTempData()  { ZeroStruct(userData); hasValidRenderObjects = invalidRenderObjects = false; }
+	~SRenderNodeTempData() { Free(); }
+
+	CRenderObject* GetRenderObject(int nLod); /* thread-safe */
+	void           Free();
+	void           FreeRenderObjects(); /* non-thread-safe */
+	void           InvalidateRenderObjectsInstanceData();
+
+	void           SetClipVolume(IClipVolume* pClipVolume, const Vec3& pos);
+	void           ResetClipVolume();
+
+	void           OffsetPosition(const Vec3& delta)
+	{
+		userData.objMat.SetTranslation(userData.objMat.GetTranslation() + delta);
+	}
+
+	void MarkForAutoDelete();
+};
+
+//! Supplemental parameters used for camera-space rendering (ERF_FOB_NEAREST).
+struct SCameraSpaceParams
+{
+	Vec3 cameraSpacePosition; //!< Position of the render node, expressed in reference frame of the camera.
+	Vec3 worldSpaceOffset;    //!< Additional translation offset, expressed in coordinate system of the world.
+};
+
 // RenderNode flags
 enum ERenderNodeFlags : uint64
 {
-	ERF_GOOD_OCCLUDER                 = BIT(0),
-	ERF_PROCEDURAL                    = BIT(1),
-	ERF_CLONE_SOURCE                  = BIT(2), //!< set if this object was cloned from another one
-	ERF_CASTSHADOWMAPS                = BIT(3), //!< if you ever set this flag, be sure also to set ERF_HAS_CASTSHADOWMAPS
-	ERF_RENDER_ALWAYS                 = BIT(4),
-	ERF_DYNAMIC_DISTANCESHADOWS       = BIT(5),
-	ERF_HIDABLE                       = BIT(6),
-	ERF_HIDABLE_SECONDARY             = BIT(7),
-	ERF_HIDDEN                        = BIT(8),
-	ERF_SELECTED                      = BIT(9),
-	ERF_GI_MODE_BIT0                  = BIT(10), //!< Bit0 of GI mode.
-	ERF_OUTDOORONLY                   = BIT(11),
-	ERF_NODYNWATER                    = BIT(12),
-	ERF_EXCLUDE_FROM_TRIANGULATION    = BIT(13),
-	ERF_REGISTER_BY_BBOX              = BIT(14),
-	ERF_PICKABLE                      = BIT(15),
-	ERF_GI_MODE_BIT1                  = BIT(16), //!< Bit1 of GI mode.
-	ERF_NO_PHYSICS                    = BIT(17),
-	ERF_NO_DECALNODE_DECALS           = BIT(18),
-	ERF_REGISTER_BY_POSITION          = BIT(19),
-	ERF_STATIC_INSTANCING             = BIT(20),
-	ERF_RECVWIND                      = BIT(21),
-	ERF_COLLISION_PROXY               = BIT(22), //!< Collision proxy is a special object that is only visible in editor and used for physical collisions with player and vehicles.
-	ERF_GI_MODE_BIT2                  = BIT(23), //!< Bit2 of GI mode.
-	ERF_SPEC_BIT0                     = BIT(24), //!< Bit0 of min config specification.
-	ERF_SPEC_BIT1                     = BIT(25), //!< Bit1 of min config specification.
-	ERF_SPEC_BIT2                     = BIT(26), //!< Bit2 of min config specification.
-	ERF_RAYCAST_PROXY                 = BIT(27), //!< raycast proxy is only used for raycasting
-	ERF_HUD                           = BIT(28), //!< Hud object that can avoid some visibility tests
-	ERF_RAIN_OCCLUDER                 = BIT(29), //!< Is used for rain occlusion map
-	ERF_HAS_CASTSHADOWMAPS            = BIT(30), //!< at one point had ERF_CASTSHADOWMAPS set
-	ERF_ACTIVE_LAYER                  = BIT(31), //!< the node is on a currently active layer
+	ERF_GOOD_OCCLUDER                 = BIT64(0),
+	ERF_PROCEDURAL                    = BIT64(1),
+	ERF_CLONE_SOURCE                  = BIT64(2), //!< set if this object was cloned from another one
+	ERF_CASTSHADOWMAPS                = BIT64(3), //!< if you ever set this flag, be sure also to set ERF_HAS_CASTSHADOWMAPS
+	ERF_RENDER_ALWAYS                 = BIT64(4),
+	ERF_DYNAMIC_DISTANCESHADOWS       = BIT64(5),
+	ERF_HIDABLE                       = BIT64(6),
+	ERF_HIDABLE_SECONDARY             = BIT64(7),
+	ERF_HIDDEN                        = BIT64(8),
+	ERF_SELECTED                      = BIT64(9),
+	ERF_GI_MODE_BIT0                  = BIT64(10), //!< Bit0 of GI mode.
+	ERF_OUTDOORONLY                   = BIT64(11),
+	ERF_NODYNWATER                    = BIT64(12),
+	ERF_EXCLUDE_FROM_TRIANGULATION    = BIT64(13),
+	ERF_REGISTER_BY_BBOX              = BIT64(14),
+	ERF_PICKABLE                      = BIT64(15),
+	ERF_GI_MODE_BIT1                  = BIT64(16), //!< Bit1 of GI mode.
+	ERF_NO_PHYSICS                    = BIT64(17),
+	ERF_NO_DECALNODE_DECALS           = BIT64(18),
+	ERF_REGISTER_BY_POSITION          = BIT64(19),
+	ERF_STATIC_INSTANCING             = BIT64(20),
+	ERF_RECVWIND                      = BIT64(21),
+	ERF_COLLISION_PROXY               = BIT64(22), //!< Collision proxy is a special object that is only visible in editor and used for physical collisions with player and vehicles.
+	ERF_GI_MODE_BIT2                  = BIT64(23), //!< Bit2 of GI mode.
+	ERF_SPEC_BIT0                     = BIT64(24), //!< Bit0 of min config specification.
+	ERF_SPEC_BIT1                     = BIT64(25), //!< Bit1 of min config specification.
+	ERF_SPEC_BIT2                     = BIT64(26), //!< Bit2 of min config specification.
+	ERF_RAYCAST_PROXY                 = BIT64(27), //!< raycast proxy is only used for raycasting
+	ERF_HUD                           = BIT64(28), //!< Hud object that can avoid some visibility tests
+	ERF_RAIN_OCCLUDER                 = BIT64(29), //!< Is used for rain occlusion map
+	ERF_HAS_CASTSHADOWMAPS            = BIT64(30), //!< at one point had ERF_CASTSHADOWMAPS set
+	ERF_ACTIVE_LAYER                  = BIT64(31), //!< the node is on a currently active layer
 
 	ERF_ENABLE_ENTITY_RENDER_CALLBACK = BIT64(32),  //!< Enables render nodes to send a special render callback to their entity owner
 
@@ -137,10 +212,16 @@ enum ERenderNodeFlags : uint64
 	ERF_HUD_REQUIRE_DEPTHTEST         = BIT64(37), //!< If 3D HUD Object requires to be rendered at correct depth (i.e. behind weapon)
 
 	ERF_MOVES_EVERY_FRAME             = BIT64(38), //!< Set on Render Nodes that are highly dynamic, for optimization reasons
+	ERF_NO_3DENGINE_REGISTRATION      = BIT64(39), //!< Prevents render nodes from being registered in the 3DEngine octree (currently only supported by CBrush and CCharacterRenderNode)
 
 	// Special additional flags that are set on CRenderObject flags
-	ERF_FOB_RENDER_AFTER_POSTPROCESSING = BIT64(39), //!< Set FOB_RENDER_AFTER_POSTPROCESSING on the CRenderObject flags
-	ERF_FOB_NEAREST                     = BIT64(40), //!< Set FOB_NEAREST on the CRenderObject flags
+	ERF_FOB_RENDER_AFTER_POSTPROCESSING = BIT64(40), //!< Set FOB_RENDER_AFTER_POSTPROCESSING on the CRenderObject flags
+	ERF_FOB_NEAREST                     = BIT64(41), //!< Set FOB_NEAREST on the CRenderObject flags
+	ERF_PENDING_DELETE                  = BIT64(42),
+	ERF_FOB_ALLOW_TERRAIN_LAYER_BLEND   = BIT64(43), //!< Set FOB_ALLOW_TERRAIN_LAYER_BLEND on the the CRenderObject flags
+	ERF_FOB_ALLOW_DECAL_BLEND           = BIT64(44), //!< Set FOB_ALLOW_DECAL_BLEND on the the CRenderObject flags
+	ERF_HIDDEN_FROM_RECURSION           = BIT64(45), //!< Don't render object in recursive passes (currently only supported by CBrush and CCharacterRenderNode)
+	ERF_HIDDEN_FROM_CAMERA              = BIT64(46), //!< Don't render object in camera passes (currently only supported by CBrush and CCharacterRenderNode)
 };
 
 #define ERF_SPEC_BITS_MASK    (ERF_SPEC_BIT0 | ERF_SPEC_BIT1 | ERF_SPEC_BIT2)
@@ -148,6 +229,7 @@ enum ERenderNodeFlags : uint64
 
 #define ERF_GI_MODE_BITS_MASK (ERF_GI_MODE_BIT0 | ERF_GI_MODE_BIT1 | ERF_GI_MODE_BIT2)          // Bit mask of the GI mode.
 
+/* Base class of IRenderNode: Be careful when modifying the size as we can easily have millions of IRenderNode in a level. */
 struct IShadowCaster
 {
 	// <interfuscator:shuffle>
@@ -155,44 +237,57 @@ struct IShadowCaster
 	virtual bool                       HasOcclusionmap(int nLod, IRenderNode* pLightOwner)           { return false; }
 	virtual CLodValue                  ComputeLod(int wantedLod, const SRenderingPassInfo& passInfo) { return CLodValue(wantedLod); }
 	virtual void                       Render(const SRendParams& RendParams, const SRenderingPassInfo& passInfo) = 0;
-	virtual const AABB                 GetBBoxVirtual() = 0;
-	virtual void                       FillBBox(AABB& aabb) = 0;
-	virtual struct ICharacterInstance* GetEntityCharacter(unsigned int nSlot, Matrix34A* pMatrix = NULL, bool bReturnOnlyVisible = false) = 0;
-	virtual EERType                    GetRenderNodeType() = 0;
-	virtual bool                       IsRenderNode() { return true; }
+	virtual const AABB                 GetBBox() const = 0;
+	virtual void                       FillBBox(AABB& aabb) const = 0;
+	virtual struct ICharacterInstance* GetEntityCharacter(Matrix34A* pMatrix = NULL, bool bReturnOnlyVisible = false) = 0;
+	virtual EERType                    GetRenderNodeType() const = 0;
 	// </interfuscator:shuffle>
-	uint8                              m_cStaticShadowLod;
+
+	//! Internal states to track shadow cache status
+	uint8                              m_shadowCacheLastRendered[MAX_GSM_CACHED_LODS_NUM];
+	uint8                              m_shadowCacheLod[MAX_GSM_CACHED_LODS_NUM];
+
+	//! Shadow LOD bias.
+	//! Set to SHADOW_LODBIAS_DISABLE to disable any shadow lod overrides for this rendernode.
+	static const int8 SHADOW_LODBIAS_DISABLE = -128;
+	int8              m_cShadowLodBias;
+
+	int8              unused;
 };
 
+class  COctreeNode;
 struct IOctreeNode
 {
 public:
-	struct CTerrainNode* GetTerrainNode() const                    { return (CTerrainNode*) (m_pTerrainNode & ~0x1); }
-	void                 SetTerrainNode(struct CTerrainNode* node) { m_pTerrainNode = (m_pTerrainNode & 0x1) | ((INT_PTR) node); }
+	struct CTerrainNode* GetTerrainNode() const { return m_pTerrainNode; }
+	struct CVisArea*     GetVisArea() const     { return m_pVisArea; }
+	virtual void         MarkAsUncompiled(const ERNListType eListType) = 0;
+	virtual void         ReorderObject(IRenderNode* pObj, bool bPushFront) = 0;
 
-	// If true - this node needs to be recompiled for example update nodes max view distance.
-	bool IsCompiled() const         { return (bool) (m_pTerrainNode & 0x1); }
-	void SetCompiled(bool compiled) { m_pTerrainNode = ((int) compiled) | (m_pTerrainNode & ~0x1); }
-
-	struct CVisArea* m_pVisArea;
-
-private:
-	INT_PTR m_pTerrainNode;
+protected:
+	struct CVisArea*     m_pVisArea;
+	struct CTerrainNode* m_pTerrainNode;
 };
 
+/*! \brief Represents a rendered object in the world
+ *
+ * To visualize objects in a world CRYENGINE defines the concept of render nodes and render elements. Render nodes represent general objects in the 3D engine. Among other things they are used to build a hierarchy for visibility culling, allow physics interactions (optional) and rendering.
+ * For actual rendering they add themselves to the renderer (with the help of render objects as you can see in the sample code below) passing an appropriate render element which implements the actual drawing of the object.
+ *
+ * Be careful when modifying the size as we can easily have millions of IRenderNode in a level.
+ */
 struct IRenderNode : public IShadowCaster
 {
-	enum EInternalFlags
+	enum EInternalFlags : uint8
 	{
-		DECAL_OWNER                = BIT(0),   //!< Owns some decals.
-		REQUIRES_NEAREST_CUBEMAP   = BIT(1),   //!< Pick nearest cube map.
-		UPDATE_DECALS              = BIT(2),   //!< The node changed geometry - decals must be updated.
-		REQUIRES_FORWARD_RENDERING = BIT(3),   //!< Special shadow processing needed.
-		WAS_INVISIBLE              = BIT(4),   //!< Was invisible last frame.
-		WAS_IN_VISAREA             = BIT(5),   //!< Was inside vis-ares last frame.
-		WAS_FARAWAY                = BIT(6),   //!< Was considered 'far away' for the purposes of physics deactivation.
-		HAS_OCCLUSION_PROXY        = BIT(7),   //!< This node has occlusion proxy.
-		PERMANENT_RO_INVALID       = BIT(8)    //!< If this node uses permanent render object, it is not valid anymore and must be recreated.
+		DECAL_OWNER                = BIT8(0),   //!< Owns some decals.
+		REQUIRES_NEAREST_CUBEMAP   = BIT8(1),   //!< Pick nearest cube map.
+		UPDATE_DECALS              = BIT8(2),   //!< The node changed geometry - decals must be updated.
+		REQUIRES_FORWARD_RENDERING = BIT8(3),   //!< Special shadow processing needed.
+		WAS_INVISIBLE              = BIT8(4),   //!< Was invisible last frame.
+		WAS_IN_VISAREA             = BIT8(5),   //!< Was inside vis-ares last frame.
+		WAS_FARAWAY                = BIT8(6),   //!< Was considered 'far away' for the purposes of physics deactivation.
+		HAS_OCCLUSION_PROXY        = BIT8(7),   //!< This node has occlusion proxy.
 	};
 	typedef uint64 RenderFlagsType;
 
@@ -212,19 +307,24 @@ public:
 		m_dwRndFlags = 0;
 		m_ucViewDistRatio = 100;
 		m_ucLodRatio = 100;
-		m_pOcNode = 0;
+		m_pOcNode = nullptr;
+		m_nHUDSilhouettesParam = 0;
 		m_fWSMaxViewDist = 0;
 		m_nInternalFlags = 0;
 		m_nMaterialLayers = 0;
-		m_pTempData = NULL;
-		m_pPrev = m_pNext = NULL;
-		m_nSID = 0;
+		m_pTempData = nullptr;
+		m_pPrev = m_pNext = nullptr;
 		m_cShadowLodBias = 0;
-		m_cStaticShadowLod = 0;
 		m_nEditorSelectionID = 0;
+
+		ZeroArray(m_shadowCacheLod);
+		ZeroArray(m_shadowCacheLastRendered);
+
+		m_onePassTraversalFrameId = 0;
+		m_onePassTraversalShadowCascades = 0;
 	}
 
-	virtual bool CanExecuteRenderAsJob() { return false; }
+	virtual bool CanExecuteRenderAsJob() const { return false; }
 
 	// <interfuscator:shuffle>
 
@@ -235,7 +335,7 @@ public:
 	virtual float       GetImportance() const               { return 1.f; }
 
 	//! Releases IRenderNode.
-	virtual void         ReleaseNode(bool bImmediate = false) { delete this; }
+	virtual void         ReleaseNode(bool bImmediate = false) { CRY_ASSERT((m_dwRndFlags & ERF_PENDING_DELETE) == 0); delete this; }
 
 	virtual IRenderNode* Clone() const                        { return NULL; }
 
@@ -243,11 +343,11 @@ public:
 	virtual void SetMatrix(const Matrix34& mat) {}
 
 	//! Gets local bounds of the render node.
-	virtual void       GetLocalBounds(AABB& bbox) { AABB WSBBox(GetBBox()); bbox = AABB(WSBBox.min - GetPos(true), WSBBox.max - GetPos(true)); }
+	virtual void       GetLocalBounds(AABB& bbox) const { AABB WSBBox(GetBBox()); bbox = AABB(WSBBox.min - GetPos(true), WSBBox.max - GetPos(true)); }
 
 	virtual Vec3       GetPos(bool bWorldOnly = true) const = 0;
 	virtual const AABB GetBBox() const = 0;
-	virtual void       FillBBox(AABB& aabb) { aabb = GetBBox(); }
+	virtual void       FillBBox(AABB& aabb) const { aabb = GetBBox(); }
 	virtual void       SetBBox(const AABB& WSBBox) = 0;
 
 	//! Changes the world coordinates position of this node by delta.
@@ -257,24 +357,24 @@ public:
 	//! Renders node geometry
 	virtual void Render(const struct SRendParams& EntDrawParams, const SRenderingPassInfo& passInfo) = 0;
 
-	//! Hides/disables node in renderer.
-	virtual void Hide(bool bHide) { SetRndFlags(ERF_HIDDEN, bHide); }
+	//! Helpers to check state of node
+	bool IsHidden    () const { return GetRndFlags() & (ERF_HIDDEN) ? true : false; }
+	bool IsRenderable() const { return GetRndFlags() & (ERF_HIDDEN | ERF_STATIC_INSTANCING) ? false : true; }
+	bool IsInstanced () const { return GetRndFlags() & (ERF_STATIC_INSTANCING) ? true : false; }
 
 	//! Gives access to object components.
-	virtual IStatObj*  GetEntityStatObj(unsigned int nPartId = 0, unsigned int nSubPartId = 0, Matrix34A* pMatrix = NULL, bool bReturnOnlyVisible = false);
-	virtual IMaterial* GetEntitySlotMaterial(unsigned int nPartId, bool bReturnOnlyVisible = false, bool* pbDrawNear = NULL) { return NULL; }
-	virtual void       SetEntityStatObj(unsigned int nSlot, IStatObj* pStatObj, const Matrix34A* pMatrix = NULL)             {};
+	virtual IStatObj* GetEntityStatObj(unsigned int nSubPartId = 0, Matrix34A* pMatrix = NULL, bool bReturnOnlyVisible = false);
+	virtual void      SetEntityStatObj(IStatObj* pStatObj, const Matrix34A* pMatrix = NULL) {}
 
-	// Retrieve access to the character instance of the the RenderNode
-	virtual ICharacterInstance* GetEntityCharacter(unsigned int nSlot, Matrix34A* pMatrix = NULL, bool bReturnOnlyVisible = false) { return 0; }
+	//! Retrieve access to the character instance of the the RenderNode
+	virtual ICharacterInstance* GetEntityCharacter(Matrix34A* pMatrix = NULL, bool bReturnOnlyVisible = false) { return 0; }
 
 #if defined(USE_GEOM_CACHES)
 	virtual struct IGeomCacheRenderNode* GetGeomCacheRenderNode(unsigned int nSlot, Matrix34A* pMatrix = NULL, bool bReturnOnlyVisible = false) { return NULL; }
 #endif
-	virtual int                          GetSlotCount() const                                                                                   { return 1; }
 
 	//! \return IRenderMesh of the object.
-	virtual struct IRenderMesh* GetRenderMesh(int nLod) { return 0; };
+	virtual struct IRenderMesh* GetRenderMesh(int nLod) const { return 0; }
 
 	//! Allows to adjust default lod distance settings.
 	//! If fLodRatio is 100 - default lod distance is used.
@@ -288,7 +388,7 @@ public:
 	virtual void                    SetPhysics(IPhysicalEntity* pPhys) = 0;
 
 	//! Physicalizes if it isn't already.
-	virtual void CheckPhysicalized() {};
+	virtual void CheckPhysicalized() {}
 
 	//! Physicalize the node.
 	virtual void Physicalize(bool bInstant = false) {}
@@ -303,14 +403,14 @@ public:
 	virtual struct IFoliage* GetFoliage(int nSlot = 0) { return 0; }
 
 	//! Make sure I3DEngine::FreeRenderNodeState(this) is called in destructor of derived class.
-	virtual ~IRenderNode() { assert(!m_pTempData); };
+	virtual ~IRenderNode() { CRY_ASSERT(!m_pTempData); }
 
 	//! Set override material for this instance.
 	virtual void SetMaterial(IMaterial* pMat) = 0;
 
 	//! Queries override material of this instance.
 	virtual IMaterial* GetMaterial(Vec3* pHitPos = NULL) const = 0;
-	virtual IMaterial* GetMaterialOverride() = 0;
+	virtual IMaterial* GetMaterialOverride() const = 0;
 
 	//! Used by the editor during export.
 	virtual void       SetCollisionClassIndex(int tableIndex)          {}
@@ -318,27 +418,41 @@ public:
 	virtual void       SetStatObjGroupIndex(int nVegetationGroupIndex) {}
 	virtual int        GetStatObjGroupId() const                       { return -1; }
 	virtual void       SetLayerId(uint16 nLayerId)                     {}
-	virtual uint16     GetLayerId()                                    { return 0; }
-	virtual float      GetMaxViewDist() = 0;
+	virtual uint16     GetLayerId() const                              { return 0; }
+	virtual float      GetMaxViewDist() const = 0;
 
-	virtual EERType    GetRenderNodeType() = 0;
-	virtual bool       IsAllocatedOutsideOf3DEngineDLL()             { return GetRenderNodeType() == eERType_RenderProxy; }
+	virtual EERType    GetRenderNodeType() const = 0;
+	virtual bool       IsAllocatedOutsideOf3DEngineDLL()             { return GetOwnerEntity() != nullptr; }
 	virtual void       Dephysicalize(bool bKeepIfReferenced = false) {}
 	virtual void       Dematerialize()                               {}
 	virtual void       GetMemoryUsage(ICrySizer* pSizer) const = 0;
 
-	virtual void       Precache()                                                                       {};
+	virtual void       Precache()                                                                       {}
 
-	virtual void       UpdateStreamingPriority(const SUpdateStreamingPriorityContext& streamingContext) {};
-
-	virtual const AABB GetBBoxVirtual()                                                                 { return GetBBox(); }
+	virtual void       UpdateStreamingPriority(const SUpdateStreamingPriorityContext& streamingContext) {}
 
 	//	virtual float GetLodForDistance(float fDistance) { return 0; }
 
-	virtual void  OnRenderNodeBecomeVisible(const SRenderingPassInfo& passInfo) {}
-	virtual void  OnRenderNodeBecomeInvisible()                                 {}
+	//! Called immediately when render node becomes visible from any thread.
+	//! Not reentrant, multiple simultaneous calls to this method on the same rendernode from multiple threads is not supported and should not happen
+	virtual void OnRenderNodeBecomeVisibleAsync(SRenderNodeTempData* pTempData, const SRenderingPassInfo& passInfo) {}
 
-	virtual uint8 GetSortPriority()                                             { return 0; }
+	//! Called when RenderNode becomes visible or invisible, can only be called from the Main thread
+	virtual void  OnRenderNodeVisible(bool bBecomeVisible) {}
+
+	//! Called when RenderNode and its owner entity becomes visible or invisible, can only be called from the Main thread
+	void OnRenderNodeAndEntityVisibilityChanged(bool bBecomeVisible)
+	{
+		OnRenderNodeVisible(bBecomeVisible);
+
+		if (GetOwnerEntity() && (GetRndFlags() & ERF_ENABLE_ENTITY_RENDER_CALLBACK))
+		{
+			// Notify our owner entity that the visibility of render node have changed.
+			GetOwnerEntity()->OnRenderNodeVisibilityChange(bBecomeVisible);
+		}
+	}
+
+	virtual uint8 GetSortPriority() const { return 0; }
 
 	//! Object can be used by GI system in several ways.
 	enum EGIMode
@@ -350,6 +464,7 @@ public:
 		eGM_AnalyticalProxy_Soft,    //!< Analytical proxy (with shadow fading)
 		eGM_AnalyticalProxy_Hard,    //!< Analytical proxy (no shadow fading)
 		eGM_AnalytPostOccluder,      //!< Analytical occluder (used with average light direction)
+		eGM_IntegrateIntoTerrain,    //!< Copy object mesh into terrain mesh and render using usual terrain materials
 	};
 
 	//! Retrieves the way object is used by GI system.
@@ -358,7 +473,7 @@ public:
 		return (EGIMode)(((m_dwRndFlags & ERF_GI_MODE_BIT0) ? 1 : 0) | ((m_dwRndFlags & ERF_GI_MODE_BIT1) ? 2 : 0) | ((m_dwRndFlags & ERF_GI_MODE_BIT2) ? 4 : 0));
 	}
 
-	virtual void SetMinSpec(int nMinSpec) { m_dwRndFlags &= ~ERF_SPEC_BITS_MASK; m_dwRndFlags |= (nMinSpec << ERF_SPEC_BITS_SHIFT) & ERF_SPEC_BITS_MASK; };
+	virtual void SetMinSpec(RenderFlagsType nMinSpec) { m_dwRndFlags &= ~ERF_SPEC_BITS_MASK; m_dwRndFlags |= (nMinSpec << ERF_SPEC_BITS_SHIFT) & ERF_SPEC_BITS_MASK; }
 
 	//! Allows to adjust default max view distance settings.
 	//! If fMaxViewDistRatio is 100 - default max view distance is used.
@@ -367,13 +482,15 @@ public:
 
 	void CopyIRenderNodeData(IRenderNode* pDest) const
 	{
+		pDest->m_nHUDSilhouettesParam = m_nHUDSilhouettesParam;
 		pDest->m_fWSMaxViewDist = m_fWSMaxViewDist;
 		pDest->m_dwRndFlags = m_dwRndFlags;
 		//pDest->m_pOcNode						= m_pOcNode;		// Removed to stop the registering from earlying out.
 		pDest->m_ucViewDistRatio = m_ucViewDistRatio;
 		pDest->m_ucLodRatio = m_ucLodRatio;
 		pDest->m_cShadowLodBias = m_cShadowLodBias;
-		pDest->m_cStaticShadowLod = m_cStaticShadowLod;
+		memcpy(pDest->m_shadowCacheLod, m_shadowCacheLod, sizeof(m_shadowCacheLod));
+		ZeroArray(pDest->m_shadowCacheLastRendered);
 		pDest->m_nInternalFlags = m_nInternalFlags;
 		pDest->m_nMaterialLayers = m_nMaterialLayers;
 		//pDestBrush->m_pRNTmpData				//If this is copied from the source render node, there are two
@@ -382,32 +499,33 @@ public:
 	}
 
 	//! Rendering flags. (@see ERenderNodeFlags)
-	ILINE void            SetRndFlags(RenderFlagsType dwFlags)               { m_dwRndFlags = dwFlags; }
-	ILINE void            SetRndFlags(RenderFlagsType dwFlags, bool bEnable) { if (bEnable) SetRndFlags(m_dwRndFlags | dwFlags); else SetRndFlags(m_dwRndFlags & (~dwFlags)); }
+	ILINE void            SetRndFlags(RenderFlagsType dwFlags)               { if ((m_dwRndFlags ^ dwFlags) & ERF_HIDDEN) Hide(dwFlags & ERF_HIDDEN ? true : false); m_dwRndFlags  = dwFlags; }
+	ILINE void            FlipRndFlags(RenderFlagsType dwFlags)              { if (dwFlags & ERF_HIDDEN) Hide((m_dwRndFlags ^ dwFlags) & ERF_HIDDEN ? true : false); m_dwRndFlags ^= dwFlags; }
+	ILINE void            SetRndFlags(RenderFlagsType dwFlags, bool bEnable) { if (bEnable) dwFlags = m_dwRndFlags | dwFlags; else dwFlags = m_dwRndFlags & (~dwFlags); SetRndFlags(dwFlags); }
 	ILINE RenderFlagsType GetRndFlags() const                                { return m_dwRndFlags; }
 
 	//! Object draw frames (set if was drawn).
 	ILINE void SetDrawFrame(int nFrameID, int nRecursionLevel)
 	{
-		assert(m_pTempData);
-		int* pDrawFrames = (int*)m_pTempData;
+		CRY_ASSERT(m_pTempData);
+
+		int* pDrawFrames = m_pTempData->userData.lastSeenFrame;
 		pDrawFrames[nRecursionLevel] = nFrameID;
 	}
 
 	ILINE int GetDrawFrame(int nRecursionLevel = 0) const
 	{
-		IF (!m_pTempData, 0)
-			return 0;
+		IF (!m_pTempData, 0) return 0;
 
-		int* pDrawFrames = (int*)m_pTempData;
+		int* pDrawFrames = m_pTempData->userData.lastSeenFrame;
 		return pDrawFrames[nRecursionLevel];
 	}
 
 	//! \return Current VisArea or null if in outdoors or entity was not registered in 3Dengine.
-	ILINE IVisArea* GetEntityVisArea() const { return m_pOcNode ? (IVisArea*)(m_pOcNode->m_pVisArea) : NULL; }
+	ILINE IVisArea* GetEntityVisArea() const { return m_pOcNode ? (IVisArea*)(m_pOcNode->GetVisArea()) : nullptr; }
 
 	//! \return Current VisArea or null if in outdoors or entity was not registered in 3Dengine.
-	struct CTerrainNode* GetEntityTerrainNode() const { return (m_pOcNode && !m_pOcNode->m_pVisArea) ? m_pOcNode->GetTerrainNode() : NULL; }
+	struct CTerrainNode* GetEntityTerrainNode() const { return GetEntityVisArea() ? m_pOcNode->GetTerrainNode() : nullptr; }
 
 	//! Makes object visible at any distance.
 	ILINE void SetViewDistUnlimited() { SetViewDistRatio(255); }
@@ -440,14 +558,18 @@ public:
 	//! \return Lod distance ratio.
 	ILINE int GetShadowLodBias() const { return m_cShadowLodBias; }
 
-	//! Sets camera space position of the render node.
-	//! Only implemented by few nodes.
-	virtual void SetCameraSpacePos(Vec3* pCameraSpacePos) {};
+	//! Sets supplemental parameters used for camera-space rendering (ERF_FOB_NEAREST).
+	//! Parameter values shall reflect the current render node position, as supplied with SetMatrix().
+	//! Usage of this feature is optional. The benefit is increased rendering precision.
+	virtual void SetCameraSpaceParams(stl::optional<SCameraSpaceParams> cameraSpaceParams) {}
+
+	//! Retrieves camera space parameters that have been previously set by a call to SetCameraSpaceParams().
+	virtual stl::optional<SCameraSpaceParams> GetCameraSpaceParams() const { return stl::nullopt; }
 
 	//! Set material layers mask.
 	ILINE void               SetMaterialLayers(uint8 nMtlLayers) { m_nMaterialLayers = nMtlLayers; }
 
-	ILINE int                GetMinSpec() const                  { return (m_dwRndFlags & ERF_SPEC_BITS_MASK) >> ERF_SPEC_BITS_SHIFT; };
+	ILINE int                GetMinSpec() const                  { return (m_dwRndFlags & ERF_SPEC_BITS_MASK) >> ERF_SPEC_BITS_SHIFT; }
 
 	static const ERNListType GetRenderNodeListId(const EERType eRType)
 	{
@@ -460,13 +582,18 @@ public:
 		case eERType_Decal:
 		case eERType_Road:
 			return eRNListType_DecalsAndRoads;
+		case eERType_Light:
+			return eRNListType_Light;
 		default:
 			return eRNListType_Unknown;
 		}
 	}
 
 	//! Inform 3d engine that permanent render object that captures drawing state of this node is not valid and must be recreated.
-	ILINE void   InvalidatePermanentRenderObject() { CryInterlockedExchangeOr((volatile LONG*)&m_nInternalFlags, uint32(PERMANENT_RO_INVALID)); };
+	ILINE void   InvalidatePermanentRenderObject() { if (m_pTempData) m_pTempData->invalidRenderObjects = m_pTempData->hasValidRenderObjects.load(); }
+
+	void MarkAsUncompiled() const;
+	IOctreeNode* GetParent() const;
 
 	virtual void SetEditorObjectId(uint32 nEditorObjectId)
 	{
@@ -482,36 +609,86 @@ public:
 		InvalidatePermanentRenderObject();
 	}
 	// Set a new owner entity
-	virtual void   SetOwnerEntity(IEntity* pEntity) { m_pOwnerEntity = pEntity; }
+	virtual void     SetOwnerEntity(IEntity* pEntity) { assert(!"Not supported by this object type");  }
 	// Retrieve a pointer to the entity who owns this render node.
-	ILINE IEntity* GetOwnerEntity() const           { return m_pOwnerEntity; }
+	virtual IEntity* GetOwnerEntity() const           { return nullptr; }
 
-	//////////////////////////////////////////////////////////////////////////
-	// Variables
-	//////////////////////////////////////////////////////////////////////////
+	void SetOnePassTraversalFrameId(uint32 onePassTraversalFrameId, int shadowFrustumLod)
+	{
+#if !defined(SWIG)
+		uint64 onePassDataPrev = m_onePassData.load();
+		uint64 onePassDataCurr;
 
-public:
+		do
+		{
+			uint32 traversalFrameId  = uint32(onePassDataPrev);
+			uint32 traversalCascades = uint32(onePassDataPrev >> 32);
+
+			if (traversalFrameId != onePassTraversalFrameId)
+			{
+				traversalCascades = 0;
+				traversalFrameId = onePassTraversalFrameId;
+			}
+
+			traversalCascades |= BIT(shadowFrustumLod);
+			onePassDataCurr    = uint64(traversalCascades) << 32 | traversalFrameId;
+
+		} while (!m_onePassData.compare_exchange_weak(onePassDataPrev, onePassDataCurr));
+#endif
+	}
+
+private:
+	template<class T> friend struct TDoublyLinkedList;
+	friend struct IOctreeNode;
+	friend class  COctreeNode;
 
 	//! Every sector has linked list of IRenderNode objects.
 	IRenderNode* m_pNext, * m_pPrev;
 
+protected:
+#if !defined(SWIG) && !defined(CryMonoBridge_EXPORTS)
+	friend void CopyCommonData(SRenderNodeChunk* pChunk, IRenderNode* pObj);
+	friend void LoadCommonData(SRenderNodeChunk* pChunk, IRenderNode* pObj, const SLayerVisibility* pLayerVisibility);
+#endif
+
 	//! Current objects tree cell.
 	IOctreeNode* m_pOcNode;
-
-	//! Pointer to temporary data allocated only for currently visible objects.
-	struct SRenderNodeTempData* m_pTempData;
-
-	//! Max view distance.
-	float m_fWSMaxViewDist;
 
 	//! Render flags (@see ERenderNodeFlags)
 	RenderFlagsType m_dwRndFlags;
 
-	//! Segment Id.
-	int m_nSID;
+	//! Hides/shows node in renderer.
+	virtual void Hide(bool bHide) { bool toggleHide = bHide != IsHidden(); if (toggleHide) { m_dwRndFlags ^= ERF_HIDDEN; if (m_pOcNode) m_pOcNode->ReorderObject(this, !bHide); } }
+
+	//! Enables/disables instancing on the node
+	virtual void Instance(bool bInstance) {};
+
+public:
+	//! Pointer to temporary data allocated only for currently visible objects.
+	SRenderNodeTempData* m_pTempData = nullptr;
+	int                  m_manipulationFrame = -1;
+
+	//! Hud silhouette parameter, default is black with alpha zero
+	uint32 m_nHUDSilhouettesParam;
+
+	//! Used to request visiting of the node during one-pass traversal
+	union
+	{
+#if !defined(SWIG)
+		std::atomic<uint64> m_onePassData;
+#endif
+		struct
+		{
+			uint32 m_onePassTraversalFrameId;
+			uint32 m_onePassTraversalShadowCascades;
+		};
+	};
+
+	//! Max view distance.
+	float m_fWSMaxViewDist;
 
 	//! Flags for render node internal usage, one or more bits from EInternalFlags.
-	uint32 m_nInternalFlags;
+	uint8 m_nInternalFlags;
 
 	//! Max view distance settings.
 	uint8 m_ucViewDistRatio;
@@ -522,21 +699,28 @@ public:
 	//! Material layers bitmask -> which material layers are active.
 	uint8 m_nMaterialLayers;
 
-	//! Shadow LOD bias.
-	//! Set to SHADOW_LODBIAS_DISABLE to disable any shadow lod overrides for this rendernode.
-	static const int8 SHADOW_LODBIAS_DISABLE = -128;
-	int8              m_cShadowLodBias;
-
 	//! Selection ID used to map the rendernode to a baseobject in the editor, or differentiate between objects
 	//! in highlight framebuffer
 	//! This ID is split in two parts. The low 8 bits store flags such as selection and highlight state
 	//! The high 24 bits store the actual ID of the object. This need not be the same as CryGUID,
 	//! though the CryGUID could be used to generate it
 	uint32 m_nEditorSelectionID;
-private:
-	// When render node is created by the entity, pointer to the owner entity.
-	IEntity* m_pOwnerEntity = 0;
+
+#ifdef TRACK_THREADED_ACCESS_TO_RENDERNODES
+	DBG_THREAD_ACCESS_INFO;
+#endif
 };
+
+inline IOctreeNode* IRenderNode::GetParent() const
+{
+	return m_pOcNode;
+}
+
+inline void IRenderNode::MarkAsUncompiled() const
+{
+	if (m_pOcNode)
+		m_pOcNode->MarkAsUncompiled(GetRenderNodeListId(GetRenderNodeType()));
+}
 
 inline void IRenderNode::SetViewDistRatio(int nViewDistRatio)
 {
@@ -545,12 +729,25 @@ inline void IRenderNode::SetViewDistRatio(int nViewDistRatio)
 	{
 		m_ucViewDistRatio = nViewDistRatio;
 		if (m_pOcNode)
-			m_pOcNode->SetCompiled(false);
+			m_pOcNode->MarkAsUncompiled(GetRenderNodeListId(GetRenderNodeType()));
+	}
+}
+
+inline void SRenderNodeTempData::MarkForAutoDelete()
+{
+	userData.lastSeenFrame[0] =
+		userData.lastSeenFrame[1] =
+		userData.lastSeenShadowFrame = 0;
+
+	if (userData.pOwnerNode)
+	{
+		userData.pOwnerNode->OnRenderNodeAndEntityVisibilityChanged(false);
+		userData.pOwnerNode = nullptr;
 	}
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-inline IStatObj* IRenderNode::GetEntityStatObj(unsigned int nPartId, unsigned int nSubPartId, Matrix34A* pMatrix, bool bReturnOnlyVisible)
+inline IStatObj* IRenderNode::GetEntityStatObj(unsigned int nSubPartId, Matrix34A* pMatrix, bool bReturnOnlyVisible)
 {
 	return 0;
 }
@@ -570,9 +767,10 @@ struct IBrush : public IRenderNode
 
 	// Hide mask disable individual sub-objects rendering in the compound static objects
 	// Only implemented by few nodes.
-	virtual void SetSubObjectHideMask(hidemask subObjHideMask) {};
+	virtual void SetSubObjectHideMask(hidemask subObjHideMask) {}
 };
 
+//! \cond INTERNAL
 struct SVegetationSpriteInfo
 {
 	Sphere                             sp;
@@ -623,35 +821,18 @@ private:
 
 	Vec3 m_vSunDir;                //!< Normalized sun direction.
 };
+//! \endcond
 
 struct ILightSource : public IRenderNode
 {
 	// <interfuscator:shuffle>
-	virtual void                     SetLightProperties(const CDLight& light) = 0;
-	virtual CDLight&                 GetLightProperties() = 0;
-	virtual const Matrix34&          GetMatrix() = 0;
-	virtual struct ShadowMapFrustum* GetShadowFrustum(int nId = 0) = 0;
-	virtual bool                     IsLightAreasVisible() = 0;
+	virtual void                     SetLightProperties(const SRenderLight& light) = 0;
+	virtual SRenderLight&            GetLightProperties() = 0;
+	virtual const SRenderLight&      GetLightProperties() const = 0;
+	virtual const Matrix34&          GetMatrix() const = 0;
+	virtual struct ShadowMapFrustum* GetShadowFrustum(int nId = 0) const = 0;
+	virtual bool                     IsLightAreasVisible() const = 0;
 	virtual void                     SetCastingException(IRenderNode* pNotCaster) = 0;
-	// </interfuscator:shuffle>
-};
-
-struct SCloudMovementProperties
-{
-	Vec3  m_speed = Vec3(ZERO);
-	Vec3  m_spaceLoopBox = Vec3(2000.0f, 2000.0f, 2000.0f);
-	float m_fadeDistance = 0.0f;
-	bool  m_autoMove = false;
-};
-
-//! Interface to the Cloud Render Node object.
-struct ICloudRenderNode : public IRenderNode
-{
-	// <interfuscator:shuffle>
-	//! Loads a cloud from a cloud description XML file.
-	virtual bool LoadCloud(const char* sCloudFilename) = 0;
-	virtual bool LoadCloudFromXml(XmlNodeRef cloudNode) = 0;
-	virtual void SetMovementProperties(const SCloudMovementProperties& properties) = 0;
 	// </interfuscator:shuffle>
 };
 
@@ -727,39 +908,7 @@ struct IVoxelObject : public IRenderNode
 	// </interfuscator:shuffle>
 };
 
-//! IFogVolumeRenderNode is an interface to the Fog Volume Render Node object.
-struct SFogVolumeProperties
-{
-	// Common parameters.
-	// Center position & rotation values are taken from the entity matrix.
-
-	int    m_volumeType;
-	Vec3   m_size;
-	ColorF m_color;
-	bool   m_useGlobalFogColor;
-	bool   m_ignoresVisAreas;
-	bool   m_affectsThisAreaOnly;
-	float  m_globalDensity;
-	float  m_densityOffset;
-	float  m_softEdges;
-	float  m_fHDRDynamic;               //!< 0 to get the same results in LDR, <0 to get darker, >0 to get brighter.
-	float  m_nearCutoff;
-
-	float  m_heightFallOffDirLong;        //!< Height based fog specifics.
-	float  m_heightFallOffDirLati;        //!< Height based fog specifics.
-	float  m_heightFallOffShift;          //!< Height based fog specifics.
-	float  m_heightFallOffScale;          //!< Height based fog specifics.
-
-	float  m_rampStart;
-	float  m_rampEnd;
-	float  m_rampInfluence;
-	float  m_windInfluence;
-	float  m_densityNoiseScale;
-	float  m_densityNoiseOffset;
-	float  m_densityNoiseTimeFrequency;
-	Vec3   m_densityNoiseFrequency;
-	Vec3   m_emission;
-};
+struct SFogVolumeProperties;
 
 struct IFogVolumeRenderNode : public IRenderNode
 {
@@ -777,6 +926,40 @@ struct IFogVolumeRenderNode : public IRenderNode
 
 	virtual void            FadeGlobalDensity(float fadeTime, float newGlobalDensity) = 0;
 	// </interfuscator:shuffle>
+};
+
+//! IFogVolumeRenderNode is an interface to the Fog Volume Render Node object.
+struct SFogVolumeProperties
+{
+	// Common parameters.
+	// Center position & rotation values are taken from the entity matrix.
+
+	int    m_volumeType = IFogVolumeRenderNode::eFogVolumeType_Box;
+	Vec3   m_size = Vec3(1.f);
+	ColorF m_color = ColorF(1, 1, 1, 1);
+	bool   m_useGlobalFogColor = false;
+	bool   m_ignoresVisAreas = false;
+	bool   m_affectsThisAreaOnly = true;
+	float  m_globalDensity = 1.f;
+	float  m_densityOffset = 0.f;
+	float  m_softEdges = 1.f;
+	float  m_fHDRDynamic = 0.f;               //!< 0 to get the same results in LDR, <0 to get darker, >0 to get brighter.
+	float  m_nearCutoff = 0.f;
+
+	float  m_heightFallOffDirLong = 0.f;        //!< Height based fog specifics.
+	float  m_heightFallOffDirLati = 0.f;        //!< Height based fog specifics.
+	float  m_heightFallOffShift = 0.f;          //!< Height based fog specifics.
+	float  m_heightFallOffScale = 1.f;          //!< Height based fog specifics.
+
+	float  m_rampStart = 0.f;
+	float  m_rampEnd = 50.f;
+	float  m_rampInfluence = 0.f;
+	float  m_windInfluence = 1.f;
+	float  m_densityNoiseScale = 0.f;
+	float  m_densityNoiseOffset = 0.f;
+	float  m_densityNoiseTimeFrequency = 0.f;
+	Vec3   m_densityNoiseFrequency = Vec3(1.f);
+	Vec3   m_emission = Vec3(1.f);
 };
 
 struct SDecalProperties
@@ -818,8 +1001,8 @@ struct IDecalRenderNode : public IRenderNode
 	// <interfuscator:shuffle>
 	virtual void                    SetDecalProperties(const SDecalProperties& properties) = 0;
 	virtual const SDecalProperties* GetDecalProperties() const = 0;
-	virtual const Matrix34& GetMatrix() = 0;
-	virtual void            CleanUpOldDecals() = 0;
+	virtual const Matrix34&         GetMatrix() const = 0;
+	virtual void                    CleanUpOldDecals() = 0;
 	// </interfuscator:shuffle>
 };
 
@@ -854,11 +1037,12 @@ struct IWaterVolumeRenderNode : public IRenderNode
 	virtual void             SetCausticIntensity(float causticIntensity) = 0;
 	virtual void             SetCausticTiling(float causticTiling) = 0;
 	virtual void             SetCausticHeight(float causticHeight) = 0;
+	virtual void             SetPhysParams(float density, float resistance) = 0;
 	virtual void             SetAuxPhysParams(pe_params_area*) = 0;
 
 	virtual void             CreateOcean(uint64 volumeID, /* TBD */ bool keepSerializationParams = false) = 0;
-	virtual void             CreateArea(uint64 volumeID, const Vec3* pVertices, unsigned int numVertices, const Vec2& surfUVScale, const Plane& fogPlane, bool keepSerializationParams = false, int nSID = -1) = 0;
-	virtual void             CreateRiver(uint64 volumeID, const Vec3* pVertices, unsigned int numVertices, float uTexCoordBegin, float uTexCoordEnd, const Vec2& surfUVScale, const Plane& fogPlane, bool keepSerializationParams = false, int nSID = -1) = 0;
+	virtual void             CreateArea(uint64 volumeID, const Vec3* pVertices, unsigned int numVertices, const Vec2& surfUVScale, const Plane& fogPlane, bool keepSerializationParams = false) = 0;
+	virtual void             CreateRiver(uint64 volumeID, const Vec3* pVertices, unsigned int numVertices, float uTexCoordBegin, float uTexCoordEnd, const Vec2& surfUVScale, const Plane& fogPlane, bool keepSerializationParams = false) = 0;
 
 	virtual void             SetAreaPhysicsArea(const Vec3* pVertices, unsigned int numVertices, bool keepSerializationParams = false) = 0;
 	virtual void             SetRiverPhysicsArea(const Vec3* pVertices, unsigned int numVertices, bool keepSerializationParams = false) = 0;
@@ -868,6 +1052,7 @@ struct IWaterVolumeRenderNode : public IRenderNode
 };
 
 //! Interface to the Water Wave Render Node object.
+//! \cond INTERNAL
 struct SWaterWaveParams
 {
 	SWaterWaveParams() : m_fSpeed(5.0f), m_fSpeedVar(2.0f), m_fLifetime(8.0f), m_fLifetimeVar(2.0f),
@@ -897,7 +1082,9 @@ struct IWaterWaveRenderNode : public IRenderNode
 	virtual const SWaterWaveParams& GetParams() const = 0;
 	// </interfuscator:shuffle>
 };
+// \endcond
 
+//! \cond INTERNAL
 //! Interface to the Distance Cloud Render Node object.
 struct SDistanceCloudProperties
 {
@@ -907,32 +1094,11 @@ struct SDistanceCloudProperties
 	float       m_rotationZ;
 	const char* m_pMaterialName;
 };
+//! \endcond INTERNAL
 
 struct IDistanceCloudRenderNode : public IRenderNode
 {
 	virtual void SetProperties(const SDistanceCloudProperties& properties) = 0;
-};
-
-struct SVolumeObjectProperties
-{
-};
-
-struct SVolumeObjectMovementProperties
-{
-	bool  m_autoMove;
-	Vec3  m_speed;
-	Vec3  m_spaceLoopBox;
-	float m_fadeDistance;
-};
-
-//! Interface to the Volume Object Render Node object.
-struct IVolumeObjectRenderNode : public IRenderNode
-{
-	// <interfuscator:shuffle>
-	virtual void LoadVolumeData(const char* filePath) = 0;
-	virtual void SetProperties(const SVolumeObjectProperties& properties) = 0;
-	virtual void SetMovementProperties(const SVolumeObjectMovementProperties& properties) = 0;
-	// </interfuscator:shuffle>
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -952,48 +1118,65 @@ struct IRopeRenderNode : public IRenderNode
 		eRope_StaticAttachEnd        = 0x0200,  //!< attach end point to the 'world'.
 		eRope_CastShadows            = 0x0400,  //!< self-explanatory.
 		eRope_Awake                  = 0x0800,  //!< Rope will be awake initially.
+		eRope_UseBones							 = 0x1000,  //!< Rope will use skinned mesh instead fully generated
+		eRope_SegObjBends						 = 0x2000,  //!< Is segment cgf is used, whether it'll be rigidly linked to bones
+	};
+	enum ERopeSegAxis
+	{
+		eRopeSeg_X    = 0,
+		eRopeSeg_Y    = 1,
+		eRopeSeg_Z    = 2,
+		eRopeSeg_Auto = 3
 	};
 	struct SRopeParams
 	{
-		int   nFlags; //!< ERopeParamFlags.
+		int   nFlags = eRope_CheckCollisinos | eRope_UseBones; //!< ERopeParamFlags.
 
-		float fThickness;
+		float fThickness = 0.02f;
+		float sizeChange = 0.0f;
 
 		//! Radius for the end points anchors that bind rope to objects in world.
-		float fAnchorRadius;
+		float fAnchorRadius = 0.1f;
 
 		//////////////////////////////////////////////////////////////////////////
 		// Rendering/Tessellation.
-		int   nNumSegments;
-		int   nNumSides;
-		float fTextureTileU;
-		float fTextureTileV;
+		int   nNumSegments = 8;
+		int   nNumSides = 4;
+		float fTextureTileU = 1.f;
+		float fTextureTileV = 10.f;
 		//////////////////////////////////////////////////////////////////////////
+
+		string       segmentObj;
+		ERopeSegAxis segObjAxis = eRopeSeg_Auto;
+		float        segObjLen  = 1.0f;
+		float        segObjRot  = 0.0f;
+		float        segObjRot0 = 0.0f;
+		int          boneSmoothIters = 2;
 
 		//////////////////////////////////////////////////////////////////////////
 		// Rope Physical parameters.
-		int   nPhysSegments;
-		int   nMaxSubVtx;
+		int   nPhysSegments = 8;
+		int   nMaxSubVtx = 3;
 
-		float mass;        //!< Rope mass. if mass is 0 it will be static.
-		float tension;
-		float friction;
-		float frictionPull;
+		float mass = 1.f;        //!< Rope mass. if mass is 0 it will be static.
+		float tension = 0.f;
+		float friction = 2.f;
+		float frictionPull = 0.f;
 
-		Vec3  wind;
-		float windVariance;
-		float airResistance;
-		float waterResistance;
+		Vec3  wind = ZERO;
+		float windVariance = 0.f;
+		float airResistance = 0.f;
+		float waterResistance = 0.f;
 
-		float jointLimit;
-		float maxForce;
+		float jointLimit = 0.f;
+		float maxForce = 0.f;
 
-		int   nMaxIters;
-		float maxTimeStep;
-		float stiffness;
-		float hardness;
-		float damping;
-		float sleepSpeed;
+		int   nMaxIters = 650;
+		float maxTimeStep = 0.02f;
+		float stiffness = 10.f;
+		float hardness = 8.f;
+		float damping = 0.2f;
+		float sleepSpeed = 0.04f;
 	};
 	struct SEndPointLink
 	{
@@ -1001,15 +1184,23 @@ struct IRopeRenderNode : public IRenderNode
 		Vec3             offset;
 		int              nPartId;
 	};
+	struct SRopeAudioParams
+	{
+		SRopeAudioParams() = default;
+
+		CryAudio::ControlId      startTrigger = CryAudio::InvalidControlId;
+		CryAudio::ControlId      stopTrigger = CryAudio::InvalidControlId;
+		CryAudio::ControlId      angleParameter = CryAudio::InvalidControlId;
+		CryAudio::EOcclusionType occlusionType = CryAudio::EOcclusionType::Ignore;
+		int                      segementToAttachTo = 1;
+		float                    offset = 0.0f;
+	};
 
 	// <interfuscator:shuffle>
 	virtual void                                SetName(const char* sNodeName) = 0;
 
 	virtual void                                SetParams(const SRopeParams& params) = 0;
 	virtual const IRopeRenderNode::SRopeParams& GetParams() const = 0;
-
-	virtual void                                SetEntityOwner(uint32 nEntityId) = 0;
-	virtual uint32                              GetEntityOwner() const = 0;
 
 	virtual void                                SetPoints(const Vec3* pPoints, int nCount) = 0;
 	virtual int                                 GetPointsCount() const = 0;
@@ -1028,10 +1219,8 @@ struct IRopeRenderNode : public IRenderNode
 
 	virtual void ResetPoints() = 0;
 
-	//! Sound related.
-	virtual void SetRopeSound(char const* const pcSoundName, int unsigned const nSegmentToAttachTo, float const fOffset) = 0;
-	virtual void StopRopeSound() = 0;
-	virtual void ResetRopeSound() = 0;
+	virtual void DisableAudio() = 0;
+	virtual void SetAudioParams(SRopeAudioParams const& audioParams) = 0;
 	// </interfuscator:shuffle>
 };
 
@@ -1108,7 +1297,4 @@ struct IGeomCacheRenderNode : public IRenderNode
 struct ICharacterRenderNode : public IRenderNode
 {
 	virtual void SetCharacter(struct ICharacterInstance* pCharacter) = 0;
-	virtual void SetCharacterRenderOffset(const QuatTS& renderOffset) = 0;
 };
-
-#endif // IRenderNodeSTATE_H

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   UISettings.cpp
@@ -32,7 +32,7 @@ static float g_sfx = 1.0f;
 ////////////////////////////////////////////////////////////////////////////
 static void SetVolume(CryAudio::ControlId id, float volume)
 {
-	gEnv->pAudioSystem->SetParameter(id, volume);
+	gEnv->pAudioSystem->SetParameterGlobally(id, volume);
 }
 
 ////////////////////////////////////////////////////////////////////////////
@@ -63,8 +63,8 @@ void CUISettings::InitEventSystem()
 	GET_CVAR_SAFE(m_pRYVar, "r_Height");
 	GET_CVAR_SAFE(m_pFSVar, "r_Fullscreen");
 	GET_CVAR_SAFE(m_pGQVar, "sys_spec");
-	gEnv->pAudioSystem->GetAudioParameterId("volume_music", m_musicVolumeId);
-	gEnv->pAudioSystem->GetAudioParameterId("volume_sfx", m_sfxVolumeId);
+	m_musicVolumeId = CryAudio::StringToId("volume_music");
+	m_sfxVolumeId = CryAudio::StringToId("volume_sfx");
 	GET_CVAR_SAFE(m_pVideoVar, "sys_flash_video_soundvolume");
 	GET_CVAR_SAFE(m_pMouseSensitivity, "cl_sensitivity");
 	GET_CVAR_SAFE(m_pInvertMouse, "cl_invertMouse");

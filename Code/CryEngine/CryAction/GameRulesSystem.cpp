@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -18,10 +18,6 @@
 #include "Network/GameServerNub.h"
 
 #include <list>
-
-#if CRY_PLATFORM_WINDOWS && CRY_PLATFORM_64BIT
-	#pragma warning ( disable : 4244 )
-#endif
 
 #define GAMERULES_GLOBAL_VARIABLE   ("g_gameRules")
 #define GAMERULESID_GLOBAL_VARIABLE ("g_gameRulesId")
@@ -93,7 +89,9 @@ bool CGameRulesSystem::CreateGameRules(const char* rulesName)
 	if (pEntity == NULL)
 		return false;
 
-	pEntity->Activate(true);
+	// Make sure game rules is activated
+	IGameObject* pGameObject = gEnv->pGameFramework->GetGameObject(pEntity->GetId());
+	pGameObject->ForceUpdate(true);
 
 	if (pEntity->GetScriptTable())
 	{
@@ -234,7 +232,7 @@ IEntityComponent* CGameRulesSystem::CreateGameObject(IEntity* pEntity, SEntitySp
 	TGameRulesMap::iterator it = pThis->m_GameRules.find(params.pClass->GetName());
 	CRY_ASSERT(it != pThis->m_GameRules.end());
 
-	auto pGameObject = pEntity->CreateComponentClass<CGameObject>();
+	auto pGameObject = pEntity->GetOrCreateComponentClass<CGameObject>();
 
 	if (!it->second.extension.empty())
 	{

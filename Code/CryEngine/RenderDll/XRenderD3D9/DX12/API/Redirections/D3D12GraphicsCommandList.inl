@@ -1,12 +1,15 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include <array>
 #include <d3d12.h>
+template<int numTargets> class BroadcastableD3D12Resource;
+template<int numTargets> class BroadcastableD3D12DescriptorHeap;
+template<int numTargets> class BroadcastableD3D12QueryHeap;
 
-template<const int numTargets>
+template<int numTargets>
 class BroadcastableD3D12GraphicsCommandList : public ID3D12GraphicsCommandList
 {
-	template<const int numTargets> friend class BroadcastableD3D12CommandQueue;
+	template<int numTargets> friend class BroadcastableD3D12CommandQueue;
 
 public:
 	int m_RefCount;
@@ -31,15 +34,13 @@ public:
 			m_Targets[i] = nullptr;
 			if (UINT nM = (nodeMask & (1 << i)))
 			{
-#if CRY_USE_DX12_MULTIADAPTER_SIMULATION
+#if DX12_LINKEDADAPTER_SIMULATION
 				// Always create on the first GPU, if running simulation
 				if (CRenderer::CV_r_StereoEnableMgpu < 0)
 					nM = 1;
 #endif
-
-				HRESULT ret = pDevice->CreateCommandList(
-				  nM, type, *(*pCommandAllocator)[i], pInitialState, riid, (void**)&m_Targets[i]);
-				DX12_ASSERT(ret == S_OK, "Failed to create graphics command list!");
+				if (pDevice->CreateCommandList(nM, type, *(*pCommandAllocator)[i], pInitialState, riid, (void**)&m_Targets[i]) != S_OK)
+					DX12_ERROR("Failed to create graphics command list!");
 			}
 		}
 	}
@@ -68,8 +69,8 @@ public:
   }                                             \
   else                                          \
   {                                             \
-    { int i = 0; DX12_ASSERT(func, message); }  \
-    { int i = 1; DX12_ASSERT(func, message); }  \
+    { int i; i = 0; DX12_ASSERT(func, message); } \
+    { int i; i = 1; DX12_ASSERT(func, message); } \
   }
 
 #define Parallelize(func)                       \

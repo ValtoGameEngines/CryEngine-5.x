@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    -------------------------------------------------------------------------
@@ -17,13 +17,10 @@
 #include "Puppet.h"
 #include "AILog.h"
 #include "GoalOp.h"
-#include "Graph.h"
 #include "AIPlayer.h"
 #include "Leader.h"
 #include "CAISystem.h"
 #include "AICollision.h"
-#include "VertexList.h"
-#include "SmartObjects.h"
 #include "PathFollower.h"
 #include "AIVehicle.h"
 
@@ -89,7 +86,7 @@ bool CPuppet::ActorObstructingAim(const CAIActor* pActor, const Vec3& firePos, c
 //====================================================================
 bool CPuppet::CanAimWithoutObstruction(const Vec3& vTargetPos)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (m_bDryUpdate)
 		return m_lastAimObstructionResult;
@@ -208,12 +205,15 @@ bool CPuppet::CheckLineOfFire(const Vec3& vTargetPos, float fDistance, float fSo
 				}
 			}
 
-			m_lineOfFireState.rayID = gAIEnv.pRayCaster->Queue(RayCastRequest::HighestPriority,
-			                                                   RayCastRequest(
-			                                                     firePos, dir, COVER_OBJECT_TYPES,
-			                                                     AI_VISION_RAY_CAST_FLAG_BLOCKED_BY_SOLID_COVER,
-			                                                     &skipList[0], skipList.size()),
-			                                                   functor(const_cast<CPuppet&>(*this), &CPuppet::LineOfFireRayComplete));
+			m_lineOfFireState.rayID = gAIEnv.pRayCaster->Queue(
+				RayCastRequest::HighestPriority,
+				RayCastRequest(
+					firePos, dir, COVER_OBJECT_TYPES,
+					AI_VISION_RAY_CAST_FLAG_BLOCKED_BY_SOLID_COVER,
+					&skipList[0], skipList.size()),
+				functor(const_cast<CPuppet&>(*this), &CPuppet::LineOfFireRayComplete),
+				nullptr,
+				AIRayCast::SRequesterDebugInfo("CPuppet::CheckLineOfFire", GetEntityID()));
 		}
 
 		return m_lineOfFireState.result;
@@ -264,7 +264,7 @@ ILINE Vec3 JitterVector(Vec3 v, Vec3 amount)
 bool CPuppet::AdjustFireTarget(CAIObject* targetObject, const Vec3& target, bool hit, float missExtraOffset,
                                float clampAngle, Vec3* posOut)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	Vec3 out(target);
 
@@ -296,7 +296,7 @@ bool CPuppet::AdjustFireTarget(CAIObject* targetObject, const Vec3& target, bool
 		{
 			bool found = false;
 
-			if (targetObject && gAIEnv.CVars.EnableCoolMisses && cry_random(0.0f, 1.0f) < gAIEnv.CVars.CoolMissesProbability)
+			if (targetObject && gAIEnv.CVars.legacyFiring.EnableCoolMisses && cry_random(0.0f, 1.0f) < gAIEnv.CVars.legacyFiring.CoolMissesProbability)
 			{
 				if (CAIPlayer* player = targetObject->CastToCAIPlayer())
 				{
@@ -305,7 +305,7 @@ bool CPuppet::AdjustFireTarget(CAIObject* targetObject, const Vec3& target, bool
 
 					float distance = dir.NormalizeSafe();
 
-					if (distance >= gAIEnv.CVars.CoolMissesMinMissDistance)
+					if (distance >= gAIEnv.CVars.legacyFiring.CoolMissesMinMissDistance)
 						found = player->GetMissLocation(fireLocation, dir, clampAngle, out);
 				}
 			}
@@ -352,7 +352,7 @@ inline float DeltaAngle(float a, float b)
 bool CPuppet::CalculateMissPointOutsideTargetSilhouette(CAIObject* targetObject, const Vec3& target, float missExtraOffset,
                                                         Vec3* posOut)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (m_targetSilhouette.valid)
 	{
@@ -412,7 +412,7 @@ bool CPuppet::CalculateMissPointOutsideTargetSilhouette(CAIObject* targetObject,
 //====================================================================
 bool CPuppet::CalculateHitPointOnTarget(CAIObject* targetObject, const Vec3& target, float clampAngle, Vec3* posOut)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (!targetObject->IsAgent())
 		return false;
@@ -548,7 +548,7 @@ void CPuppet::AdjustWithPrediction(CAIObject* pTarget, Vec3& posOut)
 
 bool CPuppet::IsFireTargetValid(const Vec3& targetPos, const CAIObject* pTargetObject)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	// Accept the point if:
 	// 1) Shooting in the direction hits something relatively far away
@@ -597,12 +597,14 @@ void CPuppet::QueueFireTargetValidRay(const CAIObject* targetObj, const Vec3& fi
 	}
 
 	m_validTargetState.rayID = gAIEnv.pRayCaster->Queue(
-	  RayCastRequest::HighestPriority,
-	  RayCastRequest(
-	    firePos, fireDir, COVER_OBJECT_TYPES,
-	    AI_VISION_RAY_CAST_FLAG_BLOCKED_BY_SOLID_COVER,
-	    &skipList[0], skipList.size()),
-	  functor(*this, &CPuppet::FireTargetValidRayComplete));
+		RayCastRequest::HighestPriority,
+		RayCastRequest(
+			firePos, fireDir, COVER_OBJECT_TYPES,
+			AI_VISION_RAY_CAST_FLAG_BLOCKED_BY_SOLID_COVER,
+			&skipList[0], skipList.size()),
+		functor(*this, &CPuppet::FireTargetValidRayComplete),
+		nullptr,
+		AIRayCast::SRequesterDebugInfo("CPuppet::QueueFireTargetValidRay", GetEntityID()));
 }
 
 void CPuppet::FireTargetValidRayComplete(const QueuedRayID& rayID, const RayCastResult& result)

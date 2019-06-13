@@ -1,14 +1,6 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-/*=============================================================================
-   ShadowUtils.h :
-
-   Revision history:
-* Created by Tiago Sousa
-   =============================================================================*/
-
-#ifndef __WATERUTILS_H__
-#define __WATERUTILS_H__
+#pragma once
 
 class CWaterSim;
 
@@ -28,7 +20,7 @@ public:
 	}
 
 	// Create/Initialize simulation
-	void Create(float fA, float fWind, float fWindScale, float fWorldSizeX, float fWorldSizeY);
+	void Create(float fA, float fWind, float fWorldSizeX, float fWorldSizeY);
 	void Release();
 	void SaveToDisk(const char* pszFileName);
 
@@ -54,5 +46,3 @@ static CWater* WaterSimMgr()
 {
 	return gRenDev->m_pWaterSimMgr;
 }
-
-#endif

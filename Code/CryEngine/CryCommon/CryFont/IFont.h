@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef CRYFONT_ICRYFONT_H
 #define CRYFONT_ICRYFONT_H
@@ -8,6 +8,7 @@
 #include <CryMath/Cry_Math.h>
 #include <CryMath/Cry_Color.h>
 #include <CryString/CryString.h>
+#include <CrySystem/IEngineModule.h>
 
 struct ISystem;
 class ICrySizer;
@@ -16,6 +17,7 @@ struct ICryFont;
 struct IFFont;
 
 struct IRenderer;
+struct IRenderAuxGeom;
 
 extern "C"
 #ifdef CRYFONT_EXPORTS
@@ -27,7 +29,13 @@ ICryFont * CreateCryFontInterface(ISystem * pSystem);
 
 typedef ICryFont*(* PFNCREATECRYFONTINTERFACE)(ISystem* pSystem);
 
+struct IFontEngineModule : public Cry::IDefaultModule
+{
+	CRYINTERFACE_DECLARE_GUID(IFontEngineModule, "cddd1b3c-a105-4612-ada4-ea7e6f919df1"_cry_guid);
+};
+
 //////////////////////////////////////////////////////////////////////////////////////////////
+//! Main interface to the engine's font rendering implementation, allowing retrieval of fonts for run-time rendering
 struct ICryFont
 {
 	// <interfuscator:shuffle>
@@ -104,12 +112,12 @@ struct STextDrawContext
 		, m_clipY(0)
 		, m_clipWidth(0)
 		, m_clipHeight(0)
+		, m_drawTextFlags(0)
 		, m_proportional(true)
 		, m_sizeIn800x600(true)
 		, m_clippingEnabled(false)
 		, m_framed(false)
 		, m_colorOverride(0, 0, 0, 0)
-		, m_drawTextFlags(0)
 	{
 	}
 
@@ -134,6 +142,7 @@ struct STextDrawContext
 };
 
 //////////////////////////////////////////////////////////////////////////////////////////////
+//! Main interface for a type of font in the engine, allowing drawing onto the 2D viewport and textures
 struct IFFont
 {
 	// <interfuscator:shuffle>
@@ -173,15 +182,9 @@ struct IFFont
 	virtual void         GetGradientTextureCoord(float& minU, float& minV, float& maxU, float& maxV) const = 0;
 
 	virtual unsigned int GetEffectId(const char* pEffectName) const = 0;
-	// </interfuscator:shuffle>
-};
 
-//////////////////////////////////////////////////////////////////////////
-struct IFFont_RenderProxy
-{
-	// <interfuscator:shuffle>
-	virtual ~IFFont_RenderProxy(){}
-	virtual void RenderCallback(float x, float y, float z, const char* pStr, const bool asciiMultiLine, const STextDrawContext& ctx) = 0;
+	//! Only to be used by renderer, from the render thread.
+	virtual void RenderCallback(float x, float y, float z, const char* pStr, const bool asciiMultiLine, const STextDrawContext& ctx,IRenderAuxGeom* pAux) = 0;
 	// </interfuscator:shuffle>
 };
 

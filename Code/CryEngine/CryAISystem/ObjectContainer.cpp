@@ -1,7 +1,9 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ObjectContainer.h"
+
+#include "AIEntityComponent.h"
 
 // Annoying...
 #include "AIVehicle.h"
@@ -175,9 +177,11 @@ bool CObjectContainer::DeregisterObjectUntyped(CAbstractUntypedRef* ref)
 	}
 	else
 	{
+#if defined(USE_CRY_ASSERT)
 		int prevIndex = m_objects.get_index_for_id(id);
 		CAIObject* pObject = m_objects.get_index(prevIndex);
 		CRY_ASSERT_TRACE(false, ("Previous object was %s (%d)", pObject ? pObject->GetName() : "<NULL OBJECT>", pObject ? pObject->GetAIObjectID() : 0));
+#endif
 
 		return false;
 	}
@@ -191,7 +195,7 @@ bool CObjectContainer::DeregisterObjectUntyped(CAbstractUntypedRef* ref)
 int CObjectContainer::ReleaseDeregisteredObjects(bool checkForLeaks)
 {
 	CCCPOINT(ReleaseDeregisteredObjects);
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	int nReleased = 0;
 
@@ -299,9 +303,7 @@ void CObjectContainer::DumpRegistered()
 
 void CObjectContainer::Serialize(TSerialize ser)
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "Object Container serialization");
-
-	CAISystem* pAISystem = GetAISystem();
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "Object Container serialization");
 
 	// Deal with the deregistration list as it makes no sense to serialize those objects
 	ReleaseDeregisteredObjects(true);
@@ -373,10 +375,12 @@ void CObjectContainer::Serialize(TSerialize ser)
 		objHeader.Serialize(ser);
 		assert(id == objHeader.objectId);
 
+		bool bHadObject = object != nullptr && m_objects.get(id) != nullptr;
+
 		if (bReading)
 		{
 			//Read type for creation, skipping if the object already exists
-			if (!object && m_objects.get(id) == NULL)
+			if (!bHadObject)
 			{
 				object = objHeader.RecreateObject();
 
@@ -394,10 +398,19 @@ void CObjectContainer::Serialize(TSerialize ser)
 
 		if (object)
 		{
-			MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Other, 0, "AI object (%s) serialization", GetNameFromType(objHeader.aiClass));
+			MEMSTAT_CONTEXT_FMT(EMemStatContextType::Other, "AI object (%s) serialization", GetNameFromType(objHeader.aiClass));
 
 			// (MATT) Note that this call may reach CAIActor, which currently handles serialising the proxies {2009/04/30}
 			object->Serialize(ser);
+
+			if (bReading && !bHadObject)
+			{
+				if (IEntity* pEntity = object->GetEntity())
+				{
+					// Re-create the associated AI entity component
+					pEntity->GetOrCreateComponentClass<CAIEntityComponent>(GetWeakRef(object));
+				}
+			}
 		}
 		totalSerialised++;
 

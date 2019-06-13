@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    -------------------------------------------------------------------------
@@ -18,6 +18,7 @@
 #include "DebugDrawContext.h"
 #include "MissLocationSensor.h"
 #include "Puppet.h"
+#include "Formation/FormationManager.h"
 
 #include <CryAISystem/VisionMapTypes.h>
 
@@ -43,10 +44,12 @@ CAIPlayer::CAIPlayer()
 	, m_mercyTimer(-1.0f)
 	, m_coverExposedTime(-1.0f)
 	, m_coolMissCooldown(0.0f)
-#pragma warning(disable: 4355)
+#pragma warning(push)
+#pragma warning(disable: 4355) // 'this': used in base member initializer list
 #if ENABLE_MISSLOCATION_SENSOR
 	, m_pMissLocationSensor(new CMissLocationSensor(this))
 #endif
+#pragma warning(pop)
 {
 	_fastcast_CAIPlayer = true;
 }
@@ -108,7 +111,7 @@ void CAIPlayer::ReleaseExposedCoverObjects()
 //---------------------------------------------------------------------------------
 void CAIPlayer::AddExposedCoverObject(IPhysicalEntity* pPhysEnt)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	unsigned oldest = 0;
 	float oldestTime = FLT_MAX; // Count down timers, find smallest value.
@@ -149,7 +152,7 @@ void CAIPlayer::AddExposedCoverObject(IPhysicalEntity* pPhysEnt)
 //---------------------------------------------------------------------------------
 void CAIPlayer::CollectExposedCover()
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (m_coverExposedTime > 0.0f)
 	{
@@ -165,7 +168,9 @@ void CAIPlayer::CollectExposedCover()
 			m_exposedCoverState.rayID = gAIEnv.pRayCaster->Queue(
 			  RayCastRequest::MediumPriority,
 			  RayCastRequest(pos, dir, ent_static, flags),
-			  functor(*this, &CAIPlayer::CollectExposedCoverRayComplete));
+			  functor(*this, &CAIPlayer::CollectExposedCoverRayComplete),
+				nullptr,
+				AIRayCast::SRequesterDebugInfo("CAIPlayer::CollectExposedCover", GetEntityID()));
 		}
 	}
 }
@@ -217,8 +222,6 @@ void CAIPlayer::GetPhysicalSkipEntities(PhysSkipList& skipList) const
 	{
 		stl::push_back_unique(skipList, m_exposedCoverObjects[i].pPhysEnt);
 	}
-
-	CRY_ASSERT_MESSAGE(skipList.size() <= 5, "Too many physical skipped entities determined. See SRwiRequest definition.");
 }
 
 //
@@ -307,13 +310,13 @@ float CAIPlayer::AdjustTargetVisibleRange(const CAIActor& observer, float fVisib
 		{
 		//	case AILL_LIGHT: SOMSpeed
 		case AILL_MEDIUM:
-			fRangeScale *= gAIEnv.CVars.SightRangeMediumIllumMod;
+			fRangeScale *= gAIEnv.CVars.legacyPerception.SightRangeMediumIllumMod;
 			break;
 		case AILL_DARK:
-			fRangeScale *= gAIEnv.CVars.SightRangeDarkIllumMod;
+			fRangeScale *= gAIEnv.CVars.legacyPerception.SightRangeDarkIllumMod;
 			break;
 		case AILL_SUPERDARK:
-			fRangeScale *= gAIEnv.CVars.SightRangeSuperDarkIllumMod;
+			fRangeScale *= gAIEnv.CVars.legacyPerception.SightRangeSuperDarkIllumMod;
 			break;
 		}
 	}
@@ -339,13 +342,13 @@ float CAIPlayer::AdjustTargetVisibleRange(const CAIActor& observer, float fVisib
 //---------------------------------------------------------------------------------
 bool CAIPlayer::IsAffectedByLight() const
 {
-	return (gAIEnv.CVars.PlayerAffectedByLight != 0 ||
+	return (gAIEnv.CVars.legacyPerception.PlayerAffectedByLight != 0 ||
 	        MyBase::IsAffectedByLight());
 }
 
 //
 //---------------------------------------------------------------------------------
-void CAIPlayer::Update(EObjectUpdate type)
+void CAIPlayer::Update(EUpdateType type)
 {
 	if (m_refAttentionTarget.IsValid())
 	{
@@ -394,7 +397,7 @@ void CAIPlayer::Update(EObjectUpdate type)
 	const float zMinDifferenceBetweenStandAndCrouchToRecalculateWaterOcclusion = 0.6f;
 	const bool playerFullyChangedStance = (m_lastFullUpdateStance != bodyInfo.stance)
 	                                      && abs(m_vLastFullUpdatePos.z - bodyInfo.vEyePos.z) > zMinDifferenceBetweenStandAndCrouchToRecalculateWaterOcclusion;
-	if (type == AIUPDATE_FULL && (!IsEquivalent(m_vLastFullUpdatePos, bodyInfo.vEyePos, 1.0f) || playerFullyChangedStance))
+	if (type == EUpdateType::Full && (!IsEquivalent(m_vLastFullUpdatePos, bodyInfo.vEyePos, 1.0f) || playerFullyChangedStance))
 	{
 		// Recalculate the water occlusion at the new point
 		m_cachedWaterOcclusionValue = GetAISystem()->GetWaterOcclusionValue(bodyInfo.vEyePos);
@@ -416,7 +419,7 @@ void CAIPlayer::Update(EObjectUpdate type)
 	if (pProxy)
 		pProxy->UpdateMind(m_State);
 
-	if (type == AIUPDATE_FULL)
+	if (type == EUpdateType::Full)
 	{
 		m_lightLevel = GetAISystem()->GetLightManager()->GetLightLevelAt(GetPos(), this, &m_usingCombatLight);
 
@@ -483,11 +486,11 @@ void CAIPlayer::Update(EObjectUpdate type)
 	}
 
 	// Collect new covers.
-	if (type == AIUPDATE_FULL)
+	if (type == EUpdateType::Full)
 		CollectExposedCover();
 
 #ifdef CRYAISYSTEM_DEBUG
-	if (gAIEnv.CVars.DebugDrawDamageControl > 0)
+	if (gAIEnv.CVars.legacyDebugDraw.DebugDrawDamageControl > 0)
 		UpdateHealthHistory();
 #endif
 
@@ -675,11 +678,11 @@ void CAIPlayer::UpdatePlayerStuntActions()
 		    && pAIActor->GetAttentionTarget()
 		    && pAIActor->GetAttentionTarget()->GetEntityID() == GetEntityID())
 		{
-			IAISignalExtraData* pData = GetAISystem()->CreateSignalExtraData();
+			AISignals::IAISignalExtraData* pData = GetAISystem()->CreateSignalExtraData();
 			pData->iValue = 1;
 			pData->fValue = Distance::Point_Point(m_stuntTargets[i].pAIActor->GetPos(), m_stuntTargets[i].threatPos);
 			pData->point = m_stuntTargets[i].threatPos;
-			pAIActor->SetSignal(1, "OnCloseCollision", 0, pData);
+			pAIActor->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnCloseCollision(), 0, pData));
 			if (CPuppet* pPuppet = pAIActor->CastToCPuppet())
 				pPuppet->SetAlarmed();
 			m_stuntTargets[i].signalled = true;
@@ -804,7 +807,7 @@ void CAIPlayer::AddThrownEntity(EntityId id)
 			float dist = FLT_MAX;
 			if (!GetAISystem()->CheckVisibilityToBody(pPuppet, pThrownActor, dist))
 				continue;
-			pPuppet->SetSignal(1, "OnGroupMemberMutilated", pThrownActor->GetEntity(), 0);
+			pPuppet->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnGroupMemberMutilated(), pThrownActor->GetEntityID()));
 			pPuppet->SetAlarmed();
 		}
 	}
@@ -832,7 +835,7 @@ void CAIPlayer::AddThrownEntity(EntityId id)
 
 void CAIPlayer::HandleArmoredHit()
 {
-	NotifyPlayerActionToTheLookingAgents("OnTargetArmoredHit");
+	NotifyPlayerActionToTheLookingAgents(GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnTargetArmoredHit());
 }
 
 void CAIPlayer::HandleCloaking(bool cloak)
@@ -841,18 +844,18 @@ void CAIPlayer::HandleCloaking(bool cloak)
 
 	m_Parameters.m_bCloaked = cloak;
 	m_Parameters.m_fLastCloakEventTime = pAISystem->GetFrameStartTime().GetSeconds();
-	NotifyPlayerActionToTheLookingAgents(cloak ? "OnTargetCloaked" : "OnTargetUncloaked");
+	NotifyPlayerActionToTheLookingAgents(cloak ? GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnTargetCloaked() : GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnTargetUncloaked());
 }
 
 void CAIPlayer::HandleStampMelee()
 {
 	if (!m_Parameters.m_bCloaked)
-		NotifyPlayerActionToTheLookingAgents("OnTargetStampMelee");
+		NotifyPlayerActionToTheLookingAgents(GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnTargetStampMelee());
 }
 
 //-----------------------------------------------------------
 
-void CAIPlayer::NotifyPlayerActionToTheLookingAgents(const char* eventName)
+void CAIPlayer::NotifyPlayerActionToTheLookingAgents(const AISignals::ISignalDescription& signalDescription)
 {
 	CAISystem* pAISystem = GetAISystem();
 	ActorLookUp& lookUp = *gAIEnv.pActorLookUp;
@@ -886,12 +889,12 @@ void CAIPlayer::NotifyPlayerActionToTheLookingAgents(const char* eventName)
 				const bool bCanSeeTarget = pAIActor->CanSee(targetVisionId);
 				if (bCanSeeTarget)
 				{
-					AISignalExtraData* pData = new AISignalExtraData;
+					AISignals::AISignalExtraData* pData = new AISignals::AISignalExtraData;
 					pData->nID = playerId;
 					pData->iValue = pAIActor->GetAttentionTargetType();
 					pData->iValue2 = pAIActor->GetAttentionTargetThreat();
 					pData->fValue = pAIActor->GetPos().GetDistance(GetPos());
-					pAISystem->SendSignal(SIGNALFILTER_SENDER, 1, eventName, pAIActor, pData);
+					pAISystem->SendSignal(AISignals::ESignalFilter::SIGNALFILTER_SENDER, GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, signalDescription, pAIActor->GetEntityID(), pData));
 				}
 			}
 		}
@@ -910,7 +913,7 @@ void CAIPlayer::Event(unsigned short eType, SAIEVENT* pEvent)
 		m_bEnabled = false;
 		GetAISystem()->RemoveFromGroup(GetGroupId(), this);
 
-		GetAISystem()->ReleaseFormationPoint(this);
+		gAIEnv.pFormationManager->ReleaseFormationPoint(this);
 		ReleaseFormation();
 
 		m_State.ClearSignals();
@@ -929,17 +932,8 @@ void CAIPlayer::Event(unsigned short eType, SAIEVENT* pEvent)
 		m_playerStuntSprinting = -1.0f;
 		break;
 	case AIEVENT_PLAYER_STUNT_PUNCH:
-		if (pEvent)
-			AddThrownEntity(pEvent->targetId);
-		break;
 	case AIEVENT_PLAYER_STUNT_THROW:
-		if (pEvent)
-			AddThrownEntity(pEvent->targetId);
-		break;
 	case AIEVENT_PLAYER_STUNT_THROW_NPC:
-		if (pEvent)
-			AddThrownEntity(pEvent->targetId);
-		break;
 	case AIEVENT_PLAYER_THROW:
 		if (pEvent)
 			AddThrownEntity(pEvent->targetId);
@@ -961,7 +955,7 @@ void CAIPlayer::Event(unsigned short eType, SAIEVENT* pEvent)
 	case AIEVENT_LOWHEALTH:
 		{
 			const float scale = (pEvent != NULL) ? pEvent->fThreat : 1.0f;
-			m_mercyTimer = gAIEnv.CVars.RODLowHealthMercyTime * scale;
+			m_mercyTimer = gAIEnv.CVars.legacyPuppetRod.RODLowHealthMercyTime * scale;
 		}
 		break;
 	case AIEVENT_ENABLE:
@@ -1019,7 +1013,7 @@ bool CAIPlayer::GetMissLocation(const Vec3& shootPos, const Vec3& shootDir, floa
 
 void CAIPlayer::NotifyMissLocationConsumed()
 {
-	m_coolMissCooldown += gAIEnv.CVars.CoolMissesCooldown;
+	m_coolMissCooldown += gAIEnv.CVars.legacyFiring.CoolMissesCooldown;
 }
 
 //
@@ -1120,7 +1114,7 @@ void CAIPlayer::DebugDraw()
 	if (IsLowHealthPauseActive())
 	{
 		ICVar* pLowHealth = gEnv->pConsole->GetCVar("g_playerLowHealthThreshold");
-		dc->Draw2dLabel(150, 190, 2.0f, color, true, "Mercy %.2f/%.2f (when below %0.2f)", m_mercyTimer, gAIEnv.CVars.RODLowHealthMercyTime, pLowHealth->GetFVal());
+		dc->Draw2dLabel(150, 190, 2.0f, color, true, "Mercy %.2f/%.2f (when below %0.2f)", m_mercyTimer, gAIEnv.CVars.legacyPuppetRod.RODLowHealthMercyTime, pLowHealth->GetFVal());
 	}
 
 	for (unsigned i = 0, ni = m_exposedCoverObjects.size(); i < ni; ++i)
@@ -1159,8 +1153,7 @@ bool CAIPlayer::IsGrabbedEntityInView(const Vec3& pos) const
 {
 	bool bInViewDist = true;
 
-	IEntitySystem* pEntitySystem = gEnv->pEntitySystem;
-	assert(pEntitySystem);
+	assert(gEnv->pEntitySystem);
 
 	IEntity* pObjectEntity = GetGrabbedEntity();
 

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -19,8 +19,9 @@ History:
 #include "ItemString.h"
 #include "ItemParamsRegistration.h"
 #include "GameTypeInfo.h"
-
-
+#include <CryMemory/CrySizer.h>
+#include <CrySystem/XML/IXml.h>
+#include <CryParticleSystem/IParticles.h>
 
 struct IFireModePluginParams
 {

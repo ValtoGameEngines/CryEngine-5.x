@@ -1,6 +1,9 @@
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
 #pragma once
 
 #include <CryCore/Platform/platform.h>
+#include <CryString/CryString.h>
 
 #if defined(EDITOR_COMMON_EXPORTS)
 #define PROPERTY_TREE_API __declspec(dllexport)
@@ -27,8 +30,8 @@ typedef CryStringLocalT<wchar_t> wstring;
 }
 #else
 namespace yasli {
-typedef CryStringT<char> string;
-typedef CryStringT<wchar_t> wstring;
+typedef ::string string;
+typedef ::wstring wstring;
 }
 #endif
 namespace Serialization
@@ -76,8 +79,7 @@ namespace yasli
 }
 
 
-template< class T, class I, class STORE>
-struct DynArray;
+#include <CryCore/Containers/CryArray.h>
 
 template<class T, class I, class S>
 bool Serialize(yasli::Archive& ar, DynArray<T, I, S>& container, const char* name, const char* label);

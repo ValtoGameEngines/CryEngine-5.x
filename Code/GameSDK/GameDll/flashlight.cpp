@@ -1,9 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "flashlight.h"
 #include "ItemSharedParams.h"
 #include "GameActions.h"
+#include "GameCVars.h"
 #include "Weapon.h"
 #include "Player.h"
 #include "EntityUtility/EntityScriptCalls.h"
@@ -56,8 +57,8 @@ bool CFlashLight::m_flashLightEnabled = true;
 bool CFlashLight::m_lightEnabled = true;
 
 CFlashLight::CFlashLight()
-	:	m_fogVolume(0)
-	,	m_lightId(0)
+	: m_fogVolume(0)
+	, m_lightId(0)
 {
 }
 
@@ -93,7 +94,7 @@ void CFlashLight::EnableLight(bool enable)
 		{
 			IEntityRender* pIEntityRender = (pOwner->GetEntity()->GetRenderInterface());
 
-			
+
 			{
 				pCasterException = pIEntityRender->GetRenderNode();
 			}
@@ -149,9 +150,9 @@ void CFlashLight::EnableFogVolume(CWeapon* pWeapon, int slot, bool enable)
 	if (m_fogVolume == 0)
 	{
 		const Vec3 size = Vec3(
-		                    m_sharedparams->pFlashLightParams->fogVolumeRadius,
-		                    m_sharedparams->pFlashLightParams->fogVolumeSize,
-		                    m_sharedparams->pFlashLightParams->fogVolumeRadius);
+			m_sharedparams->pFlashLightParams->fogVolumeRadius,
+			m_sharedparams->pFlashLightParams->fogVolumeSize,
+			m_sharedparams->pFlashLightParams->fogVolumeRadius);
 
 		SEntitySpawnParams fogVolumeParams;
 		fogVolumeParams.pClass = gEnv->pEntitySystem->GetClassRegistry()->FindClass("FogVolume");
@@ -180,7 +181,10 @@ void CFlashLight::EnableFogVolume(CWeapon* pWeapon, int slot, bool enable)
 
 		EntityScripts::CallScriptFunction(pFogVolume, pFogVolume->GetScriptTable(), "OnPropertyChange");
 
-		pFogVolume->Activate(true);
+		if (auto* pScriptComponent = pFogVolume->GetComponent<IEntityScriptComponent>())
+		{
+			pScriptComponent->EnableScriptUpdate(true);
+		}
 	}
 	else
 	{

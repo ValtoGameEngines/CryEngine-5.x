@@ -1,15 +1,8 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// ------------------------------------------------------------------------
-//  File name:   IZlibDecompressor.h
-//  Created:     30/8/2012 by Axel Gneiting
-//  Description: Provides the interface for the zlib inflate wrapper
-// -------------------------------------------------------------------------
-//
-////////////////////////////////////////////////////////////////////////////
+//! \cond INTERNAL
 
-#ifndef __IZLIBDECOMPRESSOR_H__
-#define __IZLIBDECOMPRESSOR_H__
+#pragma once
 
 enum EZInflateState
 {
@@ -23,7 +16,7 @@ enum EZInflateState
 struct IZLibInflateStream
 {
 protected:
-	virtual ~IZLibInflateStream() {}; //!< Use Release().
+	virtual ~IZLibInflateStream() {} //!< Use Release().
 
 public:
 	struct SStats
@@ -65,7 +58,7 @@ public:
 struct IZLibDecompressor
 {
 protected:
-	virtual ~IZLibDecompressor()  {};   //!< Use Release().
+	virtual ~IZLibDecompressor() {}   //!< Use Release().
 
 public:
 	//! Creates a inflate stream to decompress data using zlib.
@@ -74,4 +67,4 @@ public:
 	virtual void                Release() = 0;
 };
 
-#endif // __IZLIBCOMPRESSOR_H__
+//! \endcond

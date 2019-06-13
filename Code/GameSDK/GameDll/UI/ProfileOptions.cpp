@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -9,6 +9,7 @@
 #include "IPlayerProfiles.h"
 #include "ScreenResolution.h"
 #include "GameXmlParamReader.h"
+#include <CryRenderer/IRenderer.h>
 
 //////////////////////////////////////////////////////////////////////////
 
@@ -147,7 +148,6 @@ COption* CProfileOptions::GetOption(const char* option) const
 	if(!option || !option[0])
 		return NULL;
 
-	bool returnValue = false;
 	std::vector<COption*>::const_iterator it = m_allOptions.begin();
 	std::vector<COption*>::const_iterator end = m_allOptions.end();
 	for(; it!=end; ++it)
@@ -168,7 +168,6 @@ COption* CProfileOptions::GetOptionByCVar(const char* cvar) const
 	if(!cvar || !cvar[0])
 		return NULL;
 
-	bool returnValue = false;
 	std::vector<COption*>::const_iterator it = m_allOptions.begin();
 	std::vector<COption*>::const_iterator end = m_allOptions.end();
 	for(; it!=end; ++it)
@@ -478,8 +477,6 @@ bool CProfileOptions::HasPendingOptionValue(const char* optionName)const
 
 	for(; it!=end; ++it)
 	{
-		const SPendingOption& option = (*it);
-		const char* command = it->command.c_str();
 		if(!it->command.compareNoCase(optionName))
 		{
 			return true;
@@ -709,7 +706,7 @@ void CProfileOptions::AddOrReplacePendingOption(const char* command, const char*
 
 bool CProfileOptions::WriteGameCfg()
 {
-	CDebugAllowFileAccess ignoreInvalidFileAccess;
+	SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
 
 	FILE* pFile = fxopen("%USER%/game.cfg", "wb");
 	if (pFile == 0)
@@ -737,7 +734,6 @@ void CProfileOptions::CCVarSink::OnElementFound(ICVar *pCVar)
 		return;
 
 	const char* name = pCVar->GetName();
-	const char* val = pCVar->GetString();
 
 	COption* pOption = m_pOptions->GetOptionByCVar(name);
 	if(!pOption)

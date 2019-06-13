@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "HUDUtils.h"
@@ -498,8 +498,8 @@ void* GetNearestTo(const TCenterSortArray& array, const Vec2& center, const floa
 	}
 	else if(gEnv->pRenderer)
 	{
-		renderSize.x = (float)gEnv->pRenderer->GetWidth();
-		renderSize.y = (float)gEnv->pRenderer->GetHeight();
+		renderSize.x = (float)gEnv->pRenderer->GetOverlayWidth();
+		renderSize.y = (float)gEnv->pRenderer->GetOverlayHeight();
 	}
 
 	float xCompression = 1.0f;
@@ -527,16 +527,29 @@ void* GetNearestTo(const TCenterSortArray& array, const Vec2& center, const floa
 		nearestDistSq = distanceSq;
 	}
 
-	if(numPoints>0 && nearest<0)
-	{
-		int a=1;
-	}
-
 	if(nearest>=0)
 	{
 		return array[nearest].m_pData;
 	}
 	return NULL;
+}
+
+uint32 ConverToSilhouetteParamValue(ColorF color, bool bEnable/* = true*/)
+{
+		return	ConverToSilhouetteParamValue(color.r, color.g, color.b, color.a);
+}
+
+uint32 ConverToSilhouetteParamValue(float r, float g, float b, float a, bool bEnable/* = true*/)
+{
+	if (bEnable && fabsf(1.f - a) < FLT_EPSILON)
+	{
+		return	(uint32)(int_round(r * 255.0f) << 24) |
+						(int_round(g * 255.0f) << 16) |
+						(int_round(b * 255.0f) << 8) |
+						(int_round(a * 255.0f));
+	}
+
+	return 0;
 }
 
 }

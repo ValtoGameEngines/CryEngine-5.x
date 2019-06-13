@@ -1,12 +1,8 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2015-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
-#include "ParticleSystem/ParticleFeature.h"
-#include "ParticleSystem/ParticleEmitter.h"
-#include "ParamTraits.h"
+#include "FeatureCommon.h"
 #include "FeatureAngles.h"
-
-CRY_PFX2_DBG
 
 namespace pfx2
 {
@@ -16,25 +12,13 @@ namespace pfx2
 
 class CFeatureProjectBase : public CParticleFeature
 {
-public:
-	typedef TParticleHeap::Array<PosNorm> TPosNormArray;
-
-public:
-	CFeatureProjectBase()
-		: m_alignAxis(EAlignParticleAxis::Normal)
-		, m_alignView(EAlignView::None)
-		, m_offset(0.0f)
-		, m_projectPosition(true)
-		, m_projectVelocity(true)
-		, m_projectAngles(false)
-		, m_spawnOnly(false) {}
-
+protected:
 	virtual void AddToComponent(CParticleComponent* pComponent, SComponentParams* pParams) override
 	{
 		if (m_spawnOnly)
-			pComponent->AddToUpdateList(EUL_InitUpdate, this);
+			pComponent->InitParticles.add(this);
 		else
-			pComponent->AddToUpdateList(EUL_Update, this);
+			pComponent->UpdateParticles.add(this);
 		if (m_projectPosition)
 			pComponent->AddParticleData(EPVF_Position);
 		if (m_projectVelocity)
@@ -46,74 +30,78 @@ public:
 	virtual void Serialize(Serialization::IArchive& ar) override
 	{
 		CParticleFeature::Serialize(ar);
-		ar(m_spawnOnly, "SpawnOnly", "Spawn Only");
-		ar(m_projectPosition, "ProjectPosition", "Project Positions");
-		if (m_spawnOnly && m_projectPosition)
-			ar(m_offset, "Offset", "Offset");
+		SERIALIZE_VAR(ar, m_spawnOnly);
+		SERIALIZE_VAR(ar, m_projectPosition);
+		if (m_projectPosition)
+			SERIALIZE_VAR(ar, m_offset);
 		else
 			m_offset = 0.0f;
-		ar(m_projectVelocity, "ProjectVelocity", "Project Velocities");
-		ar(m_projectAngles, "ProjectAngles", "Project Angles");
+		SERIALIZE_VAR(ar, m_projectVelocity);
+		SERIALIZE_VAR(ar, m_projectAngles);
 		if (m_projectAngles)
 		{
-			ar(m_alignAxis, "AlignAxis", "Align Axis");
-			ar(m_alignView, "AlignView", "Align View");
+			SERIALIZE_VAR(ar, m_alignAxis);
+			SERIALIZE_VAR(ar, m_alignView);
 		}
+		SERIALIZE_VAR(ar, m_highAccuracy);
 	}
 
-	virtual void InitParticles(const SUpdateContext& context) override
+	virtual void InitParticles(CParticleComponentRuntime& runtime) override
 	{
 		CRY_PFX2_PROFILE_DETAIL;
-		Project(context, context.m_container.GetSpawnedRange());
+		Project(runtime, runtime.SpawnedRange());
 	}
 
-	virtual void Update(const SUpdateContext& context) override
+	virtual void UpdateParticles(CParticleComponentRuntime& runtime) override
 	{
 		CRY_PFX2_PROFILE_DETAIL;
-		Project(context, context.m_updateRange);
+		Project(runtime, runtime.FullRange());
 	}
 
-private:
-	virtual void FillSamples(const SUpdateContext& context, const SUpdateRange& range, TPosNormArray& samples) = 0;
+protected:
+	virtual void Project(CParticleComponentRuntime& runtime, const SUpdateRange& range) const = 0;
 
-	ILINE void Project(const SUpdateContext& context, const SUpdateRange& range)
+	bool PositionOnly() const
 	{
+		return m_projectPosition && !m_projectVelocity && !m_projectAngles;
+	}
+
+	void ProjectToSamples(CParticleComponentRuntime& runtime, const SUpdateRange& range, TConstArray<Vec4> samples) const
+	{
+		CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
+
 		const Matrix34 viewTM = gEnv->p3DEngine->GetRenderingCamera().GetMatrix();
 		const Vec3 cameraPos = gEnv->p3DEngine->GetRenderingCamera().GetPosition();
 		const Vec3 forward = -viewTM.GetColumn1();
 
-		CParticleContainer& container = context.m_container;
+		CParticleContainer& container = runtime.GetContainer();
+		IVec3Stream positions = container.IStream(EPVF_Position);
+		IOFStream posZ = container.IOStream(EPVF_Position[2]);
+		IOVec3Stream velocities = container.IOStream(EPVF_Velocity);
+		IOQuatStream orientations = container.IOStream(EPQF_Orientation);
 
-		TPosNormArray posNormArray(*context.m_pMemHeap, container.GetMaxParticles());
-		FillSamples(context, range, posNormArray);
-
-		IOVec3Stream positions = container.GetIOVec3Stream(EPVF_Position);
-		IOVec3Stream velocities = container.GetIOVec3Stream(EPVF_Velocity);
-		IOQuatStream orientations = container.GetIOQuatStream(EPQF_Orientation);
-
-		CRY_PFX2_FOR_RANGE_PARTICLES(range)
+		for (auto particleId : range)
 		{
-			const PosNorm posNormSample = posNormArray[particleId];
-
 			if (m_projectPosition)
 			{
-				const Vec3 position1 = posNormSample.vPos + posNormSample.vNorm * m_offset;
-				positions.Store(particleId, position1);
+				posZ[particleId] = samples[particleId].w + m_offset;
 			}
+
+			const Vec3& norm = samples[particleId];
 
 			if (m_projectVelocity)
 			{
-				const Vec3 velocity0 = velocities.Load(particleId);
-				const Vec3 normalVelocity = posNormSample.vNorm * posNormSample.vNorm.Dot(velocity0);
-				const Vec3 tangentVelocity = velocity0 - normalVelocity;
-				velocities.Store(particleId, tangentVelocity);
+				Vec3 velocity = velocities.Load(particleId);
+				const Vec3 normalVelocity = norm * (norm | velocity);
+				velocity -= normalVelocity;
+				velocities.Store(particleId, velocity);
 			}
 
 			if (m_projectAngles)
 			{
 				const Quat orientation0 = orientations.Load(particleId);
 				const Vec3 particleAxis = GetParticleAxis(m_alignAxis, orientation0);
-				const Quat fieldAlign = Quat::CreateRotationV0V1(particleAxis, posNormSample.vNorm);
+				const Quat fieldAlign = Quat::CreateRotationV0V1(particleAxis, norm);
 				const Quat orientation1 = fieldAlign * orientation0;
 
 				if (m_alignView != EAlignView::None)
@@ -121,7 +109,7 @@ private:
 					const Vec3 position = positions.Load(particleId);
 					const Vec3 toCamera = m_alignView == EAlignView::Camera ? (cameraPos - position).GetNormalized() : forward;
 					const Vec3 particleOtherAxis = GetParticleOtherAxis(m_alignAxis, orientation1);
-					const Vec3 cameraAlignAxis = posNormSample.vNorm.Cross(toCamera).GetNormalizedSafe();
+					const Vec3 cameraAlignAxis = (norm ^ toCamera).GetNormalizedSafe();
 					const Quat cameraAlign = Quat::CreateRotationV0V1(particleOtherAxis, cameraAlignAxis);
 					const Quat orientation2 = cameraAlign * orientation1;
 					orientations.Store(particleId, orientation2);
@@ -132,17 +120,17 @@ private:
 				}
 			}
 		}
-		CRY_PFX2_FOR_END;
 	}
 
-private:
-	EAlignParticleAxis m_alignAxis;
-	EAlignView         m_alignView;
-	UFloat             m_offset;
-	bool               m_projectPosition;
-	bool               m_projectVelocity;
-	bool               m_projectAngles;
-	bool               m_spawnOnly;
+protected:
+	EAlignParticleAxis m_alignAxis       = EAlignParticleAxis::Normal;
+	EAlignView         m_alignView       = EAlignView::None;
+	UFloat             m_offset          = 0;
+	bool               m_projectPosition = true;
+	bool               m_projectVelocity = true;
+	bool               m_projectAngles   = false;
+	bool               m_highAccuracy    = false;
+	bool               m_spawnOnly       = true;
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -154,43 +142,47 @@ public:
 	CRY_PFX2_DECLARE_FEATURE
 
 private:
-	virtual void FillSamples(const SUpdateContext& context, const SUpdateRange& range, TPosNormArray& samples) override
+	virtual void Project(CParticleComponentRuntime& runtime, const SUpdateRange& range) const override
 	{
-		CTerrain* pTerrain = context.m_runtime.GetEmitter()->GetTerrain();
+		CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
 
-		const CParticleContainer& container = context.m_container;
-		const IVec3Stream positions = container.GetIVec3Stream(EPVF_Position);
-		const IFStream sizes = container.GetIFStream(EPDT_Size);
+		const CTerrain& terrain = *Cry3DEngineBase::GetTerrain();
 
-		CRY_PFX2_FOR_RANGE_PARTICLES(range)
+		CParticleContainer& container = runtime.GetContainer();
+		IFStream posX = container.IStream(EPVF_Position[0]);
+		IFStream posY = container.IStream(EPVF_Position[1]);
+		IOFStream posZ = container.IOStream(EPVF_Position[2]);
+		IFStream sizes = container.IStream(EPDT_Size);
+
+		if (PositionOnly())
 		{
-			const Vec3 position = positions.Load(particleId);
-			const float size = sizes.Load(particleId);
-			samples[particleId] = SampleTerrain(*pTerrain, position, size);
+			if (m_highAccuracy)
+			{
+				for (auto particleId : range)
+				{
+					const float size = sizes.Load(particleId);
+					Vec4 normz = terrain.GetNormalAndZ(posX[particleId], posY[particleId], size);
+					posZ[particleId] = normz.w + m_offset;
+				}
+			}
+			else
+			{
+				for (auto particleId : range)
+				{
+					posZ[particleId] = terrain.GetZApr(posX[particleId], posY[particleId]) + m_offset;
+				}
+			}
 		}
-		CRY_PFX2_FOR_END;
-	}
-
-	ILINE PosNorm SampleTerrain(const CTerrain& terrain, const Vec3 position, const float size) const
-	{
-		PosNorm out;
-		out.vPos.x = position.x;
-		out.vPos.y = position.y;
-
-		Vec3 samplers[4] =
+		else
 		{
-			Vec3(position.x + size, position.y       , 0.0f),
-			Vec3(position.x - size, position.y       , 0.0f),
-			Vec3(position.x       , position.y + size, 0.0f),
-			Vec3(position.x       , position.y - size, 0.0f),
-		};
-		for (uint i = 0; i < 4; ++i)
-			samplers[i].z = terrain.GetZApr(samplers[i].x, samplers[i].y, DEFAULT_SID);
-
-		out.vPos.z = (samplers[0].z + samplers[1].z + samplers[2].z + samplers[3].z) * 0.25f;
-		out.vNorm = (samplers[1] - samplers[0]).Cross(samplers[3] - samplers[2]).GetNormalizedSafe();
-
-		return out;
+			THeapArray<Vec4> samples(runtime.MemHeap(), container.GetMaxParticles());
+			for (auto particleId : range)
+			{
+				const float size = m_highAccuracy ? sizes.Load(particleId) : 0.0f;
+				samples[particleId] = terrain.GetNormalAndZ(posX[particleId], posY[particleId], size);
+			}
+			ProjectToSamples(runtime, range, samples);
+		}
 	}
 };
 
@@ -204,35 +196,46 @@ class CFeatureProjectWater : public CFeatureProjectBase
 public:
 	CRY_PFX2_DECLARE_FEATURE
 
-private:
-	virtual void FillSamples(const SUpdateContext& context, const SUpdateRange& range, TPosNormArray& samples) override
+	virtual void AddToComponent(CParticleComponent* pComponent, SComponentParams* pParams) override
 	{
-		const SPhysEnviron& physicsEnvironment = context.m_runtime.GetEmitter()->GetPhysicsEnv();
-		CParticleContainer& container = context.m_container;
-		const IVec3Stream positions = container.GetIVec3Stream(EPVF_Position);
-		auto states = container.GetTIOStream<uint8>(EPDT_State);
-		IOFStream ages = container.GetIOFStream(EPDT_NormalAge);
+		CFeatureProjectBase::AddToComponent(pComponent, pParams);
+		pComponent->AddEnvironFlags(ENV_WATER);
+	}
 
-		CRY_PFX2_FOR_RANGE_PARTICLES(range)
+private:
+	virtual void Project(CParticleComponentRuntime& runtime, const SUpdateRange& range) const override
+	{
+		CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
+
+		const SPhysEnviron& physicsEnvironment = runtime.GetEmitter()->GetPhysicsEnv();
+		CParticleContainer& container = runtime.GetContainer();
+		IVec3Stream positions = container.IStream(EPVF_Position);
+		IOFStream posZ = container.IOStream(EPVF_Position[2]);
+		IOFStream ages = container.IOStream(EPDT_NormalAge);
+		const Plane oceanPlane(Vec3(0, 0, 1), -gEnv->p3DEngine->GetWaterLevel());
+
+		const bool positionOnly = PositionOnly();
+		THeapArray<Vec4> samples(runtime.MemHeap(), !positionOnly * container.GetMaxParticles());
+		for (auto particleId : range)
 		{
 			Plane waterPlane;
-			const Vec3 position = positions.Load(particleId);
+			Vec3 position = positions.Load(particleId);
 			physicsEnvironment.GetWaterPlane(waterPlane, position);
-			if (waterPlane.d < -WATER_LEVEL_UNKNOWN)
+			if (waterPlane.d >= -WATER_LEVEL_UNKNOWN)
 			{
-				const float distToWater = waterPlane.DistFromPlane(position);
-				samples[particleId].vPos = position - waterPlane.n * distToWater;
-				samples[particleId].vNorm = waterPlane.n;
-			}
-			else
-			{
-				samples[particleId].vPos = Vec3(ZERO);
-				samples[particleId].vNorm = Vec3(ZERO);
-				states.Store(particleId, ES_Expired);
 				ages.Store(particleId, 1.0f);
+				continue;
 			}
+			position.z = -waterPlane.d - waterPlane.n.x * position.x - waterPlane.n.y * position.y;
+			if (m_highAccuracy && waterPlane == oceanPlane)
+				position.z = gEnv->p3DEngine->GetAccurateOceanHeight(position);
+			if (positionOnly)
+				posZ[particleId] = position.z + m_offset;
+			else
+				samples[particleId] = Vec4(waterPlane.n, position.z);
 		}
-		CRY_PFX2_FOR_END;
+		if (!positionOnly)
+			ProjectToSamples(runtime, range, samples);
 	}
 };
 

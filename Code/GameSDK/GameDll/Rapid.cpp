@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -67,7 +67,7 @@ void CRapid::Activate(bool activate)
 //------------------------------------------------------------------------
 void CRapid::Update(float frameTime, uint32 frameId)
 {
-	FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	PlayStopRapidFireIfNeeded();
 
@@ -76,16 +76,6 @@ void CRapid::Update(float frameTime, uint32 frameId)
 	if (m_speed <= 0.0f && m_acceleration < 0.0001f)
 	{
 		FinishDeceleration();
-		if (m_pWeapon->IsVehicleWeapon())
-		{
-			CVehicleWeapon* const pVehicleWeapon = static_cast<CVehicleWeapon*>(m_pWeapon);
-			IVehicle* const pVehicle = pVehicleWeapon->GetVehicle();
-			CPlayer* const pPlayer = pVehicleWeapon->GetOwnerPlayer();
-			if (pVehicle && pPlayer)
-			{
-				pVehicle->OnAction(eVAI_Attack2, eAAM_OnRelease, 0.0f, pPlayer->GetEntityId());
-			}
-		}
 		return;
 	}
 
@@ -367,7 +357,7 @@ void CRapid::UpdateRotation(float frameTime)
 //------------------------------------------------------------------------
 void CRapid::UpdateFiring(CActor* pOwnerActor, bool ownerIsClient, bool ownerIsPlayer, float frameTime)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (m_speed >= 0.00001f)
 	{			

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "Shotgun.h"
@@ -7,6 +7,7 @@
 #include "Actor.h"
 #include "Player.h"
 #include "Projectile.h"
+#include "GameCVars.h"
 #include "GameRules.h"
 
 #include "WeaponSharedParams.h"
@@ -17,6 +18,7 @@
 #include "ItemAnimation.h"
 
 #include <IForceFeedbackSystem.h>
+#include <IGameplayRecorder.h>
 
 
 CRY_IMPLEMENT_GTI(CShotgun, CSingle);
@@ -58,8 +60,6 @@ void CShotgun::StartReload(int zoomed)
 	int ammoCount = m_pWeapon->GetAmmoCount(m_fireParams->fireparams.ammo_type_class);
 	if ((ammoCount >= clipSize) || m_reloading)
 		return;
-
-	CActor* pActor =  m_pWeapon->GetOwnerActor();
 
 	m_max_shells = clipSize - ammoCount;
 
@@ -469,7 +469,6 @@ void CShotgun::NetShootEx(const Vec3 &pos, const Vec3 &dir, const Vec3 &vel, con
 	FragmentID action = m_fireParams->fireparams.no_cock ? GetFragmentIds().fire : GetFragmentIds().fire_cock;
 
 	CActor *pActor = m_pWeapon->GetOwnerActor();
-	bool playerIsShooter = pActor?pActor->IsPlayer():false;
 
 	int ammoCount = m_pWeapon->GetAmmoCount(ammo);
 	int clipSize = GetClipSize();

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -40,7 +40,7 @@ public:
 	const char* GetCurrentFilepath() { return m_currentFilepath.c_str(); }
 
 private:
-	CryFixedStringT< ICryPak::g_nMaxPath >	m_currentFilepath;
+	CryPathString m_currentFilepath;
 
 	XmlNodeRef	m_sessionListXML;
 	int	m_currentNode;

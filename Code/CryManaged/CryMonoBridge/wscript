@@ -1,4 +1,4 @@
-# Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+# Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 	
 def build(bld):
 	bld.CryEngineModule(
@@ -11,7 +11,7 @@ def build(bld):
 		cxxflags                = [ '/EHsc', '/bigobj' ],
 		
 		includes                = [ Path('Code/CryEngine/CryAction') ],
-		win_lib                 = [ 'Shell32' ],
+		win_lib                 = [ 'Shell32', 'Ole32', 'oleaut32', 'libmono-static-sgen', 'Mswsock', 'Psapi', 'Winmm', 'version', 'Shlwapi' ],
 		
 		win_module_extensions   = [ "mono" ]
 	)

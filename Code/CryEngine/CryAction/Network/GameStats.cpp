@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -24,6 +24,7 @@
 #include "GameStatsConfig.h"
 #include "CryActionCVars.h"
 #include <CryGame/IGameStatistics.h>
+#include <CrySystem/CryVersion.h>
 
 const float REPORT_INTERVAL = 1.0f;//each second send state to network engine
 const float UPDATE_INTERVAL = 20.0f;
@@ -1624,7 +1625,7 @@ void CGameStats::ReportSession()
 
 	ReportGame();
 
-	if ((CCryAction::GetCryAction()->GetILevelSystem()->IsLevelLoaded() && CCryAction::GetCryAction()->IsGameStarted()) || m_startReportNeeded)//otherwise, OnLoadingStart will report it
+	if (gEnv->pGameFramework->GetILevelSystem()->IsLevelLoaded() && gEnv->pGameFramework->IsGameStarted() || m_startReportNeeded)//otherwise, OnLoadingStart will report it
 	{
 		if (m_serverReport && !m_reportStarted)//report now
 		{

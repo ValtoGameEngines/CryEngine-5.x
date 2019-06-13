@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #if !defined(__AIFLYING_VEHICLE__)
 #define __AIFLYING_VEHICLE__
@@ -25,7 +25,7 @@ public:
 
 	virtual void Serialize(TSerialize ser);
 	virtual void PostSerialize();
-	virtual void SetSignal(int nSignalID, const char* szText, IEntity* pSender = 0, IAISignalExtraData* pData = NULL, uint32 crcCode = 0);
+	virtual void SetSignal(const AISignals::SignalSharedPtr& pSignal);
 
 private:
 	bool m_combatModeEnabled;

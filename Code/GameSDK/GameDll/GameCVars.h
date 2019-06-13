@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __GAMECVARS_H__
 #define __GAMECVARS_H__
@@ -1288,6 +1288,14 @@ struct SCVars
 	float ai_SquadManager_UpdateTick;
 
 	float ai_ProximityToHostileAlertnessIncrementThresholdDistance;
+
+	int ai_DebugSignalTimers;
+	int ai_DebugRangeSignaling;
+
+#ifdef AI_LOG_SIGNALS
+	int   aiLogSignals;
+	float aiMaxSignalDuration;
+#endif
 
 	int g_actorViewDistRatio;
 	int g_playerLodRatio;

@@ -1,9 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "AnimScreenFaderNode.h"
 #include "ScreenFaderTrack.h"
 #include <CryRenderer/IRenderer.h>
+#include <CryRenderer/IRenderAuxGeom.h>
 
 namespace
 {
@@ -50,11 +51,11 @@ bool CalculateIsolatedKeyColor(const SScreenFaderKey& key, SAnimTime time, Vec4&
 
 		if (key.m_fadeType == SScreenFaderKey::eFT_FadeIn)
 		{
-			colorOut.w = MAX(0.f, 1.f - floatRatio);
+			colorOut.w = std::max(0.f, 1.f - floatRatio);
 		}
 		else
 		{
-			colorOut.w = MIN(1.f, floatRatio);
+			colorOut.w = std::min(1.f, floatRatio);
 		}
 	}
 
@@ -62,7 +63,7 @@ bool CalculateIsolatedKeyColor(const SScreenFaderKey& key, SAnimTime time, Vec4&
 }
 
 CAnimScreenFaderNode::CAnimScreenFaderNode(const int id)
-	: CAnimNode(id), m_bActive(false), m_screenWidth(800.f), m_screenHeight(600.f), m_lastActivatedKey(-1), m_texPrecached(false)
+	: CAnimNode(id), m_bActive(false), m_lastActivatedKey(-1), m_texPrecached(false)
 {
 	m_startColor = Vec4(1, 1, 1, 1);
 	CAnimScreenFaderNode::Initialize();
@@ -134,7 +135,7 @@ void CAnimScreenFaderNode::Animate(SAnimContext& animContext)
 
 				if (ratio < 0.f) { ratio = 0.f; }
 
-				ratio = MIN(ratio, 1.f);
+				ratio = std::min(ratio, 1.f);
 
 				switch (key.m_fadeChangeType)
 				{
@@ -189,7 +190,8 @@ void CAnimScreenFaderNode::Animate(SAnimContext& animContext)
 
 				if (pTrack->GetDrawColor().w < 0.01f)
 				{
-					m_bActive = IsAnyTextureVisible();
+					if (!IsAnyTextureVisible())
+						Deactivate();
 				}
 				else
 				{
@@ -200,7 +202,10 @@ void CAnimScreenFaderNode::Animate(SAnimContext& animContext)
 		else
 		{
 			pTrack->SetTextureVisible(false);
-			m_bActive = IsAnyTextureVisible();
+			if (m_bActive && !IsAnyTextureVisible())
+				Deactivate();
+			else
+				m_bActive = IsAnyTextureVisible();
 		}
 	}
 }
@@ -213,17 +218,26 @@ void CAnimScreenFaderNode::CreateDefaultTracks()
 void CAnimScreenFaderNode::OnReset()
 {
 	CAnimNode::OnReset();
-	m_bActive = false;
+	Deactivate();
 }
 
 void CAnimScreenFaderNode::Activate(bool bActivate)
 {
-	m_bActive = false;
+	Deactivate();
 
 	if (m_texPrecached == false)
 	{
 		PrecacheTexData();
 	}
+}
+
+void CAnimScreenFaderNode::Deactivate() 
+{
+	if (gEnv->pRenderer != nullptr)
+	{
+		gEnv->pRenderer->EF_SetPostEffectParamVec4("ScreenFader_Color", Vec4(0, 0, 0, 0), true);
+	}
+	m_bActive = false;
 }
 
 void CAnimScreenFaderNode::Serialize(XmlNodeRef& xmlNode, bool bLoading, bool bLoadEmptyTracks)
@@ -274,9 +288,7 @@ void CAnimScreenFaderNode::Render()
 
 	if (gEnv->pRenderer)
 	{
-		size_t const paramCount = m_tracks.size();
-
-		for (size_t paramIndex = 0; paramIndex < paramCount; ++paramIndex)
+		for (size_t paramIndex = 0; paramIndex < m_tracks.size(); ++paramIndex)
 		{
 			CScreenFaderTrack* pTrack = static_cast<CScreenFaderTrack*>(GetTrackForParameter(eAnimParamType_ScreenFader, paramIndex));
 
@@ -285,16 +297,23 @@ void CAnimScreenFaderNode::Render()
 				continue;
 			}
 
-			int textureId = -1;
-
 			if (pTrack->IsTextureVisible())
 			{
-				textureId = (pTrack->GetActiveTexture() != 0) ? pTrack->GetActiveTexture()->GetTextureID() : -1;
+				int textureId = (pTrack->GetActiveTexture() != 0) ? pTrack->GetActiveTexture()->GetTextureID() : -1;
+
+				gEnv->pRenderer->EF_SetPostEffectParamVec4("ScreenFader_Color", Vec4(0,0,0,0), true);
+
+				IRenderAuxGeom *pAux = gEnv->pRenderer->GetIRenderAuxGeom();
+				const CCamera& rCamera = pAux->GetCamera();
+
+				IRenderAuxGeom::GetAux()->SetRenderFlags(e_Mode2D | e_AlphaBlended | e_CullModeBack | e_DepthTestOff);
+				IRenderAuxImage::Draw2dImage(0, 0, float(rCamera.GetViewSurfaceX()), float(rCamera.GetViewSurfaceZ()), textureId, 0.0f, 0.0f, 1.0f, 1.0f, 0.f,
+					pTrack->GetDrawColor().x, pTrack->GetDrawColor().y, pTrack->GetDrawColor().z, pTrack->GetDrawColor().w, 0.f);
+
+				continue;
 			}
 
-			gEnv->pRenderer->SetState(GS_BLSRC_SRCALPHA | GS_BLDST_ONEMINUSSRCALPHA | GS_NODEPTHTEST);
-			gEnv->pRenderer->Draw2dImage(0, 0, m_screenWidth, m_screenHeight, textureId, 0.0f, 0.0f, 1.0f, 1.0f, 0.f,
-			                             pTrack->GetDrawColor().x, pTrack->GetDrawColor().y, pTrack->GetDrawColor().z, pTrack->GetDrawColor().w, 0.f);
+			gEnv->pRenderer->EF_SetPostEffectParamVec4("ScreenFader_Color", pTrack->GetDrawColor(), true);
 		}
 	}
 }

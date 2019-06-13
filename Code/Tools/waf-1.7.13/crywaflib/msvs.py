@@ -141,36 +141,34 @@ PROJECT_TEMPLATE = r'''<?xml version="1.0" encoding="utf-8"?>
 		</ProjectConfiguration>
 		${endfor}
 	</ItemGroup>
-
-	<PropertyGroup Label="Globals">
+	
+	${for b in project.build_properties}
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='${b.configuration}|${b.platform}'" Label="Globals">
+		<ProjectGuid>{${project.uuid}}</ProjectGuid>
+		<ProjectName>${project.name}</ProjectName>
+		<Keyword>${project.get_project_keyword()}</Keyword>
 		
-		${if project.is_android_project()}
-			<ProjectGuid>{${project.uuid}}</ProjectGuid>
-			<ProjectName>${project.name}</ProjectName>
-			<Keyword>${project.get_project_keyword()}</Keyword>
-			<DefaultLanguage>en-US</DefaultLanguage>
-			<MinimumVisualStudioVersion>14.0</MinimumVisualStudioVersion>
-			<ApplicationType>Android</ApplicationType>
-			<ApplicationTypeRevision>2.0</ApplicationTypeRevision>
+		${if "ARM" in b.platform}	
+		<DefaultLanguage>en-US</DefaultLanguage>
+		<MinimumVisualStudioVersion>14.0</MinimumVisualStudioVersion>
+		<ApplicationType>Android</ApplicationType>
+		<ApplicationTypeRevision>2.0</ApplicationTypeRevision>		
 		${endif}
-		${if project.is_package_host()}
-			<ProjectGuid>{${project.uuid}}</ProjectGuid>
-			<Keyword>${project.get_project_keyword()}</Keyword>
-			<ProjectName>${project.name}</ProjectName>
-		${endif}
+		
 	</PropertyGroup>
+	${endfor}
+	
 	<Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
 
 	${for b in project.build_properties}
 	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='${b.configuration}|${b.platform}'" Label="Configuration">
 		<ConfigurationType>${project.get_project_type()}</ConfigurationType>
 		<OutDir>${b.outdir}</OutDir>		
-		<PlatformToolset>${xml:b.platform_toolset}</PlatformToolset>
-		${if project.is_android_project()}
+		${if "ARM" in b.platform}
 			<AndroidAPILevel>android-${xml:b.android_platform_target_version}</AndroidAPILevel>
 			<PlatformToolset>Clang_3_8</PlatformToolset>
 		${else}
-			<PlatformToolset>${xml:b.platform_toolset}</PlatformToolset>			
+			<PlatformToolset>${xml:b.platform_toolset}</PlatformToolset>
 		${endfor}
 		
 	</PropertyGroup>
@@ -273,7 +271,7 @@ ANDROID_PROJECT_USER_TEMPLATE = '''<?xml version="1.0" encoding="UTF-8"?>
 	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='${b.configuration}|${b.platform}'">
 		<PackagePath>${b.bin_output_folder.abspath()}\\${project.name}.apk</PackagePath>
 		<DebuggerFlavor>AndroidDebugger</DebuggerFlavor>
-		<AdditionalSymbolSearchPaths>${b.bin_output_folder.abspath()}\\lib_debug\\armeabi-v7a;$(AdditionalSymbolSearchPaths)</AdditionalSymbolSearchPaths>
+		<AdditionalSymbolSearchPaths>${b.bin_output_folder.abspath()}\\lib_debug\\arm64-v8a;$(AdditionalSymbolSearchPaths)</AdditionalSymbolSearchPaths>
 	</PropertyGroup>
 	${endfor}
 </Project>
@@ -491,6 +489,9 @@ def convert_waf_platform_to_vs_platform(self, platform):
 	if platform == 'android_arm':
 		return 'ARM'
 		
+	if platform == 'android_arm64':
+		return 'ARM64'
+		
 	print('to_vs error ' + platform)
 	return 'UNKNOWN'
 	
@@ -517,6 +518,9 @@ def convert_vs_platform_to_waf_platform(self, platform):
 		
 	if platform == 'ARM':
 		return 'android_arm'
+		
+	if platform == 'ARM64':
+		return 'android_arm64'
 		
 	print('to_waf error ' + platform)
 	return 'UNKNOWN'
@@ -814,15 +818,9 @@ def strip_unsupported_msbuild_platforms(conf):
 		msbuild_dir = 'C:/Program Files (x86)/MSBuild'
 		
 	# Visual Studio behave oddly when picking which "Platform" folder to use.
-	# If there is no "Platform" folder in root assume that MSBUILD uses the MSVC versioned one
-	# VS2012 Pro -> Root/Platform
-	# VS2012 Exp -> Root/<msvc_version>/Platforms
 	msbuild_base = msbuild_dir + '/Microsoft.Cpp/' + ms_build_version
-	if os.path.exists(msbuild_base + '/Platforms'):
-		msbuild_folder_path = msbuild_base + '/Platforms/'
-	else:
-		toolset = 'V' + cur_env['MSVC_VERSION'].replace('.','') # 11.0 -> v110
-		msbuild_folder_path ='%s/%s/Platforms/' % (msbuild_base, toolset)
+	toolset = 'V' + cur_env['MSVC_VERSION'].replace('.','') # 11.0 -> v110
+	msbuild_folder_path ='%s/%s/Platforms/' % (msbuild_base, toolset)
 		
 	# Platform to MSBUILD folder map
 	required_folder_for_platform = { 		
@@ -831,7 +829,8 @@ def strip_unsupported_msbuild_platforms(conf):
 		'durango' : 'Durango',
 		'orbis' 	: 'ORBIS',
 		'cppcheck': 'CppCheck',
-		'android_arm' : 'ARM'	
+		'android_arm' : 'ARM',
+		'android_arm64' : 'ARM'
 		}
 
 	installed_platforms = []
@@ -938,7 +937,7 @@ class vsnode(object):
 		"""
 		Override in subclasses...
 		"""
-		return 'cd /d "%s" & %s' % (self.ctx.srcnode.abspath(), getattr(self.ctx, 'waf_command', 'cry_waf.exe'))
+		return 'cd /d "%s" & %s' % (self.ctx.srcnode.abspath(), getattr(self.ctx, 'waf_command', self.ctx.srcnode.abspath() + '/Code/Tools/waf-1.7.13/bin/cry_waf.exe'))
 
 	def ptype(self):
 		"""
@@ -1061,12 +1060,13 @@ class vsnode_project(vsnode):
 		"""
 		Returns a list of triplet (configuration, platform, output_directory)
 		"""
-		ret = []
+		ret = []		
 		for c in self.ctx.configurations:
 			waf_configuration = self.ctx.convert_vs_configuration_to_waf_configuration(c)
 			waf_spec = self.ctx.convert_vs_spec_to_waf_spec(c)
-			
+						
 			for p in self.ctx.platforms:
+				
 				x = build_property()
 				x.outdir = ''
 				x.platform_toolset = ''
@@ -1141,14 +1141,13 @@ class vsnode_alias(vsnode_project):
 		self.project_filter = {}
 		android_platform_target_version = ''
 		
-		tools_version_lookup = { '11.0': '4.0', '12.0': '12.0', '14.0': '14.0' }
 		max_msvc_version = 0
 		for env in self.ctx.all_envs.values():
 			msvc_version = getattr(env, 'MSVC_VERSION', '')
-			if isinstance(msvc_version, basestring) and msvc_version in tools_version_lookup:
+			if isinstance(msvc_version, basestring):
 				if float(msvc_version) > max_msvc_version:
 					max_msvc_version = float(msvc_version)
-					self.vstoolsver = tools_version_lookup[msvc_version]
+					self.vstoolsver = msvc_version
 					
 class vsnode_build_all(vsnode_alias):
 	"""
@@ -1183,8 +1182,12 @@ class vsnode_build_all(vsnode_alias):
 			waf_configuration = self.ctx.convert_vs_configuration_to_waf_configuration(x.configuration)	
 			
 			current_env = self.ctx.all_envs[waf_platform + '_' + waf_configuration]
-			x.platform_toolset = 'v' + str(current_env['MSVC_VERSION']).replace('.','') if current_env['MSVC_VERSION'] else ""
-			x.android_platform_target_version = str(current_env['ANDROID_TARGET_VERSION']) if current_env['ANDROID_TARGET_VERSION'] else ""
+			if waf_platform == 'orbis':
+				x.platform_toolset = 'Clang'
+				x.android_platform_target_version = ''
+			else:
+				x.platform_toolset = 'v' + str(current_env['MSVC_VERSION']).replace('.','') if current_env['MSVC_VERSION'] else ""
+				x.android_platform_target_version = str(current_env['ANDROID_TARGET_VERSION']) if current_env['ANDROID_TARGET_VERSION'] else "23"
 						
 			x.target_spec = waf_spec
 			x.target_config = waf_platform + '_' + waf_configuration
@@ -1330,7 +1333,6 @@ class vsnode_target(vsnode_alias):
 		return False
 		
 	def get_android_platform_version(self):
-		print "===", self.ctx.env['ANDROID_TARGET_VERSION']
 		return str(self.ctx.env['ANDROID_TARGET_VERSION'])
 		
 	def get_project_type(self):			
@@ -1482,8 +1484,12 @@ class vsnode_target(vsnode_alias):
 				waf_configuration = self.ctx.convert_vs_configuration_to_waf_configuration(x.configuration)
 				
 				current_env = self.ctx.all_envs[waf_platform + '_' + waf_configuration]	
-				x.platform_toolset = 'v' + str(current_env['MSVC_VERSION']).replace('.','') if current_env['MSVC_VERSION'] else ""
-				x.android_platform_target_version = str(current_env['ANDROID_TARGET_VERSION']) if current_env['ANDROID_TARGET_VERSION'] else "23"
+				if waf_platform == 'orbis':
+					x.platform_toolset = 'Clang'
+					x.android_platform_target_version = ''
+				else:
+					x.platform_toolset = 'v' + str(current_env['MSVC_VERSION']).replace('.','') if current_env['MSVC_VERSION'] else ""
+					x.android_platform_target_version = str(current_env['ANDROID_TARGET_VERSION']) if current_env['ANDROID_TARGET_VERSION'] else "23"
 								
 				if not hasattr(self.tg ,'link_task') and 'create_static_library' not in self.tg.features:
 					continue
@@ -1681,14 +1687,13 @@ class msvs_generator(BuildContext):
 
 		# Note: only vsver is relevant for Visual Studio version selector
 		# We select from the highest Visual C++ version in use in the current configuration
-		version_lookup = { '11.0': '2012', '12.0': '2013', '14.0': '2015' }
 		max_msvc_version = 0
 		for env in self.all_envs.values():
 			msvc_version = getattr(env, 'MSVC_VERSION', '')
-			if isinstance(msvc_version, basestring) and msvc_version in version_lookup:
+			if isinstance(msvc_version, basestring):
 				if float(msvc_version) > max_msvc_version:
 					max_msvc_version = float(msvc_version)
-					self.vsver = version_lookup[msvc_version]
+					self.vsver = msvc_version
 
 	def execute(self):
 		"""

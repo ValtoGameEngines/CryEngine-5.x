@@ -1,25 +1,36 @@
 {
-    "content": {
-        "assets": [
-            "Assets"
-        ],
-        "code": [
-            "Code"
-        ],
-        "libs": [
-            {
-                "name": "TopDownShooterTemplate",
-                "shared": {
-                    "win_x64": "bin/win_x64/TopDownShooterTemplate.dll",
-                    "win_x86": "bin/win_x86/TopDownShooterTemplate.dll"
-                }
-            }
-        ]
-    },
-    "info": {
-        "name": "Top-Down Shooter Game Template"
-    },
-    "require": {
-        "engine": "engine-5.3"
-    }
+	"version": 3,
+	"type": "",
+	"info": {
+		"name": "Top Down Shooter",
+		"guid": "323ff9c3-aaab-aaa6-6f82-a0bf4dd27405"
+	},
+	"content": {
+		"assets": [ "Assets" ],
+		"code": [ "Code" ],
+		"libs": [
+			{
+				"name": "Top Down Shooter",
+				"shared": { "any": "", "win_x64": "", "win_x86": "" }
+			}
+		]
+	},
+	"require": {
+		"engine": "engine-dev",
+		"plugins": [
+			{ "type": "EPluginType::Native", "path": "CryDefaultEntities" },
+			{ "type": "EPluginType::Native", "path": "CrySensorSystem" },
+			{ "type": "EPluginType::Native", "path": "CryPerceptionSystem" },
+			{ "type": "EPluginType::Native", "path": "bin/win_x64/Game.dll" },
+			{
+				"type": "EPluginType::Native",
+				"path": "CryGamePlatform",
+				"platforms": [ "PS4" ]
+			}
+		]
+	},
+	"console_variables": {
+		"sys_target_platforms": "pc,ps4,xboxone,linux"
+	},
+	"console_commands": { }
 }

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
  -------------------------------------------------------------------------
@@ -35,10 +35,10 @@
 #include "Health.h"
 #include "ICryMannequinDefs.h"
 
-#define ITEM_SWITCH_TIMER_ID	525
-#define REFILL_AMMO_TIMER_ID	526
-#define ITEM_SWITCH_THIS_FRAME	527
-#define RECYCLE_AI_ACTOR_TIMER_ID 528
+#define ITEM_SWITCH_TIMER_ID	0
+#define REFILL_AMMO_TIMER_ID	1
+#define ITEM_SWITCH_THIS_FRAME	2
+#define RECYCLE_AI_ACTOR_TIMER_ID 3
 
 struct SHitImpulse;
 struct SAutoaimTargetRegisterParams;
@@ -480,8 +480,8 @@ public:
 	virtual bool ScheduleItemSwitch(EntityId itemId, bool keepHistory, int category = 0, bool forceFastSelect=false);
 	ILINE void CancelScheduledSwitch() 
 	{ 
-		GetEntity()->KillTimer(ITEM_SWITCH_TIMER_ID); 
-		GetEntity()->KillTimer(ITEM_SWITCH_THIS_FRAME); 
+		KillTimer(ITEM_SWITCH_TIMER_ID); 
+		KillTimer(ITEM_SWITCH_THIS_FRAME); 
 		SActorStats::SItemExchangeStats& exchangeItemStats = GetActorStats()->exchangeItemStats;
 		exchangeItemStats.switchingToItemID = 0; 
 		exchangeItemStats.switchThisFrame = false; 
@@ -520,9 +520,9 @@ public:
 	virtual ~CActor();
 
 	// IEntityEvent
-	virtual uint64 GetEventMask() const override { return (~0); } // Actors receive all entity events
-	virtual	void ProcessEvent( SEntityEvent &event ) override;
-	virtual IEntityComponent::ComponentEventPriority GetEventPriority( const int eventID ) const override;
+	virtual	void ProcessEvent( const SEntityEvent &event ) override;
+	virtual Cry::Entity::EventFlags GetEventMask() const override;
+	virtual IEntityComponent::ComponentEventPriority GetEventPriority() const override;
 	// ~IEntityEvent
 
 	// IActor
@@ -693,6 +693,9 @@ public:
 	{
 		return m_linkStats.GetLinkedVehicle();
 	}
+
+	virtual bool GetValidPositionNearby(const Vec3& proposedPosition, Vec3& adjustedPosition) const override;
+	virtual void SetExpectedPhysicsPos(const Vec3& expectedPosition) override;
 
 	float GetLookFOV(const SActorParams &actorParams) const
 	{
@@ -1068,6 +1071,8 @@ protected:
 	virtual bool UpdateStance();
 	void UpdateLegsColliders();
 	void ReleaseLegsColliders();
+
+	int GetShadowCharacterSlot() const { return 5; }
 
 	static SActorAnimationEvents s_animationEventsTable;
 

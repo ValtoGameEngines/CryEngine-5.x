@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -183,7 +183,9 @@ bool CGameRulesStandardPlayerStats::NetSerialize( EntityId playerId, TSerialize 
 		SGameRulesPlayerStat *playerStat = GetPlayerStatsInternal(playerId);
 		if (playerStat)
 		{
+#if 0
 			int pointsBefore = playerStat->points;
+#endif
 			uint16 deathsThisRoundBefore = playerStat->deathsThisRound;
 			uint8 fragsBefore = playerStat->successfulFrags;
       uint8 flashbangsBefore = playerStat->successfulFlashbangs;

@@ -1,17 +1,13 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include "SequenceManager.h"
 #include <CryFlowGraph/IFlowBaseNode.h>
 
-#ifndef _LIB
-struct AIFlowBaseNode
-{
-	static void RegisterFlowNodes();
-	static void UnregisterFlowNodes();
-};
-#endif
+#include <CryAISystem/MovementRequestID.h>
+
+struct MovementRequestResult;
 
 namespace AIActionSequence
 {
@@ -23,22 +19,6 @@ struct SequenceFlowNodeBase
 	  , public SequenceActionBase
 {
 	// nothing
-};
-
-//////////////////////////////////////////////////////////////////////////
-
-struct GoalPipeListenerHelper
-{
-public:
-	GoalPipeListenerHelper()
-		: m_goalPipeId(0)
-	{}
-
-	void RegisterGoalPipeListener(IGoalPipeListener* listener, EntityId entityId, int goalPipeId);
-	void UnRegisterGoalPipeListener(IGoalPipeListener* listener, EntityId entityId);
-
-private:
-	int m_goalPipeId;
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -150,8 +130,6 @@ private:
 
 class CFlowNode_AISequenceActionMove
 	: public SequenceFlowNodeBase
-	  , public IGoalPipeListener
-	  , public GoalPipeListenerHelper
 {
 public:
 	enum InputPort
@@ -172,9 +150,9 @@ public:
 
 	CFlowNode_AISequenceActionMove(SActivationInfo* pActInfo)
 		: m_actInfo(*pActInfo)
+		, m_stopRadiusSqr(0.0f)
 	{
 	}
-	virtual ~CFlowNode_AISequenceActionMove();
 
 	virtual IFlowNodePtr Clone(SActivationInfo* pActInfo) { return new CFlowNode_AISequenceActionMove(pActInfo); }
 
@@ -183,21 +161,24 @@ public:
 	virtual void         GetMemoryUsage(ICrySizer* sizer) const { sizer->Add(*this); }
 
 	void                 HandleSequenceEvent(SequenceEvent sequenceEvent);
-
-	virtual void         OnGoalPipeEvent(IPipeUser* pipeUser, EGoalPipeEvent event, int goalPipeId, bool& unregisterListenerAfterEvent);
+	void                 MovementRequestCallback(const MovementRequestResult& result);
 
 private:
 	void GetPositionAndDirectionForDestination(OUT Vec3& position, OUT Vec3& direction);
 
-	SActivationInfo m_actInfo;
+	SActivationInfo   m_actInfo;
+	MovementRequestID m_movementRequestID;
+
+	Vec3              m_destPosition;
+	Vec3              m_destDirection;
+
+	float             m_stopRadiusSqr;
 };
 
 //////////////////////////////////////////////////////////////////////////
 
 class CFlowNode_AISequenceActionMoveAlongPath
 	: public SequenceFlowNodeBase
-	  , public IGoalPipeListener
-	  , public GoalPipeListenerHelper
 {
 public:
 	enum InputPort
@@ -217,7 +198,6 @@ public:
 		: m_actInfo(*pActInfo)
 	{
 	}
-	virtual ~CFlowNode_AISequenceActionMoveAlongPath();
 
 	virtual IFlowNodePtr Clone(SActivationInfo* pActInfo) { return new CFlowNode_AISequenceActionMoveAlongPath(pActInfo); }
 
@@ -226,21 +206,19 @@ public:
 	virtual void         GetMemoryUsage(ICrySizer* sizer) const { sizer->Add(*this); }
 
 	void                 HandleSequenceEvent(SequenceEvent sequenceEvent);
-
-	virtual void         OnGoalPipeEvent(IPipeUser* pipeUser, EGoalPipeEvent event, int goalPipeId, bool& unregisterListenerAfterEvent);
+	void                 MovementRequestCallback(const MovementRequestResult& result);
 
 private:
 	void GetTeleportEndPositionAndDirection(const char* pathName, Vec3& position, Vec3& direction);
 
-	SActivationInfo m_actInfo;
+	SActivationInfo   m_actInfo;
+	MovementRequestID m_movementRequestID;
 };
 
 //////////////////////////////////////////////////////////////////////////
 
 class CFlowNode_AISequenceActionAnimation
 	: public SequenceFlowNodeBase
-	  , public IGoalPipeListener
-	  , public GoalPipeListenerHelper
 {
 public:
 	enum InputPort
@@ -267,9 +245,9 @@ public:
 	CFlowNode_AISequenceActionAnimation(SActivationInfo* pActInfo)
 		: m_actInfo(*pActInfo)
 		, m_running(false)
+		, m_bTeleportWhenNotMoving(false)
 	{
 	}
-	virtual ~CFlowNode_AISequenceActionAnimation();
 
 	virtual IFlowNodePtr Clone(SActivationInfo* pActInfo) { return new CFlowNode_AISequenceActionAnimation(pActInfo); }
 
@@ -278,23 +256,26 @@ public:
 	virtual void         GetMemoryUsage(ICrySizer* sizer) const { sizer->Add(*this); }
 
 	void                 HandleSequenceEvent(SequenceEvent sequenceEvent);
-	virtual void         OnGoalPipeEvent(IPipeUser* pipeUser, EGoalPipeEvent event, int goalPipeId, bool& unregisterListenerAfterEvent);
+	void                 MovementRequestCallback(const MovementRequestResult& result);
 
 private:
 	void       GetPositionAndDirectionForDestination(Vec3& position, Vec3& direction);
 	void       ClearAnimation(bool bHurry);
 	IAIObject* GetAssignedEntityAIObject();
 
-	SActivationInfo m_actInfo;
-	bool            m_running;
+	SActivationInfo   m_actInfo;
+	MovementRequestID m_movementRequestID;
+
+	Vec3              m_destPosition;
+	Vec3              m_destDirection;
+	bool              m_running;
+	bool              m_bTeleportWhenNotMoving;
 };
 
 //////////////////////////////////////////////////////////////////////////
 
 class CFlowNode_AISequenceActionWait
 	: public SequenceFlowNodeBase
-	  , public IGoalPipeListener
-	  , public GoalPipeListenerHelper
 {
 public:
 	enum InputPort
@@ -310,9 +291,8 @@ public:
 
 	CFlowNode_AISequenceActionWait(SActivationInfo* pActInfo)
 		: m_actInfo(*pActInfo)
+		, m_waitTimeMs(0)
 	{}
-
-	virtual ~CFlowNode_AISequenceActionWait();
 
 	virtual IFlowNodePtr Clone(SActivationInfo* pActInfo) { return new CFlowNode_AISequenceActionWait(pActInfo); }
 
@@ -321,19 +301,16 @@ public:
 	virtual void         GetMemoryUsage(ICrySizer* sizer) const { sizer->Add(*this); }
 
 	void                 HandleSequenceEvent(SequenceEvent sequenceEvent);
-
-	virtual void         OnGoalPipeEvent(IPipeUser* pipeUser, EGoalPipeEvent event, int goalPipeId, bool& unregisterListenerAfterEvent);
-
 private:
 	SActivationInfo m_actInfo;
+	CTimeValue m_startTime;
+	int m_waitTimeMs;
 };
 
 //////////////////////////////////////////////////////////////////////////
 
 class CFlowNode_AISequenceActionShoot
 	: public SequenceFlowNodeBase
-	  , public IGoalPipeListener
-	  , public GoalPipeListenerHelper
 {
 public:
 	enum InputPort
@@ -351,10 +328,9 @@ public:
 
 	CFlowNode_AISequenceActionShoot(SActivationInfo* pActInfo)
 		: m_actInfo(*pActInfo)
+		, m_fireTimeMS(0)
 	{
 	}
-
-	virtual ~CFlowNode_AISequenceActionShoot();
 
 	virtual IFlowNodePtr Clone(SActivationInfo* pActInfo) { return new CFlowNode_AISequenceActionShoot(pActInfo); }
 
@@ -364,10 +340,11 @@ public:
 
 	void                 HandleSequenceEvent(SequenceEvent sequenceEvent);
 
-	virtual void         OnGoalPipeEvent(IPipeUser* pipeUser, EGoalPipeEvent event, int goalPipeId, bool& unregisterListenerAfterEvent);
-
 private:
 	SActivationInfo m_actInfo;
+
+	CTimeValue m_startTime;
+	int m_fireTimeMS;
 };
 
 //////////////////////////////////////////////////////////////////////////

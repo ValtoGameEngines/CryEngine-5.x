@@ -1,36 +1,31 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <CrySerialization/Forward.h>
-#include <Schematyc/Utils/GUID.h>
+#include <CrySchematyc/Utils/GUID.h>
+#include <CryEntitySystem/IEntityComponent.h>
 
-class CSchematycEntityDrsComponent final : public Schematyc::CComponent, DRS::IResponseManager::IListener, DRS::ISpeakerManager::IListener
+class CSchematycEntityDrsComponent final : public IEntityComponent, DRS::IResponseManager::IListener, DRS::ISpeakerManager::IListener
 {
 public:
-	struct SProperties
-	{
-		void Serialize(Serialization::IArchive& archive);
-
-		string name;
-	};
 
 	struct SResponseStartedSignal
 	{
-		static Schematyc::SGUID ReflectSchematycType(Schematyc::CTypeInfo<SResponseStartedSignal>& typeInfo);
+		static void ReflectType(Schematyc::CTypeDesc<SResponseStartedSignal>& typeInfo);
 
 		int   m_signalId;
 	};
 	struct SResponseFinishedSignal
 	{
-		static Schematyc::SGUID ReflectSchematycType(Schematyc::CTypeInfo<SResponseFinishedSignal>& typeInfo);
+		static void ReflectType(Schematyc::CTypeDesc<SResponseFinishedSignal>& typeInfo);
 
 		int   m_signalId;
 		int   m_result;  //ProcessingResult_NoResponseDefined, ProcessingResult_ConditionsNotMet, ProcessingResult_Done, ProcessingResult_Canceled	
 	};
 	struct SLineStartedSignal
 	{
-		static Schematyc::SGUID ReflectSchematycType(Schematyc::CTypeInfo<SLineStartedSignal>& typeInfo);
+		static void ReflectType(Schematyc::CTypeDesc<SLineStartedSignal>& typeInfo);
 
 		Schematyc::CSharedString  m_text;
 		Schematyc::CSharedString  m_speakerName;
@@ -38,22 +33,21 @@ public:
 	};
 	struct SLineEndedSignal
 	{
-		static Schematyc::SGUID ReflectSchematycType(Schematyc::CTypeInfo<SLineEndedSignal>& typeInfo);
+		static void ReflectType(Schematyc::CTypeDesc<SLineEndedSignal>& typeInfo);
 
 		Schematyc::CSharedString  m_text;
 		Schematyc::CSharedString  m_speakerName;
-		bool    m_bWasCanceled ;
+		bool    m_bWasCanceled;
 		//animation, audioTrigger... do we need these as well?
 	};
 
-	CSchematycEntityDrsComponent();
-	~CSchematycEntityDrsComponent();
+	CSchematycEntityDrsComponent() = default;
+	virtual ~CSchematycEntityDrsComponent() = default;
 
-	// Schematyc::CComponent
-	virtual bool Init() override;
-	virtual void Run(Schematyc::ESimulationMode simulationMode) override;
-	virtual void Shutdown() override;
-	// ~Schematyc::CComponent
+	//IEntityComponent
+	virtual void Initialize() override;
+	virtual void OnShutDown() override;
+	// ~IEntityComponent
 
 	// DRS::IResponseManager::IListener
 	virtual void OnSignalProcessingStarted(SSignalInfos& signal, DRS::IResponseInstance* pStartedResponse) override;
@@ -64,11 +58,15 @@ public:
 	virtual void OnLineEvent(const DRS::IResponseActor* pSpeaker, const CHashedString& lineID, DRS::ISpeakerManager::IListener::eLineEvent lineEvent, const DRS::IDialogLine* pLine) override;
 	// ~DRS::ISpeakerManager::IListener
 
-	static Schematyc::SGUID ReflectSchematycType(Schematyc::CTypeInfo<CSchematycEntityDrsComponent>& typeInfo);
-	static void             Register(Schematyc::IEnvRegistrar& registrar);
-
+	static void ReflectType(Schematyc::CTypeDesc<CSchematycEntityDrsComponent>& desc);
+	static void Register(Schematyc::IEnvRegistrar& registrar);
 
 private:
+	template <typename SIGNAL> inline void OutputSignal(const SIGNAL& signal)
+	{
+		if (GetEntity()->GetSchematycObject())
+			GetEntity()->GetSchematycObject()->ProcessSignal(signal, m_guid);
+	}
 
 	void SendSignal(const Schematyc::CSharedString& signalName, const Schematyc::CSharedString& contextFloatName, float contextFloatValue, const Schematyc::CSharedString& contextStringName, const Schematyc::CSharedString& contextStringValue);
 	
@@ -78,6 +76,8 @@ private:
 
 	DRS::IVariableCollection* GetVariableCollection(const Schematyc::CSharedString& collectionName);
 
-	DRS::IResponseActor* m_pDrsActor;
-	//Schematyc::CConnectionScope            m_connectionScope;
+	Schematyc::CSharedString m_nameOverride;
+	Schematyc::CSharedString m_globalVariableCollectionToUse;
+
+	IEntityDynamicResponseComponent* m_pDrsEntityComp;
 };

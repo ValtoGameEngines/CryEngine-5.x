@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __EntityCoverSampler_h__
 #define __EntityCoverSampler_h__
@@ -27,7 +27,7 @@ public:
 	void Clear();
 	void Queue(EntityId entityID, const Callback& callback);
 	void Cancel(EntityId entityID);
-	void Update();
+	void Update(const CTimeValue frameStartTime, const float updateTime);
 	void DebugDraw();
 
 private:

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -16,6 +16,7 @@ History:
 #define __REPLAYOBJECT_H__
 
 #include <ICryMannequin.h>
+#include <IGameObject.h>
 
 class CReplayObjectAction : public TAction<SAnimationContext>
 {
@@ -65,9 +66,9 @@ public:
 	virtual void PostUpdate(float frameTime ) {}
 	virtual void PostRemoteSpawn() {}
 	virtual void HandleEvent( const SGameObjectEvent &) {}
-	virtual void ProcessEvent(SEntityEvent &) {}
+	virtual void ProcessEvent(const SEntityEvent& ) {}
+	virtual Cry::Entity::EventFlags GetEventMask() const { return Cry::Entity::EventFlags(); }
 	virtual void SetChannelId(uint16 id) {}
-	virtual void SetAuthority(bool auth) {}
 	virtual void GetMemoryUsage(ICrySizer * s) const {}
 	//~IGameObjectExtension
 

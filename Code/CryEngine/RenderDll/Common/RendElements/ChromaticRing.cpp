@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ChromaticRing.h"
@@ -35,9 +35,9 @@ void ChromaticRing::InitEditorParamGroups(DynArray<FuncVariableGroup>& groups)
 ChromaticRing::ChromaticRing(const char* name)
 	: COpticsElement(name)
 	, m_bUseSpectrumTex(false)
-	, m_fWidth(0.5f)
 	, m_nPolyComplexity(160)
 	, m_nColorComplexity(2)
+	, m_fWidth(0.5f)
 	, m_fNoiseStrength(0.0f)
 	, m_fCompletionStart(90.f)
 	, m_fCompletionEnd(270.f)
@@ -50,8 +50,10 @@ ChromaticRing::ChromaticRing(const char* name)
 	m_meshDirty = true;
 
 	CConstantBufferPtr pSharedCB = gcpRendD3D->m_DevBufMan.CreateConstantBuffer(sizeof(SShaderParams), true, true);
-	m_primitive.SetInlineConstantBuffer(eConstantBufferShaderSlot_PerBatch, pSharedCB, EShaderStage_Vertex | EShaderStage_Pixel);
-	m_wireframePrimitive.SetInlineConstantBuffer(eConstantBufferShaderSlot_PerBatch, pSharedCB, EShaderStage_Vertex | EShaderStage_Pixel);
+	if (pSharedCB) pSharedCB->SetDebugName("ChromaticRing Per-Primitive CB");
+
+	m_primitive.SetInlineConstantBuffer(eConstantBufferShaderSlot_PerPrimitive, pSharedCB, EShaderStage_Vertex | EShaderStage_Pixel);
+	m_wireframePrimitive.SetInlineConstantBuffer(eConstantBufferShaderSlot_PerPrimitive, pSharedCB, EShaderStage_Vertex | EShaderStage_Pixel);
 }
 
 void ChromaticRing::Load(IXmlNode* pNode)
@@ -123,7 +125,7 @@ CTexture* ChromaticRing::GetOrLoadSpectrumTex()
 {
 	if (m_pSpectrumTex == nullptr)
 	{
-		m_pSpectrumTex = std::move(CTexture::ForName("EngineAssets/Textures/flares/spectrum_full.tif", FT_DONT_STREAM, eTF_Unknown));
+		m_pSpectrumTex = std::move(CTexture::ForName("%ENGINE%/EngineAssets/Textures/flares/spectrum_full.tif", FT_DONT_STREAM, eTF_Unknown));
 	}
 
 	return m_pSpectrumTex;
@@ -141,7 +143,7 @@ bool ChromaticRing::PreparePrimitives(const SPreparePrimitivesContext& context)
 
 	// update constants (constant buffer is shared by both primitives, so we only have to update it once)
 	{
-		auto constants = m_primitive.GetConstantManager().BeginTypedConstantUpdate<SShaderParams>(eConstantBufferShaderSlot_PerBatch, EShaderStage_Vertex | EShaderStage_Pixel);
+		auto constants = m_primitive.GetConstantManager().BeginTypedConstantUpdate<SShaderParams>(eConstantBufferShaderSlot_PerPrimitive, EShaderStage_Vertex | EShaderStage_Pixel);
 
 		for (int i = 0; i < context.viewInfoCount; ++i)
 		{
@@ -176,10 +178,11 @@ bool ChromaticRing::PreparePrimitives(const SPreparePrimitivesContext& context)
 		prim.SetTechnique(CShaderMan::s_ShaderLensOptics, techChromaticRing, rtFlags);
 		prim.SetRenderState(GS_NODEPTHTEST | GS_BLSRC_ONE | GS_BLDST_ONE | (i==0 ? 0 : GS_WIREFRAME));
 		prim.SetTexture(0, GetOrLoadSpectrumTex());
-		prim.SetSampler(0, m_samplerBilinearBorderBlack);
-		prim.SetCustomVertexStream(m_vertexBuffer, eVF_P3F_C4B_T2F, sizeof(SVF_P3F_C4B_T2F));
+		prim.SetSampler(0, EDefaultSamplerStates::LinearBorder_Black);
+		prim.SetCustomVertexStream(m_vertexBuffer, EDefaultInputLayouts::P3F_C4B_T2F, sizeof(SVF_P3F_C4B_T2F));
 		prim.SetCustomIndexStream(m_indexBuffer, Index16);
 		prim.SetDrawInfo(eptTriangleList, 0, 0, GetIndexCount());
+		prim.Compile(context.pass);
 
 		context.pass.AddPrimitive(&prim);
 	}

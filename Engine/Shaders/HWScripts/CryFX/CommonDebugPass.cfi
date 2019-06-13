@@ -1,5 +1,6 @@
-// CRYENGINE Source Code File
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
+SCENE_DEPTH_MAP
 
 struct vert2fragDebug
 {
@@ -8,7 +9,6 @@ struct vert2fragDebug
 #endif
  
 	float4 baseTC  : TEXCOORDN; 
-	float4 Color   : TEXCOORDN;
 	
 	float4 vView   : TEXCOORDN;
 #if ENABLE_TESSELLATION && !%_RT_NO_TESSELLATION
@@ -19,28 +19,24 @@ struct vert2fragDebug
 struct app2vertDebug
 {
   app2vertCommon vertCommon;
-
-  #if %_RT_INSTANCING_ATTR || %_RT_INSTANCING_CONST
-    float4 InstAmbientOp  : TEXCOORDN;
-  #endif
 };
 
 vert2fragDebug Common_DebugPassVS(app2vertDebug IN_common)
 {
-  vert2fragDebug OUT = (vert2fragDebug)0;
-  
+	vert2fragDebug OUT = (vert2fragDebug)0;
+
 	app2vertDebug IN = IN_common;
 #if %TEMP_TERRAIN
 	IN.vertCommon.Position.z = IN_common.vertCommon.baseTC.x;
 #endif
 
-  streamPos vertPassPos = (streamPos)0;
-  vtxStreamUnifyCommon(IN.vertCommon, vertPassPos);
-  
+	streamPos vertPassPos = (streamPos)0;
+	vtxStreamUnifyCommon(IN.vertCommon, vertPassPos);
+
 #if %TEMP_TERRAIN
-  float4 HPosition = Pos_VS_Terrain(0.0005f, g_VS_ViewProjZeroMatr, vertPassPos);
+	float4 HPosition = Pos_VS_Terrain(0.0005f, g_VS_ViewProjZeroMatr, vertPassPos);
 #else  
-  float4 HPosition = Pos_VS_General(g_VS_ViewProjZeroMatr, vertPassPos);  
+	float4 HPosition = Pos_VS_General(g_VS_ViewProjZeroMatr, vertPassPos);  
 #endif
 
 	float3 vPos = vertPassPos.WorldPos.xyz;
@@ -55,37 +51,56 @@ vert2fragDebug Common_DebugPassVS(app2vertDebug IN_common)
 #endif
 
 	_TCModify(vertPassPos.baseTC, OUT.baseTC, 0, 0, TS_DIFFUSE);
-	
-#if %_RT_SAMPLE1  // Selection Pass
-	// We are passing the actual texture coordinate here for use in alpha testing
-	OUT.Color = float4(IN.vertCommon.baseTC.x, IN.vertCommon.baseTC.y, 0, 0);
-#else  // Debug Views
-	// Prepare color for wireframe
-	OUT.Color = lerp(float4(0, 0.7, 0.9, 1), float4(0.35, 0.35, 0.35, 1), saturate(HPosition.w / 100.0));
-#endif
-	
-  return OUT;            
+
+	return OUT;            
 }
 
-Texture2D<float4> SceneDepthTex : register(t25);
+Texture2D<float4> texelPerMeterTex : register(t33);
 
-pixout Common_DebugPassPS(vert2fragDebug IN)
+Texture2D<float4> SceneDepthTex : register(t25);
+RWBuffer<uint> CounterTarget : register(u2);
+RWBuffer<uint> DepthTarget : register(u3);
+RWBuffer<uint> StatsTarget : register(u4);
+RWBuffer<uint> HistogramTarget : register(u5);
+
+void UpdateCounter(uint BufferPos)
 {
-  pixout OUT = (pixout)0;
-	
+	const uint IncrementValue = 1;
+	uint PreviousValue;
+
+	InterlockedAdd(CounterTarget[BufferPos], IncrementValue, PreviousValue);
+	if (PreviousValue < 255)
+	{
+		InterlockedAdd(HistogramTarget[PreviousValue + 0], -1);
+		InterlockedAdd(HistogramTarget[PreviousValue + 1], +1);
+	}
+}
+
+pixout Common_DebugPassPS(vert2fragDebug IN, uint c0 : SV_Coverage)
+{
+	pixout OUT = (pixout)0;
+
+	bool alphatested = false;
+#if %_RT_ALPHATEST
+	// only access texture for alpha tested meshes
+	float alpha = GetAlphaTex(diffuseTex, IN.baseTC.xy);
+	float alphaTest =	Get_MaterialAlphaTest();
+	alphatested = (alpha - alphaTest) < 0.0f; //need to perform texkill just like in regular passes
+#endif 
+
+	bool dissolved = TestDissolve(Get_SPI_Dissolve(), IN.WPos.xy, 33) < 0.0f;
+
 	// Debug Views
 #if !%_RT_SAMPLE1
 	[branch] if (CP_Custom_ViewMode.x == 0)  // Wireframe
 	{
-		OUT.Color.xyz = IN.Color.xyz;
+		OUT.Color = lerp(float4(0, 0.7, 0.9, 1), float4(0.35, 0.35, 0.35, 1), saturate(IN.WPos.w / 100.0));
 	}
 	else if (CP_Custom_ViewMode.x == 1)  // Texel density
 	{
 		float2 diffuseTexRes = 0;
-#if !OPENGL
-	diffuseTex.GetDimensions(diffuseTexRes.x, diffuseTexRes.y);
-#endif
-	
+		diffuseTex.GetDimensions(diffuseTexRes.x, diffuseTexRes.y);
+
 		float3 ddx_P = ddx(IN.vView.xyz);
 		float3 ddy_P = ddy(IN.vView.xyz);
 		float2 ddx_T = ddx(IN.baseTC.xy);
@@ -101,10 +116,141 @@ pixout Common_DebugPassPS(vert2fragDebug IN)
 		// Sample diffuse tex so texture modificator in VS gets properly applied
 		// Multiply by very small number and use result so compiler doesn't optimize tex fetch away
 		float3 c = GetDiffuseTex(diffuseTex, IN.baseTC.xy) * 0.0001;
-		c += GetTexture2D(dissolveNoiseTex, ssMaterialBilinearClamp, float2(t, 0.25));
+		c += GetTexture2D(texelPerMeterTex, ssMaterialBilinearClamp, float2(t, 0.0));
 		
 		OUT.Color = float4(c * checker, 1);
 	}
+	else if (CP_Custom_ViewMode.x == 2)  // Overdraw
+	{
+		uint z0 = asuint(IN.WPos.z);
+		uint BufferPos = IN.WPos.y * CP_Custom_ViewMode.z + IN.WPos.x;
+		uint PreviousDepth;
+		
+		uint testDepth = 1;
+		uint wrteDepth = (CP_Custom_ViewMode.y == 2) || (CP_Custom_ViewMode.y == 5) ||
+		                 (CP_Custom_ViewMode.y == 3) || (CP_Custom_ViewMode.y == 6); // (uint(CP_Custom_ViewMode.y - 1) % 3) > 0;
+		uint invrDepth = (CP_Custom_ViewMode.y == 3) || (CP_Custom_ViewMode.y == 6); // (uint(CP_Custom_ViewMode.y - 1) % 3) > 1;
+		uint depthTest = 1;
+		
+	#if %_RT_ALPHATEST
+		{
+			// only access texture for alpha tested meshes
+			float alpha = GetAlphaTex(diffuseTex, IN.baseTC.xy);
+			float alphaTest = Get_MaterialAlphaTest();
+			
+			// need to perform texkill just like in regular passes
+			if (alphatested || dissolved)
+				wrteDepth = 0;
+		}
+	#endif
+
+		if (CP_Custom_ViewMode.y < (1 + 3))
+		{
+			if (c0 && testDepth)
+			{
+				PreviousDepth = DepthTarget[BufferPos];
+
+				if (wrteDepth)
+					InterlockedMax(DepthTarget[BufferPos], z0, PreviousDepth);
+
+				depthTest = (z0 >= PreviousDepth) ^ invrDepth;
+			}
+
+			if (c0 && depthTest)
+			{
+				UpdateCounter(BufferPos);
+			}
+		}
+		else if (CP_Custom_ViewMode.y < (1 + 3 + 3))
+		{
+			// Obtain coverage for all pixels in the quad, via 'message passing'*.
+			// (* For more details, see:
+			// "Shader Amortization using Pixel Quad Message Passing", Eric Penner, GPU Pro 2.)
+			int3 sign = int3(0, 0, 0);
+
+			sign.x = int(ddx_fine(c0)); uint c1 = c0 ^ abs(sign.x);
+			sign.y = int(ddy_fine(c0)); uint c2 = c0 ^ abs(sign.y);
+			sign.z = int(ddx_fine(c2)); uint c3 = c2 ^ abs(sign.z);
+
+			if (c1 != (c0 * sign.x)) sign.x = -sign.x;
+			if (c2 != (c0 * sign.y)) sign.y = -sign.y;
+			if (c3 != (c2 * sign.z)) sign.z = -sign.z;
+
+			uint z1 = z0 + sign.x * ddx_fine(z0);
+			uint z2 = z0 + sign.y * ddy_fine(z0);
+			uint z3 = z2 + sign.z * ddx_fine(z2);
+			
+			if (c0 && testDepth)
+			{
+				// For "? x" sign.x is negative, for "x ?" it is positive
+				// Same for y-axis
+				uint4 PreviousDepths = uint4(
+					DepthTarget[BufferPos                                         ],
+					DepthTarget[BufferPos                                 + sign.x],
+					DepthTarget[BufferPos + CP_Custom_ViewMode.z * sign.y         ],
+					DepthTarget[BufferPos + CP_Custom_ViewMode.z * sign.y + sign.x]
+				);
+			
+				if (wrteDepth)
+					InterlockedMax(DepthTarget[BufferPos], z0, PreviousDepth);
+
+				depthTest = any(uint4(z0, z1, z2, z3) >= PreviousDepths) ^ invrDepth;
+			}
+
+			if (c0 && depthTest)
+			{
+				// Count the live pixels, minus 1 (zero indexing)
+				// pixelCount = 0 has 1x increment (1 lane  active)
+				// pixelCount = 1 has 2x increment (2 lanes active)
+				// pixelCount = 2 has 3x increment (3 lanes active)
+				// pixelCount = 3 has 4x increment (4 lanes active)
+				uint pixelCount = c0 + c1 + c2 + c3 - 1;
+				InterlockedAdd(StatsTarget[pixelCount], 1);
+
+				// x ? | ? x | ? ? | ? ?
+				// ? ? | ? ? | x ? | ? x
+				UpdateCounter(BufferPos);
+
+				// X-axis companion pixel is dead, increment in it's stead
+				if (!c1)
+				{
+					// x - | - x | ? ? | ? ?
+					// ? ? | ? ? | x - | - x
+					UpdateCounter(BufferPos + sign.x);
+				}
+				
+				// Y-axis companion row is dead, increment in it's stead
+				if (!c2 && !c3)
+				{
+					// x - | - x | - ? | ? -
+					// - ? | ? - | x - | - x
+					UpdateCounter(BufferPos + CP_Custom_ViewMode.z * sign.y);
+
+					if (!c1)
+					{
+						// x - | - x | - - | - -
+						// - - | - - | x - | - x
+						UpdateCounter(BufferPos + CP_Custom_ViewMode.z * sign.y + sign.x);
+					}
+				}
+			}
+		}
+		
+		// Bandwidth compression with black color
+		OUT.Color = 0;
+	}
+#endif
+
+#if %_RT_ALPHATEST || %_RT_DISSOLVE
+	clip((alphatested || dissolved) ? -1 : +1);
+#endif
+
+// Set the color in debug mode.	
+#if %_RT_SAMPLE1  // Selection Pass
+	// We are passing the actual texture coordinate here for use in alpha testing
+	OUT.Color = float4(IN.baseTC.x, IN.baseTC.y, 0, 0);
+#elif %_RT_SAMPLE2 // DebugDraw Pass
+	OUT.Color = float4(CD_CustomData1.rgb, 1.0f); // SilhouetteColor contains custom debug color
 #endif
 
 	// Selection Pass
@@ -114,31 +260,23 @@ pixout Common_DebugPassPS(vert2fragDebug IN)
 	#define HIGHLIGHTED_FLAG (1 << 1)
 	#define HIDDEN_FLAG      (1 << 2)
 
-#if %_RT_ALPHATEST
-  // only access texture for alpha tested meshes
-  float alpha = GetAlphaTex(diffuseTex, IN.Color.xy);
-  float alphaTest =	Get_MaterialAlphaTest();
-  clip(alpha - alphaTest); //need to perform texkill just like in regular passes
-#endif 
+	// write the selection ID to our color with some possible modifications
+	uint selectionID = asuint(CD_CustomData2.x);
 
-  // write the selection ID to our color with some possible modifications
-  uint selectionID = asuint(PerInstanceCustomData2.x);
+	// now we need to compare the scene's depth to the fragment's depth. We do that here instead of after rendering, so precision is maintained better
+	float fGeomDepth = IN.WPos.w * CV_NearFarClipDist.w;
+	float fSceneDepth = GetLinearDepth(linearDepthTex, int2(IN.WPos.xy));
 
-  // now we need to compare the scene's depth to the fragment's depth. We do that here instead of after rendering, so precision is maintained better
-  float fragmentDepth = IN.WPos.z;
-  int3 vPixCoord = int3(IN.WPos.xy, 0);
-  float sceneDepth = SceneDepthTex.Load(vPixCoord);
+	if (fGeomDepth > fSceneDepth * 1.001)
+	{
+		// set the fragment as occluded in regular scene
+		selectionID |= HIDDEN_FLAG;
+	}
 
-  if (fragmentDepth < 0.999 * sceneDepth)
-  {
-    // set the fragment as occluded in regular scene
-    selectionID |= HIDDEN_FLAG;
-  }
-
-  OUT.Color.x = asfloat(selectionID);
+	OUT.Color.x = asfloat(selectionID);
 #endif
 
-  return OUT;
+	return OUT;
 }
 
 #include "CommonDebugPassTess.cfi"

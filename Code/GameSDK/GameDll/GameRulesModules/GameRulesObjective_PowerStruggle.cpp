@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -555,7 +555,6 @@ void CGameRulesObjective_PowerStruggle::Common_UpdateActiveNode(SNodeInfo *pNode
 	
 	if (gEnv->bServer && bCountsChanged)
 	{
-		int previousOwnerId = pNodeInfo->m_controllingTeamId;
 		int team1Count = pNodeInfo->m_insideCount[0];
 		int team2Count = pNodeInfo->m_insideCount[1];
 		int newControllingTeamId;
@@ -837,18 +836,6 @@ void CGameRulesObjective_PowerStruggle::Server_ActivateAllNodes()
 	}
 }
 
-	
-void CGameRulesObjective_PowerStruggle::Common_FixNodeRenderGlitch(SNodeInfo *pNodeInfo)
-{
-	IEntity* pNodeEntity = gEnv->pEntitySystem->GetEntity(pNodeInfo->m_id);
-	
-	// fix the 1 frame glitch of the spear fully emerged by forcing it to update whilst emerging, whether its rendered or not
-	if (pNodeEntity && (pNodeInfo->m_state == ENS_hidden || pNodeInfo->m_state == ENS_emerging)) 
-	{
-		pNodeEntity->Activate(true); 
-	}
-}
-
 void CGameRulesObjective_PowerStruggle::Common_UpdateNode( SNodeInfo *pNodeInfo, float frameTime, bool &bAspectChanged)
 {
 	if (pNodeInfo->m_state >= ENS_emerging && pNodeInfo->m_state <= ENS_capturing_from_capture)
@@ -983,12 +970,6 @@ void CGameRulesObjective_PowerStruggle::Common_UpdateDebug(float frameTime)
 //------------------------------------------------------------------------
 void CGameRulesObjective_PowerStruggle::Update( float frameTime )
 {
-	for (int i = 0; i < MAX_NODES; ++ i)
-	{
-		SNodeInfo *pNodeInfo = &m_nodes[i];
-		Common_FixNodeRenderGlitch(pNodeInfo);
-	}
-
 	// for PC pre-game handling do nothing till we're actually in game 
 	if (!m_pGameRules->HasGameActuallyStarted() /*&& !m_pGameRules->IsPrematchCountDown()*/)
 	{
@@ -1254,8 +1235,8 @@ bool CGameRulesObjective_PowerStruggle::NetSerialize(TSerialize ser, EEntityAspe
 		for(int i = 0; i < NUM_TEAMS; ++i)
 		{
 			SChargeeInfo& chargee = m_Chargees[i];
-				
-			float prevChargeValueWas=chargee.m_PrevChargeValue;
+
+			//float prevChargeValueWas=chargee.m_PrevChargeValue;
 			float chargeValueWas=chargee.m_ChargeValue;
 
 			ser.Value("chargeValue", chargee.m_ChargeValue, 'sone');
@@ -1332,7 +1313,7 @@ void CGameRulesObjective_PowerStruggle::OnEntitySignal(EntityId entityId, int si
 }
 
 //------------------------------------------------------------------------
-void CGameRulesObjective_PowerStruggle::OnEntityEvent( IEntity *pEntity, SEntityEvent &event )
+void CGameRulesObjective_PowerStruggle::OnEntityEvent( IEntity *pEntity, const SEntityEvent& event )
 {
 	EntityId insideId = (EntityId) event.nParam[0];
 	EntityId entityId = pEntity->GetId();

@@ -1,4 +1,6 @@
 start_sources()
+
+# -- libmikmod.waf_files --
 sources_platform(ALL)
 add_sources("NoUberFile"
 	PROJECTS libmikmod_static
@@ -62,7 +64,7 @@ end_sources()
 ################### libmikmod_static ###################
 CryEngineStaticModule(libmikmod_static SOLUTION_FOLDER "Libs/Audio")
 target_include_directories(${THIS_PROJECT} PUBLIC
-	${SDK_DIR}/libmikmod/include
+	"${SDK_DIR}/libmikmod/include"
 )
 target_compile_definitions(${THIS_PROJECT} PUBLIC
 	-DMIKMOD_STATIC
@@ -75,7 +77,7 @@ target_compile_definitions(${THIS_PROJECT} PRIVATE
 )
 
 set_property(TARGET ${THIS_PROJECT} PROPERTY OUTPUT_NAME "mikmod")
-if(WIN32 OR WIN64)
+if(WINDOWS)
 	target_compile_definitions(${THIS_PROJECT} PRIVATE
 		-DDRV_DS
 		-DDRV_WIN

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -16,6 +16,7 @@
 #include "StdAfx.h"
 #include "GameRulesMPDamageHandling.h"
 #include <CrySystem/XML/IXml.h>
+#include "GameCVars.h"
 #include "GameRules.h"
 #include "Actor.h"
 #include "Player.h"
@@ -86,7 +87,7 @@ void CGameRulesMPDamageHandling::InitVehicleDamage(XmlNodeRef vehicleDamage)
 //------------------------------------------------------------------------
 void CGameRulesMPDamageHandling::Update(float frameTime)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	float currentTime = gEnv->pTimer->GetCurrTime();
 	m_entityLastDamageUpdateTimer += frameTime;
@@ -197,10 +198,6 @@ bool CGameRulesMPDamageHandling::SvOnHit( const HitInfo &hitInfo )
 			damage = 0.0f;
 		}
 	}
-
-	IEntity *pTarget = gEnv->pEntitySystem->GetEntity(hitInfo.targetId);
-
-	IEntityClass* pTargetClass = pTarget ? pTarget->GetClass() : NULL;
 
 	// Check for friendly fire
 	if( bool bCheckFriendlyFire = ((hitInfo.targetId!=hitInfo.shooterId) && (hitInfo.type!=CGameRules::EHitType::EventDamage)) )
@@ -508,7 +505,6 @@ void CGameRulesMPDamageHandling::SvOnExplosion(const ExplosionInfo &explosionInf
 	CGameRules::TExplosionAffectedEntities::const_iterator it = affectedEntities.begin();
 	for (; it != affectedEntities.end(); ++it)
 	{
-		bool success = false;
 		IEntity* entity = it->first;
 		float obstruction = 1.0f - it->second;
 
@@ -537,8 +533,6 @@ void CGameRulesMPDamageHandling::SvOnExplosion(const ExplosionInfo &explosionInf
 		if (incone && gEnv->bServer)
 		{
 			float damage = floor_tpl(0.5f + CalcExplosionDamage(entity, explosionInfo, obstruction));	
-
-			bool dead = false;
 
 			HitInfo explHit;
 
@@ -694,7 +688,7 @@ bool CGameRulesMPDamageHandling::IsDead(CActor* actor, IScriptTable* actorScript
 	}
 	else
 	{
-		FRAME_PROFILER("SvOnCollision IsDead scope", gEnv->pSystem, PROFILE_GAME);
+		CRY_PROFILE_SECTION(PROFILE_GAME, "SvOnCollision IsDead scope");
 		HSCRIPTFUNCTION isDeadFunc = NULL;
 		if (actorScript->GetValue("IsDead", isDeadFunc))
 		{
@@ -772,7 +766,6 @@ float CGameRulesMPDamageHandling::ProcessActorKickedVehicle(IActor* victimActor,
 		}
 	}
 
-	const Vec3& actorVelocity = collisionHitInfo.velocity;
 	const Vec3& vehicleVelocity = collisionHitInfo.target_velocity;
 	const float vehicleSpeedSq = vehicleVelocity.GetLengthSquared() + angSpeedSq;
 
@@ -838,7 +831,7 @@ float CGameRulesMPDamageHandling::ProcessActorVehicleCollision(IActor* victimAct
 //------------------------------------------------------------------------
 void CGameRulesMPDamageHandling::SvOnCollision(const IEntity *pVictimEntity, const CGameRules::SCollisionHitInfo& collisionHitInfo)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 	CRY_ASSERT(gEnv->bMultiplayer);
 
 #if !defined(_RELEASE)
@@ -879,7 +872,7 @@ void CGameRulesMPDamageHandling::SvOnCollision(const IEntity *pVictimEntity, con
 	// Filter frequent collisions
 	if (pOffenderEntity)
 	{
-		FRAME_PROFILER("Filter out recent collisions", gEnv->pSystem, PROFILE_GAME);
+		CRY_PROFILE_SECTION(PROFILE_GAME, "Filter out recent collisions");
 
 		EntityCollisionRecords::const_iterator collisionRecordIter = m_entityCollisionRecords.find(victimID);
 		if (collisionRecordIter != m_entityCollisionRecords.end())
@@ -1069,7 +1062,6 @@ void CGameRulesMPDamageHandling::SvOnCollision(const IEntity *pVictimEntity, con
 			if (damage >= DAMAGE_THRESHOLD_COLLISIONS)
 			{
 				IScriptTable* pVictimScript = pVictimEntity ? pVictimEntity->GetScriptTable() : NULL;
-				IScriptTable* pOffenderScript = pOffenderEntity ? pOffenderEntity->GetScriptTable() : NULL;
 
 				if (!pOffenderEntity && pVictimEntity)
 				{
@@ -1085,7 +1077,7 @@ void CGameRulesMPDamageHandling::SvOnCollision(const IEntity *pVictimEntity, con
 				}	
 				else if (pVictimScript)
 				{
-					FRAME_PROFILER("Call to OnHit", gEnv->pSystem, PROFILE_GAME);
+					CRY_PROFILE_SECTION(PROFILE_GAME, "Call to OnHit");
 
 					if (!IsDead(victimActor, pVictimScript))
 					{

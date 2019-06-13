@@ -1,15 +1,8 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   BSPTree3D.cpp
-//  Version:     v1.00
-//  Created:     23/Nov/2011 by Jaesik.
-//  Compilers:   Visual Studio 2010
-//  Description:
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "BSPTree3D.h"
+#include <queue>
 
 void CBSPTree3D::BSPTreeNode::GetMemoryUsage(class ICrySizer* pSizer) const
 {

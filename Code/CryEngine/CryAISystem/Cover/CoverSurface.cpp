@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "CoverSurface.h"
@@ -363,7 +363,7 @@ bool CoverSurface::IsCircleInCover(const Vec3& eye, const Vec3& center, float ra
 
 bool CoverSurface::GetCoverOcclusionAt(const Vec3& eye, const Vec3& point, float* heightSq) const
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	uint32 segmentCount = m_segments.size();
 
@@ -385,7 +385,7 @@ bool CoverSurface::GetCoverOcclusionAt(const Vec3& eye, const Vec3& point, float
 
 bool CoverSurface::GetCoverOcclusionAt(const Vec3& eye, const Vec3& center, float radius, float* heightSq) const
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	uint32 segmentCount = m_segments.size();
 
@@ -617,7 +617,7 @@ bool CoverSurface::CalculatePathCoverage(const Vec3& eye, const CoverPath& cover
 
 	FindCoverPlanes(eyeLoc, leftPlane, rightPlane);
 
-	if (gAIEnv.CVars.DebugDrawCoverPlanes != 0)
+	if (gAIEnv.CVars.legacyCoverSystem.DebugDrawCoverPlanes != 0)
 	{
 		CDebugDrawContext dc;
 
@@ -950,13 +950,11 @@ void CoverSurface::DebugDraw() const
 	}
 
 	// Locations
-	if (gAIEnv.CVars.DebugDrawCoverLocations)
+	if (gAIEnv.CVars.legacyCoverSystem.DebugDrawCoverLocations)
 	{
 		uint32 locationCount = m_locations.size();
 		for (uint32 i = 0; i < locationCount; ++i)
 		{
-			const Location& location = m_locations[i];
-
 			Vec3 pos = GetLocation(i, 0.5f);
 
 			const float height = 0.05f;

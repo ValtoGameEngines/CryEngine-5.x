@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   UnitTestExcelReporter.h
@@ -9,35 +9,69 @@
 //
 ////////////////////////////////////////////////////////////////////////////
 
-#ifndef __UnitTestExcelReporter_h__
-#define __UnitTestExcelReporter_h__
 #pragma once
 
-#include <CrySystem/CryUnitTest.h>
+#include <CryString/CryString.h>
+#include <CrySystem/ILog.h>
+#include <CrySerialization/IArchive.h>
+#include <CrySerialization/STL.h>
 #include "ExcelExport.h"
+#include <CrySystem/Testing/TestInfo.h>
+#include <CrySystem/Testing/ITestReporter.h>
 
-namespace CryUnitTest
+namespace CryTest
 {
-struct CUnitTestExcelReporter : public CExcelExportBase, public IUnitTestReporter
-{
-	virtual void OnStartTesting(UnitTestRunContext& context);
-	virtual void OnFinishTesting(UnitTestRunContext& context);
-	virtual void OnTestStart(IUnitTest* pTest);
-	virtual void OnTestFinish(IUnitTest* pTest, float fRunTimeInMs, bool bSuccess, char const* failureDescription);
 
-	void         SaveJUnitCompatableXml();
+//! Writes multiple excel documents for detailed results
+class CTestExcelReporter : public ITestReporter, public CExcelExportBase
+{
+public:
+	explicit CTestExcelReporter(ILog& log) : m_log(log) {}
+
+	void Serialize(Serialization::IArchive& ar)
+	{
+		ar(m_results, "m_results");
+	}
+
+	//! Notify reporter the test system started
+	virtual void OnStartTesting(const SRunContext& context) override {}
+
+	//! Notify reporter the test system finished
+	virtual void OnFinishTesting(const SRunContext& context, bool openReport) override;
+
+	//! Notify reporter one test started
+	virtual void OnSingleTestStart(const STestInfo& testInfo) override;
+
+	//! Notify reporter one test finished, along with necessary results
+	virtual void OnSingleTestFinish(const STestInfo& testInfo, float fRunTimeInMs, bool bSuccess, const std::vector<SError>& failures) override;
+
+	//! Save the test instance to prepare for possible time out or other unrecoverable errors
+	virtual void SaveTemporaryReport() override;
+
+	//! Recover from last save
+	virtual void RecoverTemporaryReport() override;
+
+	//! Returns whether the report contains certain test
+	virtual bool HasTest(const STestInfo& testInfo) const override;
 
 private:
-	struct TestResult
-	{
-		UnitTestInfo testInfo;
-		AutoTestInfo autoTestInfo;
-		float        fRunTimeInMs;
-		bool         bSuccess;
-		string       failureDescription;
-	};
-	std::vector<TestResult> m_results;
-};
-};
+	ILog& m_log;
 
-#endif //__UnitTestExcelReporter_h__
+	struct STestResult
+	{
+		STestInfo           testInfo;
+		float               runTimeInMs;
+		bool                isSuccessful;
+		std::vector<SError> failures;
+
+		void                Serialize(Serialization::IArchive& ar)
+		{
+			ar(testInfo, "testInfo");
+			ar(runTimeInMs, "runTimeInMs");
+			ar(isSuccessful, "isSuccessful");
+			ar(failures, "failures");
+		}
+	};
+	std::vector<STestResult> m_results;
+};
+}

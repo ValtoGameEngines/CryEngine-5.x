@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -16,6 +16,7 @@ History:
 #include "EquipmentLoadout.h"
 #include "Actor.h"
 #include "Player.h"
+#include "GameCVars.h"
 #include "Item.h"
 #include "IItemSystem.h"
 #include <CryString/StringUtils.h>
@@ -44,6 +45,7 @@ History:
 #include "Network/Lobby/GameAchievements.h"
 #include "Network/Lobby/GameLobbyData.h"
 #include "Network/Lobby/GameLobby.h"
+#include <CryGame/GameUtils.h>
 
 //------------------------------------------------------------------------
 #define EQUIPMENT_LOADOUT_ITEMS_XML_PATH		"Scripts/GameRules/EquipmentLoadoutItems.xml"
@@ -186,7 +188,6 @@ void CEquipmentLoadout::SEquipmentPackage::GetAttachmentItems(int weaponNth, CEq
 
 	// Get Nth slot contents
 	int weaponCount = 0;
-	int attachmentCount = 0;
 	for (int i=0; i<EQUIPMENT_LOADOUT_NUM_SLOTS; i++)
 	{
 		uint8 contentsValue = m_contents[i];
@@ -1049,7 +1050,6 @@ void CEquipmentLoadout::ClSetAttachmentInclusionFlags(const TEquipmentPackageCon
 	inclusionFlags = 0; 
 
 	// For all weapons (primary and secondary) weapons in this equipment package
-	IItemSystem *pItemSystem = g_pGame->GetIGameFramework()->GetIItemSystem();
 	SEquipmentItem *item = NULL;
 	for(int i = 0; i < EQUIPMENT_LOADOUT_NUM_SLOTS; ++i)
 	{
@@ -1077,7 +1077,6 @@ void CEquipmentLoadout::ClSetAttachmentInclusionFlags(const TEquipmentPackageCon
 			TAttachmentsArr				  arrayAttachments;
 			GetAvailableAttachmentsForWeapon(itemId, &arrayAttachments, &arrayDefaultAttachments);
 
-			bool playSound    = false; 
 			bool setAsDefault = false; 
 			size_t size = arrayAttachments.size();
 			int allItemsSize = static_cast<int>(m_allItems.size()); 
@@ -1152,7 +1151,6 @@ const bool CEquipmentLoadout::IsAttachmentInclusionFlagSet(const uint32& inclusi
 // Allow easy checking of any attachment against inclusion flags data etc
 const bool CEquipmentLoadout::ClIsAttachmentIncluded(const SEquipmentItem* pAttachmentItem, const char* pWeaponItemName, const TEquipmentPackageContents& contents) const
 {
-	IItemSystem *pItemSystem = g_pGame->GetIGameFramework()->GetIItemSystem();
 	CRY_ASSERT_MESSAGE(pAttachmentItem != NULL, "CEquipmentLoadout::ClIsAttachmentIncluded < ERROR pAttachmentItem is NULL");
 	CRY_ASSERT_MESSAGE(pWeaponItemName != NULL, "CEquipmentLoadout::ClIsAttachmentIncluded < ERROR pWeaponItemName is NULL");
 
@@ -1205,8 +1203,7 @@ const bool CEquipmentLoadout::ClIsAttachmentIncluded(const SEquipmentItem* pAtta
 const bool CEquipmentLoadout::AttachmentIncludedInPackageContents(const SEquipmentItem* pAttachmentItem,  const TEquipmentPackageContents& contents) const
 {
 	// How many attachments are there?
-	int startIndex = m_attachmentsStartIndex;
-	int endIndex   = m_attachmentsStartIndex;
+	int endIndex = m_attachmentsStartIndex;
 	int allItemsSize = static_cast<int>(m_allItems.size()); 
 	for (int i = m_attachmentsStartIndex; i < allItemsSize; ++i)
 	{
@@ -1222,8 +1219,6 @@ const bool CEquipmentLoadout::AttachmentIncludedInPackageContents(const SEquipme
 			++endIndex;
 		}
 	}
-	int numAttachments = endIndex - startIndex; 
-	// TEST // 
 
 	const SEquipmentItem *item = NULL;
 	for (int i=0; i<EQUIPMENT_LOADOUT_NUM_SLOTS; i++)
@@ -1259,7 +1254,6 @@ const bool CEquipmentLoadout::AttachmentIncludedInPackageContents(const SEquipme
 // Allow easy checking of any attachment against inclusion flags data etc
 const bool CEquipmentLoadout::SvIsAttachmentIncluded(const SEquipmentItem* pAttachmentItem,const uint32& inclusionFlags) const
 {
-	IItemSystem *pItemSystem = g_pGame->GetIGameFramework()->GetIItemSystem();
 	CRY_ASSERT_MESSAGE(pAttachmentItem != NULL, "CEquipmentLoadout::SvIsAttachmentIncluded < ERROR pAttatchmentItem is NULL");
 	
 	// Check appropriate bit
@@ -1547,7 +1541,7 @@ void CEquipmentLoadout::ApplyWeaponAttachment(const SEquipmentItem *pItem, const
 
 	if (pWeaponItem)
 	{
-		if (IWeapon *pWeapon = pWeaponItem->GetIWeapon())
+		if (pWeaponItem->GetIWeapon() != nullptr)
 		{
 			CItem * pCWeaponItem = static_cast<CItem*>(pWeaponItem);
 
@@ -1639,7 +1633,7 @@ void CEquipmentLoadout::Display3DItem(uint8 itemNumber)
 		CMenuRender3DModelMgr* pRender3DModelMgr = NULL;
 
 		assert (displayEndSlot < EQUIPMENT_LOADOUT_NUM_SLOTS);
-		CMenuRender3DModelMgr::TAddedModelIndex mainModelIndex = CMenuRender3DModelMgr::kAddedModelIndex_Invalid;
+		//CMenuRender3DModelMgr::TAddedModelIndex mainModelIndex = CMenuRender3DModelMgr::kAddedModelIndex_Invalid;
 		CItemSharedParams * mountAccessoriesOnThis = NULL;
 
 		for (uint8 i = displayStartSlot; i <= displayEndSlot; ++ i)
@@ -1652,7 +1646,8 @@ void CEquipmentLoadout::Display3DItem(uint8 itemNumber)
 
 				if (pItemSharedParams)
 				{
-					if(const SGeometryDef* pGeomDef = pItemSharedParams->GetGeometryForSlot(eIGS_ThirdPerson))
+					const SGeometryDef* pGeomDef = pItemSharedParams->GetGeometryForSlot(eIGS_ThirdPerson);
+					if(pGeomDef != nullptr)
 					{
 						if (i == displayStartSlot)
 						{
@@ -1672,8 +1667,10 @@ void CEquipmentLoadout::Display3DItem(uint8 itemNumber)
 								bool heyThatsMe = (0 == stricmp(accessoryName, itemName));
 								if (heyThatsMe)
 								{
+#if !defined(EXCLUDE_NORMAL_LOG)
 									const char * mountPointName = accessoryParams.attach_helper.c_str();
 									CryLog ("Attaching '%s' to weapon - mount point name is '%s'", itemName, mountPointName);
+#endif
 									INDENT_LOG_DURING_SCOPE();
 									// TODO: Implement game code side of 3d models in front end
 									/*CMenuRender3DModelMgr::TAddedModelIndex attachmentModelIndex = pRender3DModelMgr->AddModel(pGeomDef->modelPath.c_str(), pGeomDef->material.c_str(), false);
@@ -1819,7 +1816,6 @@ void CEquipmentLoadout::NewAttachmentInLoadout(const ItemString &newAttachmentNa
 //------------------------------------------------------------------------
 bool CEquipmentLoadout::IsItemLocked(int index, bool bNeedUnlockDescriptions, SPPHaveUnlockedQuery* pResults/*=NULL*/) const
 {
-	bool result = false;
 	const int numItems = m_allItems.size();
 	if (index < numItems)
 	{
@@ -2337,8 +2333,6 @@ void CEquipmentLoadout::SetHighlightedPackage(int packageIndex)
 	// Only allow 3D ModelMgr to be created if you're allowed to in the frontend
 	if (CFrontEndModelCache::IsAllowed3dFrontEndAssets())
 	{
-		IActor * localActor = g_pGame->GetIGameFramework()->GetClientActor();
-		const char * usePlayerModelName = GetPlayerModel(packageIndex);
 		const char * primaryItemName = GetItemNameFromIndex(package.m_contents[0]);
 		const char * secondaryItemName = GetItemNameFromIndex(package.m_contents[4]);
 		const char * explosiveItemName = GetItemNameFromIndex(package.m_contents[8]);
@@ -2371,7 +2365,8 @@ void CEquipmentLoadout::SetHighlightedPackage(int packageIndex)
 
 							if (pSubItemSharedParams)
 							{
-								if(const SGeometryDef* pSubGeomDef = pSubItemSharedParams->GetGeometryForSlot(eIGS_ThirdPerson))
+								const SGeometryDef* pSubGeomDef = pSubItemSharedParams->GetGeometryForSlot(eIGS_ThirdPerson);
+								if(pSubGeomDef != nullptr)
 								{
 									const int numAccessoryParams = pItemSharedParams->accessoryparams.size();
 									for(int a = 0; a < numAccessoryParams; a++)
@@ -2678,7 +2673,6 @@ void CEquipmentLoadout::SetNthWeaponAttachments(uint32 Nth, TDefaultAttachmentsA
 	const int numAttachments = arrayAttachments.size();
 	for (int i=slot; i<EQUIPMENT_LOADOUT_NUM_SLOTS && attachmentNth<numAttachments; ++i)
 	{
-		int itemId = m_currentCustomizePackage[i];
 		if (m_slotCategories[i] == eELC_ATTACHMENT)
 		{
 			//CryLogAlways("Save attachments slot:%d attachmentNow:%d, attachmentOld;%d", i, m_currentCustomizePackage[i], attachments[attachmentNth]);
@@ -2926,7 +2920,7 @@ void CEquipmentLoadout::OnRoundEnded()
 //------------------------------------------------------------------------
 void CEquipmentLoadout::PrecacheLevel()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	CGameSharedParametersStorage* pGameParamsStorage = g_pGame->GetGameSharedParametersStorage();
 	std::vector<SEquipmentItem>::const_iterator it = m_allItems.begin();
 	std::vector<SEquipmentItem>::const_iterator itEnd = m_allItems.end();
@@ -3391,8 +3385,6 @@ void CEquipmentLoadout::SpawnedWithLoadout( uint8 loadoutIdx )
 		//only needed for default loadouts
 		if( (package.m_flags & ELOF_CAN_BE_CUSTOMIZED) == 0 )
 		{
-			TEquipmentPackageContents &contents = package.m_contents;
-
 			const char* currentWeapon = NULL;
 			IEntityClass* pWeaponClass = NULL;
 			IEntityClassRegistry* pReg = gEnv->pEntitySystem->GetClassRegistry();

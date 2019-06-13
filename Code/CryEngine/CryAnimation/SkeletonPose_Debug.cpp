@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "SkeletonPose.h"
@@ -30,9 +30,6 @@ void CSkeletonPose::DrawBBox(const Matrix34& rRenderMat34)
 void CSkeletonPose::DrawPose(const Skeleton::CPoseData& pose, const Matrix34& rRenderMat34)
 {
 	g_pAuxGeom->SetRenderFlags(e_Def3DPublicRenderflags | e_DepthTestOff);
-
-	Vec3 vdir = m_pInstance->m_Viewdir;
-	CDefaultSkeleton* pDefaultSkeleton = m_pInstance->m_pDefaultSkeleton;
 
 	static Ang3 ang_root(0, 0, 0);
 	ang_root += Ang3(0.01f, 0.02f, 0.03f);

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // Includes
 #include "StdAfx.h"
@@ -8,7 +8,6 @@
 #include "../Common/RendElements/Utils/PolygonMath2D.h"
 #include "../Common/RendElements/Utils/SpatialHashGrid.h"
 
-#include "DriverD3D.h"
 #include <Cry3DEngine/IRenderNode.h>
 #include <Cry3DEngine/I3DEngine.h>
 #include <CryRenderer/IRenderAuxGeom.h>
@@ -20,22 +19,8 @@
 	#define LOG_GLASS_ERROR(str)
 #endif
 
-//--------------------------------------------------------------------------------------------------
-// Name: mfPrepare
-// Desc: Prepares render element for rendering
-//--------------------------------------------------------------------------------------------------
-void CREBreakableGlass::mfPrepare(bool bCheckOverflow)
-{
-	if (bCheckOverflow)
-	{
-		gRenDev->FX_CheckOverflow(0, 0, this);
-	}
-
-	gRenDev->m_RP.m_pRE = this;
-	gRenDev->m_RP.m_RendNumIndices = 0;
-	gRenDev->m_RP.m_RendNumVerts = 0;
-}//-------------------------------------------------------------------------------------------------
-
+// OLD PIPELINE
+/*
 //--------------------------------------------------------------------------------------------------
 // Name: mfDraw
 // Desc: Draws breakable glass sim
@@ -176,6 +161,7 @@ bool CREBreakableGlass::mfDraw(CShader* ef, SShaderPass* sfm)
 
 	return true;
 }//-------------------------------------------------------------------------------------------------
+*/
 
 //--------------------------------------------------------------------------------------------------
 // Name: RT_UpdateBuffers
@@ -286,7 +272,7 @@ void CREBreakableGlass::UpdateImpactShaderConstants()
 	Vec2 invUnitDecalScale = m_invUVRange * invImpactScale;
 
 	// Hard-coded decal atlas offsets
-	// - Must be kept in sync with "EngineAssets\Textures\glass_decalatlas_*.tif"
+	// - Must be kept in sync with "%ENGINE%\EngineAssets\Textures\glass_decalatlas_*.tif"
 	const Vec4 impactAtlasOffset(0.5f, 1.0f, 0.0f, 0.0f);
 	const Vec4 bulletAtlasOffset(0.5f, 1.0f, 0.5f, 0.0f);
 
@@ -347,8 +333,8 @@ void CREBreakableGlass::UpdateImpactShaderConstants()
 //--------------------------------------------------------------------------------------------------
 void CREBreakableGlass::SetImpactShaderConstants(CShader* pShader)
 {
-	const uint numDecalElems = 2;
-	pShader->FXSetPSFloat(s_ImpactDecalParamName, (Vec4*)m_decalPSConsts, GLASSCFG_MAX_NUM_IMPACT_DECALS * numDecalElems);
+	//const uint numDecalElems = 2;
+	//pShader->FXSetPSFloat(s_ImpactDecalParamName, (Vec4*)m_decalPSConsts, GLASSCFG_MAX_NUM_IMPACT_DECALS * numDecalElems);
 }//-------------------------------------------------------------------------------------------------
 
 #ifdef GLASS_DEBUG_MODE

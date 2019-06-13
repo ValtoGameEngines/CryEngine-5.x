@@ -1,11 +1,24 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "TextMessages.h"
 
 const uint32 g_dwTextMessageMaxSizeInKB = 128;
 
-void CTextMessages::PushEntry_Text(const Vec3& vPos, const ColorB col, const Vec2& fFontSize, const int nDrawFlags, const char* szText)
+const CTextMessages& CTextMessages::operator=(const CTextMessages& rhs)
+{
+	this->m_TextMessageData = rhs.m_TextMessageData;
+	this->m_dwCurrentReadPos = rhs.m_dwCurrentReadPos;
+
+	return *this;
+}
+
+void CTextMessages::Merge(const CTextMessages& rhs)
+{
+	m_TextMessageData.insert(m_TextMessageData.end(), rhs.m_TextMessageData.begin(), rhs.m_TextMessageData.end());
+}
+
+void CTextMessages::PushEntry_Text(const Vec3& vPos, const ColorB col, IFFont* pFont, const Vec2& fFontSize, const int nDrawFlags, const char* szText)
 {
 	AUTO_LOCK(m_TextMessageLock); // Not thread safe without this
 
@@ -37,6 +50,7 @@ void CTextMessages::PushEntry_Text(const Vec3& vPos, const ColorB col, const Vec
 	rHeader.m_Color = col;
 	rHeader.m_fFontSize = fFontSize;
 	rHeader.m_nDrawFlags = nDrawFlags;
+	rHeader.m_pFont = pFont;
 }
 
 void CTextMessages::Clear(bool posonly)

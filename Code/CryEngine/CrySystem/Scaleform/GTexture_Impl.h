@@ -1,7 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-#ifndef _GTEXTURE_XRENDER_H_
-#define _GTEXTURE_XRENDER_H_
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -22,7 +19,7 @@
 
 class GRendererXRender;
 class GImageBase;
-class ITexture;
+struct ITexture;
 
 class GTextureXRenderBase:public GTexture
 {
@@ -199,5 +196,3 @@ private:
 };
 
 #endif // #ifdef INCLUDE_SCALEFORM_SDK
-
-#endif // #ifndef _GTEXTURE_XRENDER_H_

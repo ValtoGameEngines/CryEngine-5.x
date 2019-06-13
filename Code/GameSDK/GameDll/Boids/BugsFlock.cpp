@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   bugsflock.cpp
@@ -13,8 +13,10 @@
 
 #include "StdAfx.h"
 #include "BugsFlock.h"
+#include <Cry3DEngine/I3DEngine.h>
 #include <CryEntitySystem/IEntitySystem.h>
 #include <CryAnimation/ICryAnimation.h>
+#include <CryMath/Random.h>
 
 #define BUGS_SCARE_DISTANCE 3.0f
 

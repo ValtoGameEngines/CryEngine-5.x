@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "DebugRenderPrimitives.h"
@@ -6,12 +6,22 @@
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
 // make the global Serialize() functions available for use in yasli serialization
-using uqs::core::Serialize;
+using UQS::Core::Serialize;
 
-namespace uqs
+namespace UQS
 {
-	namespace core
+	namespace Core
 	{
+
+		SERIALIZATION_CLASS_NAME(CDebugRenderPrimitiveBase, CDebugRenderPrimitive_Sphere, "CDebugRenderPrimitive_Sphere", "");
+		SERIALIZATION_CLASS_NAME(CDebugRenderPrimitiveBase, CDebugRenderPrimitive_Direction, "CDebugRenderPrimitive_Direction", "");
+		SERIALIZATION_CLASS_NAME(CDebugRenderPrimitiveBase, CDebugRenderPrimitive_Line, "CDebugRenderPrimitive_Line", "");
+		SERIALIZATION_CLASS_NAME(CDebugRenderPrimitiveBase, CDebugRenderPrimitive_Cone, "CDebugRenderPrimitive_Cone", "");
+		SERIALIZATION_CLASS_NAME(CDebugRenderPrimitiveBase, CDebugRenderPrimitive_Cylinder, "CDebugRenderPrimitive_Cylinder", "");
+		SERIALIZATION_CLASS_NAME(CDebugRenderPrimitiveBase, CDebugRenderPrimitive_Text, "CDebugRenderPrimitive_Text", "");
+		SERIALIZATION_CLASS_NAME(CDebugRenderPrimitiveBase, CDebugRenderPrimitive_Quat, "CDebugRenderPrimitive_Quat", "");
+		SERIALIZATION_CLASS_NAME(CDebugRenderPrimitiveBase, CDebugRenderPrimitive_AABB, "CDebugRenderPrimitive_AABB", "");
+		SERIALIZATION_CLASS_NAME(CDebugRenderPrimitiveBase, CDebugRenderPrimitive_OBB, "CDebugRenderPrimitive_OBB", "");
 
 		static IRenderAuxGeom* GetRenderAuxGeom()
 		{
@@ -218,7 +228,8 @@ namespace uqs
 			{
 				pAux->SetRenderFlags(GetFlags3D());
 				pAux->DrawLine(from, color, to, color, SCvars::debugDrawLineThickness);
-				pAux->DrawCone(to, (to - from).GetNormalizedSafe(), coneRadius, coneHeight, color);
+				Vec3 dir = (to - from).GetNormalizedSafe();
+				pAux->DrawCone(to - dir * coneHeight, dir, coneRadius, coneHeight, color);
 			}
 		}
 
@@ -366,7 +377,7 @@ namespace uqs
 		void CDebugRenderPrimitive_Cylinder::Draw(const Vec3& pos, const Vec3& dir, float radius, float height, const ColorF& color, bool bHighlight)
 		{
 			const bool bVisible = bHighlight ? (Pulsate() > 1.5f) : true;
-			
+
 			IRenderAuxGeom* pAux = GetRenderAuxGeom();
 			if (bVisible && pAux)
 			{
@@ -388,10 +399,10 @@ namespace uqs
 			, m_color(Col_Black)
 		{}
 
-		CDebugRenderPrimitive_Text::CDebugRenderPrimitive_Text(const Vec3& pos, float size, const char* text, const ColorF& color)
+		CDebugRenderPrimitive_Text::CDebugRenderPrimitive_Text(const Vec3& pos, float size, const char* szText, const ColorF& color)
 			: m_pos(pos)
 			, m_size(size)
-			, m_text(text)
+			, m_text(szText)
 			, m_color(color)
 		{}
 
@@ -414,7 +425,7 @@ namespace uqs
 			ar(m_color, "m_color");
 		}
 
-		void CDebugRenderPrimitive_Text::Draw(const Vec3& pos, float size, const char* text, const ColorF& color, bool bHighlight)
+		void CDebugRenderPrimitive_Text::Draw(const Vec3& pos, float size, const char* szText, const ColorF& color, bool bHighlight)
 		{
 			const bool bVisible = bHighlight ? (Pulsate() > 1.5f) : true;
 
@@ -423,7 +434,7 @@ namespace uqs
 			{
 				SDrawTextInfo ti;
 				ti.scale.set(size, size);
-				ti.flags = eDrawText_FixedSize | eDrawText_800x600;
+				ti.flags = eDrawText_FixedSize;
 				if (SCvars::debugDrawZTestOn)
 				{
 					ti.flags |= eDrawText_DepthTest;
@@ -432,7 +443,7 @@ namespace uqs
 				ti.color[1] = color.g;
 				ti.color[2] = color.b;
 				ti.color[3] = color.a;
-				pAux->RenderTextQueued(pos, ti, text);
+				pAux->RenderTextQueued(pos, ti, szText);
 			}
 		}
 

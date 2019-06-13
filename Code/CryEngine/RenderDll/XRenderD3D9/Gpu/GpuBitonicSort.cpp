@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "GpuBitonicSort.h"
@@ -6,7 +6,11 @@
 namespace gpu
 {
 
-CBitonicSort::CBitonicSort() : m_data(NUM_ELEMENTS), m_transposeData(NUM_ELEMENTS)
+CBitonicSort::CBitonicSort(CGraphicsPipeline* pGraphicsPipeline)
+	: m_data(NUM_ELEMENTS)
+	, m_transposeData(NUM_ELEMENTS)
+	, m_computePassBitonicSort(pGraphicsPipeline)
+	, m_computePassBitonicTranspose(pGraphicsPipeline)
 {
 	m_params.CreateDeviceBuffer();
 

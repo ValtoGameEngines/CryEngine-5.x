@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /******************************************************************************
 ** DownloadMgr.cpp
@@ -27,6 +27,7 @@
 #include "Network/Lobby/GameLobby.h"
 #include <CrySystem/ZLib/IZLibCompressor.h>
 #include "PatchPakManager.h"
+#include <CrySystem/ConsoleRegistration.h>
 
 enum								{ k_localizedResourceSlop=5 };								// add a bit of slop to allow localised resources to be added without contributing to fragmentation by causing the vector to realloc. arbitrary number, not critical this is accurate
 enum								{ k_httpHeaderSize=512 };											// should be large enough to hold the HTTP response and info on the payload length
@@ -234,8 +235,6 @@ void CDownloadMgr::Update(
 		}
 		else if (m_isShutingDown)
 		{
-			bool shutdown = true;
-			CGameLobby* pLobby = g_pGame->GetGameLobby();
 			gEnv->pSystem->Quit();
 		}
 		else
@@ -1064,7 +1063,6 @@ bool CDownloadableResource::DecryptAndCheckSigning(
 	int					signingSaltLength)
 {
 	char							*pOutput=NULL;
-	int								outDataLen=0;
 	bool							valid=false;
 
 	if (inDataLen>16)

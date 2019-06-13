@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -11,15 +11,15 @@
 #include <QWindowStateChangeEvent>
 
 #if defined(WIN32) || defined(WIN64)
-#include <windows.h>
-#include <windowsx.h>
-#include <dwmapi.h>
+	#include <windows.h>
+	#include <windowsx.h>
+	#include <dwmapi.h>
 
-#ifdef UNICODE
-#define _UNICODE
-#endif
+	#ifdef UNICODE
+		#define _UNICODE
+	#endif
 
-#include <tchar.h>
+	#include <tchar.h>
 #endif
 
 QToolWindowWrapper::QToolWindowWrapper(QToolWindowManager* manager, Qt::WindowFlags flags)
@@ -42,20 +42,24 @@ QToolWindowWrapper::QToolWindowWrapper(QToolWindowManager* manager, Qt::WindowFl
 	{
 		setWindowFlags(flags);
 	}
-	
+
 	QVBoxLayout* mainLayout = new QVBoxLayout(this);
 	mainLayout->setContentsMargins(0, 0, 0, 0);
 }
 
 QToolWindowWrapper::~QToolWindowWrapper()
 {
-	m_manager->removeWrapper(this);
+	if (m_manager)
+	{
+		m_manager->removeWrapper(this);
+		m_manager = nullptr;
+	}
 }
 
 void QToolWindowWrapper::closeEvent(QCloseEvent* event)
 {
 	QList<QWidget*> toolWindows;
-	foreach(QObject* child, children())
+	foreach(QObject * child, children())
 	{
 		IToolWindowArea* tabWidget = qobject_cast<IToolWindowArea*>(child);
 		if (tabWidget)
@@ -94,8 +98,7 @@ bool QToolWindowWrapper::eventFilter(QObject* o, QEvent* e)
 	return QWidget::eventFilter(o, e);
 }
 
-#if QT_VERSION >= 0x050000
-bool QToolWindowWrapper::nativeEvent(const QByteArray &eventType, void *message, long *result)
+bool QToolWindowWrapper::nativeEvent(const QByteArray& eventType, void* message, long* result)
 {
 #if defined(WIN32) || defined(WIN64)
 	MSG* msg = reinterpret_cast<MSG*>(message);
@@ -104,10 +107,9 @@ bool QToolWindowWrapper::nativeEvent(const QByteArray &eventType, void *message,
 #endif
 	return QWidget::nativeEvent(eventType, message, result);
 }
-#endif
 
 #if defined(WIN32) || defined(WIN64)
-bool QToolWindowWrapper::winEvent(MSG *msg, long *result)
+bool QToolWindowWrapper::winEvent(MSG* msg, long* result)
 {
 	switch (msg->message)
 	{
@@ -147,11 +149,7 @@ bool QToolWindowWrapper::winEvent(MSG *msg, long *result)
 		break;
 	}
 
-#if QT_VERSION < 0x050000
-	return QWidget::winEvent(msg, result);
-#else
 	return false;
-#endif
 }
 #endif
 
@@ -160,7 +158,7 @@ QWidget* QToolWindowWrapper::getContents()
 	return m_contents;
 }
 
-void QToolWindowWrapper::setContents(QWidget * widget)
+void QToolWindowWrapper::setContents(QWidget* widget)
 {
 	if (m_contents)
 	{
@@ -198,4 +196,15 @@ void QToolWindowWrapper::startDrag()
 {
 	ReleaseCapture();
 	SendMessage((HWND)winId(), WM_NCLBUTTONDOWN, HTCAPTION, 0);
+}
+
+void QToolWindowWrapper::deferDeletion()
+{
+	if (m_manager)
+	{
+		m_manager->removeWrapper(this);
+		m_manager = nullptr;
+	}
+	setParent(nullptr);
+	deleteLater();
 }

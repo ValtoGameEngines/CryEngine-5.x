@@ -1,16 +1,5 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-/*************************************************************************
- -------------------------------------------------------------------------
-  $Id$
-  $DateTime$
-  
- -------------------------------------------------------------------------
-  History:
-  - 7:10:2004   14:48 : Created by Márcio Martins
-												taken over by Filippo De Luca
-
-*************************************************************************/
 #include "StdAfx.h"
 #include <CryString/StringUtils.h>
 #include "Game.h"
@@ -18,6 +7,7 @@
 #include "GamePhysicsSettings.h"
 #include "Actor.h"
 #include "ScriptBind_Actor.h"
+#include <Cry3DEngine/ISurfaceType.h>
 #include <CryNetwork/ISerialize.h>
 #include <CryGame/GameUtils.h>
 #include <CryAnimation/ICryAnimation.h>
@@ -80,6 +70,7 @@
 
 #include "ProceduralContextRagdoll.h"
 #include "AnimActionBlendFromRagdoll.h"
+#include "IGameplayRecorder.h"
 
 IItemSystem *CActor::m_pItemSystem=0;
 IGameFramework	*CActor::m_pGameFramework=0;
@@ -410,6 +401,14 @@ CActor::~CActor()
 	UnRegisterDBAGroups();
 	ReleaseLegsColliders();
 	CActorManager::GetActorManager()->ActorRemoved(this);
+
+	if (IAIObject *pAI = GetEntity()->GetAI())
+	{
+		if (pAI->GetProxy())
+		{
+			pAI->GetProxy()->OnActorRemoved();
+		}
+	}
 }
 
 //------------------------------------------------------------------------
@@ -514,7 +513,7 @@ void CActor::PostInit( IGameObject * pGameObject )
 {
 	GetGameObject()->EnablePrePhysicsUpdate( gEnv->bMultiplayer ? ePPU_Always : ePPU_WhenAIActivated );
 
-	pGameObject->EnableUpdateSlot( this, 0 );	
+	pGameObject->EnableUpdateSlot(this, 0);
 	pGameObject->EnablePostUpdates( this );
 
 	if (m_teamId)
@@ -684,7 +683,12 @@ void CActor::Revive( EReasonForRevive reasonForRevive )
 	if (m_pAnimatedCharacter)
 		m_pAnimatedCharacter->ResetState();
 
-	bool hasChangedModel = SetActorModel(); // set the model before physicalizing
+	const bool hasChangedModel = SetActorModel(); // set the model before physicalizing
+	if (hasChangedModel)
+	{
+		// If the model has changed, it was dephysicalized
+		m_currentPhysProfile = eAP_NotPhysicalized;
+	}
 
 	if(!gEnv->bMultiplayer || hasChangedModel)
 	{
@@ -1193,8 +1197,6 @@ bool CActor::SetActorModelInternal(const char* modelName)
 {
 	bool hasChangedModel = false;
 
-	const bool bIsClient = IsClient();
-
 	if (m_LuaCache_Properties && !modelName)
 	{
 		hasChangedModel = SetActorModelInternal(m_LuaCache_Properties->fileModelInfo);
@@ -1302,7 +1304,7 @@ bool CActor::SetActorModelInternal(const SActorFileModelInfo &fileModelInfo)
 	if (bIsClient && !fileModelInfo.sShadowFileName.empty() && 0 != m_currShadowModel.compareNoCase(fileModelInfo.sShadowFileName))
 	{
 		m_currShadowModel = fileModelInfo.sShadowFileName;
-		pEntity->LoadCharacter(5, fileModelInfo.sShadowFileName.c_str());
+		pEntity->LoadCharacter(GetShadowCharacterSlot(), fileModelInfo.sShadowFileName.c_str());
 	}
 
 	return hasChangedModel;
@@ -1414,8 +1416,7 @@ void CActor::Fall(const HitInfo& hitInfo)
 void CActor::OnFall(const HitInfo& hitInfo)
 {
 	//we don't want noDeath (tutorial) AIs to loose their weapon, since we don't have pickup animations yet
-	bool	dropWeapon(true);
-	bool  hasDamageTable = false;
+	bool dropWeapon(true);
 
 	IAISystem *pAISystem=gEnv->pAISystem;
 	if (pAISystem)
@@ -1427,10 +1428,10 @@ void CActor::OnFall(const HitInfo& hitInfo)
 			IAIActor* pAIActor = CastToIAIActorSafe(GetEntity()->GetAI());
 			if(pAIActor)
 			{
-				IAISignalExtraData *pEData = pAISystem->CreateSignalExtraData();	// no leak - this will be deleted inside SendAnonymousSignal
+				AISignals::IAISignalExtraData *pEData = pAISystem->CreateSignalExtraData();	// no leak - this will be deleted inside SendAnonymousSignal
 				pEData->point = Vec3(0,0,0);
 
-				pAIActor->SetSignal(1,"OnFallAndPlay",0,pEData);
+				pAIActor->SetSignal(gEnv->pAISystem->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, gEnv->pAISystem->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnFallAndPlay(), 0, pEData));
 			}
 		}
 	}
@@ -1459,7 +1460,7 @@ void CActor::OnFall(const HitInfo& hitInfo)
 	//add some twist
 	if (!IsClient() && hitInfo.pos.len())
 	{
-		if(IPhysicalEntity *pPE = GetEntity()->GetPhysics())
+		if(GetEntity()->GetPhysics() != nullptr)
 		{
 			pe_action_impulse imp;
 			if( hitInfo.partId != -1 )
@@ -1629,7 +1630,7 @@ IEntity *CActor::LinkToVehicle(EntityId vehicleId)
   if (pLinked)  
     pLinked->AttachChild(GetEntity(), ENTITY_XFORM_USER|IEntity::ATTACHMENT_KEEP_TRANSFORMATION);
   else
-    GetEntity()->DetachThis(IEntity::ATTACHMENT_KEEP_TRANSFORMATION,/*ENTITY_XFORM_USER*/0);
+    GetEntity()->DetachThis(IEntity::ATTACHMENT_KEEP_TRANSFORMATION);
   
 	return pLinked;
 }
@@ -1651,12 +1652,12 @@ IEntity *CActor::LinkToEntity(EntityId entityId, bool bKeepTransformOnDetach)
   if (pLinked)
     pLinked->AttachChild(GetEntity(), 0);
   else
-		GetEntity()->DetachThis(bKeepTransformOnDetach ? IEntity::ATTACHMENT_KEEP_TRANSFORMATION : 0, bKeepTransformOnDetach ? ENTITY_XFORM_USER : 0);
+		GetEntity()->DetachThis(bKeepTransformOnDetach ? IEntity::ATTACHMENT_KEEP_TRANSFORMATION : IEntity::EAttachmentFlags(), bKeepTransformOnDetach ? ENTITY_XFORM_USER : EEntityXFormFlags());
 
 	return pLinked;
 }
 
-void CActor::ProcessEvent(SEntityEvent& event)
+void CActor::ProcessEvent(const SEntityEvent& event)
 {
 	switch (event.event)
 	{
@@ -1799,21 +1800,22 @@ void CActor::ProcessEvent(SEntityEvent& event)
 			pBodyDamageManager->ReloadBodyDamage(*this);
 			break;
 		}
-	case ENTITY_EVENT_ADD_TO_RADAR:
-		{
-			SHUDEvent hudevent(eHUDEvent_AddEntity);
-			hudevent.AddData(SHUDEventData(static_cast<int>(GetEntityId())));
-			CHUDEventDispatcher::CallEvent(hudevent);
-			break;
-		}
-	case ENTITY_EVENT_REMOVE_FROM_RADAR:
-		{
-			SHUDEvent hudevent(eHUDEvent_RemoveEntity);
-			hudevent.AddData(SHUDEventData(static_cast<int>(GetEntityId())));
-			CHUDEventDispatcher::CallEvent(hudevent);
-			break;
-		}
   }  
+}
+
+Cry::Entity::EventFlags CActor::GetEventMask() const
+{
+	return ENTITY_EVENT_HIDE
+		| ENTITY_EVENT_INVISIBLE
+		| ENTITY_EVENT_UNHIDE
+		| ENTITY_EVENT_VISIBLE
+		| ENTITY_EVENT_RESET
+		| ENTITY_EVENT_ANIM_EVENT
+		| ENTITY_EVENT_DONE
+		| ENTITY_EVENT_TIMER
+		| ENTITY_EVENT_PREPHYSICSUPDATE
+		| ENTITY_EVENT_INIT
+		| ENTITY_EVENT_RELOAD_SCRIPT;
 }
 
 void CActor::BecomeRemotePlayer()
@@ -2972,7 +2974,7 @@ bool CActor::GetRagdollContext( CProceduralContextRagdoll** ppRagdollContext ) c
 	IActionController* piActionController = m_pAnimatedCharacter->GetActionController();
 	if( !gEnv->bMultiplayer && piActionController )
 	{
-		IProceduralContext* piProcContext = piActionController->FindOrCreateProceduralContext( PROCEDURAL_CONTEXT_RAGDOLL_NAME );
+		IProceduralContext* piProcContext = piActionController->FindOrCreateProceduralContext(CProceduralContextRagdoll::GetCID());
 		if( piProcContext )
 		{
 			*ppRagdollContext = static_cast<CProceduralContextRagdoll*> (piProcContext);
@@ -3662,13 +3664,22 @@ void CActor::AttemptToRecycleAIActor()
 				params.type = PE_NONE;
 				GetEntity()->Physicalize(params);
 			}
-			gEnv->pEntitySystem->RemoveEntity( GetEntityId() );
+			
+			const bool isEntityRemovable = !(GetEntity()->GetFlags() & ENTITY_FLAG_UNREMOVABLE);
+			if (isEntityRemovable)
+			{
+				gEnv->pEntitySystem->RemoveEntity(GetEntityId()); 
+			}
+			else
+			{
+				GetEntity()->Hide(true);
+			}
 		}
 	}
 	else
 	{
 		// Attempt later again
-		GetEntity()->SetTimer( RECYCLE_AI_ACTOR_TIMER_ID, 2000 );
+		SetTimer( RECYCLE_AI_ACTOR_TIMER_ID, 2000 );
 	}
 }
 
@@ -3747,7 +3758,7 @@ bool CActor::ScheduleItemSwitch(EntityId itemId, bool keepHistory, int category,
 			pActorStats->exchangeItemStats.switchingToItemID = itemId;
 			pActorStats->exchangeItemStats.keepHistory = keepHistory;
 
-			GetEntity()->SetTimer(ITEM_SWITCH_THIS_FRAME, deselectDelay);
+			SetTimer(ITEM_SWITCH_THIS_FRAME, deselectDelay);
 
 			return true;
 		}
@@ -4035,7 +4046,6 @@ void CActor::ServerExchangeItem(CItem* pCurrentItem, CItem* pNewItem)
 			return;
 		}
 
-		IItemSystem* pItemSystem = gEnv->pGameFramework->GetIItemSystem();
 		CWeapon* pCurrentWeapon = static_cast<CWeapon*>(pCurrentItem->GetIWeapon());
 		CWeapon* pNewWeapon = static_cast<CWeapon*>(pNewItem->GetIWeapon());
 		IInventory* pInventory = GetInventory();
@@ -4362,9 +4372,6 @@ TBodyDamageProfileId CActor::GetBodyDamageProfileID(
 //
 void CActor::OverrideBodyDamageProfileID(const TBodyDamageProfileId profileID)
 {
-	CBodyDamageManager *bodyDamageManager = g_pGame->GetBodyDamageManager();
-	CRY_ASSERT(bodyDamageManager != NULL);
-
 	if (m_OverrideBodyDamageProfileId != profileID)
 	{
 		m_OverrideBodyDamageProfileId = profileID;
@@ -4831,7 +4838,6 @@ void CActor::ForceRagdollizeAndApplyImpulse(const HitInfo& hitInfo)
 		peImpulse.iApplyTime = 0; // Apply immediately
 
 		RagDollize(false);
-		IPhysicalEntity* pPhysics = GetEntity()->GetPhysics();
 		m_pImpulseHandler->SetOnRagdollPhysicalizedImpulse( peImpulse );
 
 		CRecordingSystem *pRecordingSystem = g_pGame->GetRecordingSystem();
@@ -4990,7 +4996,6 @@ IMPLEMENT_RMI(CActor, ClKill)
 		dummyHitInfo.projectileClassId = params.projectileClassId;
 		dummyHitInfo.penetrationCount = params.penetration;
 		dummyHitInfo.dir = params.dir;
-		dummyHitInfo.weaponId = params.weaponId;
 		dummyHitInfo.impulseScale  = params.impulseScale;
 
 		if(IEntity * pKilledEntity = gEnv->pEntitySystem->GetEntity(dummyHitInfo.targetId))
@@ -5070,8 +5075,6 @@ IMPLEMENT_RMI(CActor, ClPickUp)
 		else
 		{
 			pItem->PickUp(GetEntityId(), params.sound, params.select);
-
-			const char *displayName = pItem->GetDisplayName();
 
 			if (params.select)
 				m_netLastSelectablePickedUp=params.itemId;
@@ -5201,9 +5204,11 @@ void CActor::DumpActorInfo()
   CryLog("ActorInfo for %s", pEntity->GetName());
   CryLog("=====================================");
   
+#if !defined(EXCLUDE_NORMAL_LOG)
   Vec3 entPos(pEntity->GetWorldPos());
   CryLog("Entity Pos: %.f %.f %.f", entPos.x, entPos.y, entPos.z);
-  CryLog("Active: %i", pEntity->IsActive());
+#endif
+  CryLog("Active: %i", pEntity->IsActivatedForUpdates());
   CryLog("Hidden: %i", pEntity->IsHidden());
   CryLog("Invisible: %i", pEntity->IsInvisible());  
   CryLog("Profile: %i", m_currentPhysProfile);
@@ -5231,8 +5236,10 @@ void CActor::DumpActorInfo()
   {
     CryLog("Vehicle: %s (destroyed: %i)", pVehicle->GetEntity()->GetName(), pVehicle->IsDestroyed());
     
+#if !defined(EXCLUDE_NORMAL_LOG)
     IVehicleSeat* pSeat = pVehicle->GetSeatForPassenger(GetEntityId());
     CryLog("Seat %i", pSeat ? pSeat->GetSeatId() : 0);
+#endif
   }
 
   if (IItem* pItem = GetCurrentItem())
@@ -5538,6 +5545,28 @@ void CActor::EndInteractiveAction( EntityId entityId )
 
 }
 
+bool CActor::GetValidPositionNearby(const Vec3& proposedPosition, Vec3& adjustedPosition) const
+{
+	IAIObject* pAIObject = GetEntity()->GetAI();
+	if (pAIObject && gEnv->pAISystem)
+	{
+		if (IAIPathAgent* pAIActor = pAIObject->CastToIAIActor())
+		{
+			return pAIActor->GetValidPositionNearby(proposedPosition, adjustedPosition);
+		}
+	}
+	return false;
+}
+
+void CActor::SetExpectedPhysicsPos(const Vec3& expectedPosition)
+{
+	IAIObject* pAIObject = GetEntity()->GetAI();
+	if (pAIObject && gEnv->pAISystem)
+	{
+		pAIObject->SetExpectedPhysicsPos(expectedPosition);
+	}
+}
+
 void CActor::LockInteractor(EntityId lockId, bool lock)
 {
 	SmartScriptTable locker(gEnv->pScriptSystem);
@@ -5565,9 +5594,9 @@ void CActor::SetGrabbedByPlayer( IEntity* pPlayerEntity, bool grabbed )
 				IAIActor* pAIActor = CastToIAIActorSafe(pAIObject);
 				if(pAIActor)
 				{
-					IAISignalExtraData *pSData = gEnv->pAISystem->CreateSignalExtraData();	
+					AISignals::IAISignalExtraData *pSData = gEnv->pAISystem->CreateSignalExtraData();	
 					pSData->point = Vec3(0,0,0);
-					pAIActor->SetSignal(1, "OnGrabbedByPlayer", pPlayerEntity, pSData);
+					pAIActor->SetSignal(gEnv->pAISystem->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, gEnv->pAISystem->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnGrabbedByPlayer(), pPlayerEntity ?  pPlayerEntity->GetId() : INVALID_ENTITYID, pSData));
 				}
 				pAIObject->Event(AIEVENT_DISABLE,0);
 			}
@@ -5588,7 +5617,7 @@ void CActor::SetGrabbedByPlayer( IEntity* pPlayerEntity, bool grabbed )
 			SEntityEvent xFormEvent;
 			xFormEvent.event = ENTITY_EVENT_XFORM;
 			xFormEvent.nParam[0] = ENTITY_XFORM_ROT|ENTITY_XFORM_POS;
-			m_pAnimatedCharacter->ProcessEvent(xFormEvent);
+			m_pAnimatedCharacter->SendEvent(xFormEvent);
 
 			m_pAnimatedCharacter->SetInGrabbedState(false);
 		}
@@ -5969,15 +5998,9 @@ bool CActor::CanSwitchSpectatorStatus() const
 	return true;
 }
 
-IEntityComponent::ComponentEventPriority CActor::GetEventPriority( const int eventID ) const
+IEntityComponent::ComponentEventPriority CActor::GetEventPriority() const
 {
-	switch( eventID )
-	{
-	case ENTITY_EVENT_PREPHYSICSUPDATE:
-		return( ENTITY_PROXY_LAST - ENTITY_PROXY_USER + EEntityEventPriority_Actor + (m_isClient ? EEntityEventPriority_Client : 0) );
-	}
-
-	return IGameObjectExtension::GetEventPriority( eventID );
+	return ENTITY_PROXY_USER + EEntityEventPriority_Actor;
 }
 
 void CActor::OnHostMigrationCompleted()

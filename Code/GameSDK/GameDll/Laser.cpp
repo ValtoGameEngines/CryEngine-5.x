@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -462,7 +462,7 @@ void CLaserBeam::OnRayCastDataReceived( const QueuedRayID& rayID, const RayCastR
 		laserLength = range + 0.1f;
 	}
 
-	const CCamera& camera = gEnv->pRenderer->GetCamera();
+	const CCamera& camera = GetISystem()->GetViewCamera();
 
 	// Hit near plane
 	if (m_lastLaserUpdateDirection.Dot(camera.GetViewdir()) < 0.0f)
@@ -664,8 +664,6 @@ void CLaser::TurnOnLaser(bool manual /*= false*/)
 	if (params)
 		m_laserHelperFP = params->attach_helper;
 
-	int slot = pParentWeapon->IsOwnerFP() ? eIGS_FirstPerson: eIGS_ThirdPerson;
-
 	CActor* pOwner = pParentWeapon->GetOwnerActor();
 	GetGameObject()->EnableUpdateSlot(this, eIUS_General);
 	if (pOwner && pOwner->IsPlayer())
@@ -692,7 +690,6 @@ void CLaser::TurnOffLaser(bool manual /*= false*/)
 	CWeapon* pParentWeapon = GetWeapon();
 	if(pParentWeapon == NULL)
 		return;
-	bool ownerIsFP = pParentWeapon? pParentWeapon->IsOwnerFP(): false;
 
 	m_laserBeam.TurnOffLaser();
 
@@ -709,7 +706,7 @@ void CLaser::TurnOffLaser(bool manual /*= false*/)
 //-------------------------------------------
 void CLaser::Update(SEntityUpdateContext& ctx, int slot)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	if((slot == eIUS_General) && m_laserBeam.IsLaserActivated())
 	{
@@ -718,7 +715,6 @@ void CLaser::Update(SEntityUpdateContext& ctx, int slot)
 		CWeapon* pParentWeapon = GetWeapon();
 		if (pParentWeapon)
 		{
-			CActor* pOwnerActor = pParentWeapon->GetOwnerActor();
 			Vec3 laserPos, laserDir;
 			GetLaserPositionAndDirection(pParentWeapon, laserPos, laserDir);
 

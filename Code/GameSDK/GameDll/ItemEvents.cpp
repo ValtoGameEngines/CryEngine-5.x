@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -140,7 +140,7 @@ void CItem::OnReset()
 	const int numAccessories = m_accessories.size();
 	for (int i = 0; i < numAccessories; i++)
 	{
-		if (CItem* pItem = static_cast<CItem*>(m_pGameFramework->GetIItemSystem()->GetItem(m_accessories[i].accessoryId)))
+		if (m_pGameFramework->GetIItemSystem()->GetItem(m_accessories[i].accessoryId) != nullptr)
 		{
 			const SAccessoryParams* params = GetAccessoryParams( m_accessories[i].pClass );
 
@@ -211,7 +211,7 @@ void CItem::UpdateDamageLevel()
 	int slot=(m_stats.viewmode&eIVM_FirstPerson)?eIGS_FirstPerson:eIGS_ThirdPerson;
 
 	int n=(int)m_sharedparams->damageLevels.size();
-	int health=(int)((100.0f*MAX(0.0f, m_stats.health))/m_properties.hitpoints);
+	int health=(int)((100.0f*std::max(0.0f, m_stats.health))/m_properties.hitpoints);
 	for (int i=0; i<n; ++i)
 	{
 		const SDamageLevel &level = m_sharedparams->damageLevels[i];

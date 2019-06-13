@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ISocketIOManager.h"
@@ -6,9 +6,6 @@
 #include "SocketIOManagerNull.h"
 #include "SocketIOManagerSelect.h"
 #include "SocketIOManagerLobbyIDAddr.h"
-#if CRY_PLATFORM_DURANGO
-	#include "SocketIOManagerDurango.h"
-#endif
 
 IDatagramSocketPtr CSocketIOManager::CreateDatagramSocket(const TNetAddress& addr, uint32 flags)
 {

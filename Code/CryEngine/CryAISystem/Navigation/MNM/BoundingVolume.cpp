@@ -1,15 +1,50 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "BoundingVolume.h"
 
 namespace MNM
 {
+
+void BoundingVolume::Set(const Vec3* pVtx, const size_t count, const float height)
+{
+	vertices.clear();
+	AABB aabbNew(AABB::RESET);
+
+	if (pVtx != nullptr && count > 0)
+	{
+		vertices.reserve(count);
+
+		aabbNew.Add(pVtx[0] + Vec3(0.0f, 0.0f, height));
+
+		for (size_t i = 0; i < count; ++i)
+		{
+			const Vec3& v = pVtx[i];
+			aabbNew.Add(v);
+			vertices.push_back(v);
+		}
+
+		this->pVertices = &vertices.front();
+		this->verticesCount = vertices.size();
+	}
+	else
+	{
+		this->pVertices = nullptr;
+		this->verticesCount = 0;
+	}
+
+	this->aabb = aabbNew;
+	this->height = height;
+}
+
+
 void BoundingVolume::Swap(BoundingVolume& other)
 {
 	vertices.swap(other.vertices);
 	std::swap(aabb, other.aabb);
 	std::swap(height, other.height);
+	std::swap(pVertices, other.pVertices);
+	std::swap(verticesCount, other.verticesCount);
 }
 
 bool BoundingVolume::Overlaps(const AABB& _aabb) const
@@ -130,57 +165,13 @@ bool BoundingVolume::Contains(const Vec3& point) const
 	return count != 0;
 }
 
-/*
-   bool BoundingVolume::IntersectLineSeg(const Vec3& start, const Vec3& end, float* t, size_t* segment) const
-   {
-   float bestt = FLT_MAX;
-   size_t bestSeg = ~0ul;
-
-   const size_t vertexCount = vertices.size();
-
-   size_t ii = vertexCount - 1;
-
-   for (size_t i = 0; i < vertexCount; ++i)
-   {
-    const Vec3& v0 = vertices[ii];
-    const Vec3& v1 = vertices[i];
-    ii = i;
-
-    float a, b;
-    if (Intersect::Lineseg_Lineseg2D(Lineseg(start, end), Lineseg(v0, v1), a, b))
-    {
-      if (a < bestt)
-      {
-        bestt = a;
-        bestSeg = ii;
-      }
-    }
-   }
-
-   if (bestSeg != ~0ul)
-   {
-    if (t)
- * t = bestt;
-
-    if (segment)
- * segment = bestSeg;
-
-    return true;
-   }
-
-   return false;
-   }
- */
-
 void BoundingVolume::OffsetVerticesAndAABB(const Vec3& delta)
 {
-#ifdef SEG_WORLD
 	const size_t vertexCount = vertices.size();
 	for (size_t i = 0; i < vertexCount; ++i)
 	{
 		vertices[i] += delta;
 	}
 	aabb.Move(delta);
-#endif
 }
 }

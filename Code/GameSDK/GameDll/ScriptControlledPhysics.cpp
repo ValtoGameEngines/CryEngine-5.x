@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -133,7 +133,7 @@ void CScriptControlledPhysics::PostInit( IGameObject * pGameObject )
 bool CScriptControlledPhysics::ReloadExtension( IGameObject * pGameObject, const SEntitySpawnParams &params )
 {
 	ResetGameObject();
-	if (IPhysicalEntity *pPE=GetEntity()->GetPhysics())
+	if (GetEntity()->GetPhysics() != nullptr)
 	{
 		SCP::RegisterEvents(*this,*pGameObject);
 	}

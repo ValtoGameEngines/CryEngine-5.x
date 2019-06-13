@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "IrisShafts.h"
@@ -33,21 +33,24 @@ void IrisShafts::InitEditorParamGroups(DynArray<FuncVariableGroup>& groups)
 
 IrisShafts::IrisShafts(const char* name)
 	: COpticsElement(name, 0.5f)
-	, m_fThickness(0.3f)
-	, m_fSpread(0.2f)
-	, m_nSmoothLevel(2)
-	, m_nNoiseSeed(81)
 	, m_pBaseTex(0)
-	, m_fSizeNoiseStrength(0.8f)
-	, m_fThicknessNoiseStrength(0.6f)
-	, m_fSpacingNoiseStrength(0.2f)
-	, m_fSpreadNoiseStrength(0.0f)
 	, m_bUseSpectrumTex(false)
+
+	, m_nSmoothLevel(2)
+	, m_fPrevOcc(-1.f)
 	, m_fPrimaryDir(0)
 	, m_fAngleRange(1)
 	, m_fConcentrationBoost(0)
-	, m_fPrevOcc(-1.f)
 	, m_fBrightnessBoost(0)
+
+	, m_fSizeNoiseStrength(0.8f)
+	, m_fThicknessNoiseStrength(0.6f)
+	, m_fSpreadNoiseStrength(0.0f)
+	, m_fSpacingNoiseStrength(0.2f)
+	
+	, m_fSpread(0.2f)
+	, m_fThickness(0.3f)
+	, m_nNoiseSeed(81)
 	, m_MaxNumberOfPolygon(0)
 {
 	m_vMovement.x = 1.f;
@@ -61,7 +64,7 @@ IrisShafts::IrisShafts(const char* name)
 
 	m_meshDirty = true;
 
-	m_primitive.AllocateTypedConstantBuffer(eConstantBufferShaderSlot_PerBatch, sizeof(SShaderParams), EShaderStage_Vertex | EShaderStage_Pixel);
+	m_primitive.AllocateTypedConstantBuffer(eConstantBufferShaderSlot_PerPrimitive, sizeof(SShaderParams), EShaderStage_Vertex | EShaderStage_Pixel);
 }
 
 void IrisShafts::Load(IXmlNode* pNode)
@@ -81,8 +84,9 @@ void IrisShafts::Load(IXmlNode* pNode)
 		{
 			if (baseTextureName && baseTextureName[0])
 			{
-				ITexture* pTexture = std::move(gEnv->pRenderer->EF_LoadTexture(baseTextureName));
-				SetBaseTex((CTexture*)pTexture);
+				ITexture* pTexture = gEnv->pRenderer->EF_LoadTexture(baseTextureName);
+				m_pBaseTex.reset();
+				m_pBaseTex.Assign_NoAddRef(static_cast<CTexture*>(pTexture));
 			}
 		}
 
@@ -91,8 +95,9 @@ void IrisShafts::Load(IXmlNode* pNode)
 		{
 			if (gradientTexName && gradientTexName[0])
 			{
-				ITexture* pTexture = std::move(gEnv->pRenderer->EF_LoadTexture(gradientTexName));
-				SetSpectrumTex((CTexture*)pTexture);
+				ITexture* pTexture = gEnv->pRenderer->EF_LoadTexture(gradientTexName);
+				m_pSpectrumTex.reset();
+				m_pSpectrumTex.Assign_NoAddRef(static_cast<CTexture*>(pTexture));
 			}
 		}
 
@@ -252,13 +257,13 @@ bool IrisShafts::PreparePrimitives(const SPreparePrimitivesContext& context)
 
 	m_primitive.SetTechnique(CShaderMan::s_ShaderLensOptics, techName, rtFlags);
 	m_primitive.SetRenderState(GS_NODEPTHTEST | GS_BLSRC_ONE | GS_BLDST_ONE);
-	m_primitive.SetTexture(0, (m_bUseSpectrumTex && m_pSpectrumTex) ? m_pSpectrumTex.get() : CTexture::s_ptexBlack);
-	m_primitive.SetTexture(1, m_pBaseTex ? m_pBaseTex.get() : CTexture::s_ptexBlack);
-	m_primitive.SetSampler(0, m_samplerBilinearBorderBlack);
+	m_primitive.SetTexture(0, (m_bUseSpectrumTex && m_pSpectrumTex) ? m_pSpectrumTex.get() : CRendererResources::s_ptexBlack);
+	m_primitive.SetTexture(1, m_pBaseTex ? m_pBaseTex.get() : CRendererResources::s_ptexBlack);
+	m_primitive.SetSampler(0, EDefaultSamplerStates::LinearBorder_Black);
 
 	// update constants
 	{
-		auto constants = m_primitive.GetConstantManager().BeginTypedConstantUpdate<SShaderParams>(eConstantBufferShaderSlot_PerBatch, EShaderStage_Vertex | EShaderStage_Pixel);
+		auto constants = m_primitive.GetConstantManager().BeginTypedConstantUpdate<SShaderParams>(eConstantBufferShaderSlot_PerPrimitive, EShaderStage_Vertex | EShaderStage_Pixel);
 
 		for (int i = 0; i < context.viewInfoCount; ++i)
 		{
@@ -273,7 +278,6 @@ bool IrisShafts::PreparePrimitives(const SPreparePrimitivesContext& context)
 			if (i < context.viewInfoCount - 1)
 				constants.BeginStereoOverride(false);
 		}
-
 		m_primitive.GetConstantManager().EndTypedConstantUpdate(constants);
 	}
 
@@ -288,11 +292,12 @@ bool IrisShafts::PreparePrimitives(const SPreparePrimitivesContext& context)
 
 		ValidateMesh();
 
-		m_primitive.SetCustomVertexStream(m_vertexBuffer, eVF_P3F_C4B_T2F, sizeof(SVF_P3F_C4B_T2F));
+		m_primitive.SetCustomVertexStream(m_vertexBuffer, EDefaultInputLayouts::P3F_C4B_T2F, sizeof(SVF_P3F_C4B_T2F));
 		m_primitive.SetCustomIndexStream(m_indexBuffer, Index16);
 		m_primitive.SetDrawInfo(eptTriangleList, 0, 0, GetIndexCount());
 	}
 
+	m_primitive.Compile(context.pass);
 	context.pass.AddPrimitive(&m_primitive);
 
 	return true;

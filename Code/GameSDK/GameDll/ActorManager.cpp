@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ActorManager.h"
@@ -7,6 +7,7 @@
 #include "PlayerVisTable.h"
 
 #include "IActorSystem.h"
+#include "Game.h"
 
 
 CActorManager * CActorManager::GetActorManager()
@@ -163,7 +164,7 @@ void CActorManager::Update(float dt)
 			IEntity* pEntity = pActor->GetEntity();
 			const IAIObject* pAIObject = pEntity->GetAI();
 
-			if(bMultiplayer || (pAIObject && pEntity->IsActive()))
+			if(bMultiplayer || (pAIObject && pEntity->IsActivatedForUpdates()))
 			{
 				CacheDataFromActor(pActor, pEntity, pAIObject, kActorIndexMultiplier, playerFactionID, iNumActorsTracked);
 				iNumActorsTracked++;

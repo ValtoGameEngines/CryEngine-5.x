@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -20,6 +20,7 @@
 #include "VehicleCVars.h"
 #include "Vehicle.h"
 
+#include <CryRenderer/IRenderAuxGeom.h>
 #include <CryMath/Cry_GeoIntersect.h>
 #include <CryMath/Cry_GeoDistance.h>
 
@@ -286,10 +287,8 @@ void CVehicleViewActionThirdPerson::Update(float frameTimeIn)
 #if ENABLE_VEHICLE_DEBUG
 	if (m_isDebugView)
 	{
-		IRenderer* pRenderer = gEnv->pRenderer;
 		IRenderAuxGeom* pAuxGeom = gEnv->pRenderer->GetIRenderAuxGeom();
 		SAuxGeomRenderFlags flags = pAuxGeom->GetRenderFlags();
-		SAuxGeomRenderFlags oldFlags = pAuxGeom->GetRenderFlags();
 		flags.SetDepthWriteFlag(e_DepthWriteOff);
 		flags.SetDepthTestFlag(e_DepthTestOff);
 		pAuxGeom->SetRenderFlags(flags);
@@ -334,10 +333,8 @@ void CVehicleViewActionThirdPerson::Serialize(TSerialize serialize, EEntityAspec
 //------------------------------------------------------------------------
 void CVehicleViewActionThirdPerson::OffsetPosition(const Vec3& delta)
 {
-#ifdef SEG_WORLD
 	m_worldViewPos += delta;
 	m_worldCameraPos += delta;
-#endif
 }
 
 DEFINE_VEHICLEOBJECT(CVehicleViewActionThirdPerson);

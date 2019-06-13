@@ -1,34 +1,34 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <CrySerialization/Forward.h>
 #include <CrySerialization/StringList.h>
-class PropertyTree;
+class PropertyTreeLegacy;
 
 #include "Settings.h"
 #include "ItemTypeName.h"
 
-namespace uqs
+namespace UQS
 {
-namespace core
+namespace Core
 {
 class CTextualQueryBlueprint;
 }
-namespace shared
+namespace Shared
 {
 class CTypeInfo;
-}   // namespace shared
-namespace datasource
+}   // namespace Shared
+namespace DataSource
 {
 struct IEditorLibraryProvider;
 }
 };
 
-namespace uqseditor
+namespace UQSEditor
 {
 class CQueryBlueprint;
-} // namespace uqseditor
+} // namespace UQSEditor
 
 struct SItemTypeName;
 class CUqsEditorContext;
@@ -47,12 +47,12 @@ public:
 
 	void                        Serialize(Serialization::IArchive& archive);
 
-	void                        AttachToTree(PropertyTree* pTree);
+	void                        AttachToTree(PropertyTreeLegacy* pTree);
 	void                        DetachFromTree();
 
 	void                        ApplySettings(const SDocumentSettings& settings);
 
-	uqseditor::CQueryBlueprint* GetQueryBlueprintPtr() const { return m_pQueryBlueprint.get(); }
+	UQSEditor::CQueryBlueprint* GetQueryBlueprintPtr() const { return m_pQueryBlueprint.get(); }
 	const string& GetName() const              { return m_queryName; }
 	bool          IsNeverSaved() const         { return m_bNeverSaved; }
 
@@ -66,9 +66,9 @@ private:
 
 	friend class CUqsDocSerializationContext;
 
-	PropertyTree* m_pTree;
+	PropertyTreeLegacy* m_pTree;
 
-	std::unique_ptr<uqseditor::CQueryBlueprint> m_pQueryBlueprint;
+	std::unique_ptr<UQSEditor::CQueryBlueprint> m_pQueryBlueprint;
 	string                   m_queryName;
 
 	SDocumentSettings        m_settings;

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "SkeletonAnim.h"
@@ -55,6 +55,8 @@ bool CSkeletonAnim::StartAnimationById(int32 id, const struct CryCharAnimationPa
 	if (RootName == 0)
 		return 0;
 
+	m_pInstance->ResetQuasiStaticSleepTimer();
+
 	CryCharAnimationParams AnimPrams = Params;
 	if (AnimPrams.m_nLayerID > 0)
 	{
@@ -88,11 +90,6 @@ bool CSkeletonAnim::StartAnimationById(int32 id, const struct CryCharAnimationPa
 
 	const ModelAnimationHeader* pAnim = NULL;
 	int32 nAnimID = id;
-
-	const ModelAnimationHeader* pAnimAim0 = NULL;
-	int32 nAnimAimID0 = -1;
-	const ModelAnimationHeader* pAnimAim1 = NULL;
-	int32 nAnimAimID1 = -1;
 
 	CAnimationSet* pAnimationSet = m_pInstance->m_pDefaultSkeleton->m_pAnimationSet;
 
@@ -327,7 +324,7 @@ uint32 CSkeletonAnim::AnimationToQueue(const ModelAnimationHeader* pAnim, int nA
 		}
 	}
 
-	if (AnimParams.m_nFlags & CA_REMOVE_FROM_FIFO)
+	if (AnimParams.m_nFlags & CA_REMOVE_FROM_FIFO || m_pInstance->IsQuasiStaticSleeping())
 	{
 		RemoveAnimFromFIFO(AnimParams.m_nLayerID, 0, true);
 	}

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -88,7 +88,6 @@ struct ILevelRotation
 struct ILevelInfo
 {
 	virtual ~ILevelInfo(){}
-	typedef std::vector<string> TStringVec;
 
 	typedef struct
 	{
@@ -135,7 +134,8 @@ struct ILevelInfo
 	virtual const ILevelInfo::TGameTypeInfo* GetGameType(int gameType) const = 0;
 	virtual bool                             SupportsGameType(const char* gameTypeName) const = 0;
 	virtual const ILevelInfo::TGameTypeInfo* GetDefaultGameType() const = 0;
-	virtual ILevelInfo::TStringVec           GetGameRules() const = 0;
+	virtual size_t                           GetGameRulesCount() const = 0;
+	virtual size_t                           GetGameRules(const char** pszGameRules, size_t numGameRules) const = 0;
 	virtual bool                             HasGameRules() const = 0;
 
 	virtual const ILevelInfo::SMinimapInfo&  GetMinimapInfo() const = 0;
@@ -176,6 +176,14 @@ struct ILevelSystem :
 		TAG_UNKNOWN = 'ZZZZ'
 	};
 
+	//! Result of time-sliced level loading
+	enum class ELevelLoadStatus
+	{
+		InProgress,  //!< Loading in progress
+		Done,        //!< Loading done
+		Failed       //!< Loading failed 
+	};
+
 	virtual void              Rescan(const char* levelsFolder, const uint32 tag) = 0;
 	virtual void              LoadRotation() = 0;
 	virtual int               GetLevelCount() = 0;
@@ -188,6 +196,8 @@ struct ILevelSystem :
 
 	virtual ILevelInfo*       GetCurrentLevel() const = 0;
 	virtual ILevelInfo*       LoadLevel(const char* levelName) = 0;
+	virtual bool              StartLoadLevel(const char* szLevelName) = 0;
+	virtual ELevelLoadStatus  UpdateLoadLevelStatus() = 0;
 	virtual void              UnLoadLevel() = 0;
 	virtual ILevelInfo*       SetEditorLoadedLevel(const char* levelName, bool bReadLevelInfoMetaData = false) = 0;
 	virtual bool              IsLevelLoaded() = 0;

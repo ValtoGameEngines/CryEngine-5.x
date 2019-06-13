@@ -1,9 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <CryAISystem/IAgent.h>
 #include "IActionMapManager.h"
+#include "IGameObject.h"
 
 struct IWeapon;
 struct IActor;
@@ -614,3 +615,5 @@ struct IWeapon
 	//virtual void AdjustPosition(float time, bool zoomIn, int currentStep) = 0;
 	//virtual void SetScopeOffset(const Vec3& offset) = 0;
 };
+
+struct IWeaponProxyExtension : public IWeapon, public IGameObjectExtension {};

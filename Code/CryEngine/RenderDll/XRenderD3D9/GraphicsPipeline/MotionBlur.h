@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -9,7 +9,22 @@
 class CMotionBlurStage : public CGraphicsPipelineStage
 {
 public:
-	void Init();
+	static const EGraphicsPipelineStage StageID = eStage_MotionBlur;
+
+	CMotionBlurStage(CGraphicsPipeline& graphicsPipeline)
+		: CGraphicsPipelineStage(graphicsPipeline)
+		, m_passPacking(&graphicsPipeline)
+		, m_passTileGen1(&graphicsPipeline)
+		, m_passTileGen2(&graphicsPipeline)
+		, m_passNeighborMax(&graphicsPipeline)
+		, m_passCopy(&graphicsPipeline)
+		, m_passMotionBlur(&graphicsPipeline) {}
+
+	bool IsStageActive(EShaderRenderingFlags flags) const final
+	{
+		return CRenderer::CV_r_MotionBlur && !gRenDev->m_nDisableTemporalEffects;
+	}
+
 	void Execute();
 
 private:
@@ -22,7 +37,4 @@ private:
 	CFullscreenPass  m_passNeighborMax;
 	CStretchRectPass m_passCopy;
 	CFullscreenPass  m_passMotionBlur;
-
-	int32            m_samplerPoint;
-	int32            m_samplerLinear;
 };

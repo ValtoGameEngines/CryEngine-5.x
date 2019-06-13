@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -14,12 +14,11 @@ History:
 *************************************************************************/
 
 #pragma once
-
-#ifndef _CINEMATIC_INPUT_H_
-#define _CINEMATIC_INPUT_H_
+#include <CryAction/IActionMapManager.h>
+#include <CryPhysics/RayCastQueue.h>
+#include <CryEntitySystem/IEntityBasicTypes.h>  // for EntityId
 
 #define CINEMATIC_INPUT_PC_MOUSE 1
-
 
 class CWeapon;
 
@@ -118,7 +117,6 @@ private:
 	Ang3	m_controllerAccumulatedAngles;
 	int		m_cutsceneRunningCount;
 	int		m_cutscenesNoPlayerRunningCount;
-	bool	m_bMutedAudioForCutscene;
 	bool	m_bPlayerIsThirdPerson;
 	bool	m_bPlayerWasInvisible;
 	bool	m_bCutsceneDisabledUISystem;
@@ -135,5 +133,3 @@ private:
 	bool	m_lastUpdateWithMouse;
 #endif
 };
-
-#endif

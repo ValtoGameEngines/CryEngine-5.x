@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ComponentsModel.h"
@@ -6,8 +6,8 @@
 #include "ScriptBrowserUtils.h"
 #include "DetailWidget.h"
 
-#include <Schematyc/Utils/Any.h>
-#include <Schematyc/SerializationUtils/ISerializationContext.h>
+#include <CrySchematyc/Utils/Any.h>
+#include <CrySchematyc/SerializationUtils/ISerializationContext.h>
 
 #include <CryIcon.h>
 

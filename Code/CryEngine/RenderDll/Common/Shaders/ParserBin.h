@@ -1,15 +1,6 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-/*=============================================================================
-   ParserBin.h : Script parser declarations.
-
-   Revision history:
-* Created by Honich Andrey
-
-   =============================================================================*/
-
-#ifndef PARSERBIN_H
-#define PARSERBIN_H
+#pragma once
 
 #include "ShaderCache.h"
 #include "ShaderAllocator.h"
@@ -465,6 +456,7 @@ enum EToken
 	eT_ForceDrawFirst,
 	eT_ForceDrawAfterWater,
 	eT_DepthFixup,
+	eT_DepthFixupReplace,
 	eT_SingleLightPass,
 	eT_HWTessellation,
 	eT_WaterParticle,
@@ -485,7 +477,6 @@ enum EToken
 	eT_Hair,
 	eT_Compute,
 	eT_ForceGeneralPass,
-	eT_SkinPass,
 	eT_EyeOverlay,
 
 	eT_Metal,
@@ -497,7 +488,6 @@ enum EToken
 	eT_Glass,
 	eT_Vegetation,
 	eT_Particle,
-	eT_GenerateSprites,
 	eT_GenerateClouds,
 	eT_ScanWater,
 
@@ -510,7 +500,6 @@ enum EToken
 	eT_TechniqueCustomRender,
 	eT_TechniqueEffectLayer,
 	eT_TechniqueDebug,
-	eT_TechniqueSoftAlphaTest,
 	eT_TechniqueWaterRefl,
 	eT_TechniqueWaterCaustic,
 	eT_TechniqueZPrepass,
@@ -610,8 +599,6 @@ enum EToken
 	eT__DS,
 	eT__CS,
 
-	eT__g_SkinQuat,
-
 	eT_x,
 	eT_y,
 	eT_z,
@@ -646,7 +633,9 @@ enum EToken
 	eT_ORBIS,
 	eT_DURANGO,
 	eT_PCDX11,
+	eT_PCDX12,
 	eT_OPENGL,
+	eT_VULKAN,
 
 	eT_VT_DetailBendingGrass,
 	eT_VT_DetailBending,
@@ -699,6 +688,7 @@ enum EToken
 
 	eT_$AutoGS_MultiRes,
 	eT_Billboard,
+	eT_DebugHelper,
 
 	eT_max,
 	eT_user_first = eT_max + 1
@@ -731,7 +721,7 @@ struct SFXTokenBin
 
 #define FX_REGISTER_TOKEN(id) fxTokenKey( # id, eT_ ## id);
 
-extern char* g_KeyTokens[];
+extern const char* g_KeyTokens[];
 
 struct SMacroBinFX
 {
@@ -819,12 +809,14 @@ struct SortByToken
 	}
 };
 
-#define SF_GLES3    0x08000000
-#define SF_D3D11    0x10000000
-#define SF_ORBIS    0x20000000
-#define SF_DURANGO  0x40000000
-#define SF_GL4      0x80000000
-#define SF_PLATFORM 0xf8000000
+#define SF_D3D12    0x02000000U // SM5.1, SM6.0, SM6.1, SM6.2
+#define SF_VULKAN   0x04000000U
+#define SF_GLES3    0x08000000U
+#define SF_D3D11    0x10000000U // SM5.0
+#define SF_ORBIS    0x20000000U
+#define SF_DURANGO  0x40000000U
+#define SF_GL4      0x80000000U
+#define SF_PLATFORM 0xfC000000U
 
 class CParserBin
 {
@@ -834,8 +826,6 @@ class CParserBin
 	friend struct SFXParam;
 	friend struct SFXSampler;
 	friend struct SFXTexture;
-	friend class CREBeam;
-	friend class CRECloud;
 
 	//bool m_bEmbeddedSearchInfo;
 	struct SShaderBin* m_pCurBinShader;
@@ -848,8 +838,6 @@ class CParserBin
 	EToken m_eToken;
 	uint32 m_nFirstToken;
 	TArray<SCodeFragment> m_CodeFragments;
-	//std::vector<SFXParam> m_Parameters;
-	//std::vector<STexSamplerFX> m_Samplers;
 
 	SParserFrame m_CurFrame;
 
@@ -866,13 +854,13 @@ public:
 	CParserBin(SShaderBin* pBin, CShader* pSH);
 
 	static FXMacroBin&        GetStaticMacroses() { return m_StaticMacros; }
-	static const char*        GetString(uint32 nToken, FXShaderToken& Table, bool bOnlyKey = false);
+	static const char*        GetString(uint32 nToken, const FXShaderToken& Table, bool bOnlyKey = false);
 	const char*               GetString(uint32 nToken, bool bOnlyKey = false);
 	string                    GetString(SParserFrame& Frame);
 	CCryNameR                 GetNameString(SParserFrame& Frame);
 	void                      BuildSearchInfo();
 	bool                      PreprocessTokens(ShaderTokensVec& Tokens, int nPass, PodArray<uint32>& tokensBuffer);
-	bool                      Preprocess(int nPass, ShaderTokensVec& Tokens, FXShaderToken* pSrcTable);
+	bool                      Preprocess(int nPass, ShaderTokensVec& Tokens, const FXShaderToken& pSrcTable);
 	static const SMacroBinFX* FindMacro(uint32 dwName, FXMacroBin& Macro);
 	static bool               AddMacro(uint32 dwToken, const uint32* pMacro, int nMacroTokens, uint64 nMask, FXMacroBin& Macro);
 	static bool               RemoveMacro(uint32 dwToken, FXMacroBin& Macro);
@@ -883,7 +871,7 @@ public:
 	bool                      CheckIfExpression(const uint32* pTokens, uint32& nT, int nPass, uint64* nMask = 0);
 	bool                      IgnorePreprocessBlock(const uint32* pTokens, uint32& nT, int nMaxTokens, PodArray<uint32>& tokensBuffer, int nPass);
 	static bool               CorrectScript(uint32* pTokens, uint32& i, uint32 nT, TArray<char>& Text);
-	static bool               ConvertToAscii(uint32* pTokens, uint32 nT, FXShaderToken& Table, TArray<char>& Text, bool bInclSkipTokens = false);
+	static bool               ConvertToAscii(uint32* pTokens, uint32 nT, const FXShaderToken& Table, TArray<char>& Text, bool bInclSkipTokens = false);
 	bool                      GetBool(SParserFrame& Frame);
 	inline uint32*            GetTokens(int nStart) { return &m_Tokens[nStart]; }
 	inline int                GetNumTokens()        { return m_Tokens.size(); }
@@ -900,8 +888,7 @@ public:
 		if (szStr[0] == '0' && szStr[1] == 'x')
 		{
 			int i = 0;
-			int res = sscanf(&szStr[2], "%x", &i);
-			assert(res != 0);
+			CRY_VERIFY(sscanf(&szStr[2], "%x", &i) != 0);
 			return i;
 		}
 		return atoi(szStr);
@@ -957,20 +944,12 @@ public:
 	int                CopyTokens(SCodeFragment* pCF, PodArray<uint32>& SHData, TArray<SCodeFragment>& Replaces, TArray<uint32>& NewTokens, uint32 nID);
 	static inline void AddDefineToken(uint32 dwToken, ShaderTokensVec& Tokens)
 	{
-		if (dwToken == 611)
-		{
-			int nnn = 0;
-		}
 		Tokens.push_back(eT_define);
 		Tokens.push_back(dwToken);
 		Tokens.push_back(0);
 	}
 	static inline void AddDefineToken(uint32 dwToken, uint32 dwToken2, ShaderTokensVec& Tokens)
 	{
-		if (dwToken == 611)
-		{
-			int nnn = 0;
-		}
 		Tokens.push_back(eT_define);
 		Tokens.push_back(dwToken);
 		Tokens.push_back(dwToken2);
@@ -979,26 +958,21 @@ public:
 	bool                 JumpSemicolumn(uint32& nStart, uint32 nEnd);
 
 	static uint32        fxToken(const char* szToken, bool* bKey = NULL);
-	static uint32        fxTokenKey(char* szToken, EToken eT = eT_unknown);
+	static uint32        fxTokenKey(const char* szToken, EToken eT = eT_unknown);
 	static uint32        GetCRC32(const char* szStr);
+	static uint32        NextToken(const char*& buf, char* com, bool& bKey);
 	static uint32        NextToken(char*& buf, char* com, bool& bKey);
 	static void          Init();
-	static void          RemovePlatformDefines();
-	static void          SetupForOrbis();
-	static void          SetupForD3D9();
-	static void          SetupForD3D11();
-	static void          SetupForGL4();
-	static void          SetupForGLES3();
-	static void          SetupForDurango();
+	static void          SetupForPlatform(uint32 nPlatform);
 	static void          SetupFeatureDefines();
 	static CCryNameTSCRC GetPlatformSpecName(CCryNameTSCRC orgName);
 	static const char*   GetPlatformShaderlistName();
-	static bool          PlatformSupportsConstantBuffers() { return (CParserBin::m_nPlatform == SF_D3D11 || CParserBin::m_nPlatform == SF_ORBIS || CParserBin::m_nPlatform == SF_DURANGO || CParserBin::m_nPlatform == SF_GL4 || CParserBin::m_nPlatform == SF_GLES3); };
-	static bool          PlatformSupportsGeometryShaders() { return (CParserBin::m_nPlatform == SF_D3D11 || CParserBin::m_nPlatform == SF_ORBIS || CParserBin::m_nPlatform == SF_DURANGO || CParserBin::m_nPlatform == SF_GL4); }
-	static bool          PlatformSupportsHullShaders()     { return (CParserBin::m_nPlatform == SF_D3D11 || CParserBin::m_nPlatform == SF_ORBIS || CParserBin::m_nPlatform == SF_DURANGO || CParserBin::m_nPlatform == SF_GL4); }
-	static bool          PlatformSupportsDomainShaders()   { return (CParserBin::m_nPlatform == SF_D3D11 || CParserBin::m_nPlatform == SF_ORBIS || CParserBin::m_nPlatform == SF_DURANGO || CParserBin::m_nPlatform == SF_GL4); }
-	static bool          PlatformSupportsComputeShaders()  { return (CParserBin::m_nPlatform == SF_D3D11 || CParserBin::m_nPlatform == SF_ORBIS || CParserBin::m_nPlatform == SF_DURANGO || CParserBin::m_nPlatform == SF_GL4); }
-	static bool          PlatformIsConsole()               { return (CParserBin::m_nPlatform == SF_ORBIS || CParserBin::m_nPlatform == SF_DURANGO); };
+	static bool          PlatformSupportsConstantBuffers() { return (CParserBin::m_nPlatform & (SF_D3D12 | SF_D3D11 | SF_ORBIS | SF_DURANGO | SF_GL4 | SF_VULKAN | SF_GLES3)) != 0; }
+	static bool          PlatformSupportsGeometryShaders() { return (CParserBin::m_nPlatform & (SF_D3D12 | SF_D3D11 | SF_ORBIS | SF_DURANGO | SF_GL4 | SF_VULKAN)) != 0; }
+	static bool          PlatformSupportsHullShaders()     { return (CParserBin::m_nPlatform & (SF_D3D12 | SF_D3D11 | SF_ORBIS | SF_DURANGO | SF_GL4 | SF_VULKAN)) != 0; }
+	static bool          PlatformSupportsDomainShaders()   { return (CParserBin::m_nPlatform & (SF_D3D12 | SF_D3D11 | SF_ORBIS | SF_DURANGO | SF_GL4 | SF_VULKAN)) != 0; }
+	static bool          PlatformSupportsComputeShaders()  { return (CParserBin::m_nPlatform & (SF_D3D12 | SF_D3D11 | SF_ORBIS | SF_DURANGO | SF_GL4 | SF_VULKAN)) != 0; }
+	static bool          PlatformIsConsole()               { return (CParserBin::m_nPlatform & (SF_ORBIS | SF_DURANGO)) != 0; }
 
 	static bool m_bEditable;
 	static uint32 m_nPlatform;
@@ -1008,5 +982,3 @@ public:
 };
 
 char* fxFillPr(char** buf, char* dst);
-
-#endif

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -7,9 +7,6 @@
 #include <pthread.h>
 #include <semaphore.h>
 #include <sched.h>
-
-#include <CrySystem/ISystem.h>
-#include <CrySystem/ILog.h>
 
 // PTHREAD_MUTEX_FAST_NP is only defined by Pthreads-w32 & Pthreads-w64
 #if !defined(PTHREAD_MUTEX_FAST_NP)
@@ -70,7 +67,7 @@ public:
 		const CryPThreadLockAttr attr(pthreadMutexType);
 		pthread_mutex_init(&m_posix_mutex, &attr.m_Attr);
 	}
-	~CryLock_Mutex() 
+	~CryLock_Mutex()
 	{
 		pthread_mutex_destroy(&m_posix_mutex);
 	}
@@ -127,7 +124,7 @@ public:
 
 	// Deprecated. Value might already be wrong on return
 #ifndef _RELEASE
-	bool IsLocked()
+	bool IsLocked() const
 	{
 		return m_LockCount > 0;
 	}
@@ -136,7 +133,7 @@ public:
 protected:
 	pthread_mutex_t m_posix_mutex;
 #ifndef _RELEASE
-	volatile uint   m_LockCount;
+	volatile uint   m_LockCount = 0;
 #endif
 };
 

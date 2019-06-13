@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -40,10 +40,6 @@
 #include "../Network/GameChannel.h"
 #include "../Network/GameServerNub.h"
 #include "../Network/GameServerChannel.h"
-
-#include <CryAISystem/IPathfinder.h>
-#include <CryAISystem/IAIActor.h>
-#include <CryAISystem/IAIObject.h>
 
 #include "Animation/VehicleSeatAnimActions.h"
 
@@ -314,7 +310,7 @@ void CVehicleSeat::OnSpawnComplete()
 
 		SEntitySpawnParams params;
 		params.sName = name.c_str();
-		params.nFlags = ENTITY_FLAG_NEVER_NETWORK_STATIC | ENTITY_FLAG_NO_SAVE;
+		params.nFlags = ENTITY_FLAG_NO_SAVE;
 		params.pClass = gEnv->pEntitySystem->GetClassRegistry()->FindClass("VehicleSeatSerializer");
 
 		if (!params.pClass)
@@ -324,11 +320,9 @@ void CVehicleSeat::OnSpawnComplete()
 
 		static_cast<CVehicleSystem*>(CCryAction::GetCryAction()->GetIVehicleSystem())->SetInitializingSeat(this);
 
-		IEntity* pSerializerEntity = gEnv->pEntitySystem->SpawnEntity(params);
+		gEnv->pEntitySystem->SpawnEntity(params);
 
 		static_cast<CVehicleSystem*>(CCryAction::GetCryAction()->GetIVehicleSystem())->SetInitializingSeat(0);
-
-		CGameObject* pSerializerGameObject = (CGameObject*)pSerializerEntity->GetProxy(ENTITY_PROXY_USER);
 	}
 
 	for (TVehicleSeatActionVector::iterator it = m_seatActions.begin(), end = m_seatActions.end(); it != end; ++it)
@@ -545,7 +539,6 @@ bool CVehicleSeat::Enter(EntityId actorId, bool isTransitionEnabled)
 			pSeatToEnter = this;
 
 		// Transition Animation.
-		int seatID = pSeatToEnter->GetSeatId();
 		stack_string fragmentName = "EnterDoor";
 		fragmentName.append(pSeatToEnter->GetName().c_str());
 		FragmentID fragID = pContDef->m_fragmentIDs.Find(fragmentName.c_str());
@@ -685,12 +678,6 @@ bool CVehicleSeat::SitDown()
 		m_transitionType = eVT_None;
 	}
 
-	IAISystem* pAISystem = gEnv->pAISystem;
-	if (pAISystem && pAISystem->IsEnabled())
-	{
-		pAISystem->GetSmartObjectManager()->AddSmartObjectState(pActor->GetEntity(), "InVehicle");
-	}
-
 	IEntity* pPassengerEntity = pActor->GetEntity();
 
 	// MR: moved this to before GiveActorSeatFeatures, as the latter sets the vehicle view,
@@ -698,11 +685,11 @@ bool CVehicleSeat::SitDown()
 	if (CVehicleSeat* pSeat = GetSeatUsedRemotely(false))
 		pSeat->EnterRemotely(m_passengerId);
 
-	if (pActor->IsPlayer() || pActor->GetEntity()->GetAI())
+	if (pActor->IsPlayer() || pActor->GetEntity()->HasAI())
 	{
 		GivesActorSeatFeatures(true);
 	}
-	else if (!pActor->GetEntity()->GetAI())
+	else if (!pActor->GetEntity()->HasAI())
 	{
 		// enable the seat actions
 		for (TVehicleSeatActionVector::iterator ite = m_seatActions.begin(); ite != m_seatActions.end(); ++ite)
@@ -848,17 +835,13 @@ bool CVehicleSeat::Exit(bool isTransitionEnabled, bool force /*=false*/, Vec3 ex
 			{
 				m_adjustedExitPos.zero();
 
-				if (IAIObject* pAIObject = pActor->GetEntity()->GetAI())
-				{
-					Matrix34 worldTM = GetExitTM(pActor);
-					Vec3 adjustedPos;
+				Matrix34 worldTM = GetExitTM(pActor);
+				Vec3 adjustedPos;
 
-					if (IAIPathAgent* aiactor = pAIObject->CastToIAIActor())
-					{
-						if (aiactor->GetValidPositionNearby(worldTM.GetTranslation(), adjustedPos))
-							if (worldTM.GetTranslation() != adjustedPos)
-								m_adjustedExitPos = adjustedPos;
-					}
+				if (pActor->GetValidPositionNearby(worldTM.GetTranslation(), adjustedPos))
+				{
+					if (worldTM.GetTranslation() != adjustedPos)
+						m_adjustedExitPos = adjustedPos;
 				}
 			}
 		}
@@ -987,12 +970,6 @@ bool CVehicleSeat::StandUp()
 	}
 
 	IEntity* pPassengerEntity = pActor->GetEntity();
-
-	IAISystem* pAISystem = gEnv->pAISystem;
-	if (pAISystem && pAISystem->IsEnabled())
-	{
-		pAISystem->GetSmartObjectManager()->RemoveSmartObjectState(pActor->GetEntity(), "InVehicle");
-	}
 
 	// allow lua side of the seat implementation to do its business
 	HSCRIPTFUNCTION scriptFunction(0);
@@ -1473,7 +1450,7 @@ void CVehicleSeat::OnAction(const TVehicleActionId actionId, int activationMode,
 //------------------------------------------------------------------------
 void CVehicleSeat::Update(float deltaTime)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	IActor* pActor = GetPassengerActor();
 	if (m_passengerId && pActor && pActor->GetEntity())
@@ -1540,9 +1517,10 @@ void CVehicleSeat::Update(float deltaTime)
 
 				pActor->GetEntity()->GetWorldBounds(worldBounds);
 
-				if (!gEnv->pRenderer->GetCamera().IsAABBVisible_F(worldBounds))
+				if (!GetISystem()->GetViewCamera().IsAABBVisible_F(worldBounds))
 				{
-					if (IAIObject* pAIObject = pActor->GetEntity()->GetAI())
+					// Commented out for now because GetTeleportPosition isn't implemented anyway
+					/*if (IAIObject* pAIObject = pActor->GetEntity()->GetAI())
 					{
 						if (IAIPathAgent* aiactor = pAIObject->CastToIAIActor())
 							if (aiactor->GetTeleportPosition(m_adjustedExitPos))
@@ -1550,7 +1528,7 @@ void CVehicleSeat::Update(float deltaTime)
 								Exit(false);
 								StandUp();
 							}
-					}
+					}*/
 				}
 			}
 
@@ -1572,7 +1550,7 @@ void CVehicleSeat::Update(float deltaTime)
 			if (!seatActionData.isEnabled || !seatActionData.pSeatAction)
 				continue;
 
-			if (CVehicleSeatActionWeapons* pActionWeapons = CAST_VEHICLEOBJECT(CVehicleSeatActionWeapons, seatActionData.pSeatAction))
+			if (CAST_VEHICLEOBJECT(CVehicleSeatActionWeapons, seatActionData.pSeatAction) != nullptr)
 			{
 				seatActionData.pSeatAction->Update(deltaTime);
 			}
@@ -1819,7 +1797,6 @@ void CVehicleSeat::UpdateSounds(float deltaTime)
 		return;
 
 	SSeatSoundParams& params = GetSoundParams();
-	const char* moodName = params.moodName.c_str();
 
 	float mood = params.mood;
 
@@ -2069,7 +2046,7 @@ void CVehicleSeat::PostSerialize()
 			{
 				if (remote)
 					EnterRemotely(m_passengerId);
-				else if (pActor->GetEntity() && pActor->GetEntity()->GetAI())
+				else if (pActor->GetEntity() && pActor->GetEntity()->HasAI())
 				{
 					bool needUpdateTM = false;
 					if (m_isRagdollingOnDeath == false)
@@ -2343,7 +2320,7 @@ static Vec3 RotateAndNormalize(const Matrix34& tm, const Vec3& vectorToRotateAnd
 //------------------------------------------------------------------------
 void CVehicleSeat::GetMovementState(SMovementState& movementState)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	IEntity* pVehicleEntity = m_pVehicle->GetEntity();
 	if (!pVehicleEntity)
@@ -3023,8 +3000,6 @@ void CVehicleSeat::OnCharacterChange()
 //------------------------------------------------------------------------
 void CVehicleSeat::OffsetPosition(const Vec3& delta)
 {
-#ifdef SEG_WORLD
 	for (TVehicleViewVector::iterator it = m_views.begin(); it != m_views.end(); ++it)
 		(*it)->OffsetPosition(delta);
-#endif
 }

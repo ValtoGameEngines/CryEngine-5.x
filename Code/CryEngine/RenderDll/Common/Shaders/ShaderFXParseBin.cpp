@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*=============================================================================
    ShaderFXParseBin.cpp : implementation of the Shaders parser using FX language.
@@ -12,7 +12,6 @@
 #include <CryCore/Platform/IPlatformOS.h>
 #include <CryCore/AlignmentTools.h>
 #include "../Textures/TextureHelpers.h"
-#include "DriverD3D.h"
 
 extern CD3D9Renderer gcpRendD3D;
 
@@ -47,6 +46,8 @@ int CShaderManBin::Size()
 
 void CShaderManBin::GetMemoryUsage(ICrySizer* pSizer) const
 {
+	SIZER_COMPONENT_NAME(pSizer, "Bin Shaders");
+
 	pSizer->AddObject(m_BinPaths);
 	pSizer->AddObject(m_BinValidCRCs);
 
@@ -143,11 +144,8 @@ SShaderBin* CShaderManBin::SaveBinShader(
 		{
 
 		}
-		if (dwToken == eT_fetchinst)
-		{
-			int nnn = 0;
-		}
-		else if (dwToken == eT_include)
+
+		if (dwToken == eT_include)
 		{
 			assert(bKey);
 			SkipCharacters(&buf, kWhiteSpace);
@@ -169,9 +167,9 @@ SShaderBin* CShaderManBin::SaveBinShader(
 				++buf;
 			com[n] = 0;
 
-			fpStripExtension(com, com);
+			PathUtil::RemoveExtension(com);
 
-			SShaderBin* pBIncl = GetBinShader(com, true, 0);
+			//SShaderBin* pBIncl = GetBinShader(com, true, 0);
 			//
 			//assert(pBIncl);
 
@@ -230,11 +228,11 @@ SShaderBin* CShaderManBin::SaveBinShader(
 				macro[n] = 0;
 				n--;
 			}
-			char* b = &macro[0];
+			const char* b = &macro[0];
 			while (*b)
 			{
 				SkipCharacters(&b, kWhiteSpace);
-				SkipComments(&b, true);
+				SkipComments((char**)&b, true);
 				if (!b[0])
 					break;
 				bKey = false;
@@ -260,7 +258,7 @@ SShaderBin* CShaderManBin::SaveBinShader(
 			pBin->m_Tokens.push_back(0);
 		}
 	}
-	if (!pBin->m_Tokens[0])
+	if (!pBin->m_Tokens.size() || !pBin->m_Tokens[0])
 		pBin->m_Tokens.push_back(eT_skip);
 
 	pBin->SetCRC(pBin->ComputeCRC());
@@ -384,21 +382,6 @@ struct FXParamsSortByName
 		return left.m_dwName[0] < right;
 	}
 };
-struct FXSamplersOldSortByName
-{
-	bool operator()(const STexSamplerFX& left, const STexSamplerFX& right) const
-	{
-		return left.m_szName < right.m_szName;
-	}
-	bool operator()(const string left, const STexSamplerFX& right) const
-	{
-		return left < right.m_szName;
-	}
-	bool operator()(const STexSamplerFX& left, string right) const
-	{
-		return left.m_szName < right;
-	}
-};
 struct FXSamplersSortByName
 {
 	bool operator()(const SFXSampler& left, const SFXSampler& right) const
@@ -497,22 +480,6 @@ SFXParam* CShaderManBin::mfAddFXParam(CShader* pSH, const SFXParam* pParam)
 	SShaderFXParams& FXP = mfGetFXParams(pSH);
 	return mfAddFXParam(FXP, pParam);
 }
-void CShaderManBin::mfAddFXSampler(CShader* pSH, const STexSamplerFX* pSamp)
-{
-	if (!pSamp)
-		return;
-
-	SShaderFXParams& FXP = mfGetFXParams(pSH);
-
-	FXSamplersOldIt it = std::lower_bound(FXP.m_FXSamplersOld.begin(), FXP.m_FXSamplersOld.end(), pSamp->m_szName, FXSamplersOldSortByName());
-	if (it != FXP.m_FXSamplersOld.end() && pSamp->m_szName == (*it).m_szName)
-	{
-		assert(*it == *pSamp);
-		return;
-	}
-	FXP.m_FXSamplersOld.insert(it, *pSamp);
-	FXP.m_nFlags |= FXP_SAMPLERS_DIRTY;
-}
 void CShaderManBin::mfAddFXSampler(CShader* pSH, const SFXSampler* pSamp)
 {
 	if (!pSamp)
@@ -584,8 +551,7 @@ void CShaderManBin::mfGeneratePublicFXParams(CShader* pSH, CParserBin& Parser)
 					sp.m_Type = eType_FCOLOR;
 					if (szVal[0] == '{')
 						szVal++;
-					int n = sscanf(szVal, "%f, %f, %f, %f", &sp.m_Value.m_Color[0], &sp.m_Value.m_Color[1], &sp.m_Value.m_Color[2], &sp.m_Value.m_Color[3]);
-					assert(n == 4);
+					CRY_VERIFY(sscanf(szVal, "%f, %f, %f, %f", &sp.m_Value.m_Color[0], &sp.m_Value.m_Color[1], &sp.m_Value.m_Color[2], &sp.m_Value.m_Color[3]) == 4);
 				}
 				else
 				{
@@ -739,7 +705,7 @@ bool CShaderManBin::SaveBinShaderLocalInfo(SShaderBin* pBin, uint32 dwName, uint
 
 SShaderBin* CShaderManBin::LoadBinShader(FILE* fpBin, const char* szName, const char* szNameBin, bool bReadParams)
 {
-	LOADING_TIME_PROFILE_SECTION(iSystem);
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY)(iSystem);
 
 	gEnv->pCryPak->FSeek(fpBin, 0, SEEK_SET);
 	SShaderBinHeader Header;
@@ -999,7 +965,10 @@ SShaderBin* CShaderManBin::GetBinShader(const char* szName, bool bInclude, uint3
 	stack_string nameFile;
 	string nameBin;
 	FILE* fpSrc = NULL;
+
+#if !defined(_RELEASE)
 	uint32 nSourceCRC32 = 0;
+#endif
 
 	const char *szExt = bInclude ? "cfi" : "cfx";
 	// First look for source in Game folder
@@ -1013,7 +982,7 @@ SShaderBin* CShaderManBin::GetBinShader(const char* szName, bool bInclude, uint3
 	if (!fpSrc)
 	{
 		// Second look in Engine folder
-		nameFile.Format("%sCryFX/%s.%s", gRenDev->m_cEF.m_ShadersPath, szName, szExt);
+		nameFile.Format("%s/%sCryFX/%s.%s", "%ENGINE%", gRenDev->m_cEF.m_ShadersPath, szName, szExt);
 #if !defined(_RELEASE)
 		{
 			fpSrc = gEnv->pCryPak->FOpen(nameFile.c_str(), "rb");
@@ -1023,7 +992,7 @@ SShaderBin* CShaderManBin::GetBinShader(const char* szName, bool bInclude, uint3
 	}
 	//char szPath[1024];
 	//getcwd(szPath, 1024);
-	nameBin.Format("%s%s.%s", m_pCEF->m_ShadersCache, szName, bInclude ? "cfib" : "cfxb");
+	nameBin.Format("%s/%s%s.%s", "%ENGINE%", m_pCEF->m_ShadersCache, szName, bInclude ? "cfib" : "cfxb");
 	FILE* fpDst = NULL;
 	int i = 0, n = 2;
 
@@ -1031,7 +1000,7 @@ SShaderBin* CShaderManBin::GetBinShader(const char* szName, bool bInclude, uint3
 	if (CRenderer::CV_r_shadersediting)
 		i = 1;
 
-	string szDst = m_pCEF->m_szUserPath + nameBin;
+	string szDst = m_pCEF->m_szUserPath + (nameBin.c_str() + 9); // skip '%ENGINE%/'
 	byte bValid = 0;
 	float fVersion = (float)FX_CACHE_VER;
 	for (; i < n; i++)
@@ -1105,20 +1074,20 @@ SShaderBin* CShaderManBin::GetBinShader(const char* szName, bool bInclude, uint3
 
 			if (bValid & 2)
 			{
-				cry_sprintf(acTemp, "WARNING: Bin FXShader USER '%s' source crc mismatch", nameBin.c_str());
+				cry_sprintf(acTemp, "WARNING: Bin FXShader USER '%s' source crc mismatch", szDst.c_str());
 			}
 			if (bValid & 8)
 			{
-				cry_sprintf(acTemp, "WARNING: Bin FXShader USER '%s' version mismatch (Cache: %u.%u, Expected: %.1f)", nameBin.c_str(), Header[1].m_VersionHigh, Header[1].m_VersionLow, fVersion);
+				cry_sprintf(acTemp, "WARNING: Bin FXShader USER '%s' version mismatch (Cache: %u.%u, Expected: %.1f)", szDst.c_str(), Header[1].m_VersionHigh, Header[1].m_VersionLow, fVersion);
 			}
 			if (bValid & 0x20)
 			{
-				cry_sprintf(acTemp, "WARNING: Bin FXShader USER '%s' CRC mismatch", nameBin.c_str());
+				cry_sprintf(acTemp, "WARNING: Bin FXShader USER '%s' CRC mismatch", szDst.c_str());
 			}
 
 			if (bValid)
 			{
-				LogWarningEngineOnly("%s", acTemp);
+				LogWarningEngineOnly(acTemp);
 			}
 
 			if (fpDst)
@@ -1145,27 +1114,9 @@ SShaderBin* CShaderManBin::GetBinShader(const char* szName, bool bInclude, uint3
 
 						if (bShowMessageBox)
 						{
-							IPlatformOS::EMsgBoxResult result;
-
-							IPlatformOS* pOS = gEnv->pSystem->GetPlatformOS();
-							if (pOS)
-							{
-								result = pOS->DebugMessageBox(acTemp, "Invalid ShaderCache");
-
-								if (result == IPlatformOS::eMsgBox_Cancel)
-								{
-									CryDebugBreak();
-								}
-								else
-								{
-									bShowMessageBox = false;
-									Sleep(33);
-								}
-							}
-							else
-							{
-								Warning("Invalid ShaderCache");
-							}
+							CryMessageBox(acTemp, "Invalid ShaderCache", eMB_Error);
+							bShowMessageBox = false;
+							CrySleep(33);
 						}
 					}
 				}
@@ -1178,8 +1129,8 @@ SShaderBin* CShaderManBin::GetBinShader(const char* szName, bool bInclude, uint3
 						*pbChanged = true;
 
 					// remove the entries in the looupdata, to be sure that level and global caches have also become invalid for these shaders!
-					gRenDev->m_cEF.m_ResLookupDataMan[CACHE_READONLY].RemoveData(Header[0].m_CRC32);
-					gRenDev->m_cEF.m_ResLookupDataMan[CACHE_USER].RemoveData(Header[1].m_CRC32);
+					gRenDev->m_cEF.m_ResLookupDataMan[static_cast<int>(cacheSource::readonly)].RemoveData(Header[0].m_CRC32);
+					gRenDev->m_cEF.m_ResLookupDataMan[static_cast<int>(cacheSource::user)].RemoveData(Header[1].m_CRC32);
 
 					// has the shader been successfully written to the dest address
 					fpDst = gEnv->pCryPak->FOpen(szDst.c_str(), "rb", ICryPak::FLAGS_NEVER_IN_PAK | ICryPak::FLAGS_PATH_REAL | ICryPak::FOPEN_ONDISK);
@@ -1283,46 +1234,47 @@ bool CShaderManBin::ParseBinFX_Global_Annotations(CParserBin& Parser, SParserFra
 	SParserFrame OldFrame = Parser.BeginFrame(Frame);
 
 	FX_BEGIN_TOKENS
-	  FX_TOKEN(ShaderType)
-	FX_TOKEN(ShaderDrawType)
-	FX_TOKEN(PreprType)
-	FX_TOKEN(Public)
-	FX_TOKEN(NoPreview)
-	FX_TOKEN(LocalConstants)
-	FX_TOKEN(Cull)
-	FX_TOKEN(SupportsAttrInstancing)
-	FX_TOKEN(SupportsConstInstancing)
-	FX_TOKEN(SupportsDeferredShading)
-	FX_TOKEN(SupportsFullDeferredShading)
-	FX_TOKEN(Decal)
-	FX_TOKEN(DecalNoDepthOffset)
-	FX_TOKEN(HWTessellation)
-	FX_TOKEN(ZPrePass)
-	FX_TOKEN(VertexColors)
-	FX_TOKEN(NoChunkMerging)
-	FX_TOKEN(ForceTransPass)
-	FX_TOKEN(AfterHDRPostProcess)
-	FX_TOKEN(AfterPostProcess)
-	FX_TOKEN(ForceZpass)
-	FX_TOKEN(ForceWaterPass)
-	FX_TOKEN(ForceDrawLast)
-	FX_TOKEN(ForceDrawFirst)
-	FX_TOKEN(Hair)
-	FX_TOKEN(SkinPass)
-	FX_TOKEN(ForceGeneralPass)
-	FX_TOKEN(ForceDrawAfterWater)
-	FX_TOKEN(DepthFixup)
-	FX_TOKEN(SingleLightPass)
-	FX_TOKEN(Refractive)
-	FX_TOKEN(ForceRefractionUpdate)
-	FX_TOKEN(WaterParticle)
-	FX_TOKEN(VT_DetailBending)
-	FX_TOKEN(VT_DetailBendingGrass)
-	FX_TOKEN(VT_WindBending)
-	FX_TOKEN(AlphaBlendShadows)
-	FX_TOKEN(EyeOverlay)
-	FX_TOKEN(WrinkleBlending)
-	FX_TOKEN(Billboard)
+		FX_TOKEN(ShaderType)
+		FX_TOKEN(ShaderDrawType)
+		FX_TOKEN(PreprType)
+		FX_TOKEN(Public)
+		FX_TOKEN(NoPreview)
+		FX_TOKEN(LocalConstants)
+		FX_TOKEN(Cull)
+		FX_TOKEN(SupportsAttrInstancing)
+		FX_TOKEN(SupportsConstInstancing)
+		FX_TOKEN(SupportsDeferredShading)
+		FX_TOKEN(SupportsFullDeferredShading)
+		FX_TOKEN(Decal)
+		FX_TOKEN(DecalNoDepthOffset)
+		FX_TOKEN(Sky)
+		FX_TOKEN(HWTessellation)
+		FX_TOKEN(ZPrePass)
+		FX_TOKEN(VertexColors)
+		FX_TOKEN(NoChunkMerging)
+		FX_TOKEN(ForceTransPass)
+		FX_TOKEN(AfterHDRPostProcess)
+		FX_TOKEN(AfterPostProcess)
+		FX_TOKEN(ForceZpass)
+		FX_TOKEN(ForceWaterPass)
+		FX_TOKEN(ForceDrawLast)
+		FX_TOKEN(ForceDrawFirst)
+		FX_TOKEN(Hair)
+		FX_TOKEN(ForceGeneralPass)
+		FX_TOKEN(ForceDrawAfterWater)
+		FX_TOKEN(DepthFixup)
+		FX_TOKEN(DepthFixupReplace)
+		FX_TOKEN(SingleLightPass)
+		FX_TOKEN(Refractive)
+		FX_TOKEN(ForceRefractionUpdate)
+		FX_TOKEN(WaterParticle)
+		FX_TOKEN(VT_DetailBending)
+		FX_TOKEN(VT_DetailBendingGrass)
+		FX_TOKEN(VT_WindBending)
+		FX_TOKEN(AlphaBlendShadows)
+		FX_TOKEN(EyeOverlay)
+		FX_TOKEN(WrinkleBlending)
+		FX_TOKEN(Billboard)
 	FX_END_TOKENS
 
 	int nIndex;
@@ -1355,6 +1307,11 @@ bool CShaderManBin::ParseBinFX_Global_Annotations(CParserBin& Parser, SParserFra
 			if (!ef)
 				break;
 			ef->m_Flags |= EF_DECAL;
+			break;
+
+		case eT_Sky:
+			if (!ef)
+				break;
 			break;
 
 		case eT_LocalConstants:
@@ -1473,6 +1430,11 @@ bool CShaderManBin::ParseBinFX_Global_Annotations(CParserBin& Parser, SParserFra
 				break;
 			ef->m_Flags2 |= EF2_DEPTH_FIXUP;
 			break;
+		case eT_DepthFixupReplace:
+			if (!ef)
+				break;
+			ef->m_Flags2 |= EF2_DEPTH_FIXUP_REPLACE;
+			break;
 		case eT_SingleLightPass:
 			if (!ef)
 				break;
@@ -1510,12 +1472,6 @@ bool CShaderManBin::ParseBinFX_Global_Annotations(CParserBin& Parser, SParserFra
 			if (!ef)
 				break;
 			ef->m_Flags2 |= EF2_ALPHABLENDSHADOWS;
-			break;
-
-		case eT_SkinPass:
-			if (!ef)
-				break;
-			ef->m_Flags2 |= EF2_SKINPASS;
 			break;
 
 		case eT_EyeOverlay:
@@ -1567,12 +1523,11 @@ bool CShaderManBin::ParseBinFX_Global_Annotations(CParserBin& Parser, SParserFra
 				else if (eT == eT_Custom)
 					ef->m_eSHDType = eSHDT_CustomDraw;
 				else if (eT == eT_Sky)
-				{
 					ef->m_eSHDType = eSHDT_Sky;
-					ef->m_Flags |= EF_SKY;
-				}
 				else if (eT == eT_OceanShore)
 					ef->m_eSHDType = eSHDT_OceanShore;
+				else if (eT == eT_DebugHelper)
+					ef->m_eSHDType = eSHDT_DebugHelper;
 				else
 				{
 					Warning("Unknown shader draw type '%s'", Parser.GetString(eT));
@@ -1604,8 +1559,6 @@ bool CShaderManBin::ParseBinFX_Global_Annotations(CParserBin& Parser, SParserFra
 					ef->m_eShaderType = eST_PostProcess;
 				else if (eT == eT_HDR)
 					ef->m_eShaderType = eST_HDR;
-				else if (eT == eT_Sky)
-					ef->m_eShaderType = eST_Sky;
 				else if (eT == eT_Glass)
 					ef->m_eShaderType = eST_Glass;
 				else if (eT == eT_Vegetation)
@@ -1629,11 +1582,7 @@ bool CShaderManBin::ParseBinFX_Global_Annotations(CParserBin& Parser, SParserFra
 				if (!ef)
 					break;
 				eT = Parser.GetToken(Parser.m_Data);
-				if (eT == eT_GenerateSprites)
-					ef->m_Flags2 |= EF2_PREPR_GENSPRITES;
-				else if (eT == eT_GenerateClouds)
-					ef->m_Flags2 |= EF2_PREPR_GENCLOUDS;
-				else if (eT == eT_ScanWater)
+				if (eT == eT_ScanWater)
 					ef->m_Flags2 |= EF2_PREPR_SCANWATER;
 				else
 				{
@@ -1676,7 +1625,7 @@ bool CShaderManBin::ParseBinFX_Global(CParserBin& Parser, SParserFrame& Frame, b
 	SParserFrame OldFrame = Parser.BeginFrame(Frame);
 
 	FX_BEGIN_TOKENS
-	  FX_TOKEN(string)
+		FX_TOKEN(string)
 	FX_END_TOKENS
 
 	int nIndex;
@@ -1703,65 +1652,50 @@ bool CShaderManBin::ParseBinFX_Global(CParserBin& Parser, SParserFrame& Frame, b
 	return bRes;
 }
 
-static int sGetTAddress(uint32 nToken)
+static ESamplerAddressMode sGetTAddress(uint32 nToken)
 {
 	switch (nToken)
 	{
 	case eT_Clamp:
-		return TADDR_CLAMP;
+		return eSamplerAddressMode_Clamp;
 	case eT_Border:
-		return TADDR_BORDER;
+		return eSamplerAddressMode_Border;
 	case eT_Wrap:
-		return TADDR_WRAP;
+		return eSamplerAddressMode_Wrap;
 	case eT_Mirror:
-		return TADDR_MIRROR;
+		return eSamplerAddressMode_Mirror;
 	default:
 		assert(0);
 	}
-	return -1;
+
+	return eSamplerAddressMode_Clamp;
 }
 
-void STexSamplerFX::PostLoad()
-{
-	SHRenderTarget* pRt = m_pTarget;
-	if (!pRt)
-		return;
-	if (!strnicmp(m_szTexture.c_str(), "$RT_2D", 6))
-	{
-		if (pRt->m_nIDInPool >= 0)
-		{
-			if ((int)CTexture::s_CustomRT_2D.Num() <= pRt->m_nIDInPool)
-				CTexture::s_CustomRT_2D.Expand(pRt->m_nIDInPool + 1);
-		}
-		pRt->m_pTarget[0] = CTexture::s_ptexRT_2D;
-	}
-}
-
-bool CShaderManBin::ParseBinFX_Sampler_Annotations_Script(CParserBin& Parser, SParserFrame& Frame, STexSamplerFX* pSampler)
+bool CShaderManBin::ParseBinFX_Texture_Annotations_Script(CParserBin& Parser, SParserFrame& Frame, SFXTexture* pTexture)
 {
 	bool bRes = true;
 
 	SParserFrame OldFrame = Parser.BeginFrame(Frame);
 
 	FX_BEGIN_TOKENS
-	  FX_TOKEN(RenderOrder)
-	FX_TOKEN(ProcessOrder)
-	FX_TOKEN(RenderCamera)
-	FX_TOKEN(RenderType)
-	FX_TOKEN(RenderFilter)
-	FX_TOKEN(RenderColorTarget1)
-	FX_TOKEN(RenderDepthStencilTarget)
-	FX_TOKEN(ClearSetColor)
-	FX_TOKEN(ClearSetDepth)
-	FX_TOKEN(ClearTarget)
-	FX_TOKEN(RenderTarget_IDPool)
-	FX_TOKEN(RenderTarget_UpdateType)
-	FX_TOKEN(RenderTarget_Width)
-	FX_TOKEN(RenderTarget_Height)
-	FX_TOKEN(GenerateMips)
-	FX_END_TOKENS
+		FX_TOKEN(RenderOrder)
+		FX_TOKEN(ProcessOrder)
+		FX_TOKEN(RenderCamera)
+		FX_TOKEN(RenderType)
+		FX_TOKEN(RenderFilter)
+		FX_TOKEN(RenderColorTarget1)
+		FX_TOKEN(RenderDepthStencilTarget)
+		FX_TOKEN(ClearSetColor)
+		FX_TOKEN(ClearSetDepth)
+		FX_TOKEN(ClearTarget)
+		FX_TOKEN(RenderTarget_IDPool)
+		FX_TOKEN(RenderTarget_UpdateType)
+		FX_TOKEN(RenderTarget_Width)
+		FX_TOKEN(RenderTarget_Height)
+		FX_TOKEN(GenerateMips)
+		FX_END_TOKENS
 
-	SHRenderTarget * pRt = new SHRenderTarget;
+		SHRenderTarget * pRt = new SHRenderTarget;
 	int nIndex;
 
 	while (Parser.ParseObject(sCommands, nIndex))
@@ -1770,104 +1704,104 @@ bool CShaderManBin::ParseBinFX_Sampler_Annotations_Script(CParserBin& Parser, SP
 		switch (eT)
 		{
 		case eT_RenderOrder:
+		{
+			eT = Parser.GetToken(Parser.m_Data);
+			if (eT == eT_PreProcess)
+				pRt->m_eOrder = eRO_PreProcess;
+			else if (eT == eT_PostProcess)
+				pRt->m_eOrder = eRO_PostProcess;
+			else if (eT == eT_PreDraw)
+				pRt->m_eOrder = eRO_PreDraw;
+			else
 			{
-				eT = Parser.GetToken(Parser.m_Data);
-				if (eT == eT_PreProcess)
-					pRt->m_eOrder = eRO_PreProcess;
-				else if (eT == eT_PostProcess)
-					pRt->m_eOrder = eRO_PostProcess;
-				else if (eT == eT_PreDraw)
-					pRt->m_eOrder = eRO_PreDraw;
-				else
-				{
-					assert(0);
-					Warning("Unknown RenderOrder type '%s'", Parser.GetString(eT));
-				}
+				assert(0);
+				Warning("Unknown RenderOrder type '%s'", Parser.GetString(eT));
 			}
-			break;
+		}
+		break;
 
 		case eT_ProcessOrder:
+		{
+			eT = Parser.GetToken(Parser.m_Data);
+			if (eT == eT_WaterReflection)
+				pRt->m_nProcessFlags = FSPR_SCANTEXWATER;
+			else
 			{
-				eT = Parser.GetToken(Parser.m_Data);
-				if (eT == eT_WaterReflection)
-					pRt->m_nProcessFlags = FSPR_SCANTEXWATER;
-				else
-				{
-					assert(0);
-					Warning("Unknown ProcessOrder type '%s'", Parser.GetString(eT));
-				}
+				assert(0);
+				Warning("Unknown ProcessOrder type '%s'", Parser.GetString(eT));
 			}
-			break;
+		}
+		break;
 
 		case eT_RenderCamera:
+		{
+			eT = Parser.GetToken(Parser.m_Data);
+			if (eT == eT_WaterPlaneReflected)
+				pRt->m_nFlags |= FRT_CAMERA_REFLECTED_WATERPLANE;
+			else if (eT == eT_PlaneReflected)
+				pRt->m_nFlags |= FRT_CAMERA_REFLECTED_PLANE;
+			else if (eT == eT_Current)
+				pRt->m_nFlags |= FRT_CAMERA_CURRENT;
+			else
 			{
-				eT = Parser.GetToken(Parser.m_Data);
-				if (eT == eT_WaterPlaneReflected)
-					pRt->m_nFlags |= FRT_CAMERA_REFLECTED_WATERPLANE;
-				else if (eT == eT_PlaneReflected)
-					pRt->m_nFlags |= FRT_CAMERA_REFLECTED_PLANE;
-				else if (eT == eT_Current)
-					pRt->m_nFlags |= FRT_CAMERA_CURRENT;
-				else
-				{
-					assert(0);
-					Warning("Unknown RenderCamera type '%s'", Parser.GetString(eT));
-				}
+				assert(0);
+				Warning("Unknown RenderCamera type '%s'", Parser.GetString(eT));
 			}
-			break;
+		}
+		break;
 
 		case eT_GenerateMips:
 			pRt->m_nFlags |= FRT_GENERATE_MIPS;
 			break;
 
 		case eT_RenderType:
+		{
+			eT = Parser.GetToken(Parser.m_Data);
+			if (eT == eT_CurObject)
+				pRt->m_nFlags |= 0;
+			else if (eT == eT_CurScene)
+				pRt->m_nFlags |= FRT_RENDTYPE_CURSCENE;
+			else if (eT == eT_RecursiveScene)
+				pRt->m_nFlags |= FRT_RENDTYPE_RECURSIVECURSCENE;
+			else if (eT == eT_CopyScene)
+				pRt->m_nFlags |= FRT_RENDTYPE_COPYSCENE;
+			else
 			{
-				eT = Parser.GetToken(Parser.m_Data);
-				if (eT == eT_CurObject)
-					pRt->m_nFlags |= FRT_RENDTYPE_CUROBJECT;
-				else if (eT == eT_CurScene)
-					pRt->m_nFlags |= FRT_RENDTYPE_CURSCENE;
-				else if (eT == eT_RecursiveScene)
-					pRt->m_nFlags |= FRT_RENDTYPE_RECURSIVECURSCENE;
-				else if (eT == eT_CopyScene)
-					pRt->m_nFlags |= FRT_RENDTYPE_COPYSCENE;
-				else
-				{
-					assert(0);
-					Warning("Unknown RenderType type '%s'", Parser.GetString(eT));
-				}
+				assert(0);
+				Warning("Unknown RenderType type '%s'", Parser.GetString(eT));
 			}
-			break;
+		}
+		break;
 
 		case eT_RenderFilter:
+		{
+			eT = Parser.GetToken(Parser.m_Data);
+			if (eT == eT_Refractive)
+				pRt->m_nFilterFlags |= FRF_REFRACTIVE;
+			else if (eT == eT_Heat)
+				pRt->m_nFilterFlags |= FRF_HEAT;
+			else
 			{
-				eT = Parser.GetToken(Parser.m_Data);
-				if (eT == eT_Refractive)
-					pRt->m_nFilterFlags |= FRF_REFRACTIVE;
-				else if (eT == eT_Heat)
-					pRt->m_nFilterFlags |= FRF_HEAT;
-				else
-				{
-					assert(0);
-					Warning("Unknown RenderFilter type '%s'", Parser.GetString(eT));
-				}
+				assert(0);
+				Warning("Unknown RenderFilter type '%s'", Parser.GetString(eT));
 			}
-			break;
+		}
+		break;
 
 		case eT_RenderDepthStencilTarget:
+		{
+			eT = Parser.GetToken(Parser.m_Data);
+			if (eT == eT_DepthBuffer || eT == eT_DepthBufferTemp)
+				pRt->m_bTempDepth = true;
+			else if (eT == eT_DepthBufferOrig)
+				pRt->m_bTempDepth = false;
+			else
 			{
-				eT = Parser.GetToken(Parser.m_Data);
-				if (eT == eT_DepthBuffer || eT == eT_DepthBufferTemp)
-					pRt->m_bTempDepth = true;
-				else if (eT == eT_DepthBufferOrig)
-					pRt->m_bTempDepth = false;
-				else
-				{
-					assert(0);
-					Warning("Unknown RenderDepthStencilTarget type '%s'", Parser.GetString(eT));
-				}
+				assert(0);
+				Warning("Unknown RenderDepthStencilTarget type '%s'", Parser.GetString(eT));
 			}
-			break;
+		}
+		break;
 
 		case eT_RenderTarget_IDPool:
 			pRt->m_nIDInPool = Parser.GetInt(Parser.GetToken(Parser.m_Data));
@@ -1875,68 +1809,68 @@ bool CShaderManBin::ParseBinFX_Sampler_Annotations_Script(CParserBin& Parser, SP
 			break;
 
 		case eT_RenderTarget_Width:
-			{
-				eT = Parser.GetToken(Parser.m_Data);
-				if (eT == eT_$ScreenSize)
-					pRt->m_nWidth = -1;
-				else
-					pRt->m_nWidth = Parser.GetInt(eT);
-			}
-			break;
+		{
+			eT = Parser.GetToken(Parser.m_Data);
+			if (eT == eT_$ScreenSize)
+				pRt->m_nWidth = -1;
+			else
+				pRt->m_nWidth = Parser.GetInt(eT);
+		}
+		break;
 
 		case eT_RenderTarget_Height:
-			{
-				eT = Parser.GetToken(Parser.m_Data);
-				if (eT == eT_$ScreenSize)
-					pRt->m_nHeight = -1;
-				else
-					pRt->m_nHeight = Parser.GetInt(eT);
-			}
-			break;
+		{
+			eT = Parser.GetToken(Parser.m_Data);
+			if (eT == eT_$ScreenSize)
+				pRt->m_nHeight = -1;
+			else
+				pRt->m_nHeight = Parser.GetInt(eT);
+		}
+		break;
 
 		case eT_RenderTarget_UpdateType:
-			{
-				eT = Parser.GetToken(Parser.m_Data);
-				if (eT == eT_WaterReflect)
-					pRt->m_eUpdateType = eRTUpdate_WaterReflect;
-				else if (eT == eT_Allways)
-					pRt->m_eUpdateType = eRTUpdate_Always;
-				else
-					assert(0);
-			}
-			break;
+		{
+			eT = Parser.GetToken(Parser.m_Data);
+			if (eT == eT_WaterReflect)
+				pRt->m_eUpdateType = eRTUpdate_WaterReflect;
+			else if (eT == eT_Allways)
+				pRt->m_eUpdateType = eRTUpdate_Always;
+			else
+				assert(0);
+		}
+		break;
 
 		case eT_ClearSetColor:
+		{
+			eT = Parser.GetToken(Parser.m_Data);
+			if (eT == eT_FogColor)
+				pRt->m_nFlags |= FRT_CLEAR_FOGCOLOR;
+			else
 			{
-				eT = Parser.GetToken(Parser.m_Data);
-				if (eT == eT_FogColor)
-					pRt->m_nFlags |= FRT_CLEAR_FOGCOLOR;
-				else
-				{
-					string sStr = Parser.GetString(Parser.m_Data);
-					shGetColor(sStr.c_str(), pRt->m_ClearColor);
-				}
+				string sStr = Parser.GetString(Parser.m_Data);
+				shGetColor(sStr.c_str(), pRt->m_ClearColor);
 			}
-			break;
+		}
+		break;
 
 		case eT_ClearSetDepth:
 			pRt->m_fClearDepth = Parser.GetFloat(Parser.m_Data);
 			break;
 
 		case eT_ClearTarget:
+		{
+			eT = Parser.GetToken(Parser.m_Data);
+			if (eT == eT_Color)
+				pRt->m_nFlags |= FRT_CLEAR_COLOR;
+			else if (eT == eT_Depth)
+				pRt->m_nFlags |= FRT_CLEAR_DEPTH;
+			else
 			{
-				eT = Parser.GetToken(Parser.m_Data);
-				if (eT == eT_Color)
-					pRt->m_nFlags |= FRT_CLEAR_COLOR;
-				else if (eT == eT_Depth)
-					pRt->m_nFlags |= FRT_CLEAR_DEPTH;
-				else
-				{
-					assert(0);
-					Warning("Unknown ClearTarget type '%s'", Parser.GetString(eT));
-				}
+				assert(0);
+				Warning("Unknown ClearTarget type '%s'", Parser.GetString(eT));
 			}
-			break;
+		}
+		break;
 
 		default:
 			assert(0);
@@ -1944,25 +1878,29 @@ bool CShaderManBin::ParseBinFX_Sampler_Annotations_Script(CParserBin& Parser, SP
 	}
 	if (pRt->m_eOrder == eRO_PreProcess)
 		Parser.m_pCurShader->m_Flags |= EF_PRECACHESHADER;
-	pSampler->m_pTarget = pRt;
-	pSampler->PostLoad();
+	pTexture->m_pTarget = pRt;
+// 	pTexture->PostLoad();
 
 	Parser.EndFrame(OldFrame);
 
 	return bRes;
 }
 
-bool CShaderManBin::ParseBinFX_Sampler_Annotations(CParserBin& Parser, SParserFrame& Annotations, STexSamplerFX* pSampler)
+bool CShaderManBin::ParseBinFX_Texture_Annotations(CParserBin& Parser, SParserFrame& Annotations, SFXTexture* pTexture)
 {
 	bool bRes = true;
 
 	SParserFrame OldFrame = Parser.BeginFrame(Annotations);
 
 	FX_BEGIN_TOKENS
-	  FX_TOKEN(string)
+		FX_TOKEN(string)
+		FX_TOKEN(UIName)
+		FX_TOKEN(UIDescription)
+		FX_TOKEN(sRGBLookup)
+		FX_TOKEN(Global)
 	FX_END_TOKENS
 
-	int nIndex = 0;
+		int nIndex = 0;
 
 	while (Parser.ParseObject(sCommands, nIndex))
 	{
@@ -1971,416 +1909,53 @@ bool CShaderManBin::ParseBinFX_Sampler_Annotations(CParserBin& Parser, SParserFr
 		switch (eT)
 		{
 		case eT_string:
-			{
-				eT = Parser.GetToken(Parser.m_Name);
-				assert(eT == eT_Script);
-				bRes &= ParseBinFX_Sampler_Annotations_Script(Parser, Parser.m_Data, pSampler);
-			}
-			break;
-
-		default:
-			assert(0);
-		}
-	}
-
-	Parser.EndFrame(OldFrame);
-
-	return bRes;
-}
-
-bool CShaderManBin::ParseBinFX_Sampler(CParserBin& Parser, SParserFrame& Frame, uint32 dwName, SParserFrame Annotations, EToken samplerType)
-{
-	bool bRes = true;
-
-	SParserFrame OldFrame = Parser.BeginFrame(Frame);
-
-	FX_BEGIN_TOKENS
-	  FX_TOKEN(string)
-	FX_TOKEN(Texture)
-	FX_TOKEN(Filter)
-	FX_TOKEN(MinFilter)
-	FX_TOKEN(MagFilter)
-	FX_TOKEN(MipFilter)
-	FX_TOKEN(AddressU)
-	FX_TOKEN(AddressV)
-	FX_TOKEN(AddressW)
-	FX_TOKEN(BorderColor)
-	FX_TOKEN(AnisotropyLevel)
-	FX_TOKEN(sRGBLookup)
-	FX_TOKEN(Global)
-	FX_END_TOKENS
-
-	STexSamplerFX samp;
-	STexState ST;
-	DWORD dwBorderColor = 0;
-	uint32 nFilter = 0;
-	uint32 nFiltMin = 0;
-	uint32 nFiltMip = 0;
-	uint32 nFiltMag = 0;
-	uint32 nAddressU = 0;
-	uint32 nAddressV = 0;
-	uint32 nAddressW = 0;
-	uint32 nAnisotropyLevel = 0;
-
-	int nIndex = -1;
-
-	while (Parser.ParseObject(sCommands, nIndex))
-	{
-		EToken eT = Parser.GetToken();
-		switch (eT)
 		{
-		case eT_string:
-			{
-				eT = Parser.GetToken(Parser.m_Name);
-
-				SParserFrame stringData = Parser.m_Data;
-
-				// string could have ""s still, if so trim them off.
-				if (Parser.GetToken(stringData) == eT_quote)
-				{
-					stringData.m_nFirstToken++;
-					stringData.m_nLastToken--;
-				}
-
+			eT = Parser.GetToken(Parser.m_Name);
+			assert(eT == eT_Script);
+			bRes &= ParseBinFX_Texture_Annotations_Script(Parser, Parser.m_Data, pTexture);
+		}
+		break;
 #if SHADER_REFLECT_TEXTURE_SLOTS
-				if (eT == eT_UIName)
-					samp.m_szUIName = Parser.GetString(stringData);
-				else if (eT == eT_UIDescription)
-					samp.m_szUIDescription = Parser.GetString(stringData);
-#endif
-			}
-			break;
+		case eT_UIName:
+		{
+			SParserFrame stringData = Parser.m_Data;
 
-		case eT_Texture:
-			samp.m_szTexture = Parser.GetString(Parser.m_Data);
-			break;
-
-		case eT_BorderColor:
+			if (Parser.GetToken(stringData) == eT_quote)
 			{
-				string Str = Parser.GetString(Parser.m_Data);
-				ColorF colBorder = Col_Black;
-				shGetColor(Str.c_str(), colBorder);
-				dwBorderColor = colBorder.pack_argb8888();
-				ST.m_bActive = true;
+				stringData.m_nFirstToken++;
+				stringData.m_nLastToken--;
 			}
+			pTexture->m_szUIName = Parser.GetString(stringData);
+		}
+		break;
+		case eT_UIDescription:
+		{
+			SParserFrame stringData = Parser.m_Data;
+
+			if (Parser.GetToken(stringData) == eT_quote)
+			{
+				stringData.m_nFirstToken++;
+				stringData.m_nLastToken--;
+			}
+			pTexture->m_szUIDesc = Parser.GetString(stringData);
+		}
+		break;
+#else
+		case eT_UIName:
+		case eT_UIDescription:
 			break;
+#endif
 
 		case eT_sRGBLookup:
-			ST.m_bSRGBLookup = Parser.GetBool(Parser.m_Data);
+			pTexture->m_bSRGBLookup = Parser.GetBool(Parser.m_Data);
 			break;
 
 		case eT_Global:
-			break;
-
-		case eT_AnisotropyLevel:
-			nAnisotropyLevel = Parser.GetToken(Parser.m_Data);
-			break;
-		case eT_Filter:
-			nFilter = Parser.GetToken(Parser.m_Data);
-			ST.m_bActive = true;
-			break;
-		case eT_MinFilter:
-			nFiltMin = Parser.GetToken(Parser.m_Data);
-			ST.m_bActive = true;
-			break;
-		case eT_MagFilter:
-			nFiltMag = Parser.GetToken(Parser.m_Data);
-			ST.m_bActive = true;
-			break;
-		case eT_MipFilter:
-			nFiltMip = Parser.GetToken(Parser.m_Data);
-			ST.m_bActive = true;
-			break;
-		case eT_AddressU:
-			nAddressU = sGetTAddress(Parser.GetToken(Parser.m_Data));
-			ST.m_bActive = true;
-			break;
-		case eT_AddressV:
-			nAddressV = sGetTAddress(Parser.GetToken(Parser.m_Data));
-			ST.m_bActive = true;
-			break;
-		case eT_AddressW:
-			nAddressW = sGetTAddress(Parser.GetToken(Parser.m_Data));
-			ST.m_bActive = true;
+			pTexture->m_nFlags |= PF_GLOBAL;
 			break;
 
 		default:
 			assert(0);
-		}
-	}
-
-	samp.m_szName = Parser.GetString(dwName);
-	if (nFilter > 0)
-	{
-		switch (nFilter)
-		{
-		case eT_MIN_MAG_MIP_POINT:
-			ST.SetFilterMode(FILTER_POINT);
-			break;
-		case eT_MIN_MAG_MIP_LINEAR:
-			ST.SetFilterMode(FILTER_TRILINEAR);
-			break;
-		case eT_MIN_MAG_LINEAR_MIP_POINT:
-			ST.SetFilterMode(FILTER_BILINEAR);
-			break;
-		case eT_COMPARISON_MIN_MAG_LINEAR_MIP_POINT:
-			ST.SetFilterMode(FILTER_BILINEAR);
-			ST.SetComparisonFilter(true);
-			break;
-		default:
-			{
-				const char* szFilter = Parser.GetString(nFilter);
-				assert(0);
-			}
-			break;
-		}
-	}
-
-	if (nFiltMag > 0 && nFiltMin > 0 && nFiltMip > 0)
-	{
-		if (nFiltMag == eT_LINEAR && nFiltMin == eT_LINEAR && nFiltMip == eT_LINEAR)
-			ST.SetFilterMode(FILTER_TRILINEAR);
-		else if (nFiltMag == eT_LINEAR && nFiltMin == eT_LINEAR && nFiltMip == eT_POINT)
-			ST.SetFilterMode(FILTER_BILINEAR);
-		else if (nFiltMag == eT_LINEAR && nFiltMin == eT_LINEAR && nFiltMip == eT_NONE)
-			ST.SetFilterMode(FILTER_LINEAR);
-		else if (nFiltMag == eT_POINT && nFiltMin == eT_POINT && nFiltMip == eT_POINT)
-			ST.SetFilterMode(FILTER_POINT);
-		else if (nFiltMag == eT_POINT && nFiltMin == eT_POINT && nFiltMip == eT_NONE)
-			ST.SetFilterMode(FILTER_NONE);
-		else if (nFiltMag == eT_ANISOTROPIC || nFiltMin == eT_ANISOTROPIC)
-		{
-			if (nAnisotropyLevel == eT_0 + 4)
-				ST.SetFilterMode(FILTER_ANISO4X);
-			else if (nAnisotropyLevel == eT_0 + 8)
-				ST.SetFilterMode(FILTER_ANISO8X);
-			else if (nAnisotropyLevel == eT_0 + 16)
-				ST.SetFilterMode(FILTER_ANISO16X);
-			else
-				ST.SetFilterMode(FILTER_ANISO2X);
-		}
-		else
-		{
-			Warning("!Unknown sampler filter mode (Min=%s, Mag=%s, Mip=%s) for sampler '%s'", Parser.GetString(nFiltMin), Parser.GetString(nFiltMag), Parser.GetString(nFiltMip), samp.m_szName.c_str());
-			assert(0);
-		}
-	}
-	else
-		ST.SetFilterMode(-1);
-
-	ST.SetClampMode(nAddressU, nAddressV, nAddressW);
-	ST.SetBorderColor(dwBorderColor);
-
-	if (!gcpRendD3D->IsShaderCacheGenMode())
-	{
-		samp.m_nTexState = CTexture::GetTexState(ST);
-	}
-	samp.m_nSlotId = m_pCEF->mfCheckTextureSlotName(samp.m_szTexture);
-
-	if (!Annotations.IsEmpty())
-		bRes &= ParseBinFX_Sampler_Annotations(Parser, Annotations, &samp);
-
-	switch (samplerType)
-	{
-	case eT_sampler1D:
-		samp.m_eTexType = eTT_1D;
-		break;
-	case eT_sampler2D:
-	case eT_Texture2D:
-		samp.m_eTexType = eTT_2D;
-		break;
-	case eT_Texture2DArray:
-		samp.m_eTexType = eTT_2DArray;
-		break;
-	case eT_Texture2DMS:
-		samp.m_eTexType = eTT_2DMS;
-		break;
-	case eT_sampler3D:
-	case eT_Texture3D:
-		samp.m_eTexType = eTT_3D;
-		break;
-	case eT_samplerCUBE:
-	case eT_TextureCube:
-		samp.m_eTexType = eTT_Cube;
-		break;
-	case eT_TextureCubeArray:
-		samp.m_eTexType = eTT_CubeArray;
-		break;
-	default:
-#if !defined(_RELEASE)
-		__debugbreak();
-#endif
-		samp.m_eTexType = eTT_2D;
-		break;
-	}
-
-	mfAddFXSampler(Parser.m_pCurShader, &samp);
-
-	Parser.EndFrame(OldFrame);
-
-	return bRes;
-}
-
-bool CShaderManBin::ParseBinFX_Sampler(CParserBin& Parser, SParserFrame& Frame, SFXSampler& Sampl)
-{
-	bool bRes = true;
-
-	SParserFrame OldFrame = Parser.BeginFrame(Frame);
-
-	FX_BEGIN_TOKENS
-	  FX_TOKEN(string)
-	FX_TOKEN(Filter)
-	FX_TOKEN(MinFilter)
-	FX_TOKEN(MagFilter)
-	FX_TOKEN(MipFilter)
-	FX_TOKEN(AddressU)
-	FX_TOKEN(AddressV)
-	FX_TOKEN(AddressW)
-	FX_TOKEN(BorderColor)
-	FX_TOKEN(AnisotropyLevel)
-	FX_TOKEN(sRGBLookup)
-	FX_TOKEN(Global)
-	FX_END_TOKENS
-
-	STexState ST;
-	DWORD dwBorderColor = 0;
-	uint32 nFilter = 0;
-	uint32 nFiltMin = 0;
-	uint32 nFiltMip = 0;
-	uint32 nFiltMag = 0;
-	uint32 nAddressU = 0;
-	uint32 nAddressV = 0;
-	uint32 nAddressW = 0;
-	uint32 nAnisotropyLevel = 0;
-
-	int nIndex = -1;
-
-	while (Parser.ParseObject(sCommands, nIndex))
-	{
-		EToken eT = Parser.GetToken();
-		switch (eT)
-		{
-		case eT_BorderColor:
-			{
-				string Str = Parser.GetString(Parser.m_Data);
-				ColorF colBorder = Col_Black;
-				shGetColor(Str.c_str(), colBorder);
-				dwBorderColor = colBorder.pack_argb8888();
-				ST.m_bActive = true;
-			}
-			break;
-
-		// REMOVE: deprecated
-		case eT_sRGBLookup:
-			ST.m_bSRGBLookup = Parser.GetBool(Parser.m_Data);
-			break;
-
-		case eT_AnisotropyLevel:
-			nAnisotropyLevel = Parser.GetToken(Parser.m_Data);
-			break;
-
-		case eT_Filter:
-			nFilter = Parser.GetToken(Parser.m_Data);
-			ST.m_bActive = true;
-			break;
-
-		case eT_MinFilter:
-			nFiltMin = Parser.GetToken(Parser.m_Data);
-			ST.m_bActive = true;
-			break;
-		case eT_MagFilter:
-			nFiltMag = Parser.GetToken(Parser.m_Data);
-			ST.m_bActive = true;
-			break;
-		case eT_MipFilter:
-			nFiltMip = Parser.GetToken(Parser.m_Data);
-			ST.m_bActive = true;
-			break;
-		case eT_AddressU:
-			nAddressU = sGetTAddress(Parser.GetToken(Parser.m_Data));
-			ST.m_bActive = true;
-			break;
-		case eT_AddressV:
-			nAddressV = sGetTAddress(Parser.GetToken(Parser.m_Data));
-			ST.m_bActive = true;
-			break;
-		case eT_AddressW:
-			nAddressW = sGetTAddress(Parser.GetToken(Parser.m_Data));
-			ST.m_bActive = true;
-			break;
-
-		default:
-			assert(0);
-		}
-	}
-
-	if (nFilter > 0)
-	{
-		switch (nFilter)
-		{
-		case eT_MIN_MAG_MIP_POINT:
-			ST.SetFilterMode(FILTER_POINT);
-			break;
-		case eT_MIN_MAG_MIP_LINEAR:
-			ST.SetFilterMode(FILTER_TRILINEAR);
-			break;
-		case eT_MIN_MAG_LINEAR_MIP_POINT:
-			ST.SetFilterMode(FILTER_BILINEAR);
-			break;
-		case eT_COMPARISON_MIN_MAG_LINEAR_MIP_POINT:
-			ST.SetFilterMode(FILTER_BILINEAR);
-			ST.SetComparisonFilter(true);
-			break;
-		default:
-			{
-				const char* szFilter = Parser.GetString(nFilter);
-				assert(0);
-				int nnn = 0;
-			}
-			break;
-		}
-		int nnn = 0;
-	}
-	if (nFiltMag > 0 && nFiltMin > 0 && nFiltMip > 0)
-	{
-		if (nFiltMag == eT_LINEAR && nFiltMin == eT_LINEAR && nFiltMip == eT_LINEAR)
-			ST.SetFilterMode(FILTER_TRILINEAR);
-		else if (nFiltMag == eT_LINEAR && nFiltMin == eT_LINEAR && nFiltMip == eT_POINT)
-			ST.SetFilterMode(FILTER_BILINEAR);
-		else if (nFiltMag == eT_LINEAR && nFiltMin == eT_LINEAR && nFiltMip == eT_NONE)
-			ST.SetFilterMode(FILTER_LINEAR);
-		else if (nFiltMag == eT_POINT && nFiltMin == eT_POINT && nFiltMip == eT_POINT)
-			ST.SetFilterMode(FILTER_POINT);
-		else if (nFiltMag == eT_POINT && nFiltMin == eT_POINT && nFiltMip == eT_NONE)
-			ST.SetFilterMode(FILTER_NONE);
-		else if (nFiltMag == eT_ANISOTROPIC || nFiltMin == eT_ANISOTROPIC)
-		{
-			if (nAnisotropyLevel == eT_0 + 4)
-				ST.SetFilterMode(FILTER_ANISO4X);
-			else if (nAnisotropyLevel == eT_0 + 8)
-				ST.SetFilterMode(FILTER_ANISO8X);
-			else if (nAnisotropyLevel == eT_0 + 16)
-				ST.SetFilterMode(FILTER_ANISO16X);
-			else
-				ST.SetFilterMode(FILTER_ANISO2X);
-		}
-		else
-		{
-			Warning("!Unknown sampler filter mode (Min=%s, Mag=%s, Mip=%s) for sampler '%s'", Parser.GetString(nFiltMin), Parser.GetString(nFiltMag), Parser.GetString(nFiltMip), Sampl.m_Name.c_str());
-			assert(0);
-		}
-	}
-	else
-		ST.SetFilterMode(-1);
-
-	if (ST.m_bActive)
-	{
-		ST.SetClampMode(nAddressU, nAddressV, nAddressW);
-		ST.SetBorderColor(dwBorderColor);
-
-		if (!gcpRendD3D->IsShaderCacheGenMode())
-		{
-			Sampl.m_nTexState = CTexture::GetTexState(ST);
 		}
 	}
 
@@ -2389,26 +1964,22 @@ bool CShaderManBin::ParseBinFX_Sampler(CParserBin& Parser, SParserFrame& Frame, 
 	return bRes;
 }
 
-bool CShaderManBin::ParseBinFX_Texture(CParserBin& Parser, SParserFrame& Frame, SFXTexture& Tex)
+bool CShaderManBin::ParseBinFX_Texture(CParserBin& Parser, SParserFrame& Frame, SFXTexture& Tex, SParserFrame Annotations)
 {
 	bool bRes = true;
 
 	SParserFrame OldFrame = Parser.BeginFrame(Frame);
 
 	FX_BEGIN_TOKENS
-	  FX_TOKEN(Texture)
-	FX_TOKEN(UIName)
-	FX_TOKEN(UIDescription)
-	FX_TOKEN(sRGBLookup)
-	FX_TOKEN(Global)
+		FX_TOKEN(Texture)
 
-	FX_TOKEN(slot)
-	FX_TOKEN(vsslot)
-	FX_TOKEN(psslot)
-	FX_TOKEN(hsslot)
-	FX_TOKEN(dsslot)
-	FX_TOKEN(gsslot)
-	FX_TOKEN(csslot)
+		FX_TOKEN(slot)
+		FX_TOKEN(vsslot)
+		FX_TOKEN(psslot)
+		FX_TOKEN(hsslot)
+		FX_TOKEN(dsslot)
+		FX_TOKEN(gsslot)
+		FX_TOKEN(csslot)
 	FX_END_TOKENS
 
 	int nIndex = -1;
@@ -2422,44 +1993,6 @@ bool CShaderManBin::ParseBinFX_Texture(CParserBin& Parser, SParserFrame& Frame, 
 			{
 				Tex.m_szTexture = Parser.GetString(Parser.m_Data);
 			}
-			break;
-#if SHADER_REFLECT_TEXTURE_SLOTS
-		case eT_UIName:
-			{
-				SParserFrame stringData = Parser.m_Data;
-
-				if (Parser.GetToken(stringData) == eT_quote)
-				{
-					stringData.m_nFirstToken++;
-					stringData.m_nLastToken--;
-				}
-				Tex.m_szUIName = Parser.GetString(stringData);
-			}
-			break;
-		case eT_UIDescription:
-			{
-				SParserFrame stringData = Parser.m_Data;
-
-				if (Parser.GetToken(stringData) == eT_quote)
-				{
-					stringData.m_nFirstToken++;
-					stringData.m_nLastToken--;
-				}
-				Tex.m_szUIDesc = Parser.GetString(stringData);
-			}
-			break;
-#else
-		case eT_UIName:
-		case eT_UIDescription:
-			break;
-#endif
-
-		case eT_sRGBLookup:
-			Tex.m_bSRGBLookup = Parser.GetBool(Parser.m_Data);
-			break;
-
-		case eT_Global:
-			Tex.m_nFlags |= PF_GLOBAL;
 			break;
 
 		case eT_slot:
@@ -2475,6 +2008,9 @@ bool CShaderManBin::ParseBinFX_Texture(CParserBin& Parser, SParserFrame& Frame, 
 			assert(0);
 		}
 	}
+
+	if (!Annotations.IsEmpty())
+		bRes &= ParseBinFX_Texture_Annotations(Parser, Annotations, &Tex);
 
 	Parser.EndFrame(OldFrame);
 
@@ -2513,7 +2049,7 @@ void CShaderManBin::AddAffectedParameter(CParserBin& Parser, std::vector<SFXPara
 		AffectedParams.push_back(*pParam);
 	else
 	{
-		if (CParserBin::m_nPlatform == SF_D3D11 || CParserBin::m_nPlatform == SF_DURANGO || CParserBin::m_nPlatform == SF_ORBIS || CParserBin::m_nPlatform == SF_GL4 || CParserBin::m_nPlatform == SF_GLES3)
+		if (CParserBin::m_nPlatform & (SF_D3D11 | SF_D3D12 | SF_DURANGO | SF_ORBIS | SF_GL4 | SF_GLES3 | SF_VULKAN))
 		{
 			assert(eSHClass < eHWSC_Num);
 			if (((nFlags & PF_TWEAKABLE_MASK) || pParam->m_Values.c_str()[0] == '(') && pParam->m_nRegister[eSHClass] >= 0 && pParam->m_nRegister[eSHClass] < 1000)
@@ -2906,6 +2442,8 @@ bool CShaderManBin::ParseBinFX_Technique_Pass_PackParameters(CParserBin& Parser,
 	// Replace new parameters in shader tokens
 	for (uint32 n = 0; n < AffectedFunc.size(); n++)
 	{
+		CRY_ASSERT_MESSAGE(AffectedFunc[n] < Parser.m_CodeFragments.size(), "function index is larger than number of CodeFragments!");
+
 		SCodeFragment* st = &Parser.m_CodeFragments[AffectedFunc[n]];
 		//const char *szName = Parser.GetString(st->m_dwName);
 
@@ -2975,7 +2513,7 @@ inline bool CompareVars(const SFXParam* a, const SFXParam* b)
 	return (nReg0 < nReg1);
 }
 
-EToken dwNamesCB[CB_NUM] = { eT_PER_BATCH, eT_PER_INSTANCE, eT_unknown, eT_PER_MATERIAL, eT_unknown, eT_unknown, eT_SKIN_DATA, eT_INSTANCE_DATA };
+EToken dwNamesCB[CB_NUM] = { eT_PER_BATCH, eT_PER_MATERIAL };
 
 void CShaderManBin::AddParameterToScript(CParserBin& Parser, SFXParam* pr, PodArray<uint32>& SHData, EHWShaderClass eSHClass, int nCB)
 {
@@ -3111,7 +2649,7 @@ void CShaderManBin::AddTextureToScript(CParserBin& Parser, SFXTexture* pr, PodAr
 
 bool CShaderManBin::ParseBinFX_Technique_Pass_GenerateShaderData(CParserBin& Parser, FXMacroBin& Macros, SShaderFXParams& FXParams, uint32 dwSHName, EHWShaderClass eSHClass, uint64& nAffectMask, uint32 dwSHType, PodArray<uint32>& SHData, SShaderTechnique* pShTech)
 {
-	LOADING_TIME_PROFILE_SECTION(iSystem);
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY)(iSystem);
 	assert(gRenDev->m_pRT->IsRenderThread() || gRenDev->m_pRT->IsLevelLoadingThread());
 
 	bool bRes = true;
@@ -3180,6 +2718,8 @@ bool CShaderManBin::ParseBinFX_Technique_Pass_GenerateShaderData(CParserBin& Par
 	nAffectMask = 0;
 	for (i = 0; i < AffectedFragments.size(); i++)
 	{
+		CRY_ASSERT_MESSAGE(AffectedFragments[i] < Parser.m_CodeFragments.size(), "fragment index is larger than number of CodeFragments!");
+
 		SCodeFragment* s = &Parser.m_CodeFragments[AffectedFragments[i]];
 		if (s->m_eType != eFT_Function && s->m_eType != eFT_Structure && s->m_eType != eFT_ConstBuffer && s->m_eType != eFT_StorageClass)
 			continue;
@@ -3425,7 +2965,7 @@ bool CShaderManBin::ParseBinFX_Technique_Pass_GenerateShaderData(CParserBin& Par
 			Parser.CopyTokens(cf, SHData, Replaces, NewTokens, h);
 			if (cf->m_eType == eFT_Sampler)
 			{
-				if (CParserBin::m_nPlatform == SF_D3D11 || CParserBin::m_nPlatform == SF_DURANGO || CParserBin::m_nPlatform == SF_GL4 || CParserBin::m_nPlatform == SF_GLES3)
+				if (CParserBin::m_nPlatform & (SF_D3D11 | SF_D3D12 | SF_DURANGO | SF_GL4 | SF_GLES3 | SF_VULKAN))
 				{
 					int nT = Parser.m_Tokens[cf->m_nLastToken - 1];
 					//assert(nT >= eT_s0 && nT <= eT_s15);
@@ -3450,7 +2990,7 @@ bool CShaderManBin::ParseBinFX_Technique_Pass_LoadShader(CParserBin& Parser, FXM
 {
 	assert(gRenDev->m_pRT->IsRenderThread() || gRenDev->m_pRT->IsLevelLoadingThread());
 
-	LOADING_TIME_PROFILE_SECTION(iSystem);
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY)(iSystem);
 	bool bRes = true;
 
 	assert(!SHFrame.IsEmpty());
@@ -3502,14 +3042,12 @@ bool CShaderManBin::ParseBinFX_Technique_Pass_LoadShader(CParserBin& Parser, FXM
 	CHWShader* pSH = NULL;
 	bool bValidShader = false;
 
-	CShader* efSave = gRenDev->m_RP.m_pShader;
-	gRenDev->m_RP.m_pShader = Parser.m_pCurShader;
-	assert(gRenDev->m_RP.m_pShader != 0);
+	assert(Parser.m_pCurShader != nullptr);
 	if (bRes && (!CParserBin::m_bParseFX || !SHData.empty() || szName[0] == '$'))
 	{
 		char str[1024];
 		cry_sprintf(str, "%s@%s", Parser.m_pCurShader->m_NameShader.c_str(), szName);
-		pSH = CHWShader::mfForName(str, Parser.m_pCurShader->m_NameFile, Parser.m_pCurShader->m_CRC32, szName, eSHClass, SHData, &Parser.m_TokenTable, dwSHType, Parser.m_pCurShader, nGenMask, Parser.m_pCurShader->m_nMaskGenFX);
+		pSH = CHWShader::mfForName(str, Parser.m_pCurShader->m_NameFile, Parser.m_pCurShader->m_CRC32, szName, eSHClass, SHData, Parser.m_TokenTable, dwSHType, Parser.m_pCurShader, nGenMask, Parser.m_pCurShader->m_nMaskGenFX);
 	}
 	if (pSH)
 	{
@@ -3536,8 +3074,6 @@ bool CShaderManBin::ParseBinFX_Technique_Pass_LoadShader(CParserBin& Parser, FXM
 			CryLog("Unsupported/unrecognised shader: %s[%d]", pSH->m_Name.c_str(), eSHClass);
 	}
 
-	gRenDev->m_RP.m_pShader = efSave;
-
 	return bRes;
 }
 
@@ -3546,23 +3082,23 @@ bool CShaderManBin::ParseBinFX_Technique_Pass(CParserBin& Parser, SParserFrame& 
 	SParserFrame OldFrame = Parser.BeginFrame(Frame);
 
 	FX_BEGIN_TOKENS
-	  FX_TOKEN(VertexShader)
-	FX_TOKEN(PixelShader)
-	FX_TOKEN(GeometryShader)
-	FX_TOKEN(DomainShader)
-	FX_TOKEN(HullShader)
-	FX_TOKEN(ComputeShader)
-	FX_TOKEN(ZEnable)
-	FX_TOKEN(ZWriteEnable)
-	FX_TOKEN(CullMode)
-	FX_TOKEN(SrcBlend)
-	FX_TOKEN(DestBlend)
-	FX_TOKEN(AlphaBlendEnable)
-	FX_TOKEN(AlphaFunc)
-	FX_TOKEN(AlphaRef)
-	FX_TOKEN(ZFunc)
-	FX_TOKEN(ColorWriteEnable)
-	FX_TOKEN(IgnoreMaterialState)
+		FX_TOKEN(VertexShader)
+		FX_TOKEN(PixelShader)
+		FX_TOKEN(GeometryShader)
+		FX_TOKEN(DomainShader)
+		FX_TOKEN(HullShader)
+		FX_TOKEN(ComputeShader)
+		FX_TOKEN(ZEnable)
+		FX_TOKEN(ZWriteEnable)
+		FX_TOKEN(CullMode)
+		FX_TOKEN(SrcBlend)
+		FX_TOKEN(DestBlend)
+		FX_TOKEN(AlphaBlendEnable)
+		FX_TOKEN(AlphaFunc)
+		FX_TOKEN(AlphaRef)
+		FX_TOKEN(ZFunc)
+		FX_TOKEN(ColorWriteEnable)
+		FX_TOKEN(IgnoreMaterialState)
 	FX_END_TOKENS
 
 	bool bRes = true;
@@ -3583,7 +3119,6 @@ bool CShaderManBin::ParseBinFX_Technique_Pass(CParserBin& Parser, SParserFrame& 
 	byte AlphaRef = 0;
 	int State = GS_DEPTHWRITE;
 
-	int nMaxTMU = 0;
 	signed char Cull = -1;
 	int nIndex;
 	EToken eSrcBlend = eT_unknown;
@@ -3651,29 +3186,29 @@ bool CShaderManBin::ParseBinFX_Technique_Pass(CParserBin& Parser, SParserFrame& 
 			break;
 		case eT_ColorWriteEnable:
 			{
-				if (ColorWriteMask == 0xff)
-					ColorWriteMask = 0;
-				uint32 nCur = Parser.m_Data.m_nFirstToken;
-				while (nCur <= Parser.m_Data.m_nLastToken)
+			if (ColorWriteMask == 0xff)
+				ColorWriteMask = 0;
+			uint32 nCur = Parser.m_Data.m_nFirstToken;
+			while (nCur <= Parser.m_Data.m_nLastToken)
+			{
+				uint32 nT = Parser.m_Tokens[nCur++];
+				if (nT == eT_or)
+					continue;
+				if (nT == eT_0)
+					ColorWriteMask |= 0;
+				else if (nT == eT_RED)
+					ColorWriteMask |= 1;
+				else if (nT == eT_GREEN)
+					ColorWriteMask |= 2;
+				else if (nT == eT_BLUE)
+					ColorWriteMask |= 4;
+				else if (nT == eT_ALPHA)
+					ColorWriteMask |= 8;
+				else
 				{
-					uint32 nT = Parser.m_Tokens[nCur++];
-					if (nT == eT_or)
-						continue;
-					if (nT == eT_0)
-						ColorWriteMask |= 0;
-					else if (nT == eT_RED)
-						ColorWriteMask |= 1;
-					else if (nT == eT_GREEN)
-						ColorWriteMask |= 2;
-					else if (nT == eT_BLUE)
-						ColorWriteMask |= 4;
-					else if (nT == eT_ALPHA)
-						ColorWriteMask |= 8;
-					else
-					{
-						Warning("unknown WriteMask parameter '%s' (Skipping)\n", Parser.GetString(eT));
-					}
+					Warning("unknown WriteMask parameter '%s' (Skipping)\n", Parser.GetString(eT));
 				}
+			}
 			}
 			break;
 		case eT_ZFunc:
@@ -3714,10 +3249,19 @@ bool CShaderManBin::ParseBinFX_Technique_Pass(CParserBin& Parser, SParserFrame& 
 	}
 	if (ColorWriteMask != 0xff)
 	{
-		for (int i = 0; i < 4; i++)
+		ColorWriteMask = (~ColorWriteMask) & 0xf;
+		auto it = std::find_if(AvailableColorMasks.cbegin(), AvailableColorMasks.cend(), [ColorWriteMask](const uint32 &bitmask)
 		{
-			if (!(ColorWriteMask & (1 << i)))
-				State |= GS_NOCOLMASK_R << i;
+			return (ColorWriteMask == bitmask);
+		});
+
+		if (it != AvailableColorMasks.cend())
+		{
+			State |= (std::distance(AvailableColorMasks.cbegin(), it) << GS_COLMASK_SHIFT);
+		}
+		else
+		{
+			iLog->LogError("Unsupported/unrecognized ColorWriteMask in shader: %s", Parser.m_pCurShader->m_NameShader.c_str());
 		}
 	}
 
@@ -3866,12 +3410,12 @@ bool CShaderManBin::ParseBinFX_LightStyle(CParserBin& Parser, SParserFrame& Fram
 	SParserFrame OldFrame = Parser.BeginFrame(Frame);
 
 	FX_BEGIN_TOKENS
-	  FX_TOKEN(KeyFrameParams)
-	FX_TOKEN(KeyFrameRandColor)
-	FX_TOKEN(KeyFrameRandIntensity)
-	FX_TOKEN(KeyFrameRandSpecMult)
-	FX_TOKEN(KeyFrameRandPosOffset)
-	FX_TOKEN(Speed)
+		FX_TOKEN(KeyFrameParams)
+		FX_TOKEN(KeyFrameRandColor)
+		FX_TOKEN(KeyFrameRandIntensity)
+		FX_TOKEN(KeyFrameRandSpecMult)
+		FX_TOKEN(KeyFrameRandPosOffset)
+		FX_TOKEN(Speed)
 	FX_END_TOKENS
 
 	bool bRes = true;
@@ -3953,21 +3497,20 @@ bool CShaderManBin::ParseBinFX_Technique_Annotations_String(CParserBin& Parser, 
 	SParserFrame OldFrame = Parser.BeginFrame(Frame);
 
 	FX_BEGIN_TOKENS
-	  FX_TOKEN(Public)
-	FX_TOKEN(NoLights)
-	FX_TOKEN(NoMaterialState)
-	FX_TOKEN(PositionInvariant)
-	FX_TOKEN(TechniqueZ)
-	FX_TOKEN(TechniqueZPrepass)
-	FX_TOKEN(TechniqueShadowGen)
-	FX_TOKEN(TechniqueMotionBlur)
-	FX_TOKEN(TechniqueCustomRender)
-	FX_TOKEN(TechniqueEffectLayer)
-	FX_TOKEN(TechniqueDebug)
-	FX_TOKEN(TechniqueSoftAlphaTest)
-	FX_TOKEN(TechniqueWaterRefl)
-	FX_TOKEN(TechniqueWaterCaustic)
-	FX_TOKEN(TechniqueThickness)
+		FX_TOKEN(Public)
+		FX_TOKEN(NoLights)
+		FX_TOKEN(NoMaterialState)
+		FX_TOKEN(PositionInvariant)
+		FX_TOKEN(TechniqueZ)
+		FX_TOKEN(TechniqueZPrepass)
+		FX_TOKEN(TechniqueShadowGen)
+		FX_TOKEN(TechniqueMotionBlur)
+		FX_TOKEN(TechniqueCustomRender)
+		FX_TOKEN(TechniqueEffectLayer)
+		FX_TOKEN(TechniqueDebug)
+		FX_TOKEN(TechniqueWaterRefl)
+		FX_TOKEN(TechniqueWaterCaustic)
+		FX_TOKEN(TechniqueThickness)
 	FX_END_TOKENS
 
 	bool bRes = true;
@@ -4011,7 +3554,6 @@ bool CShaderManBin::ParseBinFX_Technique_Annotations_String(CParserBin& Parser, 
 		case eT_TechniqueMotionBlur:
 		case eT_TechniqueCustomRender:
 		case eT_TechniqueEffectLayer:
-		case eT_TechniqueSoftAlphaTest:
 		case eT_TechniqueWaterRefl:
 		case eT_TechniqueWaterCaustic:
 		case eT_TechniqueThickness:
@@ -4027,7 +3569,6 @@ bool CShaderManBin::ParseBinFX_Technique_Annotations_String(CParserBin& Parser, 
 					TTYPE_CUSTOMRENDERPASS,     //eT_TechniqueCustomRender
 					TTYPE_EFFECTLAYER,          //eT_TechniqueEffectLayer
 					TTYPE_DEBUG,                //eT_TechniqueDebug
-					TTYPE_SOFTALPHATESTPASS,    //eT_TechniqueSoftAlphaTest
 					TTYPE_WATERREFLPASS,        //eT_TechniqueWaterRefl
 					TTYPE_WATERCAUSTICPASS,     //eT_TechniqueWaterCaustic
 					TTYPE_ZPREPASS,             //eT_TechniqueZPrepass
@@ -4056,7 +3597,7 @@ bool CShaderManBin::ParseBinFX_Technique_Annotations(CParserBin& Parser, SParser
 	SParserFrame OldFrame = Parser.BeginFrame(Frame);
 
 	FX_BEGIN_TOKENS
-	  FX_TOKEN(string)
+		FX_TOKEN(string)
 	FX_END_TOKENS
 
 	bool bRes = true;
@@ -4092,36 +3633,12 @@ bool CShaderManBin::ParseBinFX_Technique_CustomRE(CParserBin& Parser, SParserFra
 	if (nName == eT_LensOptics)
 	{
 		CRELensOptics* ps = new CRELensOptics;
-		if (ps->mfCompile(Parser, Frame))
+
 		{
 			pShTech->m_REs.AddElem(ps);
 			pShTech->m_Flags |= FHF_RE_LENSOPTICS;
 			return true;
 		}
-		else
-			delete ps;
-	}
-	else if (nName == eT_Cloud)
-	{
-		CRECloud* ps = new CRECloud;
-		if (ps->mfCompile(Parser, Frame))
-		{
-			pShTech->m_REs.AddElem(ps);
-			pShTech->m_Flags |= FHF_RE_CLOUD;
-			return true;
-		}
-		else
-			delete ps;
-	}
-	else if (nName == eT_Beam)
-	{
-		CREBeam* ps = new CREBeam;
-		if (ps->mfCompile(Parser, Frame))
-		{
-			pShTech->m_REs.AddElem(ps);
-		}
-		else
-			delete ps;
 	}
 	else if (nName == eT_Ocean)
 	{
@@ -4133,14 +3650,14 @@ bool CShaderManBin::ParseBinFX_Technique_CustomRE(CParserBin& Parser, SParserFra
 
 SShaderTechnique* CShaderManBin::ParseBinFX_Technique(CParserBin& Parser, SParserFrame& Frame, SParserFrame Annotations, std::vector<SShaderTechParseParams>& techParams, bool* bPublic)
 {
-	LOADING_TIME_PROFILE_SECTION(iSystem);
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY)(iSystem);
 
 	SParserFrame OldFrame = Parser.BeginFrame(Frame);
 
 	FX_BEGIN_TOKENS
-	  FX_TOKEN(pass)
-	FX_TOKEN(CustomRE)
-	FX_TOKEN(Style)
+		FX_TOKEN(pass)
+		FX_TOKEN(CustomRE)
+		FX_TOKEN(Style)
 	FX_END_TOKENS
 
 	bool bRes = true;
@@ -4203,7 +3720,7 @@ float g_fTimeA;
 
 bool CShaderManBin::ParseBinFX(SShaderBin* pBin, CShader* ef, uint64 nMaskGen)
 {
-	LOADING_TIME_PROFILE_SECTION_ARGS(pBin->m_szName);
+	CRY_PROFILE_FUNCTION_ARG(PROFILE_LOADING_ONLY, pBin->m_szName);
 
 	bool bRes = true;
 
@@ -4218,7 +3735,7 @@ bool CShaderManBin::ParseBinFX(SShaderBin* pBin, CShader* ef, uint64 nMaskGen)
 		AddGenMacros(efGen->m_ShaderGenParams, Parser, nMaskGen);
 
 	pBin->Lock();
-	Parser.Preprocess(0, pBin->m_Tokens, &pBin->m_TokenTable);
+	Parser.Preprocess(0, pBin->m_Tokens, pBin->m_TokenTable);
 	ef->m_CRC32 = pBin->m_CRC32;
 	ef->m_SourceCRC32 = pBin->m_SourceCRC32;
 	pBin->Unlock();
@@ -4327,10 +3844,9 @@ bool CShaderManBin::ParseBinFX(SShaderBin* pBin, CShader* ef, uint64 nMaskGen)
 	ef->mfFree();
 
 	assert(ef->m_HWTechniques.Num() == 0);
-	int nInd = 0;
 
 	ETokenStorageClass nTokenStorageClass;
-	while (nTokenStorageClass = Parser.ParseObject(sCommands))
+	while ((nTokenStorageClass = Parser.ParseObject(sCommands)))
 	{
 		EToken eT = Parser.GetToken();
 		SCodeFragment Fr;
@@ -4356,7 +3872,7 @@ bool CShaderManBin::ParseBinFX(SShaderBin* pBin, CShader* ef, uint64 nMaskGen)
 				SFXSampler Pr;
 				Parser.CopyTokens(Parser.m_Name, Pr.m_dwName);
 	#ifdef _DEBUG
-				const char* sampName = Parser.GetString(Parser.m_Name);
+				//const char* sampName = Parser.GetString(Parser.m_Name);
 	#endif
 				if (eT == eT_SamplerState)
 					Pr.m_eType = eSType_Sampler;
@@ -4366,9 +3882,6 @@ bool CShaderManBin::ParseBinFX(SShaderBin* pBin, CShader* ef, uint64 nMaskGen)
 					assert(0);
 
 				Pr.PostLoad(Parser, Parser.m_Name, Parser.m_Annotations, Parser.m_Value, Parser.m_Assign);
-
-				bRes &= ParseBinFX_Sampler(Parser, Parser.m_Data, Pr);
-				//	  bRes &= ParseBinFX_Sampler(Parser, Parser.m_Annotations, Pr);
 
 				// SamplerState something = SS_identifiersearch;
 				if (!strnicmp(Pr.m_Values.c_str(), "SM_", 3) ||
@@ -4409,8 +3922,7 @@ bool CShaderManBin::ParseBinFX(SShaderBin* pBin, CShader* ef, uint64 nMaskGen)
 
 				Pr.PostLoad(Parser, Parser.m_Name, Parser.m_Annotations, Parser.m_Value, Parser.m_Assign);
 
-				bRes &= ParseBinFX_Texture(Parser, Parser.m_Data, Pr);
-				bRes &= ParseBinFX_Texture(Parser, Parser.m_Annotations, Pr);
+				bRes &= ParseBinFX_Texture(Parser, Parser.m_Data, Pr, Parser.m_Annotations);
 
 				// Texture2D something = TS_identifiersearch;
 				if (!strnicmp(Pr.m_Values.c_str(), "TM_", 3) ||
@@ -4502,32 +4014,17 @@ bool CShaderManBin::ParseBinFX(SShaderBin* pBin, CShader* ef, uint64 nMaskGen)
 					if (nTokAssign)
 					{
 						const char* assign = Parser.GetString(nTokAssign);
-						if (!strnicmp(assign, "SK_", 3))
-							Pr.m_nCB = CB_SKIN_DATA;
-						else if (!assign[0] || !strnicmp(assign, "PB_", 3))
-							Pr.m_nCB = CB_PER_BATCH;
-						else if (!strnicmp(assign, "PI_", 3) || !strnicmp(assign, "SI_", 3))
-							Pr.m_nCB = CB_PER_INSTANCE;
-						else if (!strnicmp(assign, "PM_", 3))
+						if (assign[0] && !strnicmp(assign, "PM_", 3))
 							Pr.m_nCB = CB_PER_MATERIAL;
-						else if (!strnicmp(assign, "register", 8))
-							Pr.m_nCB = CB_PER_BATCH;
 						else
-							Pr.m_nCB = CB_PER_BATCH;
+							Pr.m_nCB = CB_PER_DRAW;
 					}
-					else if (CParserBin::m_nPlatform & (SF_D3D11 | SF_ORBIS | SF_DURANGO | SF_GL4 | SF_GLES3))
+					else if (CParserBin::m_nPlatform & (SF_D3D11 | SF_D3D12 | SF_ORBIS | SF_DURANGO | SF_GL4 | SF_GLES3 | SF_VULKAN))
 					{
-						uint32 nTokName = Parser.GetToken(Parser.m_Name);
-						if (nTokName == eT__g_SkinQuat)
-							Pr.m_nCB = CB_SKIN_DATA;
-						else
-						{
-							const char* name = Parser.GetString(nTokName);
-							if (!strncmp(name, "PI_", 3))
-								Pr.m_nCB = CB_PER_INSTANCE;
-							else
-								Pr.m_nCB = CB_PER_BATCH;
-						}
+						//uint32 nTokName = Parser.GetToken(Parser.m_Name);
+						//const char* name = Parser.GetString(nTokName);
+						
+						Pr.m_nCB = CB_PER_DRAW;
 					}
 
 					Pr.PostLoad(Parser, Parser.m_Name, Parser.m_Annotations, Parser.m_Value, Parser.m_Assign);
@@ -4539,9 +4036,9 @@ bool CShaderManBin::ParseBinFX(SShaderBin* pBin, CShader* ef, uint64 nMaskGen)
 						assert(szReg[0] == 'c');
 						Pr.m_nRegister[eHWSC_Vertex] = atoi(&szReg[1]);
 						Pr.m_nRegister[eHWSC_Pixel] = Pr.m_nRegister[eHWSC_Vertex];
-						if (GEOMETRYSHADER_SUPPORT && (CParserBin::m_nPlatform == SF_D3D11 || CParserBin::m_nPlatform == SF_DURANGO || CParserBin::m_nPlatform == SF_ORBIS || CParserBin::m_nPlatform == SF_GL4))
+						if (GEOMETRYSHADER_SUPPORT && CParserBin::PlatformSupportsGeometryShaders())
 							Pr.m_nRegister[eHWSC_Geometry] = Pr.m_nRegister[eHWSC_Vertex];
-						if (CParserBin::m_nPlatform == SF_D3D11 || CParserBin::m_nPlatform == SF_DURANGO || CParserBin::m_nPlatform == SF_ORBIS || CParserBin::m_nPlatform == SF_GL4)
+						if (CParserBin::PlatformSupportsDomainShaders())
 							Pr.m_nRegister[eHWSC_Domain] = Pr.m_nRegister[eHWSC_Vertex];
 					}
 					uint32 prFlags = Pr.GetParamFlags();
@@ -4558,52 +4055,6 @@ bool CShaderManBin::ParseBinFX(SShaderBin* pBin, CShader* ef, uint64 nMaskGen)
 			}
 			break;
 
-		case eT_sampler1D:
-		case eT_sampler2D:
-		case eT_sampler3D:
-		case eT_samplerCUBE:
-			{
-				Fr.m_nFirstToken = Parser.FirstToken();
-
-				uint32 nTokenOffset = 1;
-
-				// For DX11 style texture definitions, need to parse out templated type. Also unlike HLSL we *require* it.
-				if (eT == eT_Texture2DMS || eT == eT_Texture2D || eT == eT_Texture2DArray || eT == eT_TextureCube || eT == eT_TextureCubeArray || eT == eT_Texture3D)
-				{
-					// Texture2DMS is particular case, requires (at minimum) type to be specified - parse Texture2DMS<type> tokens
-					// Texture2D for typeless resources, is also a particular case, type has to explicitly be specified - parse Texture2D<type> tokens
-					nTokenOffset = 4;
-
-					if (Parser.m_Tokens[Fr.m_nFirstToken + 1] != eT_br_tr_1 ||  // <
-					    Parser.m_Tokens[Fr.m_nFirstToken + 3] != eT_br_tr_2)    // >
-					{
-						// Parser.m_Tokens[Fr.m_nFirstToken + 2] is the templated type, e.g. float4
-						CryWarning(VALIDATOR_MODULE_RENDERER, VALIDATOR_ERROR_DBGBRK, "[SHADERS] FAILED TO PARSE '%s': Invalid Texture definition without templated type:", ef->GetName());
-						CryWarning(VALIDATOR_MODULE_RENDERER, VALIDATOR_ERROR_DBGBRK, "[SHADERS] %s %s %s %s"
-						           , Parser.GetString(Parser.m_Tokens[Fr.m_nFirstToken])
-						           , Parser.GetString(Parser.m_Tokens[Fr.m_nFirstToken + 1])
-						           , Parser.GetString(Parser.m_Tokens[Fr.m_nFirstToken + 2])
-						           , Parser.GetString(Parser.m_Tokens[Fr.m_nFirstToken + 3])
-						           );
-						break;
-					}
-				}
-
-				Fr.m_nLastToken = Fr.m_nFirstToken + nTokenOffset;
-				if (!Parser.m_Assign.IsEmpty())
-					Fr.m_nLastToken = Parser.m_Assign.m_nLastToken;
-				Fr.m_dwName = Parser.m_Tokens[Fr.m_nFirstToken + nTokenOffset];
-				Fr.m_eType = eFT_Sampler;
-				Parser.m_CodeFragments.push_back(Fr);
-
-				//// handy for debugging - do not remove plz
-				//const char *pszToken0 = Parser.GetString( Parser.m_Tokens[Fr.m_nFirstToken]  );
-				//const char *pszToken1 = Parser.GetString( Parser.m_Tokens[Fr.m_nFirstToken+1] );
-				//const char *pszToken2 = Parser.GetString( Parser.m_Tokens[Fr.m_nFirstToken+2] );
-
-				bRes &= ParseBinFX_Sampler(Parser, Parser.m_Data, Fr.m_dwName, Parser.m_Annotations, eT);
-			}
-			break;
 
 		case eT_Buffer:
 		case eT_RWBuffer:
@@ -4757,6 +4208,8 @@ SShaderTexSlots* CShaderManBin::GetTextureSlots(CParserBin& Parser, SShaderBin* 
 				SParamCacheInfo::AffectedFuncsVec& AffectedFragments = pCache->m_AffectedFuncs;
 				for (uint32 i = 0; i < AffectedFragments.size(); i++)
 				{
+					CRY_ASSERT_MESSAGE(AffectedFragments[i] < Parser.m_CodeFragments.size(), "fragment index is larger than number of CodeFragments!");
+
 					SCodeFragment* s = &Parser.m_CodeFragments[AffectedFragments[i]];
 
 					// if it's a sampler, include this sampler name CRC
@@ -4863,74 +4316,7 @@ SShaderTexSlots* CShaderManBin::GetTextureSlots(CParserBin& Parser, SShaderBin* 
 	// 3 = both from above, referenced and has UIName. We shouldn't find multiple samplers like this, shader samplers
 	//     should be set up so only ever one sampler using a slot has a UIName.
 	enum { PRIORITY_REFERENCED = 0x1, PRIORITY_HASUINAME = 0x2 };
-
-	// loop over all samplers for this shader
-	{
-		FXSamplersOldIt it = FXP.m_FXSamplersOld.begin();
-		FXSamplersOldIt end = FXP.m_FXSamplersOld.end();
-		for (; it != end; ++it)
-		{
-			int slot = it->m_nSlotId;
-
-			// if the slot is invalid this texture refers something else, skip it
-			if (slot == EFTT_MAX) continue;
-
-			uint32 dwName = Parser.GetCRC32(it->m_szName);
-
-			// check if this sampler must be included for dependencyset/reset reasons
-			bool dependency = (dependencySlots & (1 << slot)) > 0;
-
-			// check if this sampler is referenced from the shader
-			bool referenced = referencedSamplers.Find(dwName) >= 0;
-
-			if (dependency || referenced)
-			{
-				// calculate priority. See above.
-				int priority = (referenced ? PRIORITY_REFERENCED : 0) | (it->m_szUIName.length() ? PRIORITY_HASUINAME : 0);
-
-				// if we don't have this slot filled already, create a new slot
-				if (pSlots->m_UsedSlots[slot] == NULL)
-				{
-					// !!IMPORTANT!! - if these slots are deleted/cleaned instead of being allowed to live forever,
-					// MAKE SURE you refcount or refactor MergeTextureSlots above - as it will share pointers.
-					SShaderTextureSlot* pSlot = new SShaderTextureSlot;
-
-					pSlot->m_Name = it->m_szUIName;
-					pSlot->m_Description = it->m_szUIDescription;
-
-					pSlot->m_TexType = it->m_eTexType;
-
-					// store current priority
-					namePriority[slot] = priority;
-
-					pSlots->m_UsedSlots[slot] = pSlot;
-				}
-				else
-				{
-					SShaderTextureSlot* pSlot = pSlots->m_UsedSlots[slot];
-					// we shouldn't encounter two samplers that are used and have a UIName for the same slot,
-					// error in this case
-					if (priority == (PRIORITY_REFERENCED | PRIORITY_HASUINAME) && priority == namePriority[slot])
-					{
-						CryWarning(VALIDATOR_MODULE_RENDERER, VALIDATOR_ERROR, "Encountered two samplers with UINames referenced for same slot in shader '%s': '%s' and '%s'\n",
-						           ef->GetName(), pSlot->m_Name, it->m_szUIName);
-						assert(0);
-					}
-					// override if we have a higher priority
-					else if (priority > namePriority[slot])
-					{
-						pSlot->m_Name = it->m_szUIName;
-						pSlot->m_Description = it->m_szUIDescription;
-
-						pSlot->m_TexType = it->m_eTexType;
-
-						namePriority[slot] = priority;
-					}
-				}
-			}
-		}
-	}
-
+	
 	// loop over all textures for this shader
 	{
 		FXTexturesIt it = FXP.m_FXTextures.begin();
@@ -5008,52 +4394,52 @@ bool CShaderManBin::ParseBinFX_Dummy(SShaderBin* pBin, std::vector<string>& Shad
 	CParserBin Parser(pBin, NULL);
 
 	pBin->Lock();
-	Parser.Preprocess(0, pBin->m_Tokens, &pBin->m_TokenTable);
+	Parser.Preprocess(0, pBin->m_Tokens, pBin->m_TokenTable);
 	pBin->Unlock();
 
 	SParserFrame Frame(0, Parser.m_Tokens.size() - 1);
 	Parser.BeginFrame(Frame);
 
 	FX_BEGIN_TOKENS
-	  FX_TOKEN(static)
-	FX_TOKEN(half)
-	FX_TOKEN(half2)
-	FX_TOKEN(half3)
-	FX_TOKEN(half4)
-	FX_TOKEN(half2x4)
-	FX_TOKEN(half3x4)
-	FX_TOKEN(half4x4)
-	FX_TOKEN(float)
-	FX_TOKEN(float2)
-	FX_TOKEN(float3)
-	FX_TOKEN(float4)
-	FX_TOKEN(float2x4)
-	FX_TOKEN(float3x4)
-	FX_TOKEN(float4x4)
-	FX_TOKEN(bool)
-	FX_TOKEN(int)
-	FX_TOKEN(Buffer)
-	FX_TOKEN(RWBuffer)
-	FX_TOKEN(StructuredBuffer)
-	FX_TOKEN(RWStructuredBuffer)
-	FX_TOKEN(cbuffer)
-	FX_TOKEN(struct)
-	FX_TOKEN(sampler1D)
-	FX_TOKEN(sampler2D)
-	FX_TOKEN(sampler3D)
-	FX_TOKEN(samplerCUBE)
-	FX_TOKEN(technique)
-	FX_TOKEN(SamplerState)
-	FX_TOKEN(SamplerComparisonState)
-	FX_TOKEN(Texture2D)
-	FX_TOKEN(RWTexture2D)
-	FX_TOKEN(RWTexture2DArray)
-	FX_TOKEN(Texture2DArray)
-	FX_TOKEN(Texture2DMS)
-	FX_TOKEN(TextureCube)
-	FX_TOKEN(TextureCubeArray)
-	FX_TOKEN(Texture3D)
-	FX_TOKEN(RWTexture3D)
+		FX_TOKEN(static)
+		FX_TOKEN(half)
+		FX_TOKEN(half2)
+		FX_TOKEN(half3)
+		FX_TOKEN(half4)
+		FX_TOKEN(half2x4)
+		FX_TOKEN(half3x4)
+		FX_TOKEN(half4x4)
+		FX_TOKEN(float)
+		FX_TOKEN(float2)
+		FX_TOKEN(float3)
+		FX_TOKEN(float4)
+		FX_TOKEN(float2x4)
+		FX_TOKEN(float3x4)
+		FX_TOKEN(float4x4)
+		FX_TOKEN(bool)
+		FX_TOKEN(int)
+		FX_TOKEN(Buffer)
+		FX_TOKEN(RWBuffer)
+		FX_TOKEN(StructuredBuffer)
+		FX_TOKEN(RWStructuredBuffer)
+		FX_TOKEN(cbuffer)
+		FX_TOKEN(struct)
+		FX_TOKEN(sampler1D)
+		FX_TOKEN(sampler2D)
+		FX_TOKEN(sampler3D)
+		FX_TOKEN(samplerCUBE)
+		FX_TOKEN(technique)
+		FX_TOKEN(SamplerState)
+		FX_TOKEN(SamplerComparisonState)
+		FX_TOKEN(Texture2D)
+		FX_TOKEN(RWTexture2D)
+		FX_TOKEN(RWTexture2DArray)
+		FX_TOKEN(Texture2DArray)
+		FX_TOKEN(Texture2DMS)
+		FX_TOKEN(TextureCube)
+		FX_TOKEN(TextureCubeArray)
+		FX_TOKEN(Texture3D)
+		FX_TOKEN(RWTexture3D)
 	FX_END_TOKENS
 
 	std::vector<SShaderTechParseParams> techParams;
@@ -5063,7 +4449,7 @@ bool CShaderManBin::ParseBinFX_Dummy(SShaderBin* pBin, std::vector<string>& Shad
 
 	ETokenStorageClass nTokenStorageClass;
 
-	while (nTokenStorageClass = Parser.ParseObject(sCommands))
+	while ((nTokenStorageClass = Parser.ParseObject(sCommands)))
 	{
 		EToken eT = Parser.GetToken();
 		SCodeFragment Fr;
@@ -5120,7 +4506,7 @@ bool CShaderManBin::ParseBinFX_Dummy(SShaderBin* pBin, std::vector<string>& Shad
 			{
 				uint32 nToken = Parser.m_Tokens[Parser.m_Name.m_nFirstToken];
 				bool bPublicTechnique = false;
-				SShaderTechnique* pShTech = ParseBinFX_Technique(Parser, Parser.m_Data, Parser.m_Annotations, techParams, &bPublicTechnique);
+				ParseBinFX_Technique(Parser, Parser.m_Data, Parser.m_Annotations, techParams, &bPublicTechnique);
 				if (bPublicTechnique)
 				{
 					const char* name = Parser.GetString(nToken);
@@ -5225,19 +4611,23 @@ bool STexSamplerRT::Update()
 {
 	if (m_pAnimInfo && m_pAnimInfo->m_Time && gRenDev->m_bPauseTimer == 0)
 	{
-		assert(gRenDev->m_RP.m_TI[gRenDev->m_RP.m_nProcessThreadID].m_RealTime >= 0);
-		uint32 m = (uint32)(gRenDev->m_RP.m_TI[gRenDev->m_RP.m_nProcessThreadID].m_RealTime / m_pAnimInfo->m_Time) % (m_pAnimInfo->m_NumAnimTexs);
+		float time = gRenDev->GetFrameSyncTime().GetSeconds();
+		assert(time >= 0);
+		uint32 m = (uint32)(time / m_pAnimInfo->m_Time) % (m_pAnimInfo->m_NumAnimTexs);
 		assert(m < (uint32)m_pAnimInfo->m_TexPics.Num());
 
-		if (m_pTex)
+		if (m_pTex != m_pAnimInfo->m_TexPics[m])
 		{
-			m_pTex->Release();
+			if (m_pTex)
+			{
+				m_pTex->Release();
+			}
+
+			m_pTex = m_pAnimInfo->m_TexPics[m];
+			m_pTex->AddRef();
+
+			return true;
 		}
-
-		m_pTex = m_pAnimInfo->m_TexPics[m];
-		m_pTex->AddRef();
-
-		return true;
 	}
 
 	return false;
@@ -5351,7 +4741,6 @@ uint32 SFXParam::GetComponent(EHWShaderClass eSHClass)
 		assert(b[0] == 'c');
 		if (b[0] == 'c')
 		{
-			int nReg = atoi(&b[1]);
 			b++;
 			while (*b != '.')
 			{

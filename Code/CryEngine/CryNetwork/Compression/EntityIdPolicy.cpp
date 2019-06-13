@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ICompressionPolicy.h"
@@ -116,8 +116,10 @@ public:
 		}
 		m_lastValue = value;
 
+#if ENABLE_CORRUPT_PACKET_DUMP
 		IEntity* pEntity = gEnv->pEntitySystem->GetEntity(pModel->GetNetContextState()->GetEntityID(value));
 		NetLogPacketDebug("CEntityIdPolicy::ReadValue %d:%d %s (%f)", value.id, value.salt, pEntity ? pEntity->GetName() : "<no name>", in.GetBitSize());
+#endif
 
 		return true;
 	}

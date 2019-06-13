@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -13,6 +13,8 @@ History:
 #include "UI/HUD/HUDOnScreenMessageDef.h"
 #include "Utility/SingleAllocTextBlock.h"
 #include "GameRulesTypes.h"
+
+struct IConsoleCmdArgs;
 
 #define INVALID_ANNOUNCEMENT_ID (-1)
 

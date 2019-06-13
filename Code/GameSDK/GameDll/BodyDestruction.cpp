@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -18,7 +18,9 @@ History:
 #include "Utility/CryHash.h"
 #include "BodyManagerCVars.h"
 
-#include <CryAnimation/ICryAnimation.h>
+#include <CryAnimation/IAttachment.h>
+#include <CryRenderer/IRenderAuxGeom.h>
+#include <CryMath/Random.h>
 
 #include "EntityUtility/EntityScriptCalls.h"
 #include "EntityUtility/EntityEffects.h"
@@ -525,9 +527,6 @@ void CBodyDestructibilityProfile::LoadEvent( const XmlNodeRef& eventNode, SDestr
 	XmlNodeRef explosionNode = eventNode->findChild("Explosion");
 	if (explosionNode)
 	{
-		CGameRules* pGameRules = g_pGame->GetGameRules();
-		CRY_ASSERT(pGameRules);
-
 		SAFE_DELETE(eventData.pExplosion); //Should not be needed, but better not rely on data
 
 		eventData.pExplosion = new SBodyPartExplosion();
@@ -1162,7 +1161,6 @@ void CBodyDestructibilityProfile::ProcessHealthRatioEvents( IEntity& characterEn
 	CRY_ASSERT(pAttachmentManager);
 
 	const bool diedByMikeBurn = (newHealth <= 0.0f) && (CGameRules::EHitType::Mike_Burn == hitInfo.type);
-	const float healthRef = newHealth;
 	const int healthRatioEventCount = (int)m_healthRatioEvents.size();
 	for (int healthRatioIdx = instance.GetCurrentHealthRatioIndex(); healthRatioIdx < healthRatioEventCount; ++healthRatioIdx)
 	{

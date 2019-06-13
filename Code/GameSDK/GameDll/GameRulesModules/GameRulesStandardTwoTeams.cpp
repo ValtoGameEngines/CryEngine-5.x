@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -18,6 +18,7 @@
 #include "GameRules.h"
 #include "Player.h"
 #include "IGameRulesRoundsModule.h"
+#include "GameCVars.h"
 
 #define STANDARDTWOTEAMS_AUTO_BALANCE_TIME				10.f
 #define STANDARDTWOTEAMS_AUTO_BALANCE_WARNING_TIME		5.f

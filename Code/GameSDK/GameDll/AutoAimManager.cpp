@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -11,11 +11,14 @@ $DateTime$
 #include "StdAfx.h"
 #include <CryAnimation/ICryAnimation.h>
 #include "Game.h"
+#include "GameCVars.h"
 #include "AutoAimManager.h"
 #include "GameRules.h"
 #include <CryAISystem/IAIObject.h>
 #include "Actor.h"
 #include <CryAISystem/IFactionMap.h>
+#include <CryRenderer/IRenderAuxGeom.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 CAutoAimManager::CAutoAimManager()
 : m_closeCombatSnapTargetId(0)
@@ -44,7 +47,7 @@ CAutoAimManager::~CAutoAimManager()
 
 void CAutoAimManager::Update(float dt)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	const int numAutoaimTargets = m_autoaimTargets.size();
 

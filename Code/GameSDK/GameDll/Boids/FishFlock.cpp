@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   fishflock.cpp
@@ -14,6 +14,9 @@
 #include "StdAfx.h"
 #include "FishFlock.h"
 #include "BoidFish.h"
+#include "BoidObject.h"  // for Frand, SBoidContext
+#include "Flock.h"       // for CFlock, SBoidsCreateContext (ptr only)
+#include <Cry3DEngine/I3DEngine.h>
 
 //////////////////////////////////////////////////////////////////////////
 

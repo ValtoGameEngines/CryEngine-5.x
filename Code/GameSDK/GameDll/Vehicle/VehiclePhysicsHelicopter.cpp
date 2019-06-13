@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -103,7 +103,6 @@ void CVehiclePhysicsHelicopter::ProcessAI(SVehiclePhysicsHelicopterProcessAIPara
 
 	const Vec3 xAxis = params.pPhysStatus->q.GetColumn0();
 	const Vec3 yAxis = params.pPhysStatus->q.GetColumn1();
-	const Vec3 zAxis = params.pPhysStatus->q.GetColumn2();
 	const Vec3 pos = params.pPhysStatus->centerOfMass;
 	
 	CMovementRequest* aiRequest = params.pAiRequest;
@@ -147,7 +146,7 @@ void CVehiclePhysicsHelicopter::ProcessMovement(SVehiclePhysicsHelicopterProcess
 {
 	// NB: This function changes the params that are passed in!
 
-	FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	float dt = params.dt;
 
@@ -163,7 +162,6 @@ void CVehiclePhysicsHelicopter::ProcessMovement(SVehiclePhysicsHelicopterProcess
 	const Vec3 xAxis = pPhysStatus->q.GetColumn0();
 	const Vec3 yAxis = pPhysStatus->q.GetColumn1();
 	const Vec3 zAxis = pPhysStatus->q.GetColumn2();
-	const Vec3 pos = pPhysStatus->centerOfMass;
 
 	// Forward, and left-right vectors in the xy plane
 	const Vec3 up(0.f, 0.f, 1.f);
@@ -320,5 +318,3 @@ void CVehiclePhysicsHelicopter::ProcessMovement(SVehiclePhysicsHelicopterProcess
 	pPhysStatus->v = vel;
 	pPhysStatus->w = angVel;
 }
-
-

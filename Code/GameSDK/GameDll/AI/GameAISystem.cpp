@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*
 
@@ -36,9 +36,18 @@
 #include "AloneDetectorModule.h"
 #include "HazardModule/HazardModule.h"
 #include "RadioChatter/RadioChatterModule.h"
+
+#include "Action/AIProxyManager.h"
+#include "Action/AIFaceManager.h"
+#include "Action/RangeSignalingSystem/RangeSignaling.h"
+#include "Action/SignalTimers/SignalTimers.h"
+#include "Action/ScriptBind_AIAction.h"
+
 #include <CryAISystem/BehaviorTree/IBehaviorTree.h>
 #include "BehaviorTree/BehaviorTreeNodes_Game.h"
+
 #include "GameAIEnv.h"
+
 #include <CryAISystem/IAISystem.h>
 #include <algorithm>
 
@@ -88,8 +97,8 @@ private:
 
 CGameAISystem::CGameAISystem()
 	: m_state(Idle)
-	, m_pDeathManager(NULL)
-	, m_pCorpsesManager(NULL)
+	, m_pDeathManager(nullptr)
+	, m_pCorpsesManager(nullptr)
 {
 	const int modulesReserveSize = 7;
 
@@ -102,9 +111,19 @@ CGameAISystem::CGameAISystem()
 	m_modules.push_back(gGameAIEnv.hazardModule = new HazardSystem::HazardModule);
 	m_modules.push_back(gGameAIEnv.radioChatterModule = new RadioChatterModule);
 
+	m_pAIProxyManager = new CAIProxyManager;
+	m_pAIProxyManager->Init();
+
+	CRangeSignaling::Create();
+	CSignalTimer::Create();
+
+	CAIFaceManager::LoadStatic();
+
 	RegisterGameBehaviorTreeNodes();
 
 	Reset(false);
+
+	m_pScriptBindAIAction = new CScriptBind_AIAction(this);
 }
 
 CGameAISystem::~CGameAISystem()
@@ -119,6 +138,17 @@ CGameAISystem::~CGameAISystem()
 	}
 
 	m_modules.clear();
+
+	CSignalTimer::Shutdown();
+	CRangeSignaling::Shutdown();
+
+	if (m_pAIProxyManager)
+	{
+		m_pAIProxyManager->Shutdown();
+		SAFE_DELETE(m_pAIProxyManager);
+	}
+
+	SAFE_RELEASE(m_pScriptBindAIAction);
 }
 
 IGameAIModule* CGameAISystem::FindModule(const char* moduleName) const
@@ -231,7 +261,7 @@ void CGameAISystem::ResumeAllModules(EntityId entityID)
 
 void CGameAISystem::Update(float frameTime)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	UpdateModules(frameTime);
 	UpdateSubSystems(frameTime);
@@ -251,6 +281,19 @@ void CGameAISystem::ResetModules(bool bUnload)
 		IGameAIModule* module = m_modules[i];
 		module->Reset(bUnload);
 	}
+}
+
+void CGameAISystem::CompleteInit()
+{
+	ICVar* pEnableAI = gEnv->pConsole->GetCVar("sv_AISystem");
+	if (!gEnv->bMultiplayer || (pEnableAI && pEnableAI->GetIVal()))
+	{
+		m_pAIProxyManager = new CAIProxyManager;
+		m_pAIProxyManager->Init();
+	}
+
+	CRangeSignaling::ref().Init();
+	CSignalTimer::ref().Init();
 }
 
 void CGameAISystem::Reset(bool bUnload)
@@ -315,7 +358,10 @@ void CGameAISystem::UpdateModules(float frameTime)
 void CGameAISystem::UpdateSubSystems(float frameTime)
 {
 	if (m_pDeathManager)
-		m_pDeathManager->Update();
+	{
+		m_pDeathManager->GameUpdate();
+	}	
+	
 	m_visibleObjectsHelper.Update();
 	m_AIAwarenessToPlayerHelper.Update(frameTime);
 	m_AICounters.Update(frameTime);

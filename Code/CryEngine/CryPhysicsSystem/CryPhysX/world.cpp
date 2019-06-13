@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -21,12 +21,13 @@ void PhysXWorld::Release()
 	delete this;
 }
 
-void PhysXWorld::SetupEntityGrid(int axisz, Vec3 org, int nx, int ny, float stepx, float stepy, int log2PODscale, int bCyclic) 
+IPhysicalEntity* PhysXWorld::SetupEntityGrid(int axisz, Vec3 org, int nx, int ny, float stepx, float stepy, int log2PODscale, int bCyclic, IPhysicalEntity* pHost, const QuatT& posInHost) 
 {
 	PxBroadPhaseRegion rgn;
 	rgn.bounds = PxBounds3(V(org-Vec3(0,0,100)), V(org+Vec3(nx*stepx,ny*stepy,200)));
 	g_cryPhysX.Scene()->removeBroadPhaseRegion(m_idWorldRgn);
 	m_idWorldRgn = g_cryPhysX.Scene()->addBroadPhaseRegion(rgn);
+	return nullptr;
 }
 
 IPhysicalEntity *PhysXWorld::SetHeightfieldData(const heightfield *phf, int *pMatMapping, int nMats)
@@ -185,7 +186,7 @@ int CopyHitData(const PxRaycastHit &src, ray_hit &dst, bool valid=true, const Ve
 		return 0;
 	}
 	PhysXEnt *pent = Ent(src.actor);
-	dst.pCollider = pent;
+	dst.pCollider = pent->m_mask & (8|16) ? PhysXEnt::g_pPhysWorld->m_phf : pent;
 	dst.bTerrain = pent==PhysXEnt::g_pPhysWorld->m_phf;
 	dst.dist = src.distance;
 	dst.pt = V(src.position);
@@ -396,7 +397,7 @@ float PhysXWorld::PrimitiveWorldIntersection(const SPWIParams& pp, WriteLockCond
 		Vec3 dirNorm = pp.sweepDir.normalized();
 		SweepCallback res;
 		PxHitFlags flags(PxHitFlag::eDEFAULT | PxHitFlag::ePRECISE_SWEEP);
-		if (geom.CreateAndUse(pose,scale, [&](PxGeometry &pxGeom)	{
+		if (geom.CreateAndUse(pose,scale, [&](const PxGeometry &pxGeom)	{
 			if (pp.nSkipEnts>=0)
 				return g_cryPhysX.Scene()->sweep(pxGeom, T(pose), V(dirNorm), dirNorm*pp.sweepDir, res, flags, fd, &filter); 
 			else {
@@ -420,7 +421,7 @@ float PhysXWorld::PrimitiveWorldIntersection(const SPWIParams& pp, WriteLockCond
 	}	else {
 		PxOverlapHit hits[16];
 		OverlapCallback res(hits,16);
-		if (geom.CreateAndUse(pose,scale, [&](PxGeometry &pxGeom) {
+		if (geom.CreateAndUse(pose,scale, [&](const PxGeometry &pxGeom) {
 			return g_cryPhysX.Scene()->overlap(pxGeom, T(pose), res, fd, &filter); }))
 		{
 			for(int i=0; i<res.nbTouches; i++)
@@ -515,7 +516,8 @@ int PhysXWorld::GetEntitiesInBox(Vec3 ptmin, Vec3 ptmax, IPhysicalEntity**& pLis
 	BBoxFilter filter(ithread,ptmin,ptmax);
 
 	{ ReadLockScene lock;
-		g_cryPhysX.Scene()->overlap(PxBoxGeometry(V(ptmax-ptmin)*0.5f), PxTransform(V(ptmax+ptmin)*0.5f,PxQuat0), BBoxCallback(), 
+		BBoxCallback BBcb;
+		g_cryPhysX.Scene()->overlap(PxBoxGeometry(V(ptmax-ptmin)*0.5f), PxTransform(V(ptmax+ptmin)*0.5f,PxQuat0), BBcb, 
 			PxQueryFilterData(objtypesFilter(objtypes) | PxQueryFlag::ePREFILTER | PxQueryFlag::eANY_HIT), &filter);
 	}
 
@@ -530,18 +532,19 @@ int PhysXWorld::GetEntitiesInBox(Vec3 ptmin, Vec3 ptmax, IPhysicalEntity**& pLis
 			PxRigidBody *body0 = (*(PhysXEnt**)pent0)->m_actor->isRigidBody(), *body1 = (*(PhysXEnt**)pent1)->m_actor->isRigidBody();
 			return sgn((body1 ? body1->getInvMass():0.0f) - (body0 ? body0->getInvMass():0.0f));
 		});
-	if ((PhysXEnt**)pList != pListSrc)
-		memcpy(pList, pListSrc, filter.nEnts*sizeof(pList[0]));
 	for(int i=0; i<filter.nEnts; i++) 
 		AtomicAdd(&pListSrc[i]->m_mask, -(1<<filter.ithread));
+	int n = 0;
+	for(int i=0; i<filter.nEnts; i++)	if (!(pListSrc[i]->m_mask & (8|16)))
+		pList[n++] = pListSrc[i];
 	if (objtypes & ent_addref_results)
-		for(int i=0; i<filter.nEnts; pListSrc[i++]->AddRef()); 
+		for(int i=0; i<n; pListSrc[i++]->AddRef()); 
 		
 	WriteLock lock(m_lockMask);
 	m_maskUsed &= ~(1u<<filter.ithread);
 	if (filter.nEnts>64)
 		AtomicAdd(&m_lockEntList, -WRITE_LOCK_VAL);
-	return filter.nEnts;
+	return n;
 }
 
 void PhysXWorld::AddEventClient(int type, int(*func)(const EventPhys*), int bLogged, float priority)
@@ -610,8 +613,8 @@ void PhysXWorld::onContact(const PxContactPairHeader& pairHeader, const PxContac
 	for(int i=0; i<nbPairs; i++) {
 		EventPhysCollision &epc = *(EventPhysCollision*)AllocEvent(EventPhysCollision::id);
 		PhysXEnt *pent[2];
-		PxContactStreamIterator csi((PxU8*)pairs[i].contactStream, pairs[i].contactStreamSize);
-		float *imp = (float*)(pairs[i].contactStream + (pairs[i].contactStreamSize+15 & ~15));
+		PxContactStreamIterator csi(pairs[i].contactPatches, pairs[i].contactPoints, pairs[i].getInternalFaceIndices(), pairs[i].patchCount, pairs[i].contactStreamSize);
+		float *imp = (float*)pairs[i].contactImpulses;
 		csi.nextPatch(); csi.nextContact();
 		epc.pt = V(csi.getContactPoint());
 		epc.n = V(csi.getContactNormal());
@@ -651,8 +654,10 @@ void PhysXWorld::TimeStep(float dt, int flags)
 	//if (!m_dt && dt)
 	//	g_cpx.Scene()->forceDynamicTreeRebuild(true,true);
 	m_time += dt;
-	if (m_vars.fixedTimestep>0)
-		dt = m_vars.fixedTimestep;
+	if (m_vars.fixedTimestep>0 && dt>0)	{
+		g_cryPhysX.dt() = dt = m_vars.fixedTimestep;
+		m_dtSurplus = 0;
+	}
 	m_vars.lastTimeStep = m_dt = dt;
 	g_cryPhysX.Scene()->setBounceThresholdVelocity(m_vars.minBounceSpeed);
 
@@ -668,7 +673,7 @@ void PhysXWorld::TimeStep(float dt, int flags)
 
 	if (flags & ent_rigid && (!m_vars.bSingleStepMode || m_vars.bDoStep)) {
 		float dtFixed = g_cryPhysX.dt();
-		for(int i=0; m_dtSurplus+dt>dtFixed && i<m_vars.nMaxSubsteps; dt-=dtFixed,i++)	{
+		for(int i=0; m_dtSurplus+dt>=dtFixed && i<m_vars.nMaxSubsteps; dt-=dtFixed,i++)	{
 			g_cryPhysX.Scene()->simulate(dtFixed,0,m_scratchBuf.data(),m_scratchBuf.size());
 			WriteLockScene lockScene;
 			{ WriteLock lock(m_lockCollEvents); 
@@ -711,8 +716,8 @@ void PhysXWorld::TimeStep(float dt, int flags)
 		}
 	}
 
-	if (PxVisualDebugger *dbg = g_cryPhysX.Physics()->getVisualDebugger()) {
-		CCamera &cam = gEnv->pSystem->GetViewCamera();
+	if (PxPvdSceneClient *dbg = g_cryPhysX.Scene()->getScenePvdClient()) {
+		const CCamera &cam = gEnv->pSystem->GetViewCamera();
 		dbg->updateCamera("CryCamera", V(cam.GetPosition()), V(cam.GetUp()), V(cam.GetPosition()+cam.GetViewdir()));
 		//if (PhysXEnt* player = (PhysXEnt*)GetPhysicalEntityById(0x7777))
 		//	player->m_actor->setActorFlag(PxActorFlag::eVISUALIZATION, false);//!player->m_actor->getWorldBounds().contains(V(cam.GetPosition())));
@@ -752,8 +757,6 @@ void PhysXWorld::PumpLoggedEvents()
 				epsc.pEntity=pents[i]; epsc.pForeignData=pents[i]->m_pForeignData; epsc.iForeignData=pents[i]->m_iForeignData;
 				epsc.iSimClass[0] = i+1; epsc.iSimClass[1] = 2-j;
 				PxBounds3 bbox = pents[i]->m_actor->getWorldBounds();
-				epsc.BBoxNew[0]=epsc.BBoxOld[0] = V(bbox.minimum);
-				epsc.BBoxNew[1]=epsc.BBoxOld[1] = V(bbox.maximum);
 				SendEvent(epsc,1);
 			}
 			_InterlockedAnd((volatile long*)&pents[i]->m_mask,~3);
@@ -841,7 +844,7 @@ PhysXWorld::PhysXWorld(ILog* pLog) : m_debugDraw(false)
 	bqd.preFilterShader = RaycastBatchFilter;
 	m_batchQuery[0] = g_cryPhysX.Scene()->createBatchQuery(bqd);
 	m_batchQuery[1] = g_cryPhysX.Scene()->createBatchQuery(bqd);
-	m_scratchBuf.resize(1<<11);
+	m_scratchBuf.resize(1<<20);
 
 	m_pbGlob.waterDensity = 1000;
 	m_pbGlob.kwaterDensity = 1;

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 *************************************************************************/
@@ -74,8 +74,12 @@ void CWriter::Init(const char* pNameRootNode, const char* pFileName)
 		}
 	}
 
+#if defined(USE_CRY_ASSERT)
 	CNodeLiveWriter* pRoot = CreateAndAddLiveNode(pNameRootNode);
 	assert(pRoot->GetID() == XMLCPB_ROOTNODE_ID);
+#else
+	CreateAndAddLiveNode(pNameRootNode);
+#endif
 }
 
 //////////////////////////////////////////////////////////////////////////

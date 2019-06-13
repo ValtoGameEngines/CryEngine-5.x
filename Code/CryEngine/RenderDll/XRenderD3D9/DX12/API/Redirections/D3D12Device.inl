@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include <array>
 #include <d3d12.h>
@@ -153,10 +153,10 @@ struct Handable
 #include "D3D12Resource.inl"
 
 // ==============================================================================
-template<const int numTargets>
+template<int numTargets>
 class BroadcastableD3D12Device : public ID3D12Device
 {
-	template<const int numTargets> friend class BroadcastableD3D12GraphicsCommandList;
+	template<int numTargets> friend class BroadcastableD3D12GraphicsCommandList;
 	friend class NCryDX12::CDevice;
 
 	int           m_RefCount;
@@ -295,8 +295,6 @@ public:
 	  REFIID riid,
 	  _COM_Outptr_ void** ppCommandList) final
 	{
-		BroadcastableD3D12CommandAllocator<numTargets>* Allocator = (BroadcastableD3D12CommandAllocator<numTargets>*)pCommandAllocator;
-
 		return BroadcastableD3D12GraphicsCommandList<numTargets>::CreateCommandList(m_Target, nodeMask, type, pCommandAllocator, pInitialState, riid, ppCommandList);
 	}
 
@@ -329,7 +327,7 @@ public:
 	  REFIID riid,
 	  _COM_Outptr_ void** ppvRootSignature) final
 	{
-#if CRY_USE_DX12_MULTIADAPTER_SIMULATION
+#if DX12_LINKEDADAPTER_SIMULATION
 		// Always create on the first GPU, if running simulation
 		if (CRenderer::CV_r_StereoEnableMgpu < 0)
 			nodeMask = 1;
@@ -558,7 +556,7 @@ public:
 	  _In_ UINT nodeMask,
 	  D3D12_HEAP_TYPE heapType) final
 	{
-#if CRY_USE_DX12_MULTIADAPTER_SIMULATION
+#if DX12_LINKEDADAPTER_SIMULATION
 		// Always create on the first GPU, if running simulation
 		if (CRenderer::CV_r_StereoEnableMgpu < 0)
 			nodeMask = 1;

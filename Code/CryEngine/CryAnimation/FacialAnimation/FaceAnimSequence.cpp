@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "FaceAnimSequence.h"
@@ -334,7 +334,7 @@ void CFacialAnimSequence::Animate(const QuatTS& rAnimLocationNext, CFacialAnimSe
 		float fProceduralStrength = 0.0f;
 		bool bHasBakedLipsynch = false;
 
-		CCharInstance* pCharacter = pInstance->m_pAnimContext->GetInstance()->GetMasterCharacter();
+		//CCharInstance* pCharacter = pInstance->m_pAnimContext->GetInstance()->GetMasterCharacter();
 		//pCharacter->m_Morphing.m_fMorphVertexDrag = 1.0f;
 
 		int numChannels = (int)m_data.m_channels.size();
@@ -915,8 +915,8 @@ void CFacialAnimSequence::MergeSequence(IFacialAnimSequence* pMergeSequence, con
 
 void CFacialAnimSequence::StreamAsyncOnComplete(IReadStream* pStream, unsigned nError)
 {
-	//	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_FSQ, 0, GetName());
-	//	FUNCTION_PROFILER(GetISystem(), PROFILE_ANIMATION);
+	//	MEMSTAT_CONTEXT(EMemStatContextType::FSQ, GetName());
+	//	CRY_PROFILE_FUNCTION(PROFILE_ANIMATION);
 
 	if (pStream->IsError())
 	{
@@ -944,7 +944,7 @@ void CFacialAnimSequence::StreamOnComplete(IReadStream* pStream, unsigned nError
 {
 	using std::swap;
 
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ANIMATION);
+	CRY_PROFILE_FUNCTION(PROFILE_ANIMATION);
 
 	const char* file = pStream->GetName();
 

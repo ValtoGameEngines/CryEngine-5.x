@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "CryDedicatedServer.h"
@@ -108,7 +108,9 @@ CryMatchMakingConnectionID CCryDedicatedServer::AddRemoteConnection(CryLobbySess
 void CCryDedicatedServer::TickArbitratorNameLookup(CTimeValue tv)
 {
 	ENameRequestResult result = m_pNameReq->GetResult();
+#if !defined(EXCLUDE_NORMAL_LOG)
 	CLobbyCVars& cvars = CLobbyCVars::Get();
+#endif
 
 	switch (result)
 	{

@@ -1,12 +1,16 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef _IGAME_RENDERNODE_
 #define _IGAME_RENDERNODE_
 
 #pragma once
 
+#include <CryPhysics/IPhysics.h> // Required by IRenderer
+#include <CryRenderer/IRenderer.h> // required by IRenderNode and RenderElement.
 #include "Effects/RenderElements/GameRenderElement.h"
 #include "Effects/GameEffectsSystem.h"
+#include <Cry3DEngine/IRenderNode.h>
+#include <CryCore/smartptr.h>
 
 // Forward declares
 struct IGameRenderNodeParams;

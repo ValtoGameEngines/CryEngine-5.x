@@ -6,19 +6,42 @@ start_sources()
 sources_platform(ALL)
 add_sources("EditorWwise_uber_0.cpp"
 	SOURCE_GROUP "Root"
-		"AudioSystemControl_wwise.cpp"
-		"AudioSystemControl_wwise.h"
-		"AudioSystemEditor_wwise.cpp"
-		"AudioSystemEditor_wwise.h"
+		"Common.cpp"
+		"Common.h"
+		"Impl.cpp"
+		"Impl.h"
+		"Item.cpp"
+		"Item.h"
 		"main.cpp"
-		"AudioWwiseLoader.h"
-		"AudioWwiseLoader.cpp"
-		"StdAfx.h"
+		"ProjectLoader.cpp"
+		"ProjectLoader.h"
 		"StdAfx.cpp"
+		"StdAfx.h"
+	SOURCE_GROUP "Connections"
+		"GenericConnection.h"
+		"ParameterConnection.cpp"
+		"ParameterConnection.h"
+		"ParameterToStateConnection.cpp"
+		"ParameterToStateConnection.h"
+	SOURCE_GROUP "DataPanel"
+		"DataPanel.cpp"
+		"DataPanel.h"
+		"FilterProxyModel.cpp"
+		"FilterProxyModel.h"
+		"ItemModel.cpp"
+		"ItemModel.h"
+		"TreeView.cpp"
+		"TreeView.h"
+)
+
+add_sources("NoUberFile"
+	SOURCE_GROUP "Resources"
+		"EditorWwiseUI.qrc"
 )
 
 end_sources()
 #END-FILE-LIST
 
-CryEditorPlugin(EditorCryAudioImplWwise SOLUTION_FOLDER "Sandbox/Plugins/EditorAudioControlsEditor/Impl")
-target_include_directories(${THIS_PROJECT} PRIVATE ../common GeneratedFiles)
+CryEditorPlugin(EditorCryAudioImplWwise SOLUTION_FOLDER "Sandbox/Plugins/EditorAudioControlsEditor/Impl" OUTDIR EditorPlugins/ace)
+target_include_directories(${THIS_PROJECT} PRIVATE "${CRYENGINE_DIR}/Code/CryEngine/CryAudioSystem/Common" "${CRYENGINE_DIR}/Code/CryEngine/CryAudioSystem/implementations")
+target_compile_definitions(${THIS_PROJECT} PRIVATE -DNOT_USE_CRY_MEMORY_MANAGER -DACE_PLUGIN_EXPORTS -DUSE_BACKWARDS_COMPATIBILITY)

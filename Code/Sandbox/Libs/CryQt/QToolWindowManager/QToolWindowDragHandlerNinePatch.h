@@ -1,20 +1,18 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 #include "QToolWindowManagerCommon.h"
 #include "IToolWindowDragHandler.h"
-class QTOOLWINDOWMANAGER_EXPORT QToolWindowDragHandlerNinePatch :
-	public IToolWindowDragHandler
+
+class QTOOLWINDOWMANAGER_EXPORT QToolWindowDragHandlerNinePatch : public IToolWindowDragHandler
 {
 public:
-	void startDrag() Q_DECL_OVERRIDE;
-	void switchedArea(IToolWindowArea* lastArea, IToolWindowArea* newArea) Q_DECL_OVERRIDE;
-	QToolWindowManager::AreaTarget getTargetFromPosition(IToolWindowArea* area) const Q_DECL_OVERRIDE;
-	bool isHandlerWidget(QWidget* widget) const Q_DECL_OVERRIDE;
-	QToolWindowManager::AreaTarget finishDrag(QList<QWidget*> toolWindows, IToolWindowArea* source, IToolWindowArea* destination) Q_DECL_OVERRIDE;
-	IToolWindowDragHandler::SplitSizes getSplitSizes(int originalSize) const Q_DECL_OVERRIDE;
+	virtual void                               startDrag() override;
+	virtual void                               switchedArea(IToolWindowArea* lastArea, IToolWindowArea* newArea) override;
+	virtual QToolWindowAreaTarget              getTargetFromPosition(IToolWindowArea* area) const override;
+	virtual bool                               isHandlerWidget(QWidget* widget) const override;
+	virtual QToolWindowAreaTarget              finishDrag(QList<QWidget*> toolWindows, IToolWindowArea* source, IToolWindowArea* destination) override;
+	virtual IToolWindowDragHandler::SplitSizes getSplitSizes(int originalSize) const override;
 
-	QRect getRectFromCursorPos(QWidget* previewArea, IToolWindowArea* area) const Q_DECL_OVERRIDE;
-
+	virtual QRect                              getRectFromCursorPos(QWidget* previewArea, IToolWindowArea* area) const override;
 };
-

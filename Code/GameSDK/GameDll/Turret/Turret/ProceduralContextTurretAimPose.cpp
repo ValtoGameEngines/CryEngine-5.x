@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ProceduralContextTurretAimPose.h"
@@ -172,8 +172,6 @@ void CProceduralContextTurretAimPose::UpdateSmoothedTargetWorldPosition( const f
 
 	const Matrix34& worldTM = m_entity->GetWorldTM();
 
-	const Vec3 oldTargetLocalPosition = m_invertedWorldTM * m_smoothedTargetWorldPosition;
-
 	const float oldYawRadians = m_yawRadians;
 	const float oldPitchRadians = m_pitchRadians;
 
@@ -257,7 +255,7 @@ bool CProceduralContextTurretAimPose::InitialiseCharacter( const int characterSl
 
 void CProceduralContextTurretAimPose::InitialiseHorizontalAim()
 {
-	CryCreateClassInstance( "AnimationPoseModifier_OperatorQueue", m_pHorizontalAim );
+	CryCreateClassInstanceForInterface(cryiidof<IAnimationOperatorQueue>(), m_pHorizontalAim);
 }
 
 

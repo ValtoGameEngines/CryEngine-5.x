@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __WEAPONFP_AIMING_H__
 #define __WEAPONFP_AIMING_H__
@@ -72,7 +72,8 @@ struct SParams_WeaponFPAiming
 	CCryFlags<uint32> flags;
 };
 
-class IActionController;
+struct IActionController;
+
 class CWeaponFPAiming
 {
 	friend class CFPAimingAction;

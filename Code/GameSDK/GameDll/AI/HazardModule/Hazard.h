@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // The base class for storing hazard information in the hazard system.
 
@@ -11,10 +11,9 @@
 
 #include "HazardShared.h"
 
-
 // Forward declarations:
 class Agent;
-
+struct IPersistantDebug;
 
 namespace HazardSystem
 {

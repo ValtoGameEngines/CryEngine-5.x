@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "GodMode.h"
@@ -7,6 +7,7 @@
 #include "StatsRecordingMgr.h"
 #include "Actor.h"
 #include "UI/HUD/HUDEventDispatcher.h"
+#include <CrySystem/ConsoleRegistration.h>
 
 const float CGodMode::m_timeToWaitBeforeRespawn = 4.0f;
 const char * CGodMode::m_godModeCVarName = "g_godMode";

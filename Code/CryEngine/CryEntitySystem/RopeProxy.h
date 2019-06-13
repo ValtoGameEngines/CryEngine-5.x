@@ -1,19 +1,7 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// -------------------------------------------------------------------------
-//  File name:   RopeProxy.h
-//  Version:     v1.00
-//  Created:     23/10/2006 by Timur.
-//  Compilers:   Visual Studio.NET 2003
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
-
-#ifndef __RopeProxy_h__
-#define __RopeProxy_h__
 #pragma once
+#include <CryEntitySystem/IEntityComponent.h>
 
 // forward declarations.
 struct SEntityEvent;
@@ -26,7 +14,7 @@ struct IPhysicalWorld;
 //////////////////////////////////////////////////////////////////////////
 class CEntityComponentRope : public IEntityRopeComponent
 {
-	CRY_ENTITY_COMPONENT_CLASS(CEntityComponentRope,IEntityRopeComponent,"CEntityComponentRope",0xDFAE2B7E15BB4F3D,0xBD09E0C8E560BF85);
+	CRY_ENTITY_COMPONENT_CLASS_GUID(CEntityComponentRope, IEntityRopeComponent, "CEntityComponentRope", "dfae2b7e-15bb-4f3d-bd09-e0c8e560bf85"_cry_guid);
 
 	CEntityComponentRope();
 	virtual ~CEntityComponentRope();
@@ -35,16 +23,16 @@ public:
 	//////////////////////////////////////////////////////////////////////////
 	// IEntityComponent interface implementation.
 	//////////////////////////////////////////////////////////////////////////
-	virtual void Initialize() final;
-	virtual void ProcessEvent(SEntityEvent& event) final;
-	virtual uint64 GetEventMask() const final;
+	virtual void   Initialize() final;
+	virtual void   ProcessEvent(const SEntityEvent& event) final;
+	virtual Cry::Entity::EventFlags GetEventMask() const final;
 	//////////////////////////////////////////////////////////////////////////
 
 	//////////////////////////////////////////////////////////////////////////
 	// IEntityComponent interface implementation.
 	//////////////////////////////////////////////////////////////////////////
 	virtual EEntityProxy GetProxyType() const final { return ENTITY_PROXY_ROPE; }
-	virtual void         Release() final { delete this; };
+	virtual void         Release() final            { delete this; }
 	virtual void         Update(SEntityUpdateContext& ctx) final;
 	virtual void         LegacySerializeXML(XmlNodeRef& entityNode, XmlNodeRef& componentNode, bool bLoading) override final;
 	virtual bool         NeedGameSerialize() final;
@@ -54,7 +42,7 @@ public:
 	//////////////////////////////////////////////////////////////////////////
 	/// IEntityRopeComponent
 	//////////////////////////////////////////////////////////////////////////
-	virtual IRopeRenderNode* GetRopeRenderNode() final { return m_pRopeRenderNode; };
+	virtual IRopeRenderNode* GetRopeRenderNode() final { return m_pRopeRenderNode; }
 	//////////////////////////////////////////////////////////////////////////
 
 	virtual void GetMemoryUsage(ICrySizer* pSizer) const final
@@ -62,10 +50,12 @@ public:
 		pSizer->AddObject(this, sizeof(*this));
 	}
 	void PreserveParams();
+
 protected:
 	IRopeRenderNode* m_pRopeRenderNode;
 	int              m_nSegmentsOrg;
 	float            m_texTileVOrg;
-};
 
-#endif // __RopeProxy_h__
+	int              m_segmentsCount = 0;
+	float            m_texureTileV = 0;
+};

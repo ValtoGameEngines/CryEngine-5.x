@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -30,18 +30,17 @@ public:
 	virtual uint32   GetType() const override { return CAbstractDictionaryEntry::Type_Entry; }
 
 	virtual QVariant GetColumnValue(int32 columnIndex) const override;
-	virtual QString  GetToolTip() const override;
+	virtual QString  GetToolTip(int32 columnIndex) const override;
 	// ~CAbstractDictionaryEntry
 
 	QString          GetName() const { return m_name; }
-	Schematyc::SGUID GetTypeGUID()   { return m_identifier; }
+	CryGUID GetTypeGUID()   { return m_identifier; }
 
 private:
-	Schematyc::SGUID m_identifier;
+	CryGUID m_identifier;
 	QString          m_name;
 	QString          m_fullName;
 	QString          m_description;
-	QString          m_wikiLink;
 	QIcon            m_icon;
 };
 
@@ -60,18 +59,21 @@ public:
 	virtual ~CComponentsDictionary();
 
 	// CryGraphEditor::CAbstractDictionary
+	virtual void                            ResetEntries() override;
 	virtual int32                           GetNumEntries() const override { return m_components.size(); }
 	virtual const CAbstractDictionaryEntry* GetEntry(int32 index) const override;
 
-	virtual int32                           GetNumColumns() const override { return Column_COUNT; };
+	virtual int32                           GetNumColumns() const override { return Column_COUNT; }
 	virtual QString                         GetColumnName(int32 index) const override;
 
 	virtual int32                           GetDefaultFilterColumn() const override { return Column_Name; }
+	virtual int32                           GetDefaultSortColumn() const override { return Column_Name; }
 	// ~CryGraphEditor::CAbstractDictionary
 
 	void Load(const Schematyc::IScriptElement* pScriptScope);
 
 private:
+	const Schematyc::IScriptElement*       m_pScriptScope;
 	std::vector<CComponentDictionaryEntry> m_components;
 };
 

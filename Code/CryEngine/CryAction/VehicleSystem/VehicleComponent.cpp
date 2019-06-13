@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -19,7 +19,6 @@
 #include "IViewSystem.h"
 #include "CryAction.h"
 #include "IGameObject.h"
-#include <CryAISystem/IAgent.h>
 
 #include "Vehicle.h"
 #include "VehicleComponent.h"
@@ -353,7 +352,7 @@ void CVehicleComponent::OnVehicleDestroyed()
 //------------------------------------------------------------------------
 void CVehicleComponent::Update(float deltaTime)
 {
-	//FUNCTION_PROFILER( GetISystem(), PROFILE_ACTION );
+	//CRY_PROFILE_FUNCTION( PROFILE_ACTION );
 }
 
 #if ENABLE_VEHICLE_DEBUG
@@ -455,13 +454,13 @@ void CVehicleComponent::Serialize(TSerialize ser, EEntityAspects aspects)
 	{
 		ser.Value("damage", m_damage);
 
-		if (ser.IsReading())
+		/*if (ser.IsReading())
 		{
 			float damageRatio = 1.0f;
 			if (m_pSharedParams->damageMax > 0.0f)
 				damageRatio = m_damage / m_pSharedParams->damageMax;
 			int damageLevel = int(min(damageRatio, 1.0f) / 0.25f);
-		}
+		}*/
 
 		for (TVehicleDamageBehaviorVector::iterator ite = m_damageBehaviors.begin(); ite != m_damageBehaviors.end(); ++ite)
 		{

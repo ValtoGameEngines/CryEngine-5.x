@@ -1,9 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "GameVolume_Water.h"
 
 #include <CryGame/IGameVolumes.h>
+#include <CryPhysics/IPhysics.h>
+#include <CryRenderer/IRenderAuxGeom.h>
 
 //#pragma optimize("", off)
 //#pragma inline_depth(0)
@@ -156,7 +158,7 @@ void CGameVolume_Water::HandleEvent(const SGameObjectEvent& gameObjectEvent)
 	}
 }
 
-void CGameVolume_Water::ProcessEvent(SEntityEvent& event)
+void CGameVolume_Water::ProcessEvent(const SEntityEvent& event)
 {
 	switch (event.event)
 	{
@@ -231,7 +233,7 @@ void CGameVolume_Water::ProcessEvent(SEntityEvent& event)
 			{
 				if (iter->m_pWaterRenderNode)
 				{
-					iter->m_pWaterRenderNode->Hide(true);
+					iter->m_pWaterRenderNode->SetRndFlags(ERF_HIDDEN, true);
 				}
 
 				++iter;
@@ -250,7 +252,7 @@ void CGameVolume_Water::ProcessEvent(SEntityEvent& event)
 					SWaterSegment& segment = m_segments[i];
 					if (segment.m_pWaterRenderNode)
 					{
-						segment.m_pWaterRenderNode->Hide(false);
+						segment.m_pWaterRenderNode->SetRndFlags(ERF_HIDDEN, false);
 
 						if (!m_isRiver)
 						{
@@ -277,14 +279,14 @@ void CGameVolume_Water::ProcessEvent(SEntityEvent& event)
 	}
 }
 
-uint64 CGameVolume_Water::GetEventMask() const
+Cry::Entity::EventFlags CGameVolume_Water::GetEventMask() const
 {
-	return 
-		BIT64(ENTITY_EVENT_EDITOR_PROPERTY_CHANGED) |
-		BIT64(ENTITY_EVENT_RESET) |
-		BIT64(ENTITY_EVENT_XFORM) |
-		BIT64(ENTITY_EVENT_HIDE) |
-		BIT64(ENTITY_EVENT_UNHIDE);
+	return
+	  ENTITY_EVENT_EDITOR_PROPERTY_CHANGED |
+	  ENTITY_EVENT_RESET |
+	  ENTITY_EVENT_XFORM |
+	  ENTITY_EVENT_HIDE |
+	  ENTITY_EVENT_UNHIDE;
 }
 
 void CGameVolume_Water::GetMemoryUsage(ICrySizer* pSizer) const
@@ -307,14 +309,14 @@ void CGameVolume_Water::SetupVolume()
 	if (GetVolumeInfoForEntity(GetEntityId(), volumeInfo) == false)
 		return;
 
-	if (volumeInfo.verticesCount < 3)
+	if (volumeInfo.verticesCount < 4)
 		return;
 
 	WaterProperties waterProperties(GetEntity());
 
 	if (waterProperties.isRiver)
 	{
-		if (volumeInfo.verticesCount < 4 || volumeInfo.verticesCount % 2 != 0)
+		if (volumeInfo.verticesCount % 2 != 0)
 			return;
 
 		int numSegments = (volumeInfo.verticesCount / 2) - 1;
@@ -453,8 +455,6 @@ void CGameVolume_Water::CreatePhysicsArea(const uint32 segmentIndex, const Matri
 
 		if (isRiver)
 		{
-			int i = segmentIndex;
-			int j = vertexCount - 1 - segmentIndex;
 			pb.waterFlow = ((pVertices[1] - pVertices[0]).GetNormalized() + (pVertices[2] - pVertices[3]).GetNormalized()) / 2.f * streamSpeed;
 		}
 		pWaterArea->SetParams(&pb);

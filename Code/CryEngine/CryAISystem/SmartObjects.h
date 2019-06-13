@@ -1,34 +1,17 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-/********************************************************************
-   -------------------------------------------------------------------------
-   File name:   SmartObjects.h
-   $Id$
-   Description:
-
-   -------------------------------------------------------------------------
-   History:
-   - ?							: Created by ?
-
- *********************************************************************/
-#ifndef _SMARTOBJECTS_H_
-#define _SMARTOBJECTS_H_
-
-#if _MSC_VER > 1000
-	#pragma once
-#endif
+#pragma once
 
 #include <CryEntitySystem/IEntitySystem.h>
 #include <CryMemory/STLPoolAllocator.h>
-#include "Navigation/MNM/MNM.h"
 
 // forward declaration
 class CAIActor;
 class CSmartObject;
 class CSmartObjectClass;
 struct CCondition;
-
 struct OffMeshLink_SmartObject;
+class CSmartObjectOffMeshNavigation;
 
 typedef std::vector<CSmartObjectClass*> CSmartObjectClasses;
 
@@ -163,7 +146,7 @@ public:
 
 		if (!model.empty())
 		{
-			m_pStatObj = gEnv->p3DEngine->LoadStatObj("Editor/Objects/" + model, NULL, NULL, false);
+			m_pStatObj = gEnv->p3DEngine->LoadStatObj("%EDITOR%/Objects/" + model, NULL, NULL, false);
 			if (m_pStatObj)
 			{
 				m_pStatObj->AddRef();
@@ -179,7 +162,7 @@ public:
 	static IMaterial* GetHelperMaterial()
 	{
 		if (!m_pHelperMtl)
-			m_pHelperMtl = gEnv->p3DEngine->GetMaterialManager()->LoadMaterial("Editor/Objects/Helper");
+			m_pHelperMtl = gEnv->p3DEngine->GetMaterialManager()->LoadMaterial("%EDITOR%/Objects/Helper");
 		return m_pHelperMtl;
 	};
 };
@@ -211,7 +194,7 @@ public:
 		{
 			if (*state)
 			{
-				std::pair<MapSmartObjectStateIds::iterator, bool> pr = g_mapStateIds.insert(std::make_pair(state, g_mapStates.size()));
+				std::pair<MapSmartObjectStateIds::iterator, bool> pr = g_mapStateIds.insert(std::make_pair(state, static_cast<int>(g_mapStates.size())));
 				if (pr.second)   // was insertion made?
 					g_mapStates.push_back(pr.first->first.c_str());
 				m_StateId = pr.first->second;
@@ -409,18 +392,6 @@ protected:
 	float m_fLookAtLimit;
 	Vec3  m_vLookAtPos;
 
-	typedef std::map<const SmartObjectHelper*, unsigned> MapNavNodes;
-
-	// Cached results for GetEnclosingNavNode, which looks for enclosing nav nodes of types SMART_OBJECT_ENCLOSING_NAV_TYPES (does NOT include smartobject nav type!)
-	MapNavNodes m_enclosingNavNodes;
-
-	// The navgraph nodes created by this smartobject (one per helper)
-	MapNavNodes m_correspondingNavNodes;
-
-	// Links from the navgraph nodes created by this smartobject (one per helper) to other connected (non-smartobject) nodes
-	typedef std::vector<unsigned> VectorNavLinks;
-	VectorNavLinks m_navLinks;
-
 	ESO_Validate   m_eValidationResult;
 
 	bool           m_bHidden;
@@ -458,6 +429,7 @@ protected:
 	};
 	typedef std::map<CClassTemplateData*, CTemplateData> MapTemplates;
 	std::unique_ptr<MapTemplates> m_pMapTemplates;
+	bool m_updateTemplates;
 
 public:
 	explicit CSmartObject(EntityId entityId);
@@ -475,13 +447,20 @@ public:
 	bool operator==(const CSmartObject& other) const { return m_entityId == other.m_entityId; }
 
 	//Adds a class to the current set
-	void RegisterSmartObjectClass(CSmartObjectClass* pClass) { m_vClasses.push_back(pClass); }
+	void RegisterSmartObjectClass(CSmartObjectClass* pClass)
+	{ 
+		m_vClasses.push_back(pClass);
+	}
 
 	//Removes a class from the current set
 	void UnregisterSmartObjectClass(CSmartObjectClass* pClass)
 	{
+#ifdef ENABLE_AI_ASSERT
 		const bool foundClass = stl::find_and_erase(m_vClasses, pClass);
 		AIAssert(foundClass);
+#else
+		stl::find_and_erase(m_vClasses, pClass);
+#endif
 	}
 
 	CSmartObjectClasses& GetClasses()      { return m_vClasses; }
@@ -492,12 +471,7 @@ public:
 	/// Measures the user size and applies value to all associated smart object classes
 	void ApplyUserSize();
 
-	/// Calculates the navigation node that we're, or else a particular helper is, attached to.
-	/// If already attached it does nothing - the result is cached
-	unsigned GetEnclosingNavNode(const SmartObjectHelper* pHelper);
-
-	/// Returns the navigation node which was created for this helper
-	unsigned      GetCorrespondingNavNode(const SmartObjectHelper* pHelper);
+	void InvalidateTemplates() { m_updateTemplates = true; }
 
 	MapTemplates& GetMapTemplates();
 
@@ -813,9 +787,10 @@ typedef std::multimap<float, CQueryEvent> QueryEventMap;
 // CSmartObjectManager receives notifications from entity system about entities being spawned and deleted.
 // Keeps track of registered classes, and automatically creates smart object representation for every instance belonging to them.
 ///////////////////////////////////////////////
-class CSmartObjectManager
+class CSmartObjectManager final
 	: public IEntitySystemSink
-	  , public ISmartObjectManager
+	, public IEntityEventListener
+	, public ISmartObjectManager
 {
 private:
 	CSmartObject::CState    m_StateAttTarget;
@@ -843,7 +818,6 @@ private:
 	virtual void OnSpawn(IEntity* pEntity, SEntitySpawnParams& params);
 	virtual bool OnRemove(IEntity* pEntity);
 	virtual void OnReused(IEntity* pEntity, SEntitySpawnParams& params);
-	virtual void OnEvent(IEntity* pEntity, SEntityEvent& event);
 
 	void         DoRemove(IEntity* pEntity, bool bDeleteSmartObject = true);
 
@@ -886,6 +860,10 @@ public:
 	//ISmartObjectManager/////////////////////////////////////////////////////
 	//////////////////////////////////////////////////////////////////////////
 
+	// IEntityEventListener
+	virtual void OnEntityEvent(IEntity* pEntity, const SEntityEvent& event);
+	// ~IEntityEventListener
+
 	CSmartObjectManager();
 	~CSmartObjectManager();
 
@@ -907,17 +885,14 @@ public:
 	// returns the id of the inserted goal pipe if a rule was found or 0 if no rule
 	int TriggerEvent(const char* sEventName, IEntity*& pUser, IEntity*& pObject, QueryEventMap* pQueryEvents = NULL, const Vec3* pExtraPoint = NULL, bool bHighPriority = false);
 
-	/// used by heuristic to check is this link passable by current pathfind requester
-	float GetSmartObjectLinkCostFactor(const GraphNode* nodes[2], const CAIObject* pRequester, float* fCostMultiplier) const;
-	bool  GetSmartObjectLinkCostFactorForMNM(const OffMeshLink_SmartObject* pSmartObjectLink, IEntity* pRequesterEntity, float* fCostMultiplier) const;
+	// used by heuristic to check is this link passable by current pathfind requester
+	bool  GetSmartObjectLinkCostFactorForMNM(const OffMeshLink_SmartObject* pSmartObjectLink, const EntityId requesterEntityId, float* fCostMultiplier) const;
 
 	// used by COPTrace to use smart objects in navigation
-	int                  GetNavigationalSmartObjectActionType(CPipeUser* pPipeUser, const GraphNode* pFromNode, const GraphNode* pToNode);
 	int                  GetNavigationalSmartObjectActionTypeForMNM(CPipeUser* pPipeUser, CSmartObject* pSmartObject, CSmartObjectClass* pSmartObjectClass, SmartObjectHelper* pFromHelper, SmartObjectHelper* pToHelper);
-	bool                 PrepareNavigateSmartObject(CPipeUser* pPipeUser, const GraphNode* pFromNode, const GraphNode* pToNode);
 	bool                 PrepareNavigateSmartObject(CPipeUser* pPipeUser, CSmartObject* pObject, CSmartObjectClass* pObjectClass, SmartObjectHelper* pFromHelper, SmartObjectHelper* pToHelper);
 	void                 UseSmartObject(CSmartObject* pSmartObjectUser, CSmartObject* pObject, CCondition* pCondition, int eventId = 0, bool bForceHighPriority = false);
-	/// Used by COPTrace to detect busy state of SO allowing agents to wait instead of simply failing the movement request.
+	// Used by COPTrace to detect busy state of SO allowing agents to wait instead of simply failing the movement request.
 	bool                 IsSmartObjectBusy(const CSmartObject* pSmartObject) const;
 
 	void                 MapPathTypeToSoUser(const string& soUser, const string& pathType);
@@ -943,6 +918,7 @@ private:
 	};
 
 	typedef VectorMap<CSmartObject*, float> SmartObjectFloatMap;
+	CSmartObjectOffMeshNavigation*           m_pOffMeshNavigation;
 	SmartObjectFloatMap                      m_bannedNavSmartObjects;
 	std::map<string, string>                 m_MappingSOUserPathType;
 	static std::map<EntityId, CSmartObject*> g_smartObjectEntityMap;
@@ -1037,8 +1013,6 @@ private:
 private:
 	IEntity* m_pPreOnSpawnEntity; // the entity for which OnSpawn was called just right before the current OnSpawn call
 
-	void DeleteFromNavigation(CSmartObject* pSmartObject) const;
-
 	int  TriggerEventUserObject(const char* sEventName, CSmartObject* pUser, CSmartObject* pObject, QueryEventMap* pQueryEvents, const Vec3* pExtraPoint, bool bHighPriority);
 	int  TriggerEventUser(const char* sEventName, CSmartObject* pUser, QueryEventMap* pQueryEvents, IEntity** ppObjectEntity, const Vec3* pExtraPoint, bool bHighPriority);
 	int  TriggerEventObject(const char* sEventName, CSmartObject* pObject, QueryEventMap* pQueryEvents, IEntity** ppUserEntity, const Vec3* pExtraPoint, bool bHighPriority);
@@ -1073,58 +1047,3 @@ CAIObject* CSmartObjectBase::GetAI() const
 	return NULL;
 }
 
-//////////////////////////////////////////////////////////////////////////
-/// MNM integration
-
-struct OffMeshLink_SmartObject : public MNM::OffMeshLink
-{
-	OffMeshLink_SmartObject()
-		: MNM::OffMeshLink(eLinkType_SmartObject, 0)
-		, m_pSmartObject(NULL)
-		, m_pSmartObjectClass(NULL)
-		, m_pFromHelper(NULL)
-		, m_pToHelper(NULL)
-	{
-	}
-
-	OffMeshLink_SmartObject(const EntityId objectId, CSmartObject* _smartObject, CSmartObjectClass* _smartObjectClass, SmartObjectHelper* _fromHelper, SmartObjectHelper* _toHelper)
-		: MNM::OffMeshLink(eLinkType_SmartObject, objectId)
-		, m_pSmartObject(_smartObject)
-		, m_pSmartObjectClass(_smartObjectClass)
-		, m_pFromHelper(_fromHelper)
-		, m_pToHelper(_toHelper)
-	{
-
-	}
-
-	virtual ~OffMeshLink_SmartObject() {};
-
-	virtual MNM::OffMeshLink* Clone() const
-	{
-		return new OffMeshLink_SmartObject(GetEntityIdForOffMeshLink(), m_pSmartObject, m_pSmartObjectClass, m_pFromHelper, m_pToHelper);
-	}
-
-	virtual Vec3 GetStartPosition() const
-	{
-		return m_pSmartObject->GetHelperPos(m_pFromHelper);
-	}
-
-	virtual Vec3 GetEndPosition() const
-	{
-		return m_pSmartObject->GetHelperPos(m_pToHelper);
-	}
-
-	virtual bool CanUse(IEntity* pRequester, float* costMultiplier) const
-	{
-		return gAIEnv.pSmartObjectManager->GetSmartObjectLinkCostFactorForMNM(this, pRequester, costMultiplier);
-	}
-
-	static LinkType GetType() { return eLinkType_SmartObject; }
-
-	CSmartObject*      m_pSmartObject;
-	CSmartObjectClass* m_pSmartObjectClass;
-	SmartObjectHelper* m_pFromHelper;
-	SmartObjectHelper* m_pToHelper;
-};
-
-#endif

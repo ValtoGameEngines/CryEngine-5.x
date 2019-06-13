@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -71,7 +71,6 @@ void CPlayerStateGround::OnPrePhysicsUpdate( CPlayer& player, const SActorFrameM
 		}
 
 		//process movement
-		const bool isRemote = isPlayer && !player.IsClient();
 
 		Vec3 move(ZERO);
 		CPlayerStateUtil::CalculateGroundOrJumpMovement( player, movement, isHeavyWeapon, move );
@@ -84,8 +83,6 @@ void CPlayerStateGround::OnPrePhysicsUpdate( CPlayer& player, const SActorFrameM
 
 		//apply movement
 		Vec3 desiredVel(ZERO);
-		Vec3 entityPos = player.GetEntity()->GetWorldPos();
-		Vec3 entityRight(player.GetBaseQuat().GetColumn0());
 
 		float fGroundNormalZ;
 
@@ -361,9 +358,9 @@ bool CPlayerStateGround::CheckForVaultTrigger(CPlayer & player, float frameTime)
 							const float iconColor[4] = {0.3f, 1.f, 0.3f, 1.0f};
 							const char * iconText = "A";
 
-							IRenderAuxText::Draw2dLabel((gEnv->pRenderer->GetWidth() * 0.5f), (gEnv->pRenderer->GetHeight() * 0.65f), iconSize, bracketColor, true, "( )");
-							IRenderAuxText::Draw2dLabel((gEnv->pRenderer->GetWidth() * 0.5f), (gEnv->pRenderer->GetHeight() * 0.65f), iconSize, iconColor, true, "%s", iconText);
-							IRenderAuxText::Draw2dLabel((gEnv->pRenderer->GetWidth() * 0.5f), (gEnv->pRenderer->GetHeight() * 0.72f), textSize, textColor, true, "%s", message);
+							IRenderAuxText::Draw2dLabel((gEnv->pRenderer->GetOverlayWidth() * 0.5f), (gEnv->pRenderer->GetOverlayHeight() * 0.65f), iconSize, bracketColor, true, "( )");
+							IRenderAuxText::Draw2dLabel((gEnv->pRenderer->GetOverlayWidth() * 0.5f), (gEnv->pRenderer->GetOverlayHeight() * 0.65f), iconSize, iconColor, true, "%s", iconText);
+							IRenderAuxText::Draw2dLabel((gEnv->pRenderer->GetOverlayWidth() * 0.5f), (gEnv->pRenderer->GetOverlayHeight() * 0.72f), textSize, textColor, true, "%s", message);
 						}
 					}
 #endif

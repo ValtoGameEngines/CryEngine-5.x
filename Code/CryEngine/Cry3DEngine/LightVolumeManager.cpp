@@ -1,13 +1,18 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "LightVolumeManager.h"
 #include "ClipVolumeManager.h"
 
+CLightVolumesMgr::CLightVolumesMgr()
+	: m_lightVolsInfoCount(0)
+{
+	Init();
+}
+
 void CLightVolumesMgr::Init()
 {
 	m_bUpdateLightVolumes = false;
-	m_pLightVolsInfo.reserve(LV_MAX_COUNT);
 	for (int i = 0; i < RT_COMMAND_BUF_COUNT; ++i)
 		m_pLightVolumes[i].reserve(LV_MAX_COUNT);
 	memset(m_nWorldCells, 0, sizeof(m_nWorldCells));
@@ -26,7 +31,7 @@ void CLightVolumesMgr::Reset()
 
 uint16 CLightVolumesMgr::RegisterVolume(const Vec3& vPos, f32 fRadius, uint8 nClipVolumeRef, const SRenderingPassInfo& passInfo)
 {
-	IF ((m_bUpdateLightVolumes & (m_pLightVolsInfo.size() < LV_MAX_COUNT)) && fRadius < 256.0f, 1)
+	IF (m_bUpdateLightVolumes && fRadius < 256.0f, 1)
 	{
 		FUNCTION_PROFILER_3DENGINE;
 
@@ -47,52 +52,50 @@ uint16 CLightVolumesMgr::RegisterVolume(const Vec3& vPos, f32 fRadius, uint8 nCl
 			int32 nVolumePosz = (int32)(floorf(sVolInfo.vVolume.z * LV_CELL_RSIZEZ));
 
 			if (nPosx == nVolumePosx &&
-			    nPosy == nVolumePosy &&
-			    nPosz == nVolumePosz &&
-			    nClipVolumeRef == sVolInfo.nClipVolumeID)
+				nPosy == nVolumePosy &&
+				nPosz == nVolumePosz &&
+				nClipVolumeRef == sVolInfo.nClipVolumeID)
 			{
-				return (uint16) * pCurrentVolumeID;
+				return (uint16)* pCurrentVolumeID;
 			}
 
 			pCurrentVolumeID = &sVolInfo.nNextVolume;
 		}
 
-		// create new volume
-		size_t nIndex = ~0;
-		SLightVolInfo* pLightVolInfo = ::new(m_pLightVolsInfo.push_back_new(nIndex))SLightVolInfo(vPos, fRadius, nClipVolumeRef);
-		*pCurrentVolumeID = static_cast<uint16>(nIndex + 1);
+		//we only increment m_lightVolsInfoCount here and clamp it to the max value later
+		const int newSize = CryInterlockedIncrement(&m_lightVolsInfoCount);
+		if (newSize <= LV_MAX_COUNT)
+		{
+			m_pLightVolsInfo[newSize - 1] = SLightVolInfo(vPos, fRadius, nClipVolumeRef);
+			*pCurrentVolumeID = static_cast<uint16>(newSize);
 
-		return *pCurrentVolumeID;
+			return *pCurrentVolumeID;
+		}
 	}
 
 	return 0;
 }
 
-void CLightVolumesMgr::RegisterLight(const CDLight& pDL, uint32 nLightID, const SRenderingPassInfo& passInfo)
+void CLightVolumesMgr::RegisterLight(const SRenderLight& pDL, uint32 nLightID, const SRenderingPassInfo& passInfo)
 {
-	IF ((m_bUpdateLightVolumes & !(pDL.m_Flags & LV_DLF_LIGHTVOLUMES_MASK)), 1)
+	IF (nLightID < LV_MAX_LIGHTS && (m_bUpdateLightVolumes & !(pDL.m_Flags & LV_DLF_LIGHTVOLUMES_MASK)), 1)
 	{
 		FUNCTION_PROFILER_3DENGINE;
 
-		const f32 fColCheck = (f32) __fsel(pDL.m_Color.r + pDL.m_Color.g + pDL.m_Color.b - 0.333f, 1.0f, 0.0f); //light color > threshold
-		const f32 fRadCheck = (f32) __fsel(pDL.m_fRadius - 0.5f, 1.0f, 0.0f);                                   //light radius > threshold
-		if (fColCheck * fRadCheck)
-		{
-			int32 nMiny = (int32)(floorf((pDL.m_Origin.y - pDL.m_fRadius) * LV_LIGHT_CELL_R_SIZE));
-			int32 nMaxy = (int32)(floorf((pDL.m_Origin.y + pDL.m_fRadius) * LV_LIGHT_CELL_R_SIZE));
-			int32 nMinx = (int32)(floorf((pDL.m_Origin.x - pDL.m_fRadius) * LV_LIGHT_CELL_R_SIZE));
-			int32 nMaxx = (int32)(floorf((pDL.m_Origin.x + pDL.m_fRadius) * LV_LIGHT_CELL_R_SIZE));
+		int32 nMiny = (int32)(floorf((pDL.m_Origin.y - pDL.m_fRadius) * LV_LIGHT_CELL_R_SIZE));
+		int32 nMaxy = (int32)(floorf((pDL.m_Origin.y + pDL.m_fRadius) * LV_LIGHT_CELL_R_SIZE));
+		int32 nMinx = (int32)(floorf((pDL.m_Origin.x - pDL.m_fRadius) * LV_LIGHT_CELL_R_SIZE));
+		int32 nMaxx = (int32)(floorf((pDL.m_Origin.x + pDL.m_fRadius) * LV_LIGHT_CELL_R_SIZE));
 
-			// Register light into all cells touched by light radius
-			for (int32 y = nMiny, ymax = nMaxy; y <= ymax; ++y)
+		// Register light into all cells touched by light radius
+		for (int32 y = nMiny, ymax = nMaxy; y <= ymax; ++y)
+		{
+			for (int32 x = nMinx, xmax = nMaxx; x <= xmax; ++x)
 			{
-				for (int32 x = nMinx, xmax = nMaxx; x <= xmax; ++x)
-				{
-					SLightCell& lightCell = m_pWorldLightCells[GetWorldHashBucketKey(x, y, 1, LV_LIGHTS_WORLD_BUCKET_SIZE)];
-					CryPrefetch(&lightCell);
-					lightCell.nLightID[lightCell.nLightCount] = nLightID;
-					lightCell.nLightCount = (lightCell.nLightCount + 1) & (LV_LIGHTS_MAX_COUNT - 1);
-				}
+				SLightCell& lightCell = m_pWorldLightCells[GetWorldHashBucketKey(x, y, 1, LV_LIGHTS_WORLD_BUCKET_SIZE)];
+				CryPrefetch(&lightCell);
+				lightCell.nLightID[lightCell.nLightCount] = nLightID;
+				lightCell.nLightCount = (lightCell.nLightCount + 1) & (LV_CELL_MAX_LIGHTS - 1);
 			}
 		}
 	}
@@ -115,7 +118,7 @@ void CLightVolumesMgr::AddLight(const SRenderLight& pLight, const SLightVolInfo*
 			Vec3 lightColor = pLight.m_Color.toVec3();
 
 			// Adjust light intensity so that the intended brightness is reached 1 meter from the light's surface
-			IF (!(pLight.m_Flags & (DLF_AREA_LIGHT | DLF_AMBIENT)), 1)
+			IF (!(pLight.m_Flags & DLF_AMBIENT), 1)
 			{
 				fAttenuationBulbSize = max(fAttenuationBulbSize, 0.001f);
 
@@ -147,14 +150,15 @@ void CLightVolumesMgr::AddLight(const SRenderLight& pLight, const SLightVolInfo*
 
 void CLightVolumesMgr::Update(const SRenderingPassInfo& passInfo)
 {
-	if (!m_bUpdateLightVolumes || m_pLightVolsInfo.empty() || !passInfo.IsGeneralPass())
+	if (!m_bUpdateLightVolumes || m_lightVolsInfoCount == 0 || !passInfo.IsGeneralPass())
 		return;
 
 	FUNCTION_PROFILER_3DENGINE;
-	m_pLightVolsInfo.CoalesceMemory();
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "CLightVolumesMgr::Update");
+
 	const uint32 nLightCount = passInfo.GetIRenderView()->GetLightsCount(eDLT_DeferredLight);
 
-	uint32 nLightVols = m_pLightVolsInfo.size();
+	const uint32 nLightVols = min(m_lightVolsInfoCount, LV_MAX_COUNT);
 	LightVolumeVector& lightVols = m_pLightVolumes[passInfo.ThreadID()];
 	lightVols.resize(nLightVols);
 
@@ -166,8 +170,7 @@ void CLightVolumesMgr::Update(const SRenderingPassInfo& passInfo)
 		return;
 	}
 
-	uint64 _nLightProcessed[128] = { 0 };
-	uint8* nLightProcessed = (uint8*)&_nLightProcessed[0];
+	uint8 nLightProcessed[LV_MAX_LIGHTS] = { 0 };
 
 	for (uint32 v = 0; v < nLightVols; ++v)
 	{
@@ -217,7 +220,7 @@ void CLightVolumesMgr::Clear(const SRenderingPassInfo& passInfo)
 	{
 		memset(m_nWorldCells, 0, sizeof(m_nWorldCells));
 		memset(m_pWorldLightCells, 0, sizeof(m_pWorldLightCells));
-		m_pLightVolsInfo.clear();
+		m_lightVolsInfoCount = 0;
 		m_bUpdateLightVolumes = (GetCVars()->e_LightVolumes == 1) ? true : false;
 	}
 }
@@ -241,7 +244,6 @@ void C3DEngine::GetLightVolumes(threadID nThreadID, SLightVolume*& pLightVols, u
 void CLightVolumesMgr::DrawDebug(const SRenderingPassInfo& passInfo)
 {
 #ifndef _RELEASE
-	IRenderer* pRenderer = GetRenderer();
 	IRenderAuxGeom* pAuxGeom = GetRenderer()->GetIRenderAuxGeom();
 	if (!pAuxGeom || !passInfo.IsGeneralPass())
 		return;
@@ -250,9 +252,8 @@ void CLightVolumesMgr::DrawDebug(const SRenderingPassInfo& passInfo)
 	ColorF cBad = ColorF(1.0f, 0.0, 0.0f, 1.0f);
 	ColorF cWarning = ColorF(1.0f, 1.0, 0.0f, 1.0f);
 	ColorF cGood = ColorF(0.0f, 0.5, 1.0f, 1.0f);
-	ColorF cSingleCell = ColorF(0.0f, 1.0, 0.0f, 1.0f);
 
-	const uint32 nLightVols = m_pLightVolsInfo.size();
+	const uint32 nLightVols = min(m_lightVolsInfoCount, LV_MAX_COUNT);
 	LightVolumeVector& lightVols = m_pLightVolumes[passInfo.ThreadID()];
 	const Vec3 vCamPos = passInfo.GetCamera().GetPosition();
 

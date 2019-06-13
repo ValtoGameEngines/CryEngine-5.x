@@ -1,16 +1,8 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+ 
+//! \cond INTERNAL
 
-// -------------------------------------------------------------------------
-//  File name:   ICryPerHud.h
-//  Created:     19/11/2009 by Timur.
-//  Description: Interface to the Performance HUD
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
-
-#ifndef __IPERFHUD_H_
-#define __IPERFHUD_H_
+#pragma once
 
 #include <CryExtension/ICryUnknown.h>
 #include <CryExtension/ClassWeaver.h>
@@ -53,7 +45,7 @@ struct ICryPerfHUDWidget : public _reference_target_t
 //! Base Interface for all engine module extensions.
 struct ICryPerfHUD : public ICryUnknown
 {
-	CRYINTERFACE_DECLARE(ICryPerfHUD, 0x268d142e043d464c, 0xa0776580f81b988a);
+	CRYINTERFACE_DECLARE_GUID(ICryPerfHUD, "268d142e-043d-464c-a077-6580f81b988a"_cry_guid);
 
 	struct PerfBucket
 	{
@@ -116,6 +108,9 @@ struct ICryPerfHUD : public ICryUnknown
 DECLARE_SHARED_POINTERS(ICryPerfHUD);
 
 void        CryPerfHUDWarning(float duration, const char*, ...) PRINTF_PARAMS(2, 3);
+
+#include <CrySystem/ISystem.h>
+
 inline void CryPerfHUDWarning(float duration, const char* format, ...)
 {
 	if (gEnv && gEnv->pSystem)
@@ -132,4 +127,4 @@ inline void CryPerfHUDWarning(float duration, const char* format, ...)
 	}
 }
 
-#endif
+//! \endcond

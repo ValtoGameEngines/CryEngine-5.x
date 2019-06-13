@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __MNM_DYNAMIC_SPAN_GRID_H
 #define __MNM_DYNAMIC_SPAN_GRID_H
@@ -106,7 +106,8 @@ private:
 	typedef std::vector<Element*> Grid;
 	Grid m_grid;
 
-	typedef TypeFixedAllocator<Element, 256* 1024> Allocator;
+	// Size of the allocator chunk was reduced from 256 * 1024 (more than 3MB). Allocating such big chunk was really expensive in terms of performance 
+	typedef TypeFixedAllocator<Element, 16 * 1024> Allocator;
 	Allocator m_alloc;
 };
 }

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // Note: The utilities in this file should typically not be used directly,
 // consider including UnicodeFunctions.h or UnicodeIterator.h instead.
@@ -29,15 +29,15 @@
 #endif
 
 #include "UnicodeEncoding.h"
-#include <string.h>                 // For str(n)len and memcpy.
-#include <wchar.h>                  // For wcs(n)len.
-#include <stddef.h>                 // For size_t and ptrdiff_t.
-#include <iterator>                 // For std::iterator_traits.
-#include <string>                   // For std::basic_string.
-#include <vector>                   // For std::vector.
-#include <list>                     // For std::list.
-#include <deque>                    // For std::deque.
-#include <type_traits>              // ... standard type-traits (as of C++11).
+#include <cstring>     // For str(n)len and memcpy.
+#include <wchar.h>     // For wcs(n)len.
+#include <stddef.h>    // For size_t and ptrdiff_t.
+#include <iterator>    // For std::iterator_traits.
+#include <string>      // For std::basic_string.
+#include <vector>      // For std::vector.
+#include <list>        // For std::list.
+#include <deque>       // For std::deque.
+#include <type_traits> // ... standard type-traits (as of C++11).
 
 // Forward declare the supported types.
 // Before actually instantiating a binding however, you need to have the full definition included.
@@ -91,6 +91,7 @@ struct SValidChar
 	static const bool isQChar = is_same<BaseType, QChar>::value;
 	static const bool isUsable = isArithmeticType || isQChar;
 	static const bool isValidQualified = !is_const<T>::value || Input;
+	PREFAST_SUPPRESS_WARNING(6285)
 	static const bool isKnownSize = sizeof(T) == 1 || sizeof(T) == 2 || sizeof(T) == 4;
 	static const bool isValidInferred = isKnownSize || !InferEncoding;
 	static const bool value = isUsable && isValidQualified && isValidInferred;
@@ -884,7 +885,6 @@ struct SWriteSink<T, Append, eBind_Buffer>
 		const size_t fixedOffset = Append && offset >= extent<T>::value
 		                           ? extent<T>::value - 1 // In case the buffer is already full and not terminated.
 		                           : offset;
-		CharType* base = static_cast<CharType*>(out);
 		Super::ptr = out + fixedOffset;     // Qualification for Super required for two-phase lookup.
 	}
 };

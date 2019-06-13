@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #if !defined(AFX_STDAFX_H__4AA14050_1B79_4A11_9D24_4E209BF87E2C__INCLUDED_)
 #define AFX_STDAFX_H__4AA14050_1B79_4A11_9D24_4E209BF87E2C__INCLUDED_
@@ -43,7 +43,7 @@
 // C6246: Local declaration of <variable> hides declaration of same name in outer scope.
 #define LOCAL_NAME_OVERRIDE_OK PREFAST_SUPPRESS_WARNING(6246)
 // C6201: buffer overrun for <variable>, which is possibly stack allocated: index <name> is out of valid index range <min> to <max>
-#if defined(__clang__)
+#if CRY_COMPILER_CLANG
 #define INDEX_NOT_OUT_OF_RANGE _Pragma("clang diagnostic ignored \"-Warray-bounds\"")
 #else
 #define INDEX_NOT_OUT_OF_RANGE PREFAST_SUPPRESS_WARNING(6201)
@@ -65,88 +65,151 @@
 #include <CryMath/Cry_XOptimise.h>
 
 #define NO_CRY_STREAM
+class CStream;
 
-#ifndef NO_CRY_STREAM
-#include "Stream.h"
-#else
-#include <CrySystem/ISystem.h>
-#include <CrySystem/ILog.h>
-
-class CStream {
-public:
-bool WriteBits(unsigned char *pBits, uint32 nSize) { return true; }
-	bool ReadBits(unsigned char *pBits, uint32 nSize) { return true; }
-	bool Write(bool b) { return true; }
-	bool Write(char c) { return true; }
-	bool Write(unsigned char uc) { return true; }
-	bool Write(float f) { return true; }
-	bool Write(unsigned short us) { return true; }
-	bool Write(short s) { return true; }
-	bool Write(int i) { return true; }
-	bool Write(unsigned int ui) { return true; }
-	bool Write(const Vec3 &v) { return true; }
-	bool Write(const Ang3 &v) { return true; }
-	bool Read(bool &b) { return true; }
-	bool Read(char &c) { return true; }
-	bool Read(unsigned char &uc) { return true; }
-	bool Read(unsigned short &us) { return true; }
-	bool Read(short &s) { return true; }
-	bool Read(int &i) { return true; }
-	bool Read(unsigned int &ui) { return true; }
-	bool Read(float &f) { return true; }
-	bool Read(Vec3 &v) { return true; }
-	bool Read(Ang3 &v) { return true; }
-	bool WriteNumberInBits(int n,size_t nSize) { return true; }
-	bool WriteNumberInBits(unsigned int n,size_t nSize) { return true; }
-	bool ReadNumberInBits(int &n,size_t nSize) { return true; }
-	bool ReadNumberInBits(unsigned int &n,size_t nSize) { return true; }
-	bool Seek(size_t dwPos = 0) { return true; }
-	size_t GetReadPos() { return 0; }
-	unsigned char *GetPtr() const { return 0; };
-	size_t GetSize() const { return 0; }
-	bool SetSize(size_t indwBitSize) { return true; }
-};
-#endif
-
-#if CRY_PLATFORM_WINDOWS && CRY_PLATFORM_64BIT
+#if CRY_PLATFORM_WINDOWS
 #undef min
 #undef max
 #endif
 
-
 #define ENTGRID_2LEVEL
+#define MULTI_GRID
 
+// uncomment the following block to effectively disable validations
+/*#define VALIDATOR_LOG(pLog,str)
+#define VALIDATORS_START
+#define VALIDATOR(member)
+#define VALIDATOR_NORM(member)
+#define VALIDATOR_RANGE(member,minval,maxval)
+#define VALIDATOR_RANGE2(member,minval,maxval)
+#define VALIDATORS_END
+#define ENTITY_VALIDATE(strSource,pStructure)*/
+#if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_LINUX
+#define DoBreak {__debugbreak();}
+#else
+#define DoBreak { __debugbreak(); }
+#endif
+
+ILINE bool is_valid(float op) { return op*op>=0 && op*op<1E30f; }
+ILINE bool is_valid(int op) { return true; }
+ILINE bool is_valid(unsigned int op) { return true; }
+ILINE bool is_valid(const Quat& op) { return is_valid(op|op); }
+template<class dtype> bool is_valid(const dtype &op) { return is_valid(op.x*op.x + op.y*op.y + op.z*op.z); }
+
+#define VALIDATOR_LOG(pLog,str) if (pLog) pLog->Log("%s", str) //OutputDebugString(str)
+#define VALIDATORS_START bool validate( const char *strSource, ILog *pLog, const Vec3 &pt,\
+	IPhysRenderer *pStreamer, void *param0, int param1, int param2 ) { bool res=true; char errmsg[1024];
+#define VALIDATOR(member) if (!is_unused(member) && !is_valid(member)) { \
+	res=false; cry_sprintf(errmsg,"%s: (%.50s @ %.1f,%.1f,%.1f) Validation Error: %s is invalid",strSource,\
+	pStreamer?pStreamer->GetForeignName(param0,param1,param2):"",pt.x,pt.y,pt.z,#member); \
+	VALIDATOR_LOG(pLog,errmsg); } 
+#define VALIDATOR_NORM(member) if (!is_unused(member) && !(is_valid(member) && fabs_tpl((member|member)-1.0f)<0.01f)) { \
+	res=false; cry_sprintf(errmsg,"%s: (%.50s @ %.1f,%.1f,%.1f) Validation Error: %s is invalid or unnormalized",\
+	strSource,pStreamer?pStreamer->GetForeignName(param0,param1,param2):"",pt.x,pt.y,pt.z,#member); VALIDATOR_LOG(pLog,errmsg); }
+#define VALIDATOR_NORM_MSG(member,msg,member1) if (!is_unused(member) && !(is_valid(member) && fabs_tpl((member|member)-1.0f)<0.01f)) { \
+	PREFAST_SUPPRESS_WARNING(6053) \
+	res=false; cry_sprintf(errmsg,"%s: (%.50s @ %.1f,%.1f,%.1f) Validation Error: %s is invalid or unnormalized %s",\
+	strSource,pStreamer?pStreamer->GetForeignName(param0,param1,param2):"",pt.x,pt.y,pt.z,#member,msg); \
+	PREFAST_SUPPRESS_WARNING(6053) \
+	if (!is_unused(member1)) { cry_sprintf(errmsg+strlen(errmsg),sizeof errmsg - strlen(errmsg)," "#member1": %.1f,%.1f,%.1f",member1.x,member1.y,member1.z);} \
+	VALIDATOR_LOG(pLog,errmsg); }
+#define VALIDATOR_RANGE(member,minval,maxval) if (!is_unused(member) && !(is_valid(member) && member>=minval && member<=maxval)) { \
+	res=false; cry_sprintf(errmsg,"%s: (%.50s @ %.1f,%.1f,%.1f) Validation Error: %s is invalid or out of range",\
+	strSource,pStreamer?pStreamer->GetForeignName(param0,param1,param2):"",pt.x,pt.y,pt.z,#member); VALIDATOR_LOG(pLog,errmsg); }
+#define VALIDATOR_RANGE2(member,minval,maxval) if (!is_unused(member) && !(is_valid(member) && member*member>=minval*minval && \
+		member*member<=maxval*maxval)) { \
+	res=false; cry_sprintf(errmsg,"%s: (%.50s @ %.1f,%.1f,%.1f) Validation Error: %s is invalid or out of range",\
+	strSource,pStreamer?pStreamer->GetForeignName(param0,param1,param2):"",pt.x,pt.y,pt.z,#member); VALIDATOR_LOG(pLog,errmsg); }
+#define VALIDATORS_END return res; }
+
+#define ENTITY_VALIDATE(strSource,pStructure) if (!pStructure->validate(strSource,m_pWorld->m_pLog,m_pos,\
+	m_pWorld->m_pRenderer,m_pForeignData,m_iForeignData,m_iForeignFlags)) { \
+	if (m_pWorld->m_vars.bBreakOnValidation) DoBreak return 0; }
+#define ENTITY_VALIDATE_ERRCODE(strSource,pStructure,iErrCode) if (!pStructure->validate(strSource,m_pWorld->m_pLog,m_pos, \
+	m_pWorld->m_pRenderer,m_pForeignData,m_iForeignData,m_iForeignFlags)) { \
+	if (m_pWorld->m_vars.bBreakOnValidation) DoBreak return iErrCode; }
+
+#ifndef STANDALONE_PHYSICS
+template<class T,bool alloc> struct SizerAllocator {};
+template<class T> struct SizerAllocator<T,false> { static T *alloc(int count,T* src=nullptr) { return src; } };
+template<> struct SizerAllocator<int,false> {	static int *alloc(int count,int* src=nullptr) { return count ? new int[count] : src; } };
+template<class T> struct SizerAllocator<T,true> {	static T *alloc(int count,T* src=nullptr) { return new typename std::remove_const<T>::type[count]; } };
+#define GetMode GetMode() const { return 0; } \
+	template<class T> bool AddObjectPtr(T* const& ptr, size_t size, int nCount=1) { \
+		if (GetMode()==1 && size)	const_cast<T*&>(ptr) = SizerAllocator<T,!std::is_polymorphic<T>::value>::alloc(size/sizeof(T),ptr); \
+		return AddObject(ptr, size); \
+	}	\
+	bool AddObjectPtr(struct geom* const& ptr, size_t size, int nCount) { return AddObject(ptr, size); }	\
+	int dummy
 // TODO: reference additional headers your program requires here
 #include <CryMemory/CrySizer.h>
+#undef GetMode
+#define AddObject AddObjectPtr
+#else
+#include <CryMemory/CrySizer.h>
+#endif
+#include <CrySystem/ISystem.h>
+#include <CrySystem/ILog.h>
 #include <CryPhysics/primitives.h>
-#include "utils.h"
 #include <CryPhysics/physinterface.h>
+#ifndef NO_CRY_STREAM
+#include "Stream.h"
+#else
+class CStream : public CMemStream {
+public:
+	using CMemStream::CMemStream;
+	void WriteBits(unsigned char *pBits, uint32 nSize) { Write(pBits,nSize+7>>3); }
+	void ReadBits(unsigned char *pBits, uint32 nSize) { ReadRaw(pBits,nSize+7>>3); }
+	void WriteNumberInBits(int n,size_t nSize) { Write(n); }
+	template<class T> void ReadNumberInBits(T &n,size_t nSize) { Read(n); }
+	void Seek(size_t dwPos = 0) { m_iPos = dwPos; }
+	size_t GetReadPos() { return m_iPos; }
+	size_t GetSize() const { return m_nSize; }
+};
+#endif
+#include "utils.h"
 
+#define MAX_TOT_THREADS (MAX_PHYS_THREADS+MAX_EXT_THREADS)
 
-#if MAX_PHYS_THREADS<=1
+#if MAX_TOT_THREADS<=2
 extern threadID g_physThreadId;
 inline int IsPhysThread() { return iszero((int)(CryGetCurrentThreadId()-g_physThreadId)); }
 inline void MarkAsPhysThread() { g_physThreadId = CryGetCurrentThreadId(); }
 inline void MarkAsPhysWorkerThread(int*) {}
-inline int get_iCaller() { return IsPhysThread()^1; }
+inline int get_iCaller(int allocIfExt = 0) { return IsPhysThread()^1; }
 inline int get_iCaller_int() { return 0; }
-#else // MAX_PHYS_THREADS>1
-TLS_DECLARE(int*,g_pidxPhysThread)
+inline int alloc_extCaller() { return 0; }
+inline int set_extCaller(int slot) { return slot; }
+#else // MAX_PHYS_THREADS>1	or MAX_EXT_THREADS>1
+extern thread_local int* tls_pidxPhysThread;
+extern thread_local int tls_idxExtThread;
 inline int IsPhysThread() {
 	int dummy = 0;
-	INT_PTR ptr = (INT_PTR)TLS_GET(INT_PTR, g_pidxPhysThread);
-	ptr += (INT_PTR)&dummy-ptr & (ptr-1>>sizeof(INT_PTR)*8-1 ^ ptr>>sizeof(INT_PTR)*8-1);
+	INT_PTR ptr = (INT_PTR)tls_pidxPhysThread;
+	ptr += (INT_PTR)&dummy-ptr & (ptr-1>>sizeof(INT_PTR)*8-1 ^ptr>>sizeof(INT_PTR)*8-1);
 	return *(int*)ptr;
 }
 void MarkAsPhysThread();
 void MarkAsPhysWorkerThread(int*);
-inline int get_iCaller() {
+inline int set_extCaller(int slot) { tls_idxExtThread = slot; return slot; }
+inline int alloc_extCaller() {
+	extern volatile int *g_pLockIntersect;
+	int iCaller;
+	for(iCaller=MAX_EXT_THREADS-1; iCaller>0 && g_pLockIntersect[iCaller]; iCaller--);
+	return set_extCaller(iCaller);
+}
+inline int get_iCaller_int() {
 	int dummy = MAX_PHYS_THREADS;
-	INT_PTR ptr = (INT_PTR)TLS_GET(INT_PTR,g_pidxPhysThread);
+	INT_PTR ptr = (INT_PTR)tls_pidxPhysThread;
 	ptr += (INT_PTR)&dummy-ptr & (ptr-1>>sizeof(INT_PTR)*8-1 ^ ptr>>sizeof(INT_PTR)*8-1);
 	return *(int*)ptr;
 }
-#define get_iCaller_int get_iCaller
+inline int get_iCaller(int allocIfExternal = 0) {
+	int iCaller = get_iCaller_int();
+	if (iCaller >= (MAX_PHYS_THREADS + (1-allocIfExternal<<20)))
+		return iCaller + alloc_extCaller();
+	return iCaller + tls_idxExtThread;
+}
 #endif
 
 

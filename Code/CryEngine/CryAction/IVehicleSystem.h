@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -21,7 +21,6 @@ class CMovementRequest;
 struct SMovementState;
 struct IVehicleEventListener;
 struct SVehicleEventParams;
-struct IFireController;
 struct IVehicleSystem;
 struct IVehicleSeat;
 struct IVehicleAnimation;
@@ -172,6 +171,13 @@ const TVehicleSeatId FirstVehicleViewId   = 1;
 //   IVehicleAnimation
 typedef int TVehicleAnimStateId;
 const TVehicleAnimStateId InvalidVehicleAnimStateId = -1;
+
+struct IFireController
+{
+	virtual ~IFireController() {}
+	virtual bool RequestFire(bool bFire) = 0;
+	virtual void UpdateTargetPosAI(const Vec3& pos) = 0;
+};
 
 struct SVehicleStatus
 {
@@ -652,7 +658,7 @@ struct IVehicleAction
   TVehicleObjectId obj::m_objectId = InvalidVehicleObjectId;
 
 #define CAST_VEHICLEOBJECT(type, objptr) \
-  (objptr->GetId() == type::m_objectId) ? (type*)objptr : NULL
+  ((objptr->GetId() == type::m_objectId) ? (type*)objptr : NULL)
 
 // Summary:
 //   Vehicle implementation interface
@@ -1221,7 +1227,7 @@ struct IVehicleMovement
 	virtual void                   RegisterActionFilter(IVehicleMovementActionFilter* pActionFilter) = 0;
 	virtual void                   UnregisterActionFilter(IVehicleMovementActionFilter* pActionFilter) = 0;
 
-	virtual void                   ProcessEvent(SEntityEvent& event) = 0;
+	virtual void                   ProcessEvent(const SEntityEvent& event) = 0;
 	virtual CryCriticalSection*    GetNetworkLock() = 0;
 
 	virtual void                   GetMemoryUsage(ICrySizer* s) const = 0;
@@ -1611,19 +1617,19 @@ struct IVehiclePart
 	//   Will return the FINAL local transform matrix (with recoil etc) relative to parent part or vehicle space
 	// Return value:
 	//   a 3x4 matrix
-	virtual const Matrix34& GetLocalTM(bool relativeToParentPart, bool forced = false) = 0;
+	virtual Matrix34 GetLocalTM(bool relativeToParentPart, bool forced = false) = 0;
 
 	// Summary:
 	//   Gets the local base transform matrix
 	// Description:
 	//   Will return the local BASE transform matrix (without recoil etc) relative to parent part
-	virtual const Matrix34& GetLocalBaseTM() = 0;
+	virtual Matrix34 GetLocalBaseTM() = 0;
 
 	// Summary:
 	//   Gets the initial base transform matrix
 	// Description:
 	//   Will return the local transform matrix from the initial state of the model as relative to parent part
-	virtual const Matrix34& GetLocalInitialTM() = 0;
+	virtual Matrix34 GetLocalInitialTM() = 0;
 
 	// Summary:
 	//   Gets a world transform matrix
@@ -1631,7 +1637,7 @@ struct IVehiclePart
 	//   Will return a transform matrix world space.
 	// Return value:
 	//   a 3x4 matrix
-	virtual const Matrix34& GetWorldTM() = 0;
+	virtual Matrix34 GetWorldTM() = 0;
 
 	// Summary:
 	//   Sets local transformation matrix relative to parent part

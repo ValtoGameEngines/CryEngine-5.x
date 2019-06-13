@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -17,6 +17,8 @@ History:
 
 #ifndef __MASKEDVAR_H__
 #define __MASKEDVAR_H__
+
+#include <CryMath/Random.h>
 
 #ifdef _RELEASE
 #define MASKEDVAR_DEBUG_VAL_ENABLED  (0)

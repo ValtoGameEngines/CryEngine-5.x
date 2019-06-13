@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 
@@ -10,6 +10,7 @@ History:
 
 #include "StdAfx.h"
 #include "PlayerStumble.h"
+#include <CryMath/Random.h>
 
 using namespace PlayerActor::Stumble;
 

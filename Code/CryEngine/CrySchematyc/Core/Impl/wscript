@@ -1,19 +1,10 @@
-# Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+# Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 def build(bld):
 	bld.CryEngineModule(
-		target = 'CrySchematycCore',
-		vs_filter = 'CryEngine/CrySchematyc',
+		target = 'CrySchematyc',
+		vs_filter = 'CryEngine',
 		file_list = 'core.waf_files',
 		pch = 'StdAfx.cpp',
 		defines = 'SCHEMATYC_EXPORTS',
-
-		includes = [ 
-			'.', 
-			Path('Code/CryEngine/CryCommon'),
-			Path('Code/CryEngine/CrySchematyc/Core/Interface') ],
-		module_provides = dict(
-			includes = [ Path('Code/CryEngine/CrySchematyc/Core/Interface') ],
-			defines = [ 'USE_SCHEMATYC_CORE' ] ),
-		linux_cxxflags = '-fPIC',
-	)	
+)

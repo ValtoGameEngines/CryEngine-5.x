@@ -1,5 +1,4 @@
-// CRYENGINE Source Code File
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 float4 vfViewPos				: PB_CameraPos;
 float4 vfParams					: PB_VolumetricFogParams;
@@ -53,7 +52,7 @@ SFogParams GetFogParamsInternal()
 {
 	SFogParams params;
 
-	params.viewPos.xyz = PS_WorldViewPos.xyz;
+	params.viewPos.xyz = GetWorldViewPos();
 	params.padding0 = 0.0f;
 
 	params.heightDensityScale = vfParams.x;
@@ -294,6 +293,7 @@ struct SVolumetricFogParams
 	float  farDistCenterLeft;
 	float  farDistCenter;
 
+#if %_RT_VOLUMETRIC_FOG
 	// PB_VolumetricFogGlobalEnvProbe0
 	float3 globalProbeColor0;
 	float  globalProbeAttenuation0;
@@ -301,6 +301,7 @@ struct SVolumetricFogParams
 	// PB_VolumetricFogGlobalEnvProbe1
 	float3 globalProbeColor1;
 	float  globalProbeAttenuation1;
+#endif
 
 	// PB_time
 	float4 timeParams;
@@ -308,8 +309,8 @@ struct SVolumetricFogParams
 
 // TODO: remove these textures after completely moving to new graphics pipeline.
 Texture3D<float4> VolumetricFogTexture : TS_VolumetricFog;
-TextureCube<float4> vfGlobalEnvProbeTexture0 : TS_VolumetricFogGlobalEnvProbe0;
-TextureCube<float4> vfGlobalEnvProbeTexture1 : TS_VolumetricFogGlobalEnvProbe1;
+TextureCube<float4> vfGlobalEnvProbeTexture0 : register(t25) = TS_VolumetricFogGlobalEnvProbe0;
+TextureCube<float4> vfGlobalEnvProbeTexture1 : register(t26) = TS_VolumetricFogGlobalEnvProbe1;
 SamplerState vfTrilinearClampSState : SS_TrilinearClamp;
 
 // x:near distance, y:reciprocal of far minus near distance, z:depth resolution of volume tex, w:reciprocal of depth resolution
@@ -360,11 +361,11 @@ SVolumetricFogParams vfGetVolumetricFogParamsInternal()
 	params.maxIndex = vfSamplingParams.z;
 	params.invMaxIndex = vfSamplingParams.w;
 
-	params.screenSize = PS_ScreenSize.xy;
+	params.screenSize = CV_ScreenSize.xy;
 	params.farMinusNearDist = vfDistributionParams.y;
 	params.invMaxIndexMinusOne = vfDistributionParams.z;
 
-	params.viewPos = PS_WorldViewPos.xyz;
+	params.viewPos = GetWorldViewPos();
 	params.framwCountJitter = vfDistributionParams.w;
 
 	params.scatterCoefficient = vfScatteringParams.x;
@@ -398,11 +399,13 @@ SVolumetricFogParams vfGetVolumetricFogParamsInternal()
 	params.farDistCenterLeft = vfDistanceParams.z;
 	params.farDistCenter = vfDistanceParams.w;
 
+#if %_RT_VOLUMETRIC_FOG
 	params.globalProbeColor0 = vfGlobalEnvProbeParams0.xyz;
 	params.globalProbeAttenuation0 = vfGlobalEnvProbeParams0.w;
 
 	params.globalProbeColor1 = vfGlobalEnvProbeParams1.xyz;
 	params.globalProbeAttenuation1 = vfGlobalEnvProbeParams1.w;
+#endif
 
 	params.timeParams = vfTimeParams;
 
@@ -413,7 +416,7 @@ uint vfGetClipVolumeStencilID(int nStencilVal)
 {
 	const int BIT_STENCIL_STATIC = 0x0000007F;
 	const int BIT_STENCIL_INSIDE_VOLUME = 0x00000040;// originally defined in ResolveStencilPS in DeferredShading.cfx
-	return max(nStencilVal - BIT_STENCIL_INSIDE_VOLUME, 1);
+	return max(nStencilVal - BIT_STENCIL_INSIDE_VOLUME, 0);
 }
 
 float GetJitterInternal(in uint2 pixelCoord, in float2 temporalJitter)
@@ -507,6 +510,7 @@ float4 GetVolumetricFogAnalyticalColor(
 
 	float4 diffuseProbe0 = float4(0.0f, 0.0f, 0.0f, 0.0f);
 	float4 diffuseProbe1 = float4(0.0f, 0.0f, 0.0f, 0.0f);
+#if %_RT_VOLUMETRIC_FOG
 	if(params.globalProbeAttenuation0 > 0.0f)
 	{
 		diffuseProbe0 = vfs.globalEnvProbeTex0.SampleLevel( vfs.trilinearClampSState, cameraToWorldPos, 0 );
@@ -518,7 +522,7 @@ float4 GetVolumetricFogAnalyticalColor(
 		const float attn = (1.0f - params.globalProbeAttenuation0) * params.globalProbeAttenuation1;
 		diffuseProbe1.rgb = attn * DecodeHDRCubemap( diffuseProbe1 ) * params.globalProbeColor1.rgb;
 	}
-
+#endif
 	// exponential fog density parameters
 	const float d = lengthToTarget;// distance from camera to target matches ray-marching volumetric fog.
 	const float L = params.heightDensityScale;
@@ -813,7 +817,7 @@ VolumetricFogTexcoord GetVolumetricFogTexcoordParamByScreenPos(
 	in float lengthToTarget = 10000000.0f)
 {
 	VolumetricFogTexcoord vtc;
-	vtc.texcoord.xy = screenPos.xy * PS_ScreenSize.zw * 2.0f;
+	vtc.texcoord.xy = screenPos.xy * CV_ScreenSize.zw * 2.0f;
 	vtc.linearDepth = screenPos.w;
 	vtc.texcoord.z = vtc.linearDepth;
 	vtc.range = params.farDistCenter;

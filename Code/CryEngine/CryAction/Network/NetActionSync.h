@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -17,11 +17,6 @@
 #define __NETACTIONSYNC_H__
 
 #pragma once
-
-#ifdef __GNUC__
-// GCC requires a full decl of TSerialize, not just a fwd decl.
-	#include <CryNetwork/ISerialize.h>
-#endif
 
 template<class ActionRep>
 class CNetActionSync

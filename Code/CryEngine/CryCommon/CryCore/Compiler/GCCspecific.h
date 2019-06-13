@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -8,9 +8,9 @@
 
 //! Compiler version
 #define CRY_COMPILER_GCC     1
-#define CRY_COMPILER_VERSION ((__GNUC__ * 100) + (__GNUC_MINOR__))
-#if CRY_COMPILER_VERSION < 406
-	#error This version of g++ is not supported, the minimum supported version is 4.6
+#define CRY_COMPILER_VERSION ((__GNUC__ * 100) + (__GNUC_MINOR__ * 10))
+#if CRY_COMPILER_VERSION < 730
+    #error This version of g++ is not supported, the minimum supported version is 7.3
 #endif
 #if defined(__cplusplus) && __cplusplus < 201103L
 	#error The compiler is not in C++11 mode, this is required for compiling CRYENGINE
@@ -31,16 +31,18 @@
 //! PREfast not supported
 #define PREFAST_SUPPRESS_WARNING(W)
 #define PREFAST_ASSUME(cond)
+#define _Out_writes_z_(x)
+#define _Inout_updates_z_(x)
 
-//! Mark function as deprecated
-#define CRY_DEPRECATED(func) __attribute__((deprecated)) func
+#if __cplusplus >= 201402L
+#define CRY_DEPRECATED(message) [[deprecated(message)]]
+#else
+#define CRY_DEPRECATED(message) __attribute__((deprecated(message)))
+#endif
 
 //! Portable alignment helper, can be placed after the struct/class/union keyword, or before the type of a declaration.
 //! Example: struct CRY_ALIGN(16) { ... }; CRY_ALIGN(16) char myAlignedChar;
 #define CRY_ALIGN(bytes) __attribute__((aligned(bytes)))
-
-//! Restricted reference (similar to restricted pointer), use like: SFoo& RESTRICT_REFERENCE myFoo = ...;
-#define RESTRICT_REFERENCE __restrict__
 
 //! Compiler-supported type-checking helper
 #define PRINTF_PARAMS(...) __attribute__((format(printf, __VA_ARGS__)))
@@ -65,3 +67,13 @@
 
 // Suppress undefined behavior sanitizer errors on a function.
 #define CRY_FUNCTION_CONTAINS_UNDEFINED_BEHAVIOR
+
+//! Unreachable code marker for helping error handling and optimization
+#define UNREACHABLE() __builtin_unreachable()
+
+#if !defined(CRY_DISABLE_WARNING_UNUSED_VARIABLES)
+
+#define CRY_DISABLE_WARN_UNUSED_VARIABLES() _Pragma("GCC diagnostic push") _Pragma("GCC diagnostic ignored \"-Wunused-variable\"")
+#define CRY_RESTORE_WARN_UNUSED_VARIABLES() _Pragma("GCC diagnostic pop")
+
+#endif

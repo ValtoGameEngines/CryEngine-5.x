@@ -1,17 +1,7 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// -------------------------------------------------------------------------
-//  File name:   CryPodArray.h
-//  Created:     28/5/2002 by Vladimir Kajalin
-//  Description: Simple POD types container
-// -------------------------------------------------------------------------
-//  History:
-//      Refactored 07/03/2007 by Timur.
-//
-////////////////////////////////////////////////////////////////////////////
+//! \cond INTERNAL
 
-#ifndef __CRY_POD_ARRAY_H__
-#define __CRY_POD_ARRAY_H__
 #pragma once
 
 //! POD Array.
@@ -62,18 +52,18 @@ public:
 	//////////////////////////////////////////////////////////////////////////
 
 	//////////////////////////////////////////////////////////////////////////
-	PodArray() : m_nCount(0), m_pElements(0), m_nAllocatedCount(0)
+	PodArray() : m_pElements(0), m_nCount(0), m_nAllocatedCount(0)
 	{
-		MEMSTAT_REGISTER_CONTAINER(this, EMemStatContainerType::MSC_Vector, T);
+		MEMSTAT_REGISTER_CONTAINER(this, EMemStatContainerType::Vector, T);
 	}
-	PodArray(int elem_count, int nNewCount = 0) : m_nCount(0), m_pElements(0), m_nAllocatedCount(0)
+	PodArray(int elem_count, int nNewCount = 0) : m_pElements(0), m_nCount(0), m_nAllocatedCount(0)
 	{
-		MEMSTAT_REGISTER_CONTAINER(this, EMemStatContainerType::MSC_Vector, T);
+		MEMSTAT_REGISTER_CONTAINER(this, EMemStatContainerType::Vector, T);
 		PreAllocate(elem_count, nNewCount);
 	}
-	PodArray(const PodArray<T>& from) : m_nCount(0), m_pElements(0), m_nAllocatedCount(0)
+	PodArray(const PodArray<T>& from) :m_pElements(0), m_nCount(0), m_nAllocatedCount(0)
 	{
-		MEMSTAT_REGISTER_CONTAINER(this, EMemStatContainerType::MSC_Vector, T);
+		MEMSTAT_REGISTER_CONTAINER(this, EMemStatContainerType::Vector, T);
 		AddList(from);
 	}
 	~PodArray()
@@ -123,7 +113,8 @@ public:
 
 	inline void AddList(const PodArray<T>& lstAnother)
 	{
-		PreAllocate(m_nCount + lstAnother.Count());
+		if (m_nCount + lstAnother.Count() > m_nAllocatedCount)
+			PreAllocate((m_nCount + lstAnother.Count()) * 3 / 2 + 8);
 
 		memcpy(&m_pElements[m_nCount], &lstAnother.m_pElements[0], sizeof(m_pElements[0]) * lstAnother.Count());
 
@@ -133,7 +124,8 @@ public:
 
 	inline void AddList(T* pAnotherArray, int nAnotherCount)
 	{
-		PreAllocate(m_nCount + nAnotherCount);
+		if (m_nCount + nAnotherCount > m_nAllocatedCount)
+			PreAllocate((m_nCount + nAnotherCount) * 3 / 2 + 8);
 
 		memcpy(&m_pElements[m_nCount], pAnotherArray, sizeof(m_pElements[0]) * nAnotherCount);
 
@@ -141,7 +133,7 @@ public:
 		MEMSTAT_USAGE(begin(), (sizeof(T) * size()) + overAllocBytes);
 	}
 
-	ILINE void Add(const T& p)
+	ILINE T& Add(const T& p)
 	{
 		if (m_nCount >= m_nAllocatedCount)
 		{
@@ -159,6 +151,7 @@ public:
 		memcpy(&m_pElements[m_nCount], &p, sizeof(m_pElements[m_nCount]));
 		m_nCount++;
 		MEMSTAT_USAGE(begin(), (sizeof(T) * size()) + overAllocBytes);
+		return Last();
 	}
 
 	ILINE T& AddNew()
@@ -308,4 +301,4 @@ private:
 
 };
 
-#endif // __CRY_POD_ARRAY_H__
+//! \endcond

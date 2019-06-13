@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -97,7 +97,7 @@ int CTriMesh::Subtract(IGeometry *pGeom, geom_world_data *pdata1,geom_world_data
 {
 	if (!pGeom || pGeom->GetType()!=GEOM_TRIMESH && pGeom->GetType()!=GEOM_HEIGHTFIELD || m_flags & mesh_no_booleans)
 		return 0;
-	FUNCTION_PROFILER( GetISystem(),PROFILE_PHYSICS );
+	CRY_PROFILE_FUNCTION(PROFILE_PHYSICS );
 
 	int i,j,iop,icont,ncont,ipt,idx,ivtx,ivtx0,ivtx1,itri,itri1,imask,ipoly,flags,ivtxStart,ivtxEnd;
 	int nVtx,nPolies,nTriSlots,nTriSlotsAlloc,nVtxSlots,nVtxSlotsAlloc,nBTris,nBTrisAlloc,nTris,nTrisAlloc,
@@ -105,7 +105,6 @@ int CTriMesh::Subtract(IGeometry *pGeom, geom_world_data *pdata1,geom_world_data
 			nNewVtxAlloc,nNewTrisAlloc,nIsles,nTries=1,bCheckVolumes=0;
 	int iCurTri[2],iCurVtx[2],iCurVtx0[2],iCurPoly[2],iVtxCntStart[2],iCurTwin[2],iTwin0[2],bIsolatedCnt[2],idmask[2],matmask[2];
 	int *pTriSlots,*pVtxSlots,*pTris,*pBTris,*pBVtxMap,*pBVtxMapNew,*pVtxMap;
-	int iCaller = get_iCaller();
 	unsigned int *pTriMask[2],*pVtxMask[2];
 	Vec3 n,edge,edge1,*pdata0=m_pVertices.data,*pBackupVertices=0,*pBackupNormals=0;
 	int *pIds[2],dummyId,*pIds0=m_pForeignIdx,*pBackupIds=0,*pBackupVtxMap=0;
@@ -1075,7 +1074,7 @@ int CTriMesh::Slice(const triangle *pcut, float minlen, float minArea)
 			bop_meshupdate *pmd = new bop_meshupdate, *pmd0;
 			pmd->pMesh[0]=pmd->pMesh[1] = this;	AddRef();AddRef();
 			for(pmd0=m_pMeshUpdate; pmd0->next; pmd0=pmd0->next);
-				pmd0->next = pmd;
+			pmd0->next = pmd;
 			pmd->pRemovedTri = new int[pmd->nRemovedTri = nRemovedTri];
 			for(int i0=i=nRemovedTri=0;i0<m_nTris;i0++) if (!m_pTri2Island[i0].bFree) {
 				pIdx[i]=pIdx[i0]; m_pNormals[i]=m_pNormals[i0];	m_pForeignIdx[i++]=m_pForeignIdx[i0];

@@ -1,10 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __CET_NETCONFIG_H__
 #define __CET_NETCONFIG_H__
 
 #pragma once
 
+void AddStartedEstablishingContext(IContextEstablisher* pEst, EContextViewState state, int token);
 void AddEstablishedContext(IContextEstablisher* pEst, EContextViewState state, int token);
 void AddDeclareWitness(IContextEstablisher* pEst, EContextViewState state);
 void AddDelegateAuthorityToClientActor(IContextEstablisher* pEst, EContextViewState state);

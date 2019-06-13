@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -21,7 +21,8 @@ History:
 
 #include <CryMath/Cry_Color.h>
 #include "IUIDraw.h" // For alignment flags.
-#include <CryRenderer/IRenderAuxGeom.h> // RenderStates
+#include <CryRenderer/IRenderAuxGeom.h>
+#include <CryFont/IFont.h>
 
 //-----------------------------------------------------------------------------------------------------
 
@@ -32,8 +33,6 @@ typedef uint8 UIDRAWFLAGS;
 class ScreenLayoutManager;
 
 //-----------------------------------------------------------------------------------------------------
-
-#define C2DRU_USE_DVN_VB 0
 
 //-----------------------------------------------------------------------------------------------------
 

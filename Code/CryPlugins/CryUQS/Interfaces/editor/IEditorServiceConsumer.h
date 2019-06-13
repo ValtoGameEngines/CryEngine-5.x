@@ -1,12 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
-namespace uqs
+namespace UQS
 {
-	namespace editor
+	namespace Editor
 	{
 
 		//===================================================================================
@@ -25,12 +25,12 @@ namespace uqs
 
 			// - called by IEditorService::LoadTextualQueryBlueprint()
 			// - given ITextualQueryBlueprint exists only on the stack for the duration of this function call (!)
-			virtual void       OnTextualQueryBlueprintLoaded(const core::ITextualQueryBlueprint& loadedTextualQueryBlueprint) = 0;
+			virtual void       OnTextualQueryBlueprintLoaded(const Core::ITextualQueryBlueprint& loadedTextualQueryBlueprint) = 0;
 
 			// - called by IEditorService::SaveTextualQueryBlueprint()
-			virtual void       OnTextualQueryBlueprintGettingSaved(core::ITextualQueryBlueprint& textualQueryBlueprintToFillBeforeSaving) = 0;
+			virtual void       OnTextualQueryBlueprintGettingSaved(Core::ITextualQueryBlueprint& textualQueryBlueprintToFillBeforeSaving) = 0;
 
-			virtual void       OnTextualQueryBlueprintGettingValidated(core::ITextualQueryBlueprint& textualQueryBlueprintToFillBeforeValidating) = 0;
+			virtual void       OnTextualQueryBlueprintGettingValidated(Core::ITextualQueryBlueprint& textualQueryBlueprintToFillBeforeValidating) = 0;
 		};
 
 	}

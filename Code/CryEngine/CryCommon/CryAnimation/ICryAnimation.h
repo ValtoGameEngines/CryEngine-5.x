@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -10,16 +10,7 @@
 	#endif
 #endif
 
-#include <CryMath/Cry_Math.h>
-#include <CryMath/Cry_Geo.h>
-
-#include <CryRenderer/IRenderer.h>
-#include <CryPhysics/IPhysics.h>
-#include <Cry3DEngine/I3DEngine.h>
-#include <CryRenderer/IRenderAuxGeom.h>
-#include <CryEntitySystem/IEntitySystem.h>
-#include <CryExtension/ICryUnknown.h>
-
+#include <Cry3DEngine/IMeshObj.h>
 #include "CryCharAnimationParams.h"
 
 typedef int32 TJointId;
@@ -54,15 +45,21 @@ enum ECharRenderFlags
 	CS_FLAG_RENDER_NODE_VISIBLE  = 1 << 13, //!< Set by 3DEngine when render node owning character is potentially visible and needs rendering
 };
 
-enum CHRLOADINGFLAGS
+enum CHRLOADINGFLAGS : uint32
 {
-	CA_IGNORE_LOD               = BIT(0),
-	CA_CharEditModel            = BIT(1),
-	CA_PreviewMode              = BIT(2),
-	CA_DoNotStreamStaticObjects = BIT(3),
-	CA_SkipSkelRecreation       = BIT(4),
-	CA_DisableLogWarnings       = BIT(5),
-	CA_SkipBoneRemapping        = BIT(6),
+	CA_None                        = 0,
+	CA_IGNORE_LOD                  = BIT32(0),
+	CA_CharEditModel               = BIT32(1),
+	CA_PreviewMode                 = BIT32(2),
+	CA_DoNotStreamStaticObjects    = BIT32(3),
+	CA_SkipSkelRecreation          = BIT32(4),
+	CA_DisableLogWarnings          = BIT32(5),
+	CA_SkipBoneRemapping           = BIT32(6),
+	CA_ImmediateMode               = BIT32(7),
+	CA_ExcludeChrProxies           = BIT32(8),
+	CA_ExcludeChrCgfProxies        = BIT32(9),
+	CA_ExcludeChrRagdollCgfProxies = BIT32(10),
+	CA_CacheSkinDataInCpuMemory    = BIT32(11),
 };
 
 enum EReloadCAFResult
@@ -74,14 +71,14 @@ enum EReloadCAFResult
 
 enum CharacterToolFlags
 {
-	CA_CharacterTool      = 0x01,
+	CA_CharacterAuxEditor = 0x01, //!< Set from any auxiliary editor or viewport, i.e. Character Tool, Mannequin and Mesh Importer
 	CA_DrawSocketLocation = 0x02,
 	CA_BindPose           = 0x04,
-	CA_AllowRedirection   = 0x08,  //!< Allow redirection in bindpose.
+	CA_AllowRedirection   = 0x08, //!< Allow redirection in bindpose.
 };
 
-#define CHR            (0x11223344)
-#define CGA            (0x55aa55aa)
+static constexpr uint32 CHR = (0x11223344);
+static constexpr uint32 CGA = (0x55aa55aa);
 
 #define NULL_ANIM      "null"
 #define NULL_ANIM_FILE "null"
@@ -92,10 +89,10 @@ struct  SRendParams;
 struct CryEngineDecalInfo;
 struct ParticleParams;
 struct CryCharMorphParams;
+struct ICharacterRenderNode;
 struct IMaterial;
 struct IStatObj;
 struct IRenderMesh;
-class CDLight;
 
 class CDefaultSkeleton;
 
@@ -116,12 +113,18 @@ struct IAnimEvents;
 struct TFace;
 struct IFacialInstance;
 struct IFacialAnimation;
-struct IAttachmentMerger;
 
 class ICrySizer;
 struct CryCharAnimationParams;
 
 struct IAnimationPoseModifier;
+struct SAnimMemoryTracker;
+struct SMotionParameterDetails;
+struct SRenderingPassInfo;
+struct phys_geometry;
+struct CryBonePhysics;
+struct IPhysicalEntity;
+struct SMeshLodInfo;
 typedef int (* CallBackFuncType)(ICharacterInstance*, void*);
 
 struct IAnimationStreamingListener;
@@ -135,12 +138,17 @@ class CLodValue;
 struct IAnimationSerializable :
 	public ICryUnknown
 {
-	CRYINTERFACE_DECLARE(IAnimationSerializable, 0x69b4f3ae61974bee, 0xba70d361b7975e69);
+	CRYINTERFACE_DECLARE_GUID(IAnimationSerializable, "69b4f3ae-6197-4bee-ba70-d361b7975e69"_cry_guid);
 
 	virtual void Serialize(Serialization::IArchive& ar) = 0;
 };
 
 DECLARE_SHARED_POINTERS(IAnimationSerializable);
+
+struct IAnimationEngineModule : public Cry::IDefaultModule
+{
+	CRYINTERFACE_DECLARE_GUID(IAnimationEngineModule, "ea8faa6f-4ec9-48fb-935d-b54c09823b86"_cry_guid);
+};
 
 //! This class is the main access point for any character animation required for a program which uses CRYENGINE.
 struct ICharacterManager
@@ -296,8 +304,9 @@ struct ICharacterManager
 
 	virtual void                     UpdateRendererFrame() = 0;
 	virtual void                     PostInit() = 0;
-
-	virtual const IAttachmentMerger& GetIAttachmentMerger() const = 0;
+	
+	//! Extends the default skeleton of a character instance with skin attachments
+	virtual void ExtendDefaultSkeletonWithSkinAttachments(ICharacterInstance* pCharInstance, const char* szFilepathSKEL, const char** szSkinAttachments, const uint32 skinCount, const uint32 nLoadingFlags) = 0;
 	// </interfuscator:shuffle>
 
 #if BLENDSPACE_VISUALIZATION
@@ -307,8 +316,8 @@ struct ICharacterManager
 	virtual void RenderBlendSpace(const SRenderingPassInfo& passInfo, ICharacterInstance* character, float fCharacterScale, unsigned int debugFlags) = 0;
 	virtual bool HasDebugInstancesCreated(const char* szFilename) const = 0;
 #endif
-#ifdef EDITOR_PCDEBUGCODE
 	virtual void GetMotionParameterDetails(SMotionParameterDetails& outDetails, EMotionParamID paramId) const = 0;
+#ifdef EDITOR_PCDEBUGCODE
 	virtual bool InjectCDF(const char* pathname, const char* content, size_t contentLength) = 0;
 	virtual void ClearCDFCache() = 0;
 	virtual void ClearAllKeepInMemFlags() = 0;
@@ -319,6 +328,7 @@ struct ICharacterManager
 #endif
 };
 
+//! \cond INTERNAL
 //! This struct defines the interface for a class that listens to AnimLoaded, AnimUnloaded and AnimReloaded events
 struct IAnimationStreamingListener
 {
@@ -335,6 +345,7 @@ struct IAnimationStreamingListener
 	virtual void NotifyAnimReloaded(const int32 globalID) = 0;
 	// </interfuscator:shuffle>
 };
+//! \endcond
 
 struct SJointProperty
 {
@@ -360,6 +371,7 @@ struct SBoneShadowCapsule
 //////////////////////////////////////////////////////////////////////////
 typedef unsigned int LimbIKDefinitionHandle;
 
+//! Represents the skeleton tied to a character, and all the default properties it contains.
 struct IDefaultSkeleton
 {
 	// <interfuscator:shuffle>
@@ -390,7 +402,8 @@ struct IDefaultSkeleton
 
 	// All render-meshes will be removed from the CDefaultSkeleton-class.
 	// The following functions will become deprecated.
-	virtual const phys_geometry* GetJointPhysGeom(uint32 jointIndex) const = 0;                 //!< just for statistics of physics proxies.
+	virtual const phys_geometry* GetJointPhysGeom(uint32 jointIndex, int nLod = 0) const = 0;                 //!< just for statistics of physics proxies.
+	virtual CryBonePhysics*      GetJointPhysInfo(uint32 jointIndex, int nLod = 0, bool allocIfLodAbsent = true) = 0;
 	virtual int32                GetLimbDefinitionIdx(LimbIKDefinitionHandle handle) const = 0;
 	virtual void                 PrecacheMesh(bool bFullUpdate, int nRoundId, int nLod) = 0;
 	virtual IRenderMesh*         GetIRenderMesh() const = 0;
@@ -406,6 +419,7 @@ struct IDefaultSkeleton
 };
 
 //////////////////////////////////////////////////////////////////////////
+//! Represents a .skin mesh type
 struct ISkin
 {
 	// <interfuscator:shuffle>
@@ -441,19 +455,26 @@ struct SCharUpdateFeedback
 
 struct SAnimationProcessParams
 {
-	QuatTS locationAnimation;
-	bool   bOnRender;
-	float  zoomAdjustedDistanceFromCamera;
-	float  overrideDeltaTime;
-
-	SAnimationProcessParams() :
-		locationAnimation(IDENTITY),
-		bOnRender(false),
-		zoomAdjustedDistanceFromCamera(0.0f),
-		overrideDeltaTime(-1.0f)
-	{
-	}
+	QuatTS locationAnimation = IDENTITY;
+	float  zoomAdjustedDistanceFromCamera = 0.f;
+	bool   bOnRender = false;
+	float  overrideDeltaTime = -1.f;
 };
+
+namespace Cry
+{
+namespace Anim
+{
+//!< The staticity of this character instance.
+//!< This information may be used for additional optimizations.
+enum class ECharacterStaticity
+{
+	Dynamic, // Default
+	QuasiStaticLooping, // This character instance usually stays in a short looping animation, unless other animations are queued
+	QuasiStaticFixed // This character instance usually stays in a fixed pose, unless other animations are queued
+};
+}
+}
 
 //! Interface to character animation.
 //! This interface contains methods for manipulating and querying an animated character
@@ -506,11 +527,7 @@ struct ICharacterInstance : IMeshObj
 
 	//! Draw the character using specified rendering parameters.
 	//! \param RendParams Rendering parameters.
-	virtual void Render(const SRendParams& RendParams, const QuatTS& Offset, const SRenderingPassInfo& passInfo) = 0;
-	virtual void Render(const SRendParams& RendParams, const SRenderingPassInfo& passInfo) override
-	{
-		Render(RendParams, QuatTS(IDENTITY), passInfo);
-	}
+	virtual void Render(const SRendParams& RendParams, const SRenderingPassInfo& passInfo) = 0;
 
 	//! Set rendering flags defined in ECharRenderFlags for this character instance
 	//! \param nFlags Rendering flags
@@ -559,7 +576,7 @@ struct ICharacterInstance : IMeshObj
 	virtual uint32 IsCharacterVisible() const = 0;
 
 	// Skeleton effects interface.
-	virtual void  SpawnSkeletonEffect(const char* effectName, const char* boneName, const Vec3& offset, const Vec3& dir, const QuatTS& entityLoc) = 0;
+	virtual void  SpawnSkeletonEffect(const AnimEventInstance& animEvent, const QuatTS &entityLoc) = 0;
 	virtual void  KillAllSkeletonEffects() = 0;
 
 	virtual void  SetViewdir(const Vec3& rViewdir) = 0;
@@ -574,11 +591,27 @@ struct ICharacterInstance : IMeshObj
 	//! ensure all computations have finished when necessary.
 	virtual void FinishAnimationComputations() = 0;
 
+	//! Sets up a non-owning reference to the parent IRenderNode instance.
+	//! Reference set through this method is used for propagating state to IRenderNodes controlled by this character instance (e.g. character attachments).
+	//! This method has been introduced as a temporary measure and should not be relied upon by any system apart from 3DEngine.
+	virtual void SetParentRenderNode(ICharacterRenderNode* pRenderNode) = 0;
+
+	//! Accesses the parent IRenderNode instance that has been previously set by a call to SetParentRenderNode().
+	virtual ICharacterRenderNode* GetParentRenderNode() const = 0;
+
 	// This is a hack to keep entity attachments in synch.
 	virtual void SetAttachmentLocation_DEPRECATED(const QuatTS& newCharacterLocation) = 0;
 
+	//! Sets character offset inside its owner entity (mostly used to update physics)
+	virtual void SetCharacterOffset(const QuatTS& offs) = 0;
+
 	//! Called when the character is detached (if it was an attachment).
 	virtual void OnDetach() = 0;
+
+	//! Sets the staticity level for this character instance.
+	//! See definition of Cry::Anim::ECharacterStaticity
+	virtual Cry::Anim::ECharacterStaticity GetStaticity() const = 0;
+	virtual void SetStaticity(Cry::Anim::ECharacterStaticity staticity) = 0;
 
 	//! Disable rendering of this render this instance.
 	virtual void HideMaster(uint32 h) = 0;
@@ -600,8 +633,6 @@ struct ICharacterInstance : IMeshObj
 	virtual void ReloadCHRPARAMS() = 0;
 #endif
 
-	//! Deprecated.
-	void SpawnSkeletonEffect(int animID, const char* animName, const char* effectName, const char* boneName, const Vec3& offset, const Vec3& dir, const QuatTS& entityLoc);
 };
 
 #include <CryAnimation/IAnimationPoseModifier.h>                                                    // <> required for Interfuscator
@@ -610,6 +641,7 @@ struct ICharacterInstance : IMeshObj
 #define SKELETON_ANIMATION_LAYER_COUNT 32
 #endif
 
+//! Main interface to handle low-level animation processing on a character instance
 struct ISkeletonAnim
 {
 	// <interfuscator:shuffle>
@@ -631,10 +663,19 @@ struct ISkeletonAnim
 	virtual void   SetTrackViewMixingWeight(uint32 layer, f32 weight) = 0;
 	virtual uint32 GetTrackViewStatus() const = 0;
 
-	// Motion playback and blending
-	virtual bool StartAnimation(const char* szAnimName0, const CryCharAnimationParams& Params) = 0;
+	//! Starts playing back the specified animation in the layer specified in the provided parameters.
+	//! \param szAnimName0 Name of the animation we want to play back, without the .caf or .i_caf suffixes.
+	//! \param params Parameters that describe how the animation should be started, such as playback speed.
+	//! \par Example
+	//! \include CryAnimation/Examples/StartAnimation.cpp
+	virtual bool StartAnimation(const char* szAnimName0, const CryCharAnimationParams& params) = 0;
+	//! Starts playing back the specified animation in the layer specified in the provided parameters.
+	//! \param id Unique animation identifier, useful to avoid looking up animation by name on every playback
+	//! \param params Parameters that describe how the animation should be started, such as playback speed.
 	virtual bool StartAnimationById(int32 id, const CryCharAnimationParams& Params) = 0;
+	//! Stops playback of the current animation in the specified layer, and specifies the time during which we will blend out
 	virtual bool StopAnimationInLayer(int32 nLayer, f32 BlendOutTime) = 0;
+	//! Seizes playback of animations in all layers
 	virtual bool StopAnimationsAllLayers() = 0;
 
 	//! Find an animation with a given user token.
@@ -666,7 +707,9 @@ struct ISkeletonAnim
 	//! \note This does NOT override the overall animation speed, but it multiplies it.
 	virtual f32 GetLayerPlaybackScale(uint32 nLayer) const = 0;
 
-	//! Updates the given parameter (will perform clamping and clearing as needed).
+	//! Updates the given motion parameter in order to select / blend between animations in blend spaces. Will perform clamping and clearing as needed.
+	//! \par Example
+	//! \include CryAnimation/Examples/SetDesiredMotionParam.cpp
 	virtual void SetDesiredMotionParam(EMotionParamID id, f32 value, f32 frametime) = 0;
 	virtual bool GetDesiredMotionParam(EMotionParamID id, float& value) const = 0;
 
@@ -696,6 +739,7 @@ struct ISkeletonAnim
 
 	virtual f32                            GetUserData(int i) const = 0;
 
+	//! Pushes a pose modifier into the specified layer, ensuring that it will be executed next frame
 	virtual bool                           PushPoseModifier(uint32 layer, IAnimationPoseModifierPtr poseModifier, const char* name = NULL) = 0;
 
 	virtual IAnimationPoseModifierSetupPtr      GetPoseModifierSetup() = 0;
@@ -713,6 +757,7 @@ struct ISkeletonAnim
 
 struct IAnimationPoseBlenderDir;
 
+//! Interface for maintaining the physical state of a character's skeleton, for example to generate physical parts for each joint
 struct ISkeletonPhysics
 {
 	// <interfuscator:shuffle>
@@ -750,6 +795,7 @@ struct ISkeletonPhysics
 	// </interfuscator:shuffle>
 };
 
+//! Represents the current pose of a character instance, allowing retrieval of the latest animation pose.
 struct ISkeletonPose : public ISkeletonPhysics
 {
 	static const int32 kForceSkeletonUpdatesInfinitely = 0x8000;
@@ -814,9 +860,21 @@ struct ISkeletonPose : public ISkeletonPhysics
 	// -------------------------------------------------------------------------
 	// Pose Modifiers (soon obsolete)
 	// -------------------------------------------------------------------------
+	//! Gets the pose modifier used to target gun aiming at a specific world coordinate
+	//! \par Example (Aim-IK)
+	//! \include CryAnimation/Examples/AimIK.cpp
 	virtual IAnimationPoseBlenderDir*       GetIPoseBlenderAim() = 0;
+	//! Gets the pose modifier used to target gun aiming at a specific world coordinate
+	//! \par Example (Aim-IK)
+	//! \include CryAnimation/Examples/AimIK.cpp
 	virtual const IAnimationPoseBlenderDir* GetIPoseBlenderAim() const = 0;
+	//! Gets the pose modifier used to target look aim at a specific world coordinate
+	//! \par Example (Look-IK)
+	//! \include CryAnimation/Examples/LookIK.cpp
 	virtual IAnimationPoseBlenderDir*       GetIPoseBlenderLook() = 0;
+	//! Gets the pose modifier used to target look aim at a specific world coordinate
+	//! \par Example (Look-IK)
+	//! \include CryAnimation/Examples/LookIK.cpp
 	virtual const IAnimationPoseBlenderDir* GetIPoseBlenderLook() const = 0;
 	virtual void                            ApplyRecoilAnimation(f32 fDuration, f32 fKinematicImpact, f32 fKickIn, uint32 arms = 3) = 0;
 	virtual uint32                          SetHumanLimbIK(const Vec3& wgoal, const char* limb) = 0;
@@ -824,6 +882,7 @@ struct ISkeletonPose : public ISkeletonPhysics
 	// </interfuscator:shuffle>
 };
 
+//! \cond INTERNAL
 //! Holds description of a set of animations.
 //! This interface holds a set of animations in which each animation is described as properties.
 struct IAnimationSet
@@ -924,6 +983,7 @@ struct IAnimationSet
 
 	// </interfuscator:shuffle>
 };
+//! \endcond
 
 struct IAnimationSetListener
 {
@@ -943,8 +1003,6 @@ struct IAnimationSetListener
 	virtual void OnAnimationSetAboutToBeReloaded()                                                {}
 	virtual void OnAnimationSetReloaded()                                                         {}
 };
-
-#include <CryAnimation/IAttachment.h>
 
 struct SAnimationStatistics
 {
@@ -1050,6 +1108,7 @@ private:
 	#define ANIMATION_LIGHT_SYNC_PROFILER()
 #endif
 
+//! \cond INTERNAL
 //! Utility class to automatically start loading & lock a CAF file.
 //! Either it is 'empty' or it holds a reference to a CAF file.
 //! It asserts gEnv->pCharacterManager exists when it isn't empty.
@@ -1138,10 +1197,5 @@ private:
 
 	uint32 m_filePathCRC;
 };
+//! \endcond
 
-inline void ICharacterInstance::SpawnSkeletonEffect(int animID, const char* animName, const char* effectName, const char* boneName, const Vec3& offset, const Vec3& dir, const QuatTS& entityLoc)
-{
-	(void)animID;
-	(void)animName;
-	SpawnSkeletonEffect(effectName, boneName, offset, dir, entityLoc);
-}

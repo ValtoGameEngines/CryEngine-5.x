@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "GlobalAnimationHeaderCAF.h"
@@ -9,9 +9,8 @@
 //////////////////////////////////////////////////////////////////////////
 uint32 GlobalAnimationHeaderCAF::LoadCAF()
 {
-	LOADING_TIME_PROFILE_SECTION(GetISystem());
-	const char* pname = m_FilePath.c_str();
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Other, 0, "CAF Animation %s", pname);
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
+	MEMSTAT_CONTEXT_FMT(EMemStatContextType::Other, "CAF Animation %s", m_FilePath.c_str());
 
 	m_nFlags = 0;
 	OnAssetNotFound();
@@ -76,7 +75,7 @@ void GlobalAnimationHeaderCAF::LoadControllersCAF()
 
 void GlobalAnimationHeaderCAF::LoadDBA()
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "Animation DBA");
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "Animation DBA");
 
 	if (m_nControllers == 0 && m_FilePathDBACRC32)
 	{
@@ -206,7 +205,7 @@ void* GlobalAnimationHeaderCAFStreamContent::StreamOnNeedStorage(IReadStream* pS
 
 	if (static_cast<int>(nSize) >= Console::GetInst().ca_MinInPlaceCAFStreamSize)
 	{
-		MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_CAF, 0, m_pPath);
+		MEMSTAT_CONTEXT(EMemStatContextType::CAF, m_pPath);
 
 		m_hControllerData = g_controllerHeap.AllocPinned(nSize, NULL);
 		if (m_hControllerData.IsValid())
@@ -218,7 +217,7 @@ void* GlobalAnimationHeaderCAFStreamContent::StreamOnNeedStorage(IReadStream* pS
 
 void GlobalAnimationHeaderCAFStreamContent::StreamAsyncOnComplete(IReadStream* pStream, unsigned nError)
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_CAF, 0, m_pPath);
+	MEMSTAT_CONTEXT(EMemStatContextType::CAF, m_pPath);
 
 	if (pStream->IsError())
 	{
@@ -264,7 +263,7 @@ void GlobalAnimationHeaderCAFStreamContent::StreamAsyncOnComplete(IReadStream* p
 void GlobalAnimationHeaderCAFStreamContent::StreamOnComplete(IReadStream* pStream, unsigned nError)
 {
 	DEFINE_PROFILER_FUNCTION();
-	//LOADING_TIME_PROFILE_SECTION(g_pISystem);
+	//CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY)(g_pISystem);
 
 	GlobalAnimationHeaderCAF& caf = g_AnimationManager.m_arrGlobalCAF[m_id];
 
@@ -370,7 +369,7 @@ bool GlobalAnimationHeaderCAFStreamContent::ParseChunkRange(IChunkFile* pChunkFi
 
 uint32 GlobalAnimationHeaderCAF::DoesExistCAF()
 {
-	LOADING_TIME_PROFILE_SECTION(GetISystem());
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	_smart_ptr<IChunkFile> pChunkFile = g_pI3DEngine->CreateChunkFile(true);
 	if (!pChunkFile->Read(m_FilePath))
 		return 0;
@@ -380,14 +379,15 @@ uint32 GlobalAnimationHeaderCAF::DoesExistCAF()
 
 void GlobalAnimationHeaderCAF::ControllerInit()
 {
-	uint32 numController = m_arrController.size();
-	assert(numController);
+	const uint32 numController = m_arrController.size();
 	std::sort(m_arrController.begin(), m_arrController.end(), AnimCtrlSortPred());
 	InitControllerLookup(numController);
 	m_nControllers = numController;
 	m_nControllers2 = numController;
 	if (m_nControllers2 == 0)
-		CryWarning(VALIDATOR_MODULE_3DENGINE, VALIDATOR_WARNING, "CryAnimation CAF: Assets has no controllers. Probably compressed to death: %s", GetFilePath());
+	{
+		CryWarning(VALIDATOR_MODULE_ANIMATION, VALIDATOR_WARNING, "CryAnimation: CAF file has no controllers: %s", GetFilePath());
+	}
 
 	ClearAssetRequested();
 	ClearAssetNotFound();
@@ -634,7 +634,6 @@ bool GlobalAnimationHeaderCAFStreamContent::ReadMotionParameters(IChunkFile::Chu
 		m_nFlags |= CA_ASSET_CREATED;
 
 		m_FilePathDBACRC32 = 0;        //if 0, then this is a streamable CAF file
-		uint32 nCompression = pChunk->mp.m_nCompression;
 		int32 nStartKey = pChunk->mp.m_nStart;
 		int32 nEndKey = pChunk->mp.m_nEnd;
 		if (pChunk->mp.m_nAssetFlags & CA_ASSET_ADDITIVE)
@@ -877,7 +876,7 @@ bool GlobalAnimationHeaderCAFStreamContent::ReadController(IChunkFile::ChunkDesc
 		pData += sizeof(CONTROLLER_CHUNK_DESC_0832);
 
 		// Consumes bytesCount of input data and returns a pointer to the consumed buffer. Takes care of all memory-related logic.
-		auto consumeData = [&pData, &pStorage, &controllerChunk](size_t bytesCount) -> char*
+		auto consumeData = [&pData, &pStorage](size_t bytesCount) -> char*
 		{
 			char* out = nullptr;
 			if (pStorage)
@@ -1136,7 +1135,7 @@ bool GlobalAnimationHeaderCAF::Export2HTR(const char* szAnimationName, const cha
 	}
 
 	bool htr = SaveHTR(szAnimationName, savePath, jointNameArray, jointParentArray, arrAnimation, parrDefJoints);
-	bool caf = SaveICAF(szAnimationName, savePath, jointNameArray, arrAnimation);
+	SaveICAF(szAnimationName, savePath, jointNameArray, arrAnimation);
 	return htr;
 }
 #endif

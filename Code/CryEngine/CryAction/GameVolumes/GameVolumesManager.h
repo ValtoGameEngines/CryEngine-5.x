@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef _GAME_VOLUMES_MANAGER_H_
 #define _GAME_VOLUMES_MANAGER_H_
@@ -16,25 +16,25 @@ private:
 	struct EntityVolume
 	{
 		EntityVolume()
-			: entityId(0)
-			, height(0.0f)
+			: height(0.0f)
 			, closed(false)
 		{
 		}
 
-		bool operator==(const EntityId& id) const
+		bool operator==(const CryGUID& id) const
 		{
-			return entityId == id;
+			return entityGUID.hipart == id.hipart && entityGUID.lopart == id.lopart;
 		}
 
-		EntityId entityId;
+		CryGUID  entityGUID;
 		f32      height;
 		bool     closed;
 		Vertices vertices;
 	};
 
-	typedef std::vector<EntityVolume>  TEntityVolumes;
-	typedef std::vector<IEntityClass*> TVolumeClasses;
+	typedef std::vector<EntityVolume>   TEntityVolumes;
+	typedef std::vector<IEntityClass*>  TVolumeClasses;
+	typedef VectorMap<EntityId, uint32> TEntityToIndexMap;
 
 public:
 	CGameVolumesManager();
@@ -58,12 +58,14 @@ public:
 	virtual void        Export(const char* fileName) const;
 	// ~IGameVolumesEdit
 
+	void ResolveEntityIdsFromGUIDs();
+
 private:
+	TEntityToIndexMap m_entityToIndexMap; // Level memory
+	TEntityVolumes    m_volumesData; // Level memory
+	TVolumeClasses    m_classes;     // Global memory, initialized at start-up
 
-	TEntityVolumes      m_volumesData; // Level memory
-	TVolumeClasses      m_classes;     // Global memory, initialized at start-up
-
-	const static uint32 GAME_VOLUMES_FILE_VERSION = 2;
+	const static uint32 GAME_VOLUMES_FILE_VERSION = 3;
 };
 
 #endif

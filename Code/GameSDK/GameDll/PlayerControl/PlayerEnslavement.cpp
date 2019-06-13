@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // Various support classes for having the player's animation enslaved to other entities.
 
@@ -12,6 +12,7 @@
 #include "Player.h"
 #include "PlayerStateEvents.h"
 #include "GameConstantCVars.h"
+#include <CryGame/GameUtils.h>
 
 
 // ===========================================================================
@@ -76,8 +77,6 @@ void CPlayerEnslavementForButtonMashing::EnslavePlayer(IActionController* pMaste
 		return;
 
 	IMannequin &mannequinInterface = gEnv->pGameFramework->GetMannequinInterface();
-	CMannequinUserParamsManager& mannequinUserParams = mannequinInterface.GetMannequinUserParamsManager();
-
 	const IAnimationDatabase *pSlaveAnimationDB = mannequinInterface.GetAnimationDatabaseManager().Load( m_ADBFileName.c_str() );
 
 	IF_UNLIKELY(pSlaveAnimationDB == NULL)

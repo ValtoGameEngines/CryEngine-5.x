@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __SYNCEDFILEPAK_H__
 #define __SYNCEDFILEPAK_H__
@@ -18,7 +18,7 @@ class CSyncedFilePak : public ICryPak
 public:
 	explicit CSyncedFilePak(CSyncedFileSet& fileset) : m_fileset(fileset) {}
 
-	virtual const char*                  AdjustFileName(const char* src, char dst[g_nMaxPath], unsigned nFlags, bool* bFoundInPak);
+	virtual void                         AdjustFileName(const char* src, CryPathString& dst, unsigned nFlags, bool* bFoundInPak);
 	virtual bool                         Init(const char* szBasePath);
 	virtual void                         Release();
 	virtual bool                         OpenPack(const char* pName, unsigned nFlags);

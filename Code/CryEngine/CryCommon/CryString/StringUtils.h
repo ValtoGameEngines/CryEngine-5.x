@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -6,9 +6,7 @@
 #include "CryString.h"
 #include "UnicodeFunctions.h"
 
-#if !defined(RESOURCE_COMPILER)
-	#include <CryCore/CryCrc32.h>
-#endif
+#include <CryCore/CryCrc32.h>
 
 #if CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID || CRY_PLATFORM_APPLE
 	#include <ctype.h>
@@ -140,7 +138,7 @@ inline const char* strnstr(const char* szString, const char* szSubstring, int nS
 	if (!nSubstringLength)
 		return szString;
 
-	for (int nSubstringPos = 0; szString[nSubstringPos] && nSubstringPos < nSuperstringLength - nSubstringLength; ++nSubstringPos)
+	for (int nSubstringPos = 0; szString[nSubstringPos] && nSubstringPos <= nSuperstringLength - nSubstringLength; ++nSubstringPos)
 	{
 		if (strncmp(szString + nSubstringPos, szSubstring, nSubstringLength) == 0)
 			return szString + nSubstringPos;
@@ -165,8 +163,6 @@ inline bool MatchWildcardIgnoreCase(const char* szString, const char* szWildcard
 {
 	return CryStringUtils_Internal::MatchesWildcards_Tpl<CryStringUtils_Internal::SCharComparatorCaseInsensitive>(szString, szWildcard);
 }
-
-#if !defined(RESOURCE_COMPILER)
 
 //! Calculates a hash value for a given string.
 inline uint32 CalculateHash(const char* str)
@@ -229,7 +225,6 @@ inline uint32 HashStringLower(const char* string)
 {
 	return HashStringLowerSeed(string, CRY_DEFAULT_HASH_SEED);
 }
-#endif
 
 //! Converts all ASCII characters in a string to lower case - avoids memory allocation.
 //! This function is ASCII-only (Unicode remains unchanged) and uses the "C" locale for case conversion (A-Z only).
@@ -290,6 +285,14 @@ inline void UTF8ToWStr(const char* str, T& dstr)
 inline wstring UTF8ToWStr(const char* str)
 {
 	return Unicode::Convert<wstring>(str);
+}
+
+
+//! Converts an UTF-8 string to wide string (can be UTF-16 or UTF-32 depending on platform).
+//! This function is Unicode aware and locale agnostic.
+inline wstring UTF8ToWStrSafe(const char* szString)
+{
+	return Unicode::ConvertSafe<Unicode::eErrorRecovery_FallbackWin1252ThenReplace, wstring>(szString);
 }
 
 #endif // NOT_USE_CRY_STRING
@@ -562,7 +565,7 @@ ILINE void portable_makepath(char* path, const char* drive, const char* dir, con
 
 	/* copy fname */
 
-	if (p = fname)
+	if ((p = fname))
 	{
 		while (*p)
 		{
@@ -574,13 +577,13 @@ ILINE void portable_makepath(char* path, const char* drive, const char* dir, con
 	 * to be inserted.
 	 */
 
-	if (p = ext)
+	if ((p = ext))
 	{
 		if (*p && *p != ('.'))
 		{
 			*path++ = ('.');
 		}
-		while (*path++ = *p++)
+		while ((*path++ = *p++))
 			;
 	}
 	else

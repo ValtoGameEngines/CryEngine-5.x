@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -11,6 +11,7 @@ static skill kill checks
 #include "SkillKill.h"
 
 #include "Player.h"
+#include "GameCVars.h"
 #include "GameRules.h"
 #include "PersistantStats.h"
 

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -18,6 +18,7 @@ History:
 #include "RecordingSystem.h"
 #include "ItemAnimation.h"
 #include "EquipmentLoadout.h"
+#include <IGameplayRecorder.h>
 
 //------------------------------------------------------------------------
 CItem *CItem::AddAccessory(IEntityClass* pClass)
@@ -183,7 +184,7 @@ void CItem::AccessoryDetachAction(CItem* pAccessory, const SAccessoryParams* par
 
 	pAccessory->OnAttach(false);
 	ResetCharacterAttachment(eIGS_FirstPerson, params->attach_helper.c_str(), params->attachToOwner);
-	pAccessoryEntity->DetachThis(0);
+	pAccessoryEntity->DetachThis();
 	pAccessory->SetParentId(0);
 	pAccessory->Hide(true);
 	RemoveAccessory(pAccessoryEntity->GetClass());
@@ -212,7 +213,6 @@ void CItem::AttachAccessory(IEntityClass* pAccessoryClass, bool attach, bool noa
 	if (!force && IsBusy())
 		return;
 
-	bool anim = !noanim && m_stats.fp;
 	const SAccessoryParams *params = GetAccessoryParams(pAccessoryClass);
 	if (!params)
 		return;

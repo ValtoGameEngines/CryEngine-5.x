@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef TEXTURESTREAMPOOL_H
 #define TEXTURESTREAMPOOL_H
@@ -35,26 +35,28 @@ struct STexPoolItem : STexPoolItemHdr
 	STexPool* const       m_pOwner;
 	CTexture*             m_pTex;
 	CDeviceTexture* const m_pDevTexture;
-	size_t const          m_nDeviceTexSize;
+	size_t const          m_nDevTextureSize;
 
 	uint32                m_nFreeTick;
-	uint8                 m_nActiveLod;
+	int8                  m_nActiveLod;
 
-	STexPoolItem(STexPool* pOwner, CDeviceTexture* pDevTexture, size_t devSize);
+	STexPoolItem(STexPool* pOwner, CDeviceTexture* pDevTexture, size_t devTextureSize);
 	~STexPoolItem();
 
 	bool IsFree() const { return m_NextFree != NULL; }
 
-	int  GetSize()
-	{
-		int nSize = sizeof(*this);
-		return nSize;
-	}
 	void GetMemoryUsage(ICrySizer* pSizer) const
 	{
 		pSizer->AddObject(this, sizeof(*this));
 		pSizer->AddObject(m_pDevTexture);
 	}
+
+	size_t GetAllocatedSystemMemory() const
+	{
+		size_t nSize = sizeof(*this);
+		return nSize;
+	}
+
 	bool IsStillUsedByGPU(uint32 nCurTick);
 };
 
@@ -64,34 +66,15 @@ struct STexPool
 	uint16          m_Height;
 	uint16          m_nArraySize;
 	D3DFormat       m_eFormat;
-	size_t          m_Size;
+	size_t          m_nDevTextureSize;
 	STexPoolItemHdr m_ItemsList;
 	ETEX_Type       m_eTT;
-	uint8           m_nMips;
+	int8            m_nMips;
 
 	int             m_nItems;
 	int             m_nItemsFree;
 
 	~STexPool();
-
-	size_t GetSize()
-	{
-		size_t nSize = sizeof(*this);
-		STexPoolItemHdr* pIT = m_ItemsList.m_Next;
-		while (pIT != &m_ItemsList)
-		{
-			nSize += static_cast<STexPoolItem*>(pIT)->GetSize();
-			pIT = pIT->m_Next;
-		}
-
-		return nSize;
-	}
-
-	uint32 GetNumSlices() const
-	{
-		uint32 b = (m_eTT == eTT_Cube) ? 6 : 1;
-		return b * m_nArraySize;
-	}
 
 	void GetMemoryUsage(ICrySizer* pSizer) const
 	{
@@ -102,6 +85,25 @@ struct STexPool
 			pSizer->AddObject(static_cast<STexPoolItem*>(pIT));
 			pIT = pIT->m_Next;
 		}
+	}
+
+	size_t GetAllocatedSystemMemory() const
+	{
+		size_t nSize = sizeof(*this);
+		const STexPoolItemHdr* pIT = m_ItemsList.m_Next;
+		while (pIT != &m_ItemsList)
+		{
+			nSize += static_cast<const STexPoolItem*>(pIT)->GetAllocatedSystemMemory();
+			pIT = pIT->m_Next;
+		}
+
+		return nSize;
+	}
+
+	uint32 GetNumSlices() const
+	{
+		assert((m_eTT != eTT_Cube && m_eTT != eTT_CubeArray) || !(m_nArraySize % 6));
+		return m_nArraySize;
 	}
 };
 
@@ -123,17 +125,18 @@ public:
 
 	struct SPoolStats
 	{
-		int       nWidth;
-		int       nHeight;
-		int       nMips;
-		uint32    nFormat;
-		ETEX_Type eTT;
+		uint16      nWidth;
+		uint16      nHeight;
+		int8        nMips;
 
-		int       nInUse;
-		int       nFree;
+		uint8       nFormat; // DXGI_FORMAT/D3DFormat
+		ETEX_Type   eTT;
 
-		int       nHardCreatesPerFrame;
-		int       nSoftCreatesPerFrame;
+		int         nInUse;
+		int         nFree;
+
+		int         nHardCreatesPerFrame;
+		int         nSoftCreatesPerFrame;
 	};
 
 public:
@@ -160,9 +163,9 @@ public:
 	}
 #endif
 
-	STexPool*     GetPool(int nWidth, int nHeight, int nMips, int nArraySize, ETEX_Format eTF, bool bIsSRGB, ETEX_Type eTT);
+	STexPool*     GetPool(const STextureLayout& pLayout);
+	STexPoolItem* GetItem(const STextureLayout& pLayout, bool bShouldBeCreated, const char* sName, const STexturePayload* pPayload = nullptr, bool bCanCreate = true, bool bWaitForIdle = true);
 
-	STexPoolItem* GetPoolItem(int nWidth, int nHeight, int nMips, int nArraySize, ETEX_Format eTF, bool bIsSRGB, ETEX_Type eTT, bool bShouldBeCreated, const char* sName, STextureInfo* pTI = NULL, bool bCanCreate = true, bool bWaitForIdle = true);
 	void          ReleaseItem(STexPoolItem* pItem);
 	void          GarbageCollect(size_t* nCurTexPoolSize, size_t nLowerPoolLimit, int nMaxItemsToFree);
 
@@ -180,20 +183,21 @@ private:
 		};
 		struct
 		{
-			uint16 nWidth;
-			uint16 nHeight;
-			uint32 nFormat;
-			uint8  nTexType;
-			uint8  nMips;
-			uint16 nArraySize;
+			uint16      nWidth;
+			uint16      nHeight;
+			uint16      nArraySize;
+			int8        nMips;
+
+			uint8       nFormat; // DXGI_FORMAT/D3DFormat
+			ETEX_Type   nTexType;
 		};
 
-		TexturePoolKey(uint16 nWidth, uint16 nHeight, uint32 nFormat, uint8 nTexType, uint8 nMips, uint16 nArraySize)
+		TexturePoolKey(uint16 nWidth, uint16 nHeight, D3DFormat nFormat, ETEX_Type nTexType, int8 nMips, uint16 nArraySize)
 		{
 			memset(this, 0, sizeof(*this));
 			this->nWidth = nWidth;
 			this->nHeight = nHeight;
-			this->nFormat = nFormat;
+			this->nFormat = uint8(nFormat);
 			this->nTexType = nTexType;
 			this->nMips = nMips;
 			this->nArraySize = nArraySize;
@@ -201,11 +205,11 @@ private:
 
 		void        GetMemoryUsage(ICrySizer* pSizer) const {}
 
-		friend bool operator<(const TexturePoolKey& a, const TexturePoolKey& b)
+		bool operator<(const TexturePoolKey& right) const
 		{
-			if (a.a != b.a)
-				return a.a < b.a;
-			return a.b < b.b;
+			if (a != right.a)
+				return a < right.a;
+			return b < right.b;
 		}
 	};
 
@@ -217,7 +221,7 @@ private:
 	typedef VectorMap<TexturePoolKey, STexPool*> TexturePoolMap;
 
 private:
-	STexPool* CreatePool(int nWidth, int nHeight, int nMips, int nArraySize, D3DFormat eTF, ETEX_Type eTT);
+	STexPool* GetOrCreatePool(uint16 nWidth, uint16 nHeight, int8 nMips, uint16 nArraySize, D3DFormat eTF, ETEX_Type eTT);
 	void      FlushFree();
 
 private:

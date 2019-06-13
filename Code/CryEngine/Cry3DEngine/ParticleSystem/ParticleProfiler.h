@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -27,14 +27,14 @@ enum EProfileStat
 class CTimeProfiler
 {
 public:
-	CTimeProfiler(CParticleProfiler& profiler, CParticleComponentRuntime* pRuntime, EProfileStat stat);
+	CTimeProfiler(CParticleProfiler& profiler, const CParticleComponentRuntime& runtime, EProfileStat stat);
 	~CTimeProfiler();
 
 private:
-	CParticleProfiler&         m_profiler;
-	CParticleComponentRuntime* m_pRuntime;
-	int64                      m_startTicks;
-	EProfileStat               m_stat;
+	CParticleProfiler&               m_profiler;
+	const CParticleComponentRuntime& m_runtime;
+	int64                            m_startTicks;
+	EProfileStat                     m_stat;
 };
 
 struct SStatistics
@@ -51,28 +51,31 @@ public:
 
 	struct SEntry
 	{
-		CParticleComponentRuntime* m_pRuntime;
-		EProfileStat               m_type;
-		uint                       m_value;
+		const CParticleComponentRuntime* m_pRuntime;
+		EProfileStat                     m_type;
+		uint                             m_value;
 	};
 	typedef std::vector<SEntry> TEntries;
 
 public:
 	CParticleProfiler();
 
+	bool IsEnabled() const { return Cry3DEngineBase::GetCVars()->e_ParticlesProfiler != 0; }
 	void Reset();
 	void Display();
 	void SaveToFile();
 
-	void AddEntry(CParticleComponentRuntime* pRuntime, EProfileStat type, uint value = 1);
+	void AddEntry(const CParticleComponentRuntime& runtime, EProfileStat type, uint value = 1);
 
 private:
+	static CVars* GetCVars() { return Cry3DEngineBase::GetCVars(); }
 	void SortEntries();
 	void WriteEntries(CCSVFileOutput& output) const;
 
-	void DrawStats();
+	void DrawPerfomanceStats();
 	void DrawStatsCounts(CStatisticsDisplay& output, Vec2 pos, uint budget);
 	void DrawStats(CStatisticsDisplay& output, Vec2 pos, EProfileStat stat, uint budget, cstr statName);
+	void DrawMemoryStats();
 
 	std::vector<TEntries> m_entries;
 };

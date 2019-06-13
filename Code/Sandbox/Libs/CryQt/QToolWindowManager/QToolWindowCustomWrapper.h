@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 #include "QToolWindowManagerCommon.h"
@@ -6,20 +6,13 @@
 #include "IToolWindowWrapper.h"
 
 #include <QLabel>
+#include <QPointer>
 
-#if (defined(_WIN32) || defined(_WIN64))
-#include <windows.h>
-#include <dwmapi.h>
-#pragma warning(disable: 4264)
-#pragma warning(disable: 4266)
-#endif
-
-class QToolWindowManager;
+class QGridLayout;
 class QPushButton;
 class QToolButton;
-class QGridLayout;
-
 class QToolWindowCustomWrapper;
+class QToolWindowManager;
 
 class QTOOLWINDOWMANAGER_EXPORT QToolWindowCustomTitleBar : public QCustomTitleBar
 {
@@ -41,31 +34,29 @@ public:
 
 	static QToolWindowCustomWrapper* wrapWidget(QWidget* w, QVariantMap config = QVariantMap());
 
-	QWidget* getWidget() Q_DECL_OVERRIDE { return this; }
-	virtual QWidget* getContents() { return m_contents; }
-	virtual void setContents(QWidget* widget) Q_DECL_OVERRIDE { QCustomWindowFrame::setContents(widget,false); }
-	virtual void startDrag() Q_DECL_OVERRIDE;
-
-	QRect getWrapperFrameSize();
+	virtual QWidget*                 getWidget() override                  { return this; }
+	virtual QWidget*                 getContents() override                { return m_contents; }
+	virtual void                     setContents(QWidget* widget) override { internalSetContents(widget, false); }
+	virtual void                     startDrag() override;
+	virtual void                     hide() override                       { QCustomWindowFrame::hide(); }
+	virtual void                     deferDeletion() override;
+	virtual void                     setParent(QWidget* parent) override   { QCustomWindowFrame::setParent(parent); }
 
 private:
-	virtual bool event(QEvent *)Q_DECL_OVERRIDE;
-	virtual void closeEvent(QCloseEvent *) Q_DECL_OVERRIDE;
-
+	virtual bool event(QEvent*) override;
+	virtual void closeEvent(QCloseEvent*) override;
 
 protected:
-	virtual Qt::WindowFlags calcFrameWindowFlags() Q_DECL_OVERRIDE;
-	virtual bool eventFilter(QObject *, QEvent *) Q_DECL_OVERRIDE;
+	virtual Qt::WindowFlags calcFrameWindowFlags() override;
+	virtual bool            eventFilter(QObject*, QEvent*) override;
+	virtual bool            nativeEvent(const QByteArray& eventType, void* message, long* result) override;
 
-#if QT_VERSION >= 0x050000
-	virtual bool nativeEvent(const QByteArray &eventType, void *message, long *result) Q_DECL_OVERRIDE;
-#endif
 #if (defined(_WIN32) || defined(_WIN64))
-	bool winEvent(MSG *msg, long *result);
+	virtual bool winEvent(MSG* msg, long* result);
 #endif
 
 protected:
-	QToolWindowManager* m_manager;
+	QPointer<QToolWindowManager> m_manager;
 
 	friend class QToolWindowCustomTitleBar;
 };

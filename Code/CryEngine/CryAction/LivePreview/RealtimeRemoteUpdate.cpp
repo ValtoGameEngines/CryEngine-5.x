@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -292,7 +292,7 @@ void CRealtimeRemoteUpdateListener::LoadTerrainLayer(XmlNodeRef& root, unsigned 
 
 	if (gEnv->pRenderer && gEnv->p3DEngine)
 	{
-		texId = gEnv->pRenderer->DownLoadToVideoMemory(uchData, w, h, eTFSrc, eTFSrc, 0, false, FILTER_NONE, 0, NULL, FT_USAGE_ALLOWREADSRGB);
+		texId = gEnv->pRenderer->UploadToVideoMemory(uchData, w, h, eTFSrc, eTFSrc, 0, false, FILTER_NONE, 0, NULL, FT_USAGE_ALLOWREADSRGB);
 		// Swapped x & y for historical reasons.
 		gEnv->p3DEngine->SetTerrainSectorTexture(posy, posx, texId);
 	}
@@ -338,7 +338,6 @@ void CRealtimeRemoteUpdateListener::LoadEntities(XmlNodeRef& root)
 		while (!pIt->IsEnd())
 		{
 			IEntity* pEntity = pIt->Next();
-			IEntityClass* pEntityClass = pEntity->GetClass();
 			uint32 nEntityFlags = pEntity->GetFlags();
 
 			// Local player must not be deleted.
@@ -444,10 +443,9 @@ bool CRealtimeRemoteUpdateListener::IsSyncingWithEditor()
 //////////////////////////////////////////////////////////////////////////
 void CRealtimeRemoteUpdateListener::Update()
 {
-	while (!m_ProcessingQueue.empty())
+	TDBuffer* pCurrentBuffer;
+	while (m_ProcessingQueue.try_pop(pCurrentBuffer))
 	{
-		TDBuffer* pCurrentBuffer(m_ProcessingQueue.pop());
-
 		if (!pCurrentBuffer)
 		{
 			continue;

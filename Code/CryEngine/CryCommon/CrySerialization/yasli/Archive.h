@@ -8,7 +8,6 @@
  */
 
 #pragma once
-#pragma warning (disable : 4100) 
 
 #include <stdarg.h>
 
@@ -16,22 +15,24 @@
 #include <CrySerialization/yasli/Helpers.h>
 #include <CrySerialization/yasli/Serializer.h>
 #include <CrySerialization/yasli/KeyValue.h>
+#include <CrySerialization/yasli/KeyValueDictionary.h>
 #include <CrySerialization/yasli/TypeID.h>
+
+#define YASLI_HELPERS_DECLARE_DEFAULT_SERIALIZEABLE_TYPE(type) template <> struct IsDefaultSerializaeble<type> { static const bool value = true; };
 
 namespace yasli{
 
 class Archive;
 struct CallbackInterface;
 
-template<class T>
-bool YASLI_SERIALIZE_OVERRIDE(Archive& ar, T& object, const char* name, const char* label);
-
 class Object;
 class KeyValueInterface;
+class KeyValueDictionaryInterface;
 class EnumDescription;
 template <class Enum>
 EnumDescription& getEnumDescription();
 bool serializeEnum(const EnumDescription& desc, Archive& ar, int& value, const char* name, const char* label);
+template<class T> constexpr bool HasSerializeOverride();
 
 // Context is used to pass arguments to nested serialization functions.
 // Example of usage:
@@ -57,7 +58,7 @@ struct Context {
 	Context* previousContext;
 	Archive* archive;
 
-	Context() : archive(0), object(0), previousContext(0) {}
+	Context() :  object(0), previousContext(0), archive(0) {}
 	template<class T>
 	void set(T* object);
 	template<class T>
@@ -71,25 +72,26 @@ struct BlackBox;
 class Archive{
 public:
 	enum ArchiveCaps{
-		INPUT = 1 << 0,
-		OUTPUT = 1 << 1,
-		TEXT = 1 << 2,
-		BINARY = 1 << 3,
-		EDIT = 1 << 4,
-		INPLACE = 1 << 5,
+		INPUT          = 1 << 0,
+		OUTPUT         = 1 << 1,
+		TEXT           = 1 << 2,
+		BINARY         = 1 << 3,
+		EDIT           = 1 << 4,
+		INPLACE        = 1 << 5,
 		NO_EMPTY_NAMES = 1 << 6,
-		VALIDATION = 1 << 7,
-		DOCUMENTATION = 1 << 8,
-		CUSTOM1 = 1 << 9,
-		CUSTOM2 = 1 << 10,
-		CUSTOM3 = 1 << 11
+		VALIDATION     = 1 << 7,
+		DOCUMENTATION  = 1 << 8,
+		XML_VERSION_1  = 1 << 9,
+		CUSTOM1        = 1 << 10,
+		CUSTOM2        = 1 << 11,
+		CUSTOM3        = 1 << 12
 	};
 
 	Archive(int caps)
-	: lastContext_(0)
-	, caps_(caps)
+	: caps_(caps)
 	, filter_(YASLI_DEFAULT_FILTER)
 	, modifiedRow_(nullptr)
+	, lastContext_(0)
 	{
 	}
 	virtual ~Archive() {}
@@ -141,6 +143,7 @@ public:
 	virtual bool operator()(PointerInterface& ptr, const char* name = "", const char* label = 0);
 	virtual bool operator()(Object& obj, const char* name = "", const char* label = 0) { return false; }
 	virtual bool operator()(KeyValueInterface& keyValue, const char* name = "", const char* label = 0) { return operator()(Serializer(keyValue), name, label); }
+	virtual bool operator()(KeyValueDictionaryInterface& container, const char* name = "", const char* label = 0);
 	virtual bool operator()(CallbackInterface& callback, const char* name = "", const char* label = 0) { return false; }
 
 	// No point in supporting long double since it is represented as double on MSVC
@@ -153,15 +156,15 @@ public:
 	// values. Output depends on the specific implementation of Archive,
 	// for example PropertyTree uses it to show bubbles with errors in UI
 	// next to the mentioned property.
-	template<class T> void error(T& value, const char* format, ...);
-	template<class T> void warning(T& value, const char* format, ...);
+	template<class T> void error(const T& value, const char* format, ...);
+	template<class T> void warning(const T& value, const char* format, ...);
 
 	void error(const void* value, const yasli::TypeID& type, const char* format, ...);
 	// Used to add tooltips in PropertyTree
 	void doc(const char* docString);
 
-	// block call are osbolete, please do not use
-	virtual bool openBlock(const char* name, const char* label) { return true; }
+	// block call are obsolete, please do not use
+	virtual bool openBlock(const char* name, const char* label,const char* icon=0) { return true; }
 	virtual void closeBlock() {}
 
 	template<class T>
@@ -201,15 +204,28 @@ struct SerializeStruct{
 	static bool invoke(Archive& ar, T& value, const char* name, const char* label){
 		Serializer serializer(value);
 		return ar(serializer, name, label);
-	};
+	}
+};
+
+//Enum classes may define an enum type that is not sizeof(int), therefore reinterpret_cast is dangerous and leads to bugs.
+template<class Enum, int size = sizeof(Enum)>
+struct SerializeEnum{
+	static bool invoke(Archive& ar, Enum& value, const char* name, const char* label) {
+		static_assert(size < sizeof(int), "Enum of integer size should use specialized template, bigger than int should not be serialized");
+		const EnumDescription& enumDescription = getEnumDescription<Enum>();
+		int valueHolder = (int)value;
+		bool ret = serializeEnum(enumDescription, ar, valueHolder, name, label);
+		value = (Enum)valueHolder;
+		return ret;
+	}
 };
 
 template<class Enum>
-struct SerializeEnum{
-	static bool invoke(Archive& ar, Enum& value, const char* name, const char* label){
+struct SerializeEnum<Enum, sizeof(int)>{
+	static bool invoke(Archive& ar, Enum& value, const char* name, const char* label) {
 		const EnumDescription& enumDescription = getEnumDescription<Enum>();
 		return serializeEnum(enumDescription, ar, reinterpret_cast<int&>(value), name, label);
-	};
+	}
 };
 
 template<class T>
@@ -263,7 +279,7 @@ inline void Archive::doc(const char* docString)
 }
 
 template<class T>
-void Archive::error(T& value, const char* format, ...)
+void Archive::error(const T& value, const char* format, ...)
 {
 #if !YASLI_NO_EDITING
 	if ((caps_ & VALIDATION) == 0)
@@ -292,7 +308,7 @@ inline void Archive::error(const void* handle, const yasli::TypeID& type, const 
 }
 
 template<class T>
-void Archive::warning(T& value, const char* format, ...)
+void Archive::warning(const T& value, const char* format, ...)
 {
 #if !YASLI_NO_EDITING
 	if ((caps_ & VALIDATION) == 0)
@@ -307,8 +323,9 @@ void Archive::warning(T& value, const char* format, ...)
 }
 
 template<class T>
-bool Archive::operator()(const T& value, const char* name, const char* label){
-    return YASLI_SERIALIZE_OVERRIDE(*this, const_cast<T&>(value), name, label);
+bool Archive::operator()(const T& value, const char* name, const char* label) {
+	static_assert(HasSerializeOverride<T>(), "Type has no serialize method/override!");
+	return YASLI_SERIALIZE_OVERRIDE(*this, const_cast<T&>(value), name, label);
 }
 
 inline bool Archive::operator()(PointerInterface& ptr, const char* name, const char* label)
@@ -317,17 +334,14 @@ inline bool Archive::operator()(PointerInterface& ptr, const char* name, const c
 	return operator()(ser, name, label);
 }
 
+inline bool Archive::operator()(KeyValueDictionaryInterface& container, const char* name, const char* label)
+{
+	return container.serializeAsVector(*this, name, label);
+}
+
 template<class T, int Size>
 bool YASLI_SERIALIZE_OVERRIDE(Archive& ar, T object[Size], const char* name, const char* label)
 {
-	YASLI_ASSERT(0);
-	return false;
-}
-
-template<class T>
-bool YASLI_SERIALIZE_OVERRIDE(Archive& ar, const T& object, const char* name, const char* label)
-{
-	T::unable_to_serialize_CONST_object();
 	YASLI_ASSERT(0);
 	return false;
 }
@@ -383,23 +397,83 @@ inline bool YASLI_SERIALIZE_OVERRIDE(Archive& ar, signed long long& v, const cha
 inline bool YASLI_SERIALIZE_OVERRIDE(Archive& ar, wchar_t& v, const char* name, const char* label) { return castInteger(ar, v, name, label); }
 #endif
 
+template<class T>
+inline auto YASLI_SERIALIZE_OVERRIDE(Archive& ar, T& object, const char* name, const char* label)->decltype(std::declval<T&>().YASLI_SERIALIZE_METHOD(std::declval<Archive&>()), bool())
+{
+	return Helpers::SerializeStruct<T>::invoke(ar, object, name, label);
+}
 
 template<class T>
-bool YASLI_SERIALIZE_OVERRIDE(Archive& ar, T& object, const char* name, const char* label)
+inline typename std::enable_if<std::is_enum<T>::value, bool>::type YASLI_SERIALIZE_OVERRIDE(Archive& ar, T& object, const char* name, const char* label)
 {
-	using namespace Helpers;
+	return Helpers::SerializeEnum<T>::invoke(ar, object, name, label);
+}
 
-	return
-		Select< IsClass<T>,
-				Identity< SerializeStruct<T> >,
-				Select< IsArray<T>,
-					Identity< SerializeArray<T> >,
-					Identity< SerializeEnum<T> >
-				>
-		>::type::invoke(ar, object, name, label);
+template<class T>
+inline typename std::enable_if<std::is_array<T>::value, bool>::type YASLI_SERIALIZE_OVERRIDE(Archive& ar, T& object, const char* name, const char* label)
+{
+	return Helpers::SerializeArray<T>::invoke(ar, object, name, label);
+}
+
+inline bool YASLI_SERIALIZE_OVERRIDE(Archive& ar, Serializer& object, const char* name, const char* label)
+{
+	return Helpers::SerializeStruct<Serializer>::invoke(ar, object, name, label);
+}
+
+namespace Helpers {
+
+template <typename T> struct IsDefaultSerializaeble { static const bool value = false; };
+
+template<class T>
+constexpr auto HasSerializeOverride(int)->decltype(YASLI_SERIALIZE_OVERRIDE(std::declval<Archive&>(), std::declval<T&>(), std::declval<const char*>(), std::declval<const char*>()), bool())
+{
+	return true;
+}
+
+template<class T>
+constexpr bool HasSerializeOverride(...)
+{
+	return false;
+}
+
+// N.B. List of default serializeable types must be in sync with Archive interface.
+YASLI_HELPERS_DECLARE_DEFAULT_SERIALIZEABLE_TYPE(bool)
+YASLI_HELPERS_DECLARE_DEFAULT_SERIALIZEABLE_TYPE(char)
+YASLI_HELPERS_DECLARE_DEFAULT_SERIALIZEABLE_TYPE(u8)
+YASLI_HELPERS_DECLARE_DEFAULT_SERIALIZEABLE_TYPE(i8)
+YASLI_HELPERS_DECLARE_DEFAULT_SERIALIZEABLE_TYPE(i16)
+YASLI_HELPERS_DECLARE_DEFAULT_SERIALIZEABLE_TYPE(u16)
+YASLI_HELPERS_DECLARE_DEFAULT_SERIALIZEABLE_TYPE(i32)
+YASLI_HELPERS_DECLARE_DEFAULT_SERIALIZEABLE_TYPE(u32)
+YASLI_HELPERS_DECLARE_DEFAULT_SERIALIZEABLE_TYPE(i64)
+YASLI_HELPERS_DECLARE_DEFAULT_SERIALIZEABLE_TYPE(u64)
+YASLI_HELPERS_DECLARE_DEFAULT_SERIALIZEABLE_TYPE(float)
+YASLI_HELPERS_DECLARE_DEFAULT_SERIALIZEABLE_TYPE(double)
+
+}
+
+
+template<class T>
+constexpr bool IsDefaultSerializeable()
+{
+	return Helpers::IsDefaultSerializaeble<T>::value;
+}
+
+template<class T>
+constexpr bool HasSerializeOverride()
+{
+	return Helpers::HasSerializeOverride<T>(0);
+}
+
+template<class T>
+constexpr bool IsSerializeable()
+{
+	return IsDefaultSerializeable<T>() || HasSerializeOverride<T>();
 }
 
 }
+
+#undef YASLI_HELPERS_DECLARE_DEFAULT_SERIALIZEABLE_TYPE
 
 #include <CrySerialization/yasli/SerializerImpl.h>
 

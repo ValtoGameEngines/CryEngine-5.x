@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include <CryGame/IGameStatistics.h>
@@ -422,8 +422,6 @@ XmlNodeRef CScoreIncEvent::GetXML(IGameStatistics* pGS)
 	node->setAttr("score", m_score);
 
 	static_assert(EGRST_Num==CRY_ARRAY_COUNT(k_ScoreIncTypeStrs), "Unexpected array size!");
-
-	EGameRulesScoreType type=m_type;
 
 	const char *pStr = "Unknown";
 	if (m_type>=0 && m_type<CRY_ARRAY_COUNT(k_ScoreIncTypeStrs))

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "CCryDX12RenderTargetView.hpp"
@@ -16,7 +16,7 @@ CCryDX12RenderTargetView* CCryDX12RenderTargetView::Create(CCryDX12Device* pDevi
 	// Special case: NullResource is valid when only the D3D12 resource is null
 	if (!pResource11 && !pResource12)
 	{
-		DX12_ASSERT(0, "Unknown resource type!");
+		DX12_ERROR("Unknown resource type!");
 		return NULL;
 	}
 
@@ -183,11 +183,6 @@ CCryDX12RenderTargetView::CCryDX12RenderTargetView(ID3D11Resource* pResource11, 
 	, m_Desc11(rDesc11)
 {
 	m_DX12View.HasDesc(false);
-}
-
-CCryDX12RenderTargetView::~CCryDX12RenderTargetView()
-{
-
 }
 
 /* ID3D11RenderTargetView implementation */

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "AIObjectManager.h"
@@ -9,9 +9,9 @@
 #include "AIFlyingVehicle.h"
 #include "AIPlayer.h"
 #include "AIObjectIterators.h"//TODO get rid of this file totally!
-#include "PerceptionManager.h"
 #include "ObjectContainer.h"
 #include "./TargetSelection/TargetTrackManager.h"
+#include "AIEntityComponent.h"
 
 //////////////////////////////////////////////////////////////////////////
 //	SAIObjectCreationHelper - helper for serializing AI objects
@@ -128,6 +128,7 @@ void CAIObjectManager::Reset(bool includingPooled /*=true*/)
 IAIObject* CAIObjectManager::CreateAIObject(const AIObjectParams& params)
 {
 	CCCPOINT(CreateAIObject);
+	CRY_ASSERT(params.type != 0);
 
 	if (!GetAISystem()->IsEnabled())
 		return 0;
@@ -145,6 +146,9 @@ IAIObject* CAIObjectManager::CreateAIObject(const AIObjectParams& params)
 
 	IEntity* pEntity = gEnv->pEntitySystem->GetEntity(params.entityID);
 	uint16 type = params.type;
+
+	// Attempt to remove already existing AI object for this entity
+	RemoveObjectByEntityId(params.entityID);
 
 	switch (type)
 	{
@@ -227,6 +231,9 @@ IAIObject* CAIObjectManager::CreateAIObject(const AIObjectParams& params)
 	// this is a multimap
 	m_Objects.insert(AIObjectOwners::iterator::value_type(type, countedRef));
 
+	// Create an associated AI entity component
+	pEntity->GetOrCreateComponentClass<CAIEntityComponent>(countedRef.GetWeakRef());
+
 	// Reset the object after registration, so other systems can reference back to it if needed
 	pObject->SetType(type);
 	pObject->SetEntityID(params.entityID);
@@ -254,6 +261,8 @@ IAIObject* CAIObjectManager::CreateAIObject(const AIObjectParams& params)
 
 	if (type == AIOBJECT_PLAYER)
 		pObject->Event(AIEVENT_ENABLE, NULL);
+
+	GetAISystem()->OnAIObjectCreated(pObject);
 
 	return pObject;
 }
@@ -305,7 +314,7 @@ void CAIObjectManager::CreateDummyObject(CStrongRef<CAIObject>& ref, const char*
 	AILogComment("CAIObjectManager::CreateDummyObject %s (%p)", pObject->GetName(), pObject);
 }
 
-void CAIObjectManager::RemoveObject(tAIObjectID objectID)
+void CAIObjectManager::RemoveObject(const tAIObjectID objectID)
 {
 	EntityId entityId = 0;
 
@@ -327,8 +336,6 @@ void CAIObjectManager::RemoveObject(tAIObjectID objectID)
 	// Check we found one
 	if (it == itEnd)
 	{
-		AIError("AI system asked to erase AI object with unknown AIObjectID");
-		assert(false);
 		return;
 	}
 
@@ -337,6 +344,20 @@ void CAIObjectManager::RemoveObject(tAIObjectID objectID)
 	// Because Action doesn't yet handle a delayed removal of the Proxies, we should perform cleanup immediately.
 	// Note that this only happens when triggered externally, when an entity is refreshed/removed
 	gAIEnv.pObjectContainer->ReleaseDeregisteredObjects(false);
+}
+
+void CAIObjectManager::RemoveObjectByEntityId(const EntityId entityId)
+{
+	AIObjectOwners::iterator it = m_Objects.begin();
+	AIObjectOwners::iterator itEnd = m_Objects.end();
+	for (; it != itEnd; ++it)
+	{
+		if (it->second->GetEntityID() == entityId)
+		{
+			RemoveObject(it->second.GetObjectID());
+			return;
+		}
+	}
 }
 
 // Get an AI object by it's AI object ID
@@ -445,7 +466,7 @@ IAIObjectIter* CAIObjectManager::GetFirstAIObjectInRange(EGetFirstFilter filter,
 
 void CAIObjectManager::OnObjectRemoved(CAIObject* pObject)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 	CCCPOINT(OnObjectRemoved);
 
 	if (!pObject)
@@ -456,34 +477,7 @@ void CAIObjectManager::OnObjectRemoved(CAIObject* pObject)
 	RemoveObjectFromAllOfType(AIOBJECT_ATTRIBUTE, pObject);
 	RemoveObjectFromAllOfType(AIOBJECT_LEADER, pObject);
 
-	// (MATT) Remove from player - especially as attention target {2009/02/05}
-	CAIPlayer* pPlayer = CastToCAIPlayerSafe(GetAISystem()->GetPlayer());
-	if (pPlayer)
-		pPlayer->OnObjectRemoved(pObject);
-
-	for (CAISystem::AIGroupMap::iterator it = GetAISystem()->m_mapAIGroups.begin(); it != GetAISystem()->m_mapAIGroups.end(); ++it)
-		it->second->OnObjectRemoved(pObject);
-
-	AIObjects::iterator oi;
-	for (oi = GetAISystem()->m_mapFaction.begin(); oi != GetAISystem()->m_mapFaction.end(); ++oi)
-	{
-		if (oi->second == pObject)
-		{
-			GetAISystem()->m_mapFaction.erase(oi);
-			break;
-		}
-	}
-
-	for (oi = GetAISystem()->m_mapGroups.begin(); oi != GetAISystem()->m_mapGroups.end(); ++oi)
-	{
-		if (oi->second == pObject)
-		{
-			GetAISystem()->m_mapGroups.erase(oi);
-			break;
-		}
-	}
-
-	for (oi = m_mapDummyObjects.begin(); oi != m_mapDummyObjects.end(); ++oi)
+	for (AIObjects::iterator oi = m_mapDummyObjects.begin(); oi != m_mapDummyObjects.end(); ++oi)
 	{
 		if (oi->second == pObject)
 		{
@@ -492,63 +486,7 @@ void CAIObjectManager::OnObjectRemoved(CAIObject* pObject)
 		}
 	}
 
-	CLeader* pLeader = pObject->CastToCLeader();
-	if (pLeader)
-	{
-		if (CAIGroup* pAIGroup = pLeader->GetAIGroup())
-		{
-			pAIGroup->SetLeader(0);
-		}
-	}
-	CAISystem::FormationMap::iterator fi;
-	for (fi = GetAISystem()->m_mapActiveFormations.begin(); fi != GetAISystem()->m_mapActiveFormations.end(); ++fi)
-		fi->second->OnObjectRemoved(pObject);
-
-	//remove this object from any pending paths generated for him
-	CAIActor* pActor = pObject->CastToCAIActor();
-	if (pActor)
-	{
-		pActor->CancelRequestedPath(true);
-	}
-
-	// (MATT) Try to do implicitly {2009/02/05}
-	/*
-	   // check if this object owned any beacons and remove them if so
-	   if (!m_mapBeacons.empty())
-	   {
-	   BeaconMap::iterator bi,biend = m_mapBeacons.end();
-	   for (bi=m_mapBeacons.begin();bi!=biend;)
-	   {
-	    if ((bi->second).pOwner == pObject)
-	    {
-	      BeaconMap::iterator eraseme = bi;
-	   ++bi;
-	      RemoveObject((eraseme->second).pBeacon);
-	      m_mapBeacons.erase(bi);
-	    }
-	    else
-	   ++bi;
-	   }
-	   }
-	 */
-
-	if (gAIEnv.pTargetTrackManager)
-		gAIEnv.pTargetTrackManager->OnObjectRemoved(pObject);
-
-	CPuppet* pPuppet = pObject->CastToCPuppet();
-	if (pPuppet)
-	{
-		for (unsigned i = 0; i < GetAISystem()->m_delayedExpAccessoryUpdates.size(); )
-		{
-			if (GetAISystem()->m_delayedExpAccessoryUpdates[i].pPuppet = pPuppet)
-			{
-				GetAISystem()->m_delayedExpAccessoryUpdates[i] = GetAISystem()->m_delayedExpAccessoryUpdates.back();
-				GetAISystem()->m_delayedExpAccessoryUpdates.pop_back();
-			}
-			else
-				++i;
-		}
-	}
+	GetAISystem()->OnAIObjectRemoved(pObject);
 }
 
 // it removes all references to this object from all objects of the specified type

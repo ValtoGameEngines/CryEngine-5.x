@@ -1,34 +1,26 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// -------------------------------------------------------------------------
-//  File name:   3dengine.h
-//  Version:     v1.00
-//  Created:     28/5/2001 by Vladimir Kajalin
-//  Compilers:   Visual Studio.NET
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
+#pragma once
 
-#ifndef C3DENGINE_H
-#define C3DENGINE_H
-
-#if _MSC_VER > 1000
-	#pragma once
-#endif
-
-#include <CryThreading/CryThreadSafeRendererContainer.h>
-#include "VisibleRenderNodeManager.h"
+#include "ColorGradingCtrl.h"
 #include "LightVolumeManager.h"
+#include "VisibleRenderNodeManager.h"
+
+#include <CryCore/Containers/CryListenerSet.h>
+#include <CryMemory/IMemory.h>
+#include <CryThreading/IJobManager.h>
+#include <CryCore/Containers/CryListenerSet.h>
+#include <CryThreading/CryThreadSafePushContainer.h>
 
 #ifdef DrawText
 	#undef DrawText
 #endif //DrawText
 
-// forward declaration
 struct SNodeInfo;
+struct SRNInfo;
+class C3DEngineLevelLoadTimeslicer;
 class CStitchedImage;
+class CTimeOfDay;
 class CWaterRippleManager;
 
 struct SEntInFoliage
@@ -109,23 +101,6 @@ public:
 	int    m_nSize;
 };
 
-// Values to combine for phys area type selection
-enum EAreaPhysics
-{
-	Area_Water = BIT(0),
-	Area_Air   = BIT(1),
-	// Other physics media can be masked in as well
-
-	Area_Gravity = BIT(14),
-	Area_Other   = BIT(15),
-};
-
-struct SAreaChangeRecord
-{
-	AABB   boxAffected;         // Area of change
-	uint16 uPhysicsMask;        // Types of mediums for this area
-};
-
 struct SOptimizedOutdoorWindArea
 {
 	int              x0, x1, y0, y1; // 2d rectangle extents for the wind area
@@ -137,8 +112,8 @@ struct SOptimizedOutdoorWindArea
 
 struct DLightAmount
 {
-	CDLight* pLight;
-	float    fAmount;
+	SRenderLight* pLight;
+	float         fAmount;
 };
 
 struct SImageSubInfo
@@ -361,25 +336,27 @@ class C3DEngine : public I3DEngine, public Cry3DEngineBase
 public:
 
 	// I3DEngine interface implementation
-	virtual bool      Init();
-	virtual void      OnFrameStart();
-	virtual void      Update();
-	virtual void      RenderWorld(const int nRenderFlags, const SRenderingPassInfo& passInfo, const char* szDebugName);
-	virtual void      PreWorldStreamUpdate(const CCamera& cam);
-	virtual void      WorldStreamUpdate();
-	virtual void      ShutDown();
-	virtual void      Release() { CryAlignedDelete(this); };
-	virtual void      SetLevelPath(const char* szFolderName);
-	virtual bool      LoadLevel(const char* szFolderName, const char* szMissionName);
-	virtual void      UnloadLevel();
-	virtual void      PostLoadLevel();
-	virtual bool      InitLevelForEditor(const char* szFolderName, const char* szMissionName);
-	virtual void      DisplayInfo(float& fTextPosX, float& fTextPosY, float& fTextStepY, const bool bEnhanced);
-	virtual void      SetupDistanceFog();
-	virtual IStatObj* LoadStatObj(const char* szFileName, const char* szGeomName = NULL, /*[Out]*/ IStatObj::SSubObject** ppSubObject = NULL, bool bUseStreaming = true, unsigned long nLoadingFlags = 0);
-	virtual IStatObj* FindStatObjectByFilename(const char* filename);
-	virtual void      RegisterEntity(IRenderNode* pEnt, int nSID = -1, int nSIDConsideredSafe = -1);
-	virtual void      SelectEntity(IRenderNode* pEnt);
+	virtual bool             Init();
+	virtual void             OnFrameStart();
+	virtual void             Update();
+	virtual void             RenderWorld(const int nRenderFlags, const SRenderingPassInfo& passInfo, const char* szDebugName);
+	virtual void             PreWorldStreamUpdate(const CCamera& cam);
+	virtual void             WorldStreamUpdate();
+	virtual void             ShutDown();
+	virtual void             Release() { CryAlignedDelete(this); }
+	virtual void             SetLevelPath(const char* szFolderName);
+	virtual bool             LoadLevel(const char* szFolderName, XmlNodeRef missionXml);
+	virtual bool             StartLoadLevel(const char* szFolderName, XmlNodeRef missionXml);
+	virtual bool             LoadLevel(const char* szFolderName, const char* szMissionName);
+	virtual ELevelLoadStatus UpdateLoadLevelStatus();
+	virtual void             UnloadLevel();
+	virtual void             PostLoadLevel();
+	virtual bool             InitLevelForEditor(const char* szFolderName, const char* szMissionName);
+	virtual void             DisplayInfo(float& fTextPosX, float& fTextPosY, float& fTextStepY, const bool bEnhanced);
+	virtual IStatObj*        LoadStatObj(const char* szFileName, const char* szGeomName = NULL, /*[Out]*/ IStatObj::SSubObject** ppSubObject = NULL, bool bUseStreaming = true, unsigned long nLoadingFlags = 0);
+	virtual IStatObj*        FindStatObjectByFilename(const char* filename);
+	virtual void             RegisterEntity(IRenderNode* pEnt);
+	virtual void             SelectEntity(IRenderNode* pEnt);
 
 #ifndef _RELEASE
 	virtual void AddObjToDebugDrawList(SObjectInfoToAddToDebugDrawList& objInfo);
@@ -406,7 +383,7 @@ public:
 
 	virtual IStatObj* LoadDesignerObject(int nVersion, const char* szBinaryStream, int size);
 
-	void              AsyncOctreeUpdate(IRenderNode* pEnt, int nSID, int nSIDConsideredSafe, uint32 nFrameID, bool bUnRegisterOnly);
+	void              AsyncOctreeUpdate(IRenderNode* pEnt, uint32 nFrameID, bool bUnRegisterOnly);
 	bool              UnRegisterEntityImpl(IRenderNode* pEnt);
 	virtual void      UpdateObjectsLayerAABB(IRenderNode* pEnt);
 
@@ -424,11 +401,11 @@ public:
 	virtual void                     CreateDecal(const CryEngineDecalInfo& Decal);
 	virtual void                     DrawFarTrees(const SRenderingPassInfo& passInfo);
 	virtual void                     GenerateFarTrees(const SRenderingPassInfo& passInfo);
-	virtual float                    GetTerrainElevation(float x, float y, int nSID = GetDefSID());
+	virtual float                    GetTerrainElevation(float x, float y);
 	virtual float                    GetTerrainElevation3D(Vec3 vPos);
-	virtual float                    GetTerrainZ(int x, int y);
-	virtual bool                     GetTerrainHole(int x, int y);
-	virtual int                      GetHeightMapUnitSize();
+	virtual float                    GetTerrainZ(float x, float y);
+	virtual bool                     GetTerrainHole(float x, float y);
+	virtual float                    GetHeightMapUnitSize();
 	virtual int                      GetTerrainSize();
 	virtual void                     SetSunDir(const Vec3& newSunOffset);
 	virtual Vec3                     GetSunDir() const;
@@ -449,22 +426,26 @@ public:
 	virtual bool                     GetSnowFallParams(int& nSnowFlakeCount, float& fSnowFlakeSize, float& fSnowFallBrightness, float& fSnowFallGravityScale, float& fSnowFallWindScale, float& fSnowFallTurbulence, float& fSnowFallTurbulenceFreq);
 	virtual void                     OnExplosion(Vec3 vPos, float fRadius, bool bDeformTerrain = true);
 	//! For editor
-	virtual void                     RemoveAllStaticObjects(int nSID);
+	virtual void                     RemoveAllStaticObjects();
 	virtual void                     SetTerrainSurfaceType(int x, int y, int nType);
 	virtual void                     SetTerrainSectorTexture(const int nTexSectorX, const int nTexSectorY, unsigned int textureId);
 	virtual void                     SetPhysMaterialEnumerator(IPhysMaterialEnumerator* pPhysMaterialEnumerator);
 	virtual IPhysMaterialEnumerator* GetPhysMaterialEnumerator();
 	virtual void                     LoadMissionDataFromXMLNode(const char* szMissionName);
 
-	void                             AddDynamicLightSource(const class CDLight& LSource, ILightSource* pEnt, int nEntityLightId, float fFadeout, const SRenderingPassInfo& passInfo);
+	void                             AddDynamicLightSource(const SRenderLight& LSource, ILightSource* pEnt, int nEntityLightId, float fFadeout, const SRenderingPassInfo& passInfo);
 
-	inline void                      AddLightToRenderer(const CDLight& light, float fMult, const SRenderingPassInfo& passInfo)
+	inline void                      AddLightToRenderer(const SRenderLight& light, float fMult, const SRenderingPassInfo& passInfo)
 	{
 		const uint32 nLightID = passInfo.GetIRenderView()->GetLightsCount(eDLT_DeferredLight);
 		//passInfo.GetIRenderView()->AddLight(eDLT_DeferredLight,light);
 		GetRenderer()->EF_AddDeferredLight(light, fMult, passInfo);
 		Get3DEngine()->m_LightVolumesMgr.RegisterLight(light, nLightID, passInfo);
-		m_nDeferredLightsNum++;
+
+		if (light.m_Flags & DLF_DEFERRED_CUBEMAPS)
+			m_nDeferredProbesNum++;
+		else
+			m_nDeferredLightsNum++;
 	}
 
 	virtual void                 ApplyForceToEnvironment(Vec3 vPos, float fRadius, float fAmountOfForce);
@@ -483,89 +464,96 @@ public:
 	virtual float                GetLightsHDRDynamicPowerFactor() const;
 
 	// Return true if tessellation is allowed (by cvars) into currently set shadow map LOD
-	bool                              IsTessellationAllowedForShadowMap(const SRenderingPassInfo& passInfo) const;
+	bool                                   IsTessellationAllowedForShadowMap(const SRenderingPassInfo& passInfo) const;
 	// Return true if tessellation is allowed for given render object
-	virtual bool                      IsTessellationAllowed(const CRenderObject* pObj, const SRenderingPassInfo& passInfo, bool bIgnoreShadowPass = false) const;
+	virtual bool                           IsTessellationAllowed(const CRenderObject* pObj, const SRenderingPassInfo& passInfo, bool bIgnoreShadowPass = false) const;
 
-	virtual void                      SetRenderNodeMaterialAtPosition(EERType eNodeType, const Vec3& vPos, IMaterial* pMat);
-	virtual void                      OverrideCameraPrecachePoint(const Vec3& vPos);
-	virtual int                       AddPrecachePoint(const Vec3& vPos, const Vec3& vDir, float fTimeOut = 3.f, float fImportanceFactor = 1.0f);
-	virtual void                      ClearPrecachePoint(int id);
-	virtual void                      ClearAllPrecachePoints();
-	virtual void                      GetPrecacheRoundIds(int pRoundIds[MAX_STREAM_PREDICTION_ZONES]);
+	virtual bool                           IsStatObjBufferRenderTasksAllowed() const;
 
-	virtual void                      TraceFogVolumes(const Vec3& worldPos, ColorF& fogVolumeContrib, const SRenderingPassInfo& passInfo);
+	virtual void                           SetRenderNodeMaterialAtPosition(EERType eNodeType, const Vec3& vPos, IMaterial* pMat);
+	virtual void                           OverrideCameraPrecachePoint(const Vec3& vPos);
+	virtual int                            AddPrecachePoint(const Vec3& vPos, const Vec3& vDir, float fTimeOut = 3.f, float fImportanceFactor = 1.0f);
+	virtual void                           ClearPrecachePoint(int id);
+	virtual void                           ClearAllPrecachePoints();
+	virtual void                           GetPrecacheRoundIds(int pRoundIds[MAX_STREAM_PREDICTION_ZONES]);
 
-	virtual Vec3                      GetSkyColor() const;
-	virtual Vec3                      GetSunColor() const;
-	virtual float                     GetSkyBrightness() const;
-	virtual float                     GetSSAOAmount() const;
-	virtual float                     GetSSAOContrast() const;
-	virtual float                     GetGIAmount() const;
-	virtual float                     GetTerrainTextureMultiplier(int nSID) const;
+	virtual void                           TraceFogVolumes(const Vec3& worldPos, ColorF& fogVolumeContrib, const SRenderingPassInfo& passInfo);
 
-	virtual Vec3                      GetAmbientColorFromPosition(const Vec3& vPos, float fRadius = 1.f);
-	virtual void                      FreeRenderNodeState(IRenderNode* pEnt);
-	virtual const char*               GetLevelFilePath(const char* szFileName);
-	virtual void                      SetTerrainBurnedOut(int x, int y, bool bBurnedOut);
-	virtual bool                      IsTerrainBurnedOut(int x, int y);
-	virtual int                       GetTerrainSectorSize();
-	virtual void                      LoadTerrainSurfacesFromXML(XmlNodeRef pDoc, bool bUpdateTerrain, int nSID);
-	virtual bool                      SetStatInstGroup(int nGroupId, const IStatInstGroup& siGroup, int nSID);
-	virtual bool                      GetStatInstGroup(int nGroupId, IStatInstGroup& siGroup, int nSID);
-	virtual void                      ActivatePortal(const Vec3& vPos, bool bActivate, const char* szEntityName);
-	virtual void                      ActivateOcclusionAreas(IVisAreaTestCallback* pTest, bool bActivate);
-	virtual void                      GetMemoryUsage(ICrySizer* pSizer) const;
-	virtual void                      GetResourceMemoryUsage(ICrySizer* pSizer, const AABB& cstAABB);
-	virtual IVisArea*                 CreateVisArea(uint64 visGUID);
-	virtual void                      DeleteVisArea(IVisArea* pVisArea);
-	virtual void                      UpdateVisArea(IVisArea* pArea, const Vec3* pPoints, int nCount, const char* szName,
-	                                                const SVisAreaInfo& info, bool bReregisterObjects);
-	virtual IClipVolume*              CreateClipVolume();
-	virtual void                      DeleteClipVolume(IClipVolume* pClipVolume);
-	virtual void                      UpdateClipVolume(IClipVolume* pClipVolume, _smart_ptr<IRenderMesh> pRenderMesh, IBSPTree3D* pBspTree, const Matrix34& worldTM, bool bActive, uint32 flags, const char* szName);
-	virtual void                      ResetParticlesAndDecals();
-	virtual IRenderNode*              CreateRenderNode(EERType type);
-	virtual void                      DeleteRenderNode(IRenderNode* pRenderNode);
-	virtual void                      SetWind(const Vec3& vWind);
-	virtual Vec3                      GetWind(const AABB& box, bool bIndoors) const;
+	virtual Vec3                           GetSkyColor() const;
+	virtual Vec3                           GetSunColor() const;
+	virtual float                          GetSkyBrightness() const;
+	virtual float                          GetSSAOAmount() const;
+	virtual float                          GetSSAOContrast() const;
+	virtual float                          GetGIAmount() const;
+	virtual float                          GetTerrainTextureMultiplier() const;
 
-	void                              StartWindGridJob(const Vec3& vPos);
-	void                              FinishWindGridJob();
-	void                              UpdateWindGridJobEntry(Vec3 vPos);
-	void                              UpdateWindGridArea(SWindGrid& rWindGrid, const SOptimizedOutdoorWindArea& windArea, const AABB& windBox);
+	virtual Vec3                           GetAmbientColorFromPosition(const Vec3& vPos, float fRadius = 1.f);
+	virtual void                           FreeRenderNodeState(IRenderNode* pEnt);
+	virtual const char*                    GetLevelFilePath(const char* szFileName);
+	virtual void                           SetTerrainBurnedOut(int x, int y, bool bBurnedOut);
+	virtual bool                           IsTerrainBurnedOut(int x, int y);
+	virtual int                            GetTerrainSectorSize();
+	virtual void                           LoadTerrainSurfacesFromXML(XmlNodeRef pDoc, bool bUpdateTerrain);
+	virtual bool                           SetStatInstGroup(int nGroupId, const IStatInstGroup& siGroup);
+	virtual bool                           GetStatInstGroup(int nGroupId, IStatInstGroup& siGroup);
+	virtual void                           ActivatePortal(const Vec3& vPos, bool bActivate, const char* szEntityName);
+	virtual void                           ActivateOcclusionAreas(IVisAreaTestCallback* pTest, bool bActivate);
+	virtual void                           GetMemoryUsage(ICrySizer* pSizer) const;
+	virtual void                           GetResourceMemoryUsage(ICrySizer* pSizer, const AABB& cstAABB);
+	virtual IVisArea*                      CreateVisArea(uint64 visGUID);
+	virtual void                           DeleteVisArea(IVisArea* pVisArea);
+	virtual void                           UpdateVisArea(IVisArea* pArea, const Vec3* pPoints, int nCount, const char* szName,
+	                                                     const SVisAreaInfo& info, bool bReregisterObjects);
+	virtual IClipVolume*                   CreateClipVolume();
+	virtual void                           DeleteClipVolume(IClipVolume* pClipVolume);
+	virtual void                           UpdateClipVolume(IClipVolume* pClipVolume, _smart_ptr<IRenderMesh> pRenderMesh, IBSPTree3D* pBspTree, const Matrix34& worldTM, uint8 viewDistRatio, bool bActive, uint32 flags, const char* szName);
+	virtual void                           ResetParticlesAndDecals();
+	virtual IRenderNode*                   CreateRenderNode(EERType type);
+	virtual void                           DeleteRenderNode(IRenderNode* pRenderNode);
+	void                                   TickDelayedRenderNodeDeletion();
+	virtual void                           SetWind(const Vec3& vWind);
+	virtual Vec3                           GetWind(const AABB& box, bool bIndoors) const;
+	virtual void                           AddForcedWindArea(const Vec3& vPos, float fAmountOfForce, float fRadius);
 
-	virtual Vec3                      GetGlobalWind(bool bIndoors) const;
-	virtual bool                      SampleWind(Vec3* pSamples, int nSamples, const AABB& volume, bool bIndoors) const;
-	virtual IVisArea*                 GetVisAreaFromPos(const Vec3& vPos);
-	virtual bool                      IntersectsVisAreas(const AABB& box, void** pNodeCache = 0);
-	virtual bool                      ClipToVisAreas(IVisArea* pInside, Sphere& sphere, Vec3 const& vNormal, void* pNodeCache = 0);
-	virtual bool                      IsVisAreasConnected(IVisArea* pArea1, IVisArea* pArea2, int nMaxReqursion, bool bSkipDisabledPortals);
-	void                              EnableOceanRendering(bool bOcean); // todo: remove
+	void                                   StartWindGridJob(const Vec3& vPos);
+	void                                   FinishWindGridJob();
+	void                                   UpdateWindGridJobEntry(Vec3 vPos);
+	void                                   UpdateWindGridArea(SWindGrid& rWindGrid, const SOptimizedOutdoorWindArea& windArea, const AABB& windBox);
+	void                                   RasterWindAreas(std::vector<SOptimizedOutdoorWindArea>* pWindAreas, float fElapsedTime);
+	void                                   RasterGlobalWind(const Vec3& vGlobalWind, float fElapsedTime, bool bReset);
 
-	virtual struct ILightSource*      CreateLightSource();
-	virtual void                      DeleteLightSource(ILightSource* pLightSource);
-	virtual const PodArray<CDLight*>* GetStaticLightSources();
-	virtual bool                      IsTerrainHightMapModifiedByGame();
-	virtual bool                      RestoreTerrainFromDisk(int nSID);
-	virtual void                      CheckMemoryHeap();
-	virtual void                      CloseTerrainTextureFile(int nSID);
-	virtual int                       GetLoadedObjectCount();
-	virtual void                      GetLoadedStatObjArray(IStatObj** pObjectsArray, int& nCount);
-	virtual void                      GetObjectsStreamingStatus(SObjectsStreamingStatus& outStatus);
-	virtual void                      GetStreamingSubsystemData(int subsystem, SStremaingBandwidthData& outData);
-	virtual void                      DeleteEntityDecals(IRenderNode* pEntity);
-	virtual void                      DeleteDecalsInRange(AABB* pAreaBox, IRenderNode* pEntity);
-	virtual void                      CompleteObjectsGeometry();
-	virtual void                      LockCGFResources();
-	virtual void                      UnlockCGFResources();
+	virtual Vec3                           GetGlobalWind(bool bIndoors) const;
+	virtual bool                           SampleWind(Vec3* pSamples, int nSamples, const AABB& volume, bool bIndoors) const;
+	virtual IBreezeGenerator*              GetBreezeGenerator() const;
+	virtual IVisArea*                      GetVisAreaFromPos(const Vec3& vPos) const;
+	virtual bool                           IntersectsVisAreas(const AABB& box, void** pNodeCache = 0) const;
+	virtual bool                           ClipToVisAreas(IVisArea* pInside, Sphere& sphere, Vec3 const& vNormal, void* pNodeCache = 0);
+	virtual bool                           IsVisAreasConnected(IVisArea* pArea1, IVisArea* pArea2, int nMaxReqursion, bool bSkipDisabledPortals);
+	void                                   EnableOceanRendering(bool bOcean); // todo: remove
 
-	virtual void                      SerializeState(TSerialize ser);
-	virtual void                      PostSerialize(bool bReading);
+	virtual struct ILightSource*           CreateLightSource();
+	virtual void                           DeleteLightSource(ILightSource* pLightSource);
+	virtual const PodArray<SRenderLight*>* GetStaticLightSources();
+	virtual bool                           IsTerrainHightMapModifiedByGame();
+	virtual bool                           RestoreTerrainFromDisk();
+	virtual void                           CheckMemoryHeap();
+	virtual void                           CloseTerrainTextureFile();
+	virtual int                            GetLoadedObjectCount();
+	virtual void                           GetLoadedStatObjArray(IStatObj** pObjectsArray, int& nCount);
+	virtual void                           GetObjectsStreamingStatus(SObjectsStreamingStatus& outStatus);
+	virtual void                           GetStreamingSubsystemData(int subsystem, SStremaingBandwidthData& outData);
+	virtual void                           DeleteEntityDecals(IRenderNode* pEntity);
+	virtual void                           DeleteDecalsInRange(AABB* pAreaBox, IRenderNode* pEntity);
+	virtual void                           CompleteObjectsGeometry();
+	virtual void                           LockCGFResources();
+	virtual void                           UnlockCGFResources();
 
-	virtual void                      SetHeightMapMaxHeight(float fMaxHeight);
+	virtual void                           SerializeState(TSerialize ser);
+	virtual void                           PostSerialize(bool bReading);
 
-	virtual void                      SetStreamableListener(IStreamedObjectListener* pListener);
+	virtual void                           SetHeightMapMaxHeight(float fMaxHeight);
+
+	virtual void                           SetStreamableListener(IStreamedObjectListener* pListener);
 
 	//////////////////////////////////////////////////////////////////////////
 	// Materials access.
@@ -607,10 +595,11 @@ public:
 	virtual void   SetShadowsGSMCache(bool bCache);
 	virtual void   SetCachedShadowBounds(const AABB& shadowBounds, float fAdditionalCascadesScale);
 	virtual void   SetRecomputeCachedShadows(uint nUpdateStrategy = 0);
+	virtual void   InvalidateShadowCacheData();
 	void           SetShadowsCascadesBias(const float* pCascadeConstBias, const float* pCascadeSlopeBias);
 	const float*   GetShadowsCascadesConstBias() const { return m_pShadowCascadeConstBias; }
 	const float*   GetShadowsCascadesSlopeBias() const { return m_pShadowCascadeSlopeBias; }
-	int            GetShadowsCascadeCount(const CDLight* pLight) const;
+	int            GetShadowsCascadeCount(const SRenderLight* pLight) const;
 
 	virtual uint32 GetObjectsByType(EERType objType, IRenderNode** pObjects);
 	virtual uint32 GetObjectsByTypeInBox(EERType objType, const AABB& bbox, IRenderNode** pObjects, uint64 dwFlags = ~0);
@@ -623,20 +612,16 @@ public:
 	virtual void   GetLayerMemoryUsage(uint16 nLayerId, ICrySizer* pSizer, int* pNumBrushes, int* pNumDecals) const;
 	virtual void   SkipLayerLoading(uint16 nLayerId, bool bClearList);
 	bool           IsLayerSkipped(uint16 nLayerId);
-	void           ObjectsTreeMarkAsUncompiled(const IRenderNode* pRenderNode);
 
 	//////////////////////////////////////////////////////////////////////////
 
 	virtual int  GetTerrainTextureNodeSizeMeters();
 	virtual int  GetTerrainTextureNodeSizePixels(int nLayer);
 
-	virtual void SetTerrainLayerBaseTextureData(int nLayerId, byte* pImage, int nDim, const char* nImgFileName, IMaterial* pMat, float fBr, float fTiling, int nDetailSurfTypeId, float fTilingDetail, float fSpecularAmount, float fSortOrder, ColorF layerFilterColor, float fUseRemeshing, bool bShowSelection);
 	SImageInfo*  GetBaseTextureData(int nLayerId);
 	SImageInfo*  GetBaseTextureDataFromSurfType(int nSurfTypeId);
 
-	const char*  GetLevelFolder() { return m_szLevelFolder; }
-
-	bool         SaveCGF(std::vector<IStatObj*>& pObjs);
+	const char*  GetLevelFolder()        { return m_szLevelFolder; }
 
 	virtual bool IsAreaActivationInUse() { return m_bAreaActivationInUse && GetCVars()->e_ObjectLayersActivation; }
 
@@ -646,7 +631,7 @@ public:
 	}
 
 	void         UpdateRenderingCamera(const char* szCallerName, const SRenderingPassInfo& passInfo);
-	virtual void PrepareOcclusion(const CCamera& rCamera);
+	virtual void PrepareOcclusion(const CCamera& rCamera, const SGraphicsPipelineKey& cullGraphicsContextKey);
 	virtual void EndOcclusion();
 #ifndef _RELEASE
 	void         ProcessStreamingLatencyTest(const CCamera& camIn, CCamera& camOut, const SRenderingPassInfo& passInfo);
@@ -692,7 +677,9 @@ public:
 	virtual void           UpdateShaderItems();
 	void                   GetCollisionClass(SCollisionClass& collclass, int tableIndex);
 
-	virtual void           OffsetPosition(Vec3& delta);
+	void                   SetRecomputeCachedShadows(IRenderNode* pNode, uint updateStrategy);
+
+	virtual void           ReleasePermanentObjectsRenderResources();
 
 public:
 	C3DEngine(ISystem* pSystem);
@@ -702,17 +689,21 @@ public:
 	virtual void DebugDraw_UpdateDebugNode();
 
 	void         DebugDraw_Draw();
-	bool         IsOutdoorVisible();
-	void         RenderSkyBox(IMaterial* pMat, const SRenderingPassInfo& passInfo);
+	bool         IsOutdoorVisible() const;
+	void         ProcessSky(const SRenderingPassInfo& passInfo);
 	int          GetStreamingFramesSinceLevelStart() { return m_nStreamingFramesSinceLevelStart; }
 	int          GetRenderFramesSinceLevelStart()    { return m_nFramesSinceLevelStart; }
 
-	bool CreateDecalInstance(const CryEngineDecalInfo &DecalInfo, class CDecal * pCallerManagedDecal);
+	bool CreateDecalInstance(const CryEngineDecalInfo &DecalInfo, class CDecal* pCallerManagedDecal);
 	//void CreateDecalOnCharacterComponents(ICharacterInstance * pChar, const struct CryEngineDecalInfo & decal);
 	Vec3 GetTerrainSurfaceNormal(Vec3 vPos);
-	void LoadEnvironmentSettingsFromXML(XmlNodeRef pInputNode, int nSID);
+	void LoadEnvironmentSettingsFromXML(XmlNodeRef pInputNode);
+	void UpdateMoonParams();
+	void UpdateSkyParams();
+	void UpdateWindParams();
+	void UpdateCloudShadows();
 #if defined(FEATURE_SVO_GI)
-	void LoadTISettings(XmlNodeRef pInputNode);
+	void UpdateTISettings();
 #endif
 	void LoadDefaultAssets();
 
@@ -737,12 +728,14 @@ public:
 		bool bActive;
 	};
 	PodArray<SLayerActivityInfo> m_arrObjectLayersActivity;
-
+	uint                         m_objectLayersModificationId;
 	bool                         m_bAreaActivationInUse;
 
 	// Level info
-	float m_fSkyBoxAngle,
-	      m_fSkyBoxStretching;
+	float                 m_fSkyBoxStretching;
+	float                 m_fSkyBoxAngle;
+	Vec3                  m_vSkyBoxExposure;
+	Vec3                  m_vSkyBoxOpacity;
 
 	float                 m_fMaxViewDistScale;
 	float                 m_fMaxViewDistHighSpec;
@@ -822,14 +815,14 @@ public:
 	float                 m_moonRotationLongitude;
 	Vec3                  m_moonDirection;
 	int                   m_nWaterBottomTexId;
-	int                   m_nNightMoonTexId;
+	string                m_MoonTextureName;
 	bool                  m_bShowTerrainSurface;
 	float                 m_fSunClipPlaneRange;
 	float                 m_fSunClipPlaneRangeShift;
 	bool                  m_bSunShadows;
 	bool                  m_bSunShadowsFromTerrain;
 
-	int                   m_nCloudShadowTexId;
+	_smart_ptr<ITexture>  m_pCloudShadowTex;
 
 	float                 m_fGsmRange;
 	float                 m_fGsmRangeStep;
@@ -844,6 +837,8 @@ public:
 	float                 m_skyboxMultiplier;
 	float                 m_dayNightIndicator;
 	bool                  m_bHeightMapAoEnabled;
+	bool                  m_bIntegrateObjectsIntoTerrain;
+	bool                  m_supportOfflineProceduralVegetation = false;
 
 	Vec3                  m_fogColor2;
 	Vec3                  m_fogColorRadial;
@@ -861,12 +856,8 @@ public:
 	float                 m_oceanCausticDepth;
 	float                 m_oceanCausticIntensity;
 
-	string                m_skyMatName;
-	string                m_skyLowSpecMatName;
-
 	float                 m_oceanWindDirection;
 	float                 m_oceanWindSpeed;
-	float                 m_oceanWavesSpeed;
 	float                 m_oceanWavesAmount;
 	float                 m_oceanWavesSize;
 
@@ -906,45 +897,43 @@ public:
 
 	// Level shaders
 	_smart_ptr<IMaterial> m_pTerrainWaterMat;
-	_smart_ptr<IMaterial> m_pSkyMat;
-	_smart_ptr<IMaterial> m_pSkyLowSpecMat;
+	_smart_ptr<IMaterial> m_pSkyMat[eSkySpec_NumSkySpecs];
 	_smart_ptr<IMaterial> m_pSunMat;
 
 	// Fog Materials
 	_smart_ptr<IMaterial> m_pMatFogVolEllipsoid;
 	_smart_ptr<IMaterial> m_pMatFogVolBox;
 
-	_smart_ptr<IShader>   m_pFarTreeSprites;
-
 	void CleanLevelShaders()
 	{
 		m_pTerrainWaterMat = 0;
-		m_pSkyMat = 0;
-		m_pSkyLowSpecMat = 0;
-		m_pSunMat = 0;
-		m_pFarTreeSprites = 0;
+
+		m_pSunMat = nullptr;
+		for (int skyTypeIdx = 0; skyTypeIdx < eSkySpec_NumSkySpecs; ++skyTypeIdx)
+			m_pSkyMat[skyTypeIdx] = nullptr;
 
 		m_pMatFogVolEllipsoid = 0;
 		m_pMatFogVolBox = 0;
 	}
 
-	// Render elements
-	CRESky*    m_pRESky;
-	CREHDRSky* m_pREHDRSky;
-
-	int        m_nDeferredLightsNum;
+	int m_nDeferredLightsNum;
+	int m_nDeferredProbesNum;
 
 private:
 	// not sorted
 
-	void  LoadTimeOfDaySettingsFromXML(XmlNodeRef node);
-	char* GetXMLAttribText(XmlNodeRef pInputNode, const char* szLevel1, const char* szLevel2, const char* szDefaultValue);
-	char* GetXMLAttribText(XmlNodeRef pInputNode, const char* szLevel1, const char* szLevel2, const char* szLevel3, const char* szDefaultValue);
+	void       SetDefaultValuesForLoadMissionDataFromXML();
+	XmlNodeRef OpenMissionDataXML(const char* szMissionName);
+	void       LoadMissionDataFromXML(XmlNodeRef missionXml);
+	void       LoadTimeOfDaySettingsFromXML(XmlNodeRef node);
+	char*      GetXMLAttribText(XmlNodeRef pInputNode, const char* szLevel1, const char* szLevel2, const char* szDefaultValue);
+	char*      GetXMLAttribText(XmlNodeRef pInputNode, const char* szLevel1, const char* szLevel2, const char* szLevel3, const char* szDefaultValue);
+	bool       GetXMLAttribBool(XmlNodeRef pInputNode, const char* szLevel1, const char* szLevel2, bool bDefaultValue);
 
 	// without calling high level functions like panorama screenshot
 	void RenderInternal(const int nRenderFlags, const SRenderingPassInfo& passInfo, const char* szDebugName);
 
-	void RegisterLightSourceInSectors(CDLight* pDynLight, int nSID, const SRenderingPassInfo& passInfo);
+	void RegisterLightSourceInSectors(SRenderLight* pDynLight, const SRenderingPassInfo& passInfo);
 
 	bool IsCameraAnd3DEngineInvalid(const SRenderingPassInfo& passInfo, const char* szCaller);
 
@@ -955,7 +944,6 @@ private:
 	void ResetCasterCombinationsCache();
 
 	void FindPotentialLightSources(const SRenderingPassInfo& passInfo);
-	void DeleteAllStaticLightSources();
 	void LoadParticleEffects(const char* szFolderName);
 
 	void UpdateSunLightSource(const SRenderingPassInfo& passInfo);
@@ -981,12 +969,14 @@ public:
 #if defined(FEATURE_SVO_GI)
 	virtual bool GetSvoStaticTextures(I3DEngine::SSvoStaticTexInfo& svoInfo, PodArray<I3DEngine::SLightTI>* pLightsTI_S, PodArray<I3DEngine::SLightTI>* pLightsTI_D);
 	virtual void GetSvoBricksForUpdate(PodArray<SSvoNodeInfo>& arrNodeInfo, float fNodeSize, PodArray<SVF_P3F_C4B_T2F>* pVertsOut);
+	virtual bool IsSvoReady(bool testPostponed) const;
+	virtual int  GetSvoCompiledData(ICryArchive* pArchive);
 #endif
 	// LiveCreate
 	virtual void SaveInternalState(struct IDataWriteStream& writer, const AABB& filterArea, const bool bTerrain, const uint32 objectMask);
 	virtual void LoadInternalState(struct IDataReadStream& reader, const uint8* pVisibleLayersMask, const uint16* pLayerIdTranslation);
 
-	void         SetupLightScissors(CDLight* pLight, const SRenderingPassInfo& passInfo);
+	void         SetupLightScissors(SRenderLight* pLight, const SRenderingPassInfo& passInfo) const;
 	bool         IsTerrainTextureStreamingInProgress() { return m_bTerrainTextureStreamingInProgress; }
 
 	bool         IsTerrainSyncLoad()                   { return m_bContentPrecacheRequested && GetCVars()->e_AutoPrecacheTerrainAndProcVeget; }
@@ -1016,6 +1006,8 @@ public:
 	void                            PrepareLightSourcesForRendering_0(const SRenderingPassInfo& passInfo);
 	void                            PrepareLightSourcesForRendering_1(const SRenderingPassInfo& passInfo);
 	void                            InitShadowFrustums(const SRenderingPassInfo& passInfo);
+	void                            PrepareShadowPasses(const SRenderingPassInfo& passInfo, uint32& nTimeSlicedShadowsUpdatedThisFrame, std::vector<std::pair<ShadowMapFrustum*, const class CLightEntity*>>& shadowFrustums, std::vector<SRenderingPassInfo>& shadowPassInfo);
+	void                            FinalizePrepareShadowPasses(const SRenderingPassInfo& passInfo, const std::vector<std::pair<ShadowMapFrustum*, const class CLightEntity*>>& shadowFrustums, std::vector<SRenderingPassInfo>& shadowPassInfo);
 
 	///////////////////////////////////////////////////////////////////////////////
 
@@ -1025,28 +1017,28 @@ public:
 
 	///////////////////////////////////////////////////////////////////////////////
 
-	void                        FreeLightSourceComponents(CDLight* pLight, bool bDeleteLight = true);
-	void                        RemoveEntityLightSources(IRenderNode* pEntity);
+	void                             FreeLightSourceComponents(SRenderLight* pLight, bool bDeleteLight = true);
+	void                             RemoveEntityLightSources(IRenderNode* pEntity);
 
-	void                        CheckPhysicalized(const Vec3& vBoxMin, const Vec3& vBoxMax);
+	void                             CheckPhysicalized(const Vec3& vBoxMin, const Vec3& vBoxMax);
 
-	virtual PodArray<CDLight*>* GetDynamicLightSources() { return &m_lstDynLights; }
+	virtual PodArray<SRenderLight*>* GetDynamicLightSources() { return &m_lstDynLights; }
 
-	int                         GetRealLightsNum()       { return m_nRealLightsNum; }
-	void                        SetupClearColor();
-	void                        CheckAddLight(CDLight* pLight, const SRenderingPassInfo& passInfo);
+	int                              GetRealLightsNum()       { return m_nRealLightsNum; }
+	void                             SetupClearColor(const SRenderingPassInfo& passInfo);
+	void                             CheckAddLight(SRenderLight* pLight, const SRenderingPassInfo& passInfo);
 
-	void                        DrawTextRightAligned(const float x, const float y, const char* format, ...) PRINTF_PARAMS(4, 5);
-	void                        DrawTextRightAligned(const float x, const float y, const float scale, const ColorF& color, const char* format, ...) PRINTF_PARAMS(6, 7);
-	void                        DrawTextLeftAligned(const float x, const float y, const float scale, const ColorF& color, const char* format, ...) PRINTF_PARAMS(6, 7);
-	void                        DrawTextAligned(int flags, const float x, const float y, const float scale, const ColorF& color, const char* format, ...) PRINTF_PARAMS(7, 8);
+	void                             DrawTextRightAligned(const float x, const float y, const char* format, ...) PRINTF_PARAMS(4, 5);
+	void                             DrawTextRightAligned(const float x, const float y, const float scale, const ColorF& color, const char* format, ...) PRINTF_PARAMS(6, 7);
+	void                             DrawTextLeftAligned(const float x, const float y, const float scale, const ColorF& color, const char* format, ...) PRINTF_PARAMS(6, 7);
+	void                             DrawTextAligned(int flags, const float x, const float y, const float scale, const ColorF& color, const char* format, ...) PRINTF_PARAMS(7, 8);
 
-	float                       GetLightAmount(CDLight* pLight, const AABB& objBox);
+	float                            GetLightAmount(SRenderLight* pLight, const AABB& objBox);
 
-	IStatObj*                   CreateStatObj();
-	virtual IStatObj*           CreateStatObjOptionalIndexedMesh(bool createIndexedMesh);
+	IStatObj*                        CreateStatObj();
+	virtual IStatObj*                CreateStatObjOptionalIndexedMesh(bool createIndexedMesh);
 
-	IStatObj*                   UpdateDeformableStatObj(IGeometry* pPhysGeom, bop_meshupdate* pLastUpdate = 0, IFoliage* pSrcFoliage = 0);
+	IStatObj*                        UpdateDeformableStatObj(IGeometry* pPhysGeom, bop_meshupdate* pLastUpdate = 0, IFoliage* pSrcFoliage = 0);
 
 	// Creates a new indexed mesh.
 	IIndexedMesh*                 CreateIndexedMesh();
@@ -1059,7 +1051,7 @@ public:
 
 	virtual ITerrain*             CreateTerrain(const STerrainInfo& TerrainInfo);
 	void                          DeleteTerrain();
-	bool                          LoadTerrain(XmlNodeRef pDoc, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable, int nSID, Vec3 vSegmentOrigin);
+	bool                          LoadTerrain(XmlNodeRef pDoc, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable);
 	bool                          LoadVisAreas(std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable);
 	bool                          LoadUsedShadersList();
 	bool                          PrecreateDecals();
@@ -1077,10 +1069,20 @@ public:
 	bool                          IsContentPrecacheRequested() { return m_bContentPrecacheRequested; }
 
 	virtual ITimeOfDay*           GetTimeOfDay();
-	//! [GDC09]: Return SkyBox material
-	virtual IMaterial*            GetSkyMaterial();
-	virtual void                  SetSkyMaterial(IMaterial* pSkyMat);
-	bool                          IsHDRSkyMaterial(IMaterial* pMat) const;
+
+	virtual IColorGradingCtrl*    GetColorGradingCtrl() { return &m_colorGradingCtrl; }
+
+	//////////////////////////////////////////////////////////////////////////
+	// Sky
+	virtual bool                         IsSkyVisible() const final;
+	virtual eSkyType                     GetSkyType() const final { return (eSkyType)GetCVars()->e_SkyType; }
+	virtual IMaterial*                   GetSkyMaterial() const;
+	virtual void                         SetSkyMaterial(IMaterial* pSkyMat, eSkyType type); 
+
+	virtual const SSkyLightRenderParams* GetSkyLightRenderParams() const final;
+
+	virtual string                       GetMoonTextureName() const final         { return m_MoonTextureName; }
+	virtual void                         SetMoonTextureName(string name) final    { m_MoonTextureName = name; }
 
 	using I3DEngine::SetGlobalParameter;
 	virtual void                     SetGlobalParameter(E3DEngineParameter param, const Vec3& v);
@@ -1095,14 +1097,13 @@ public:
 	virtual int                      SaveStatObj(IStatObj* pStatObj, TSerialize ser);
 	virtual IStatObj*                LoadStatObj(TSerialize ser);
 
-	virtual bool                     CheckIntersectClouds(const Vec3& p1, const Vec3& p2);
 	virtual void                     OnRenderMeshDeleted(IRenderMesh* pRenderMesh);
 	virtual bool                     RenderMeshRayIntersection(IRenderMesh* pRenderMesh, SRayHitInfo& hitInfo, IMaterial* pCustomMtl = 0);
-
+	virtual void                     OnEntityDeleted(struct IEntity* pEntity);
 	virtual const char*              GetVoxelEditOperationName(EVoxelEditOperation eOperation);
 
-	virtual void                     SetGetLayerIdAtCallback(IGetLayerIdAtCallback* pCallBack) { m_pGetLayerIdAtCallback = pCallBack; }
-	static IGetLayerIdAtCallback* m_pGetLayerIdAtCallback;
+	virtual void                     SetEditorHeightmapCallback(IEditorHeightmap* pCallBack) { m_pEditorHeightmap = pCallBack; }
+	static IEditorHeightmap* m_pEditorHeightmap;
 
 	virtual IParticleManager* GetParticleManager() { return m_pPartManager; }
 	virtual IOpticsManager*   GetOpticsManager()   { return m_pOpticsManager; }
@@ -1115,40 +1116,24 @@ public:
 
 	void                      MarkRNTmpDataPoolForReset() { m_bResetRNTmpDataPool = true; }
 
-	static void               GetObjectsByTypeGlobal(PodArray<IRenderNode*>& lstObjects, EERType objType, const AABB* pBBox, bool* pInstStreamReady = NULL, uint64 dwFlags = ~0);
-	static void               MoveObjectsIntoListGlobal(PodArray<SRNInfo>* plstResultEntities, const AABB* pAreaBox, bool bRemoveObjects = false, bool bSkipDecals = false, bool bSkip_ERF_NO_DECALNODE_DECALS = false, bool bSkipDynamicObjects = false, EERType eRNType = eERType_TypesNum);
+	bool                      IsObjectsTreeValid()        { return m_pObjectsTree != nullptr; }
+	class COctreeNode*   GetObjectsTree()            { return m_pObjectsTree; }
 
-	virtual ISegmentsManager* GetSegmentsManager() { return m_pSegmentsManager; };
-	virtual void              SetSegmentsManager(ISegmentsManager* pSegmentsManager);
-	virtual bool              IsSegmentOperationInProgress();
-	virtual void              SetSegmentOperationInProgress(bool bActive);
+	static void          GetObjectsByTypeGlobal(PodArray<IRenderNode*>& lstObjects, EERType objType, const AABB* pBBox, bool* pInstStreamReady = NULL, uint64 dwFlags = ~0);
+	static void          MoveObjectsIntoListGlobal(PodArray<SRNInfo>* plstResultEntities, const AABB* pAreaBox, bool bRemoveObjects = false, bool bSkipDecals = false, bool bSkip_ERF_NO_DECALNODE_DECALS = false, bool bSkipDynamicObjects = false, EERType eRNType = eERType_TypesNum);
 
-	// Returns true if the segment is completely loaded and prepared to be used/rendered/whatever in game.
-	// If this returns false, DO NOT TOUCH THE SEGMENT OR ANYTHING IN IT. It is probably being streamed in
-	// a background thread and you will race all over its internal structures.
-	inline bool IsSegmentSafeToUse(int nSID)
-	{
-#ifdef SEG_WORLD
-		return m_safeToUseSegments[nSID] != 0;
-#else
-		return !m_pObjectsTree.empty() && m_pObjectsTree[nSID] != NULL;
-#endif
-	}
+	SRenderNodeTempData* CreateRenderNodeTempData(IRenderNode* pRNode, const SRenderingPassInfo& passInfo);
+	SRenderNodeTempData* CheckAndCreateRenderNodeTempData(IRenderNode* pRNode, const SRenderingPassInfo& passInfo);
 
-	void         CreateRenderNodeTempData(SRenderNodeTempData** ppInfo, IRenderNode* pRNode, const SRenderingPassInfo& passInfo);
-	bool         CheckAndCreateRenderNodeTempData(SRenderNodeTempData** ppTempData, IRenderNode* pRNode, const SRenderingPassInfo& passInfo);
+	void                 UpdateStatInstGroups();
+	void                 UpdateRenderTypeEnableLookup();
+	void                 ProcessOcean(const SRenderingPassInfo& passInfo);
+	void                 ReRegisterKilledVegetationInstances();
+	Vec3                 GetEntityRegisterPoint(IRenderNode* pEnt);
 
-	void         UpdateRNTmpDataPool(bool bFreeAll);
-
-	void         UpdateStatInstGroups();
-	void         UpdateRenderTypeEnableLookup();
-	void         ProcessOcean(const SRenderingPassInfo& passInfo);
-	void         ReRegisterKilledVegetationInstances();
-	Vec3         GetEntityRegisterPoint(IRenderNode* pEnt);
-
-	virtual void RenderRenderNode_ShadowPass(IShadowCaster* pRNode, const SRenderingPassInfo& passInfo);
-	void         ProcessCVarsChange();
-	ILINE int    GetGeomDetailScreenRes()
+	void                 RenderRenderNode_ShadowPass(IShadowCaster* pRNode, const SRenderingPassInfo& passInfo);
+	void                 ProcessCVarsChange();
+	ILINE int            GetGeomDetailScreenRes()
 	{
 		if (GetCVars()->e_ForceDetailLevelForScreenRes)
 		{
@@ -1156,7 +1141,7 @@ public:
 		}
 		else if (GetRenderer())
 		{
-			return GetRenderer()->GetWidth();
+			return std::max(GetRenderer()->GetOverlayWidth(), GetRenderer()->GetOverlayHeight());
 		}
 		return 1;
 	}
@@ -1169,6 +1154,9 @@ public:
 
 	virtual void                          SetScreenshotCallback(IScreenshotCallback* pCallback);
 
+	virtual void                          RegisterRenderNodeStatusListener(IRenderNodeStatusListener* pListener, EERType renderNodeType);
+	virtual void                          UnregisterRenderNodeStatusListener(IRenderNodeStatusListener* pListener, EERType renderNodeType);
+
 	virtual IDeferredPhysicsEventManager* GetDeferredPhysicsEventManager() { return m_pDeferredPhysicsEventManager; }
 
 	void                                  PrintDebugInfo(const SRenderingPassInfo& passInfo);
@@ -1177,9 +1165,7 @@ public:
 	//////////////////////////////////////////////////////////////////////////
 	// PUBLIC DATA
 	//////////////////////////////////////////////////////////////////////////
-	PodArray<class COctreeNode*> m_pObjectsTree;
-	PodArray<char>               m_safeToUseSegments;
-	//  class CSceneTree * m_pSceneTree;
+	class COctreeNode*             m_pObjectsTree = nullptr;
 
 	int                            m_idMatLeaves; // for shooting foliages
 	bool                           m_bResetRNTmpDataPool;
@@ -1192,10 +1178,9 @@ public:
 	PodArray<SPerObjectShadow>     m_lstPerObjectShadows;
 	std::vector<ShadowMapFrustum*> m_lstCustomShadowFrustums;
 	int                            m_nCustomShadowFrustumCount;
+	uint32                         m_onePassShadowFrustumsCount = 0;
 
 	PodArray<SImageInfo>           m_arrBaseTextureData;
-
-	ISegmentsManager*              m_pSegmentsManager;
 
 	bool                           m_bInShutDown;
 	bool                           m_bInUnload;
@@ -1205,14 +1190,14 @@ private:
 	//////////////////////////////////////////////////////////////////////////
 	// PRIVATE DATA
 	//////////////////////////////////////////////////////////////////////////
-	struct CLightEntity* m_pSun;
+	class CLightEntity* m_pSun;
 
-	std::vector<byte>    arrFPSforSaveLevelStats;
-	PodArray<float>      m_arrProcessStreamingLatencyTestResults;
-	PodArray<int>        m_arrProcessStreamingLatencyTexNum;
+	std::vector<byte>   arrFPSforSaveLevelStats;
+	PodArray<float>     m_arrProcessStreamingLatencyTestResults;
+	PodArray<int>       m_arrProcessStreamingLatencyTexNum;
 
 	// fields which are used by SRenderingPass to store over frame information
-	CThreadSafeRendererContainer<CCamera> m_RenderingPassCameras[2];                 // camera storage for SRenderingPass, the cameras cannot be stored on stack to allow job execution
+	CryMT::CThreadSafePushContainer<CCamera> m_RenderingPassCameras[2];  // camera storage for SRenderingPass, the cameras cannot be stored on stack to allow job execution
 
 	float m_fZoomFactor;                                // zoom factor of m_RenderingCamera
 	float m_fPrevZoomFactor;                            // zoom factor of m_RenderingCamera from last frame
@@ -1220,7 +1205,7 @@ private:
 	int   m_nZoomMode;                                  // the zoom level of the camera (0-4) 0: no zoom, 4: full zoom
 
 	// cameras used by 3DEngine
-	CCamera                m_RenderingCamera;           // Camera used for Rendering on 3DEngine Side, normaly equal to the viewcamera, except if frozen with e_camerafreeze
+	CCamera                m_RenderingCamera;           // Camera used for Rendering on 3DEngine Side, normally equal to the viewcamera, except if frozen with e_camerafreeze
 
 	PodArray<IRenderNode*> m_deferredRenderProxyStreamingPriorityUpdates;     // deferred streaming priority updates for newly seen CRenderProxies
 
@@ -1250,19 +1235,18 @@ private:
 	bool                   m_bLayersActivated;
 	bool                   m_bContentPrecacheRequested;
 	bool                   m_bTerrainTextureStreamingInProgress;
-	bool                   m_bSegmentOperationInProgress;
 
 	// interfaces
 	IPhysMaterialEnumerator* m_pPhysMaterialEnumerator;
 
 	// data containers
-	PodArray<CDLight*>                        m_lstDynLights;
-	PodArray<CDLight*>                        m_lstDynLightsNoLight;
+	PodArray<SRenderLight*>                   m_lstDynLights;
+	PodArray<SRenderLight*>                   m_lstDynLightsNoLight;
 	int                                       m_nRealLightsNum;
 
 	PodArray<ILightSource*>                   m_lstStaticLights;
 	PodArray<PodArray<struct ILightSource*>*> m_lstAffectingLightsCombinations;
-	PodArray<CDLight*>                        m_tmpLstLights;
+	PodArray<SRenderLight*>                   m_tmpLstLights;
 	PodArray<struct ILightSource*>            m_tmpLstAffectingLights;
 
 	PodArray<SCollisionClass>                 m_collisionClasses;
@@ -1270,7 +1254,7 @@ private:
 #define MAX_LIGHTS_NUM 32
 	PodArray<CCamera> m_arrLightProjFrustums;
 
-	class CTimeOfDay* m_pTimeOfDay;
+	CTimeOfDay*       m_pTimeOfDay;
 
 	ICVar*            m_pLightQuality;
 
@@ -1291,32 +1275,47 @@ private:
 	ITexture*                      m_ptexIconHighMemoryUsage;
 	ITexture*                      m_ptexIconEditorConnectedToConsole;
 
-	std::vector<IDecalRenderNode*> m_decalRenderNodes; // list of registered decal render nodes, used to clean up longer not drawn decals
+	std::vector<IDecalRenderNode*> m_decalRenderNodes;          // list of registered decal render nodes, used to clean up longer not drawn decals
+	std::vector<IRenderNode*>      m_renderNodesToDelete[2];    // delay deletion of rendernodes by few frames to make sure
+	uint32                         m_renderNodesToDeleteID = 0; // they can be safely used on render and voxelization threads
 
 	SImageSubInfo* RegisterImageInfo(byte** pMips, int nDim, const char* pName);
 	SImageSubInfo* GetImageInfo(const char* pName);
-	std::map<string, SImageSubInfo*>       m_imageInfos;
+	std::map<string, SImageSubInfo*> m_imageInfos;
 	byte**         AllocateMips(byte* pImage, int nDim, byte** pImageMips);
-	IScreenshotCallback*                   m_pScreenshotCallback;
-	OcclusionTestClient                    m_OceanOcclTestVar;
+	IScreenshotCallback*             m_pScreenshotCallback;
 
-	IDeferredPhysicsEventManager*          m_pDeferredPhysicsEventManager;
+	typedef CListenerSet<IRenderNodeStatusListener*> TRenderNodeStatusListeners;
+	typedef std::vector<TRenderNodeStatusListeners>  TRenderNodeStatusListenersArray;
+	TRenderNodeStatusListenersArray               m_renderNodeStatusListenersArray;
 
-	std::set<uint16>                       m_skipedLayers;
+	OcclusionTestClient                           m_OceanOcclTestVar;
 
-	IGeneralMemoryHeap*                    m_pBreakableBrushHeap;
+	IDeferredPhysicsEventManager*                 m_pDeferredPhysicsEventManager;
 
-	CVisibleRenderNodesManager             m_visibleNodesManager;
+	std::set<uint16>                              m_skipedLayers;
 
-	int                                    m_nCurrentWindAreaList;
-	std::vector<SOptimizedOutdoorWindArea> m_outdoorWindAreas[2];
-	std::vector<SOptimizedOutdoorWindArea> m_indoorWindAreas[2];
+	IGeneralMemoryHeap*                           m_pBreakableBrushHeap;
 
-	CLightVolumesMgr                       m_LightVolumesMgr;
+	CVisibleRenderNodesManager                    m_visibleNodesManager;
 
-	std::unique_ptr<CWaterRippleManager>   m_pWaterRippleManager;
+	float                                         m_fLastWindProcessedTime = 0.0f;
+	Vec3                                          m_vProcessedGlobalWind = Vec3(0, 0, 0);
+	int                                           m_nProcessedWindAreas = -1;
+	int                                           m_nFrameWindAreas = 0;
+	int                                           m_nCurrentWindAreaList;
+	std::vector<SOptimizedOutdoorWindArea>        m_outdoorWindAreas[2];
+	std::vector<SOptimizedOutdoorWindArea>        m_indoorWindAreas[2];
+	std::vector<SOptimizedOutdoorWindArea>        m_forcedWindAreas;
+
+	CLightVolumesMgr                              m_LightVolumesMgr;
+
+	std::unique_ptr<CWaterRippleManager>          m_pWaterRippleManager;
+
+	std::unique_ptr<C3DEngineLevelLoadTimeslicer> m_pLevelLoadTimeslicer;
+
+	CColorGradingCtrl                             m_colorGradingCtrl;
 
 	friend struct SRenderNodeTempData;
+	friend class C3DEngineLevelLoadTimeslicer;
 };
-
-#endif // C3DENGINE_H

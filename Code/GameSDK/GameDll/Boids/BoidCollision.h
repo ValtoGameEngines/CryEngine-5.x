@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   BoidCollision.h
@@ -20,7 +20,7 @@
 
 
 #include <CryPhysics/DeferredActionQueue.h>
-
+#include "Game.h"
 
 class CBoidCollision
 {

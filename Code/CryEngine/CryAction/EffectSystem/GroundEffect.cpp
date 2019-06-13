@@ -1,7 +1,9 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "GroundEffect.h"
+#include <Cry3DEngine/ISurfaceType.h>
+#include <CryRenderer/IRenderAuxGeom.h>
 #include <CryAction/IMaterialEffects.h>
 #include "CryAction.h"
 
@@ -200,13 +202,14 @@ void CGroundEffect::Update()
 					pEffectName = pList->m_particleList->m_particleParams.name;
 				}
 			}
-
+#if !defined(EXCLUDE_NORMAL_LOG)
 			if (DebugOutput())
 			{
 				const char* pMaterialName = gEnv->p3DEngine->GetMaterialManager()->GetSurfaceType(m_rayWorldIntersectSurfaceIdx)->GetName();
 
 				CryLog("[GroundEffect] <%s> GetEffectString for matId %i (%s) returned <%s>", m_pEntity->GetName(), m_rayWorldIntersectSurfaceIdx, pMaterialName, pEffectName ? pEffectName : "null");
 			}
+#endif
 
 			newEffect = SetParticleEffect(pEffectName);
 			m_surfaceIdx = m_rayWorldIntersectSurfaceIdx;

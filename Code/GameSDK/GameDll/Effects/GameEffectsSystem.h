@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef _GAME_EFFECTS_SYSTEM_
 #define _GAME_EFFECTS_SYSTEM_
@@ -8,6 +8,7 @@
 // Includes
 #include "GameEffectsSystemDefines.h"
 #include "GameRulesTypes.h"
+#include <CryInput/IInput.h>
 
 //==================================================================================================
 // Name: CGameEffectsSystem

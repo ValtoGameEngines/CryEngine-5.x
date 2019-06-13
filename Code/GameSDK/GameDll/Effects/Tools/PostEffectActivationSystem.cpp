@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // Simple data driven system to activate post effects.
 
@@ -6,6 +6,7 @@
 #include "StdAfx.h"
 #include "PostEffectActivationSystem.h"
 #include "IItemSystem.h"
+#include <Cry3DEngine/I3DEngine.h>
 
 //--------------------------------------------------------------------------------------------------
 // Name: Initialise

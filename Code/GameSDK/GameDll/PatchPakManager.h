@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -23,6 +23,7 @@
 #include "DownloadMgr.h"
 #include <CryCore/Containers/CryFixedArray.h>
 #include <CryCore/Platform/IPlatformOS.h>
+#include <CryMemory/IMemory.h>
 #include "IPatchPakManagerListener.h"
 
 #if defined(_RELEASE) 

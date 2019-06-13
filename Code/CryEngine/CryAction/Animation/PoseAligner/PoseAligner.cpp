@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -7,6 +7,8 @@
 #include <CryAnimation/ICryAnimation.h>
 
 #include "PoseAligner.h"
+#include <CryRenderer/IRenderAuxGeom.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 #define UNKNOWN_GROUND_HEIGHT -1E10f
 
@@ -389,7 +391,7 @@ bool CChain::SetupTargetPoseModifiers(const QuatT& location, const Vec3& limitOf
 		return true;
 
 	if (!m_pPoseAlignerChain)
-		::CryCreateClassInstance<IAnimationPoseAlignerChain>("AnimationPoseModifier_PoseAlignerChain", m_pPoseAlignerChain);
+		CryCreateClassInstanceForInterface<IAnimationPoseAlignerChain>(cryiidof<IAnimationPoseAlignerChain>(), m_pPoseAlignerChain);
 	if (!m_pPoseAlignerChain)
 		return false;
 
@@ -436,7 +438,7 @@ void CChain::DrawDebug(const QuatT& location)
 
 CPose::CPose()
 {
-	CryCreateClassInstance("AnimationPoseModifier_OperatorQueue", m_operatorQueue);
+	CryCreateClassInstanceForInterface(cryiidof<IAnimationOperatorQueue>(), m_operatorQueue);
 
 	Clear();
 }
@@ -482,17 +484,13 @@ void CPose::Clear()
 	m_bInitialized = false;
 }
 
-bool CPose::Initialize(IEntity& entity, int rootJointIndex)
+bool CPose::Initialize(IEntity& entity, ICharacterInstance* pCharacter, int rootJointIndex)
 {
 	Clear();
 
 	if (!m_operatorQueue)
 		return false;
 	if (rootJointIndex < 0)
-		return false;
-
-	ICharacterInstance* pCharacter = entity.GetCharacter(0);
-	if (!pCharacter)
 		return false;
 
 	m_pEntity = &entity;
@@ -523,25 +521,19 @@ void CPose::RemoveAllChains()
 
 //
 
-void CPose::Update(const QuatT& location, const float time)
+void CPose::Update(ICharacterInstance* pCharacter, const QuatT& location, const float time)
 {
 	CRY_ASSERT(m_pEntity);
 
 	if (!CVars::GetInstance().m_enable)
 		return;
 
-	ICharacterInstance* pCharacter = m_pEntity->GetCharacter(0);
-	if (!pCharacter)
-		return;
-
 	m_pSkeletonAnim = pCharacter->GetISkeletonAnim();
-	if (m_pSkeletonAnim == NULL)
-		return;
 	m_pSkeletonPose = pCharacter->GetISkeletonPose();
-	if (m_pSkeletonPose == NULL)
+	if (m_pSkeletonAnim == nullptr || m_pSkeletonPose == nullptr)
 		return;
-
-	if (!m_pSkeletonAnim->GetNumAnimsInFIFO(0))
+	
+	if (m_pSkeletonAnim->GetNumAnimsInFIFO(0) == 0)
 		return;
 
 	uint chainCount = uint(m_chains.size());
@@ -552,9 +544,7 @@ void CPose::Update(const QuatT& location, const float time)
 
 	float groundHeight = 0.0f;
 	Vec3 groundNormal(0.0f, 0.0f, 1.0f);
-	bool bGroundHeightValid = GetGroundFromEntity(*m_pEntity, groundHeight, groundNormal);
-
-	//
+	GetGroundFromEntity(*m_pEntity, groundHeight, groundNormal);
 
 	float chainOffsetMin = 0.0f;
 	float chainOffsetMax = 0.0f;
@@ -623,7 +613,7 @@ void CPose::SetupPoseModifiers(const QuatT& location)
 		m_operatorQueue->PushComputeAbsolute();
 	}
 
-	m_pSkeletonAnim->PushPoseModifier(0, m_operatorQueue);
+	m_pSkeletonAnim->PushPoseModifier(0, m_operatorQueue, "PoseAligner");
 
 	for (uint i = 0; i < chainCount; ++i)
 		m_chains[i]->SetupTargetPoseModifiers(chainsLocation, m_rootOffsetDirection * rootOffset, *m_pSkeletonAnim);

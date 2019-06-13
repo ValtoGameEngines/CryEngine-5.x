@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __IAIGroupProxy_h__
 #define __IAIGroupProxy_h__
@@ -25,7 +25,7 @@ struct IAIGroupProxy :
 	virtual const char*   GetCurrentBehaviorName() const = 0;
 	virtual const char*   GetPreviousBehaviorName() const = 0;
 
-	virtual void          Notify(uint32 notificationID, tAIObjectID senderID, const char* notification) = 0;
+	virtual void          Notify(uint32 notificationID, const AISignals::SignalSharedPtr& pSignal) = 0;
 
 	virtual void          SetBehaviour(const char* behaviour, bool callCDtors = true) = 0;
 

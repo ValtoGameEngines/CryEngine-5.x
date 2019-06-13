@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 //////////////////////////////////////////////////////////////////////////
 
@@ -550,7 +550,7 @@ bool CManager::LoadPlatformHandlerDLL(const char* pFilename, PlatformDLL& dllInf
 void CManager::LoadPlatformHandlerFactoryDLLs()
 {
 	//TODO: use a search algo, for file masks ? like "Tools\\LiveCreatePlatform*.dll" ?
-	#if CRY_PLATFORM_WINDOWS && CRY_PLATFORM_64BIT
+	#if CRY_PLATFORM_WINDOWS
 		#define LC_BIN_POSTFIX "_64"
 	#else
 		#define LC_BIN_POSTFIX ""

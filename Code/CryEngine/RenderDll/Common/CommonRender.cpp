@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -7,28 +7,23 @@ CNameTableR* CCryNameR::ms_table;
 
 // Resource manager internal variables.
 ResourceClassMap CBaseResource::m_sResources;
-CryCriticalSection CBaseResource::s_cResLock;
+CryRWLock CBaseResource::s_cResLock;
 
-CBaseResource& CBaseResource::operator=(const CBaseResource& Src)
+bool CBaseResource::IsValid() const
 {
-	return *this;
-}
+	CryAutoReadLock<CryRWLock> lock(s_cResLock);
 
-bool CBaseResource::IsValid()
-{
-	AUTO_LOCK(s_cResLock); // Not thread safe without this
-
-	SResourceContainer* pContainer = GetResourcesForClass(m_ClassName);
+	const SResourceContainer* pContainer = GetResourcesForClass(m_ClassName);
 	if (!pContainer)
 		return false;
 
-	ResourceClassMapItor itRM = m_sResources.find(m_ClassName);
-
+	const ResourceClassMapItor itRM = m_sResources.find(m_ClassName);
 	if (itRM == m_sResources.end())
 		return false;
 	if (itRM->second != pContainer)
 		return false;
-	ResourcesMapItor itRL = itRM->second->m_RMap.find(m_NameCRC);
+
+	const ResourcesMapItor itRL = itRM->second->m_RMap.find(m_NameCRC);
 	if (itRL == itRM->second->m_RMap.end())
 		return false;
 	if (itRL->second != this)
@@ -48,7 +43,7 @@ SResourceContainer* CBaseResource::GetResourcesForClass(const CCryNameTSCRC& cla
 CBaseResource* CBaseResource::GetResource(const CCryNameTSCRC& className, int nID, bool bAddRef)
 {
 	FUNCTION_PROFILER_RENDER_FLAT
-	  AUTO_LOCK(s_cResLock); // Not thread safe without this
+	CryAutoReadLock<CryRWLock> lock(s_cResLock);
 
 	SResourceContainer* pRL = GetResourcesForClass(className);
 	if (!pRL)
@@ -72,7 +67,7 @@ CBaseResource* CBaseResource::GetResource(const CCryNameTSCRC& className, int nI
 CBaseResource* CBaseResource::GetResource(const CCryNameTSCRC& className, const CCryNameTSCRC& Name, bool bAddRef)
 {
 	FUNCTION_PROFILER_RENDER_FLAT
-	  AUTO_LOCK(s_cResLock); // Not thread safe without this
+	CryAutoReadLock<CryRWLock> lock(s_cResLock);
 
 	SResourceContainer* pRL = GetResourcesForClass(className);
 	if (!pRL)
@@ -92,7 +87,7 @@ CBaseResource* CBaseResource::GetResource(const CCryNameTSCRC& className, const 
 
 bool CBaseResource::Register(const CCryNameTSCRC& className, const CCryNameTSCRC& Name)
 {
-	AUTO_LOCK(s_cResLock); // Not thread safe without this
+	CryAutoWriteLock<CryRWLock> lock(s_cResLock);
 
 	SResourceContainer* pRL = GetResourcesForClass(className);
 	if (!pRL)
@@ -133,10 +128,10 @@ bool CBaseResource::Register(const CCryNameTSCRC& className, const CCryNameTSCRC
 
 bool CBaseResource::UnRegister()
 {
-	AUTO_LOCK(s_cResLock); // Not thread safe without this
-
 	if (IsValid())
 	{
+		CryAutoWriteLock<CryRWLock> lock(s_cResLock);
+
 		SResourceContainer* pContainer = GetResourcesForClass(m_ClassName);
 		assert(pContainer);
 		if (pContainer)
@@ -145,16 +140,23 @@ bool CBaseResource::UnRegister()
 			pContainer->m_RList[RListIndexFromId(m_nID)] = NULL;
 			pContainer->m_AvailableIDs.push_back(m_nID);
 		}
+
 		return true;
 	}
+
 	return false;
 }
 
 void CBaseResource::UnregisterAndDelete()
 {
 	UnRegister();
-	if (gRenDev && gRenDev->m_pRT)
-		gRenDev->m_pRT->RC_ReleaseBaseResource(this);
+	if (!m_bDeleted)
+	{
+		m_bDeleted = true;
+		CRY_ASSERT(gRenDev != nullptr);
+		if(gRenDev)
+			gRenDev->ScheduleResourceForDelete(this);
+	}
 }
 
 //=================================================================
@@ -188,85 +190,159 @@ void CBaseResource::ShutDown()
 	}
 }
 
-#ifdef MEMREPLAY_WRAP_D3D11
+//=================================================================
 
-const GUID MemReplayD3DAnnotation::s_guid = {
-	{ 0xff23dad0 }, { 0xd47b }, { 0x4d80 }, { 0xaf, 0x63, 0x7e, 0xf5, 0xea, 0x2c, 0x4a, 0x9d }
-};
+static const inline size_t NoAlign(size_t nSize) { return nSize; }
 
-MemReplayD3DAnnotation::MemReplayD3DAnnotation(ID3D11DeviceChild* pRes, size_t sz)
-	: m_nRefCount(0)
-	, m_pRes(pRes)
+void SResourceBinding::AddInvalidateCallback(void* pCallbackOwner, SResourceBindPoint bindPoint, const SResourceBinding::InvalidateCallbackFunction& callback) threadsafe const
 {
-	MEMREPLAY_SCOPE(EMemReplayAllocClass::C_D3DManaged, 0);
-	MEMREPLAY_SCOPE_ALLOC(pRes, sz, 0);
-}
-
-MemReplayD3DAnnotation::~MemReplayD3DAnnotation()
-{
-	MEMREPLAY_SCOPE(EMemReplayAllocClass::C_D3DManaged, 0);
-	MEMREPLAY_SCOPE_FREE(m_pRes);
-}
-
-void MemReplayD3DAnnotation::AddMap(UINT nSubRes, void* pData, size_t sz)
-{
-	MapDesc desc;
-	desc.nSubResource = nSubRes;
-	desc.pData = pData;
-	m_maps.push_back(desc);
-
-	MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CryMalloc);
-	MEMREPLAY_SCOPE_ALLOC(pData, sz, 0);
-}
-
-void MemReplayD3DAnnotation::RemoveMap(UINT nSubRes)
-{
-	for (std::vector<MapDesc>::reverse_iterator it = m_maps.rbegin(), itEnd = m_maps.rend(); it != itEnd; ++it)
+	switch (type)
 	{
-		if (it->nSubResource == nSubRes)
-		{
-			MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CryMalloc);
-			MEMREPLAY_SCOPE_FREE(it->pData);
-
-			m_maps.erase(m_maps.begin() + std::distance(&*m_maps.begin(), &*it));
-			if (m_maps.empty())
-				stl::free_container(m_maps);
-			break;
-		}
+		case EResourceType::ConstantBuffer:                                                                       break;
+		case EResourceType::ShaderResource:                                                                       break;
+		case EResourceType::Texture:        pTexture->AddInvalidateCallback(pCallbackOwner, bindPoint, callback); break;
+		case EResourceType::Buffer:         pBuffer ->AddInvalidateCallback(pCallbackOwner, bindPoint, callback); break;
+		case EResourceType::Sampler:                                                                              break;
+		default:                            CRY_ASSERT(false);
 	}
 }
 
-HRESULT MemReplayD3DAnnotation::QueryInterface(REFIID riid, void** ppvObject)
+void SResourceBinding::RemoveInvalidateCallback(void* pCallbackOwner, SResourceBindPoint bindPoint) threadsafe const
 {
-	if (riid == IID_IUnknown)
+	switch (type)
 	{
-		*reinterpret_cast<IUnknown**>(ppvObject) = this;
-		return S_OK;
+		case EResourceType::ConstantBuffer:                                                                       break;
+		case EResourceType::ShaderResource:                                                                       break;
+		case EResourceType::Texture:        pTexture->RemoveInvalidateCallbacks(pCallbackOwner, bindPoint);       break;
+		case EResourceType::Buffer:         pBuffer ->RemoveInvalidateCallbacks(pCallbackOwner, bindPoint);       break;
+		case EResourceType::Sampler:                                                                              break;
+		default:                            CRY_ASSERT(false);
 	}
-
-	*ppvObject = NULL;
-	return E_NOINTERFACE;
 }
 
-ULONG MemReplayD3DAnnotation::AddRef()
+size_t CResourceBindingInvalidator::CountInvalidateCallbacks() threadsafe
 {
-	return ++m_nRefCount;
+	m_invalidationLock.RLock();
+	size_t count = m_invalidateCallbacks.size();
+	m_invalidationLock.RUnlock();
+
+	return count;
 }
 
-ULONG MemReplayD3DAnnotation::Release()
+void CResourceBindingInvalidator::AddInvalidateCallback(void* listener, const SResourceBindPoint bindPoint, const SResourceBinding::InvalidateCallbackFunction& callback) threadsafe
 {
-	ULONG nr = --m_nRefCount;
-
-	if (!nr)
-		delete this;
-
-	return nr;
-}
-
+#if !CRY_PLATFORM_ANDROID && !CRY_PLATFORM_LINUX && (!CRY_PLATFORM_ORBIS || defined(__GXX_RTTI))
+	CRY_ASSERT(callback.target<SResourceBinding::InvalidateCallbackSignature*>() != nullptr);
 #endif
 
-CDeviceObjectFactory& CCryDeviceWrapper::GetObjectFactory()
+	m_invalidationLock.WLock();
+
+	// Use try_emplace once we support c++17
+	auto map_it = m_invalidateCallbacks.find(listener);
+	if (map_it == m_invalidateCallbacks.end())
+	{
+		map_it = m_invalidateCallbacks.emplace(std::piecewise_construct,
+			std::forward_as_tuple(listener),
+			std::forward_as_tuple(std::vector<SInvalidateCallback>{})).first;
+	}
+
+	auto &slot = map_it->second;
+	auto bindpoint_it = std::lower_bound(slot.begin(), slot.end(), bindPoint);
+	if (bindpoint_it == slot.end() || bindpoint_it->bindpoint != bindPoint)
+		bindpoint_it = slot.emplace(bindpoint_it, bindPoint);
+	bindpoint_it->callback = callback;
+
+	++bindpoint_it->refCount;
+
+	m_invalidationLock.WUnlock();
+
+	// We only allow one callback function per listener
+#if !CRY_PLATFORM_ANDROID && !CRY_PLATFORM_LINUX && (!CRY_PLATFORM_ORBIS || defined(__GXX_RTTI))
+	CRY_ASSERT(*callback.target<SResourceBinding::InvalidateCallbackSignature*>() == *bindpoint_it->callback.target<SResourceBinding::InvalidateCallbackSignature*>());
+#endif
+}
+
+void CResourceBindingInvalidator::RemoveInvalidateCallbacks(void* listener, const SResourceBindPoint bindPoint) threadsafe
 {
-	static CDeviceObjectFactory ext12;
-	return ext12;
+	const bool bBatchRemoval = (bindPoint == SResourceBindPoint());
+	m_invalidationLock.WLock();
+
+	const auto it = m_invalidateCallbacks.find(listener);
+	if (it != m_invalidateCallbacks.end())
+	{
+		// remove all callback of this listener
+		if (bBatchRemoval)
+		{
+			m_invalidateCallbacks.erase(it);
+		}
+		// remove one callback of this listener
+		else
+		{
+			auto &slot = it->second;
+			auto bindpoint_it = std::lower_bound(slot.begin(), slot.end(), bindPoint);
+			if (bindpoint_it != slot.end() && bindpoint_it->bindpoint == bindPoint &&
+				--bindpoint_it->refCount <= 0)
+			{
+				slot.erase(bindpoint_it);
+				if (slot.size() == 0)
+					m_invalidateCallbacks.erase(it);
+			}
+		}
+	}
+
+	m_invalidationLock.WUnlock();
+}
+
+void CResourceBindingInvalidator::InvalidateDeviceResource(CGpuBuffer* pBuffer, uint32 dirtyFlags) threadsafe
+{
+//	pBuffer->AddRef();
+	InvalidateDeviceResource(UResourceReference(pBuffer), dirtyFlags);
+	CRY_ASSERT_MESSAGE(!(dirtyFlags & eResourceDestroyed) || (CountInvalidateCallbacks() == 0), "CGpuBuffer %s is destroyd but the invalidation callbacks haven't been removed!", "Unknown" /*pBuffer->GetName()*/);
+//	pBuffer->Release();
+}
+
+void CResourceBindingInvalidator::InvalidateDeviceResource(CTexture* pTexture, uint32 dirtyFlags) threadsafe
+{
+	pTexture->AddRef();
+	InvalidateDeviceResource(UResourceReference(pTexture), dirtyFlags);
+	CRY_ASSERT_MESSAGE(!(dirtyFlags & eResourceDestroyed) || (CountInvalidateCallbacks() == 0), "CTexture %s is destroyd but the invalidation callbacks haven't been removed!", pTexture->GetName());
+	pTexture->Release();
+}
+
+// Until we support c++14...
+template <class Iterator>
+std::reverse_iterator<Iterator> make_reverse_iterator(Iterator i)
+{
+	return std::reverse_iterator<Iterator>(i);
+}
+
+void CResourceBindingInvalidator::InvalidateDeviceResource(UResourceReference pResource, uint32 dirtyFlags) threadsafe
+{
+	m_invalidationLock.WLock();
+
+	for (auto it = m_invalidateCallbacks.begin(); it != m_invalidateCallbacks.end();)
+	{
+		bool erase_slot = false;
+
+		auto &slot = it->second;
+		for (auto slot_it = slot.rbegin(); slot_it != slot.rend(); )
+		{
+			// Should we keep the callback? true/false
+			if (!slot_it->callback(it->first, slot_it->bindpoint, pResource, dirtyFlags))
+			{
+				slot_it = ::make_reverse_iterator(slot.erase(std::next(slot_it).base()));
+				if (slot.size() == 0)
+					erase_slot = true;
+			}
+			else
+				slot_it = std::next(slot_it);
+		}
+
+		if (!erase_slot)
+			it = std::next(it);
+		else
+			it = m_invalidateCallbacks.erase(it);
+	}
+
+	m_invalidationLock.WUnlock();
 }

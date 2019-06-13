@@ -1,0 +1,100 @@
+{"Name": "mist",
+"Features": [
+	{ "RenderSprites": {
+		"SortMode": "BackToFront",
+
+		"FacingMode": "Screen",
+		"AspectRatio": 1.0,
+		"SphericalProjection": 0.0,
+		"SortBias": 0.0,
+		"CameraOffset": 0.0,
+		"Offset": { "x": 0.0, "y": 0.0 },
+		"FlipU": false,
+		"FlipV": false,
+		"FillCost": 1.0} },
+	{ "AnglesRotate2D": {
+		"InitialAngle": 0.0,
+		"RandomAngle": 30.0,
+		"InitialSpin": 0.0,
+		"RandomSpin": 10.0} },
+	{ "SpawnRate": {
+		"Amount": { "value": 15.0 },
+		"Delay": { "value": 0.0 },
+		"Duration": { "value": "Infinity" },
+		"Mode": "ParticlesPerSecond"} },
+	{ "LifeTime": { "LifeTime": { "value": 4.0 }, "KillOnParentDeath": false } },
+	{ "LocationBox": {
+		"Dimension": { "x": 10.0, "y": 10.0, "z": 3.0 },
+		"Scale": { "value": 1.0 }} },
+	{ "LocationOffset": {
+		"Offset": { "x": 0.0, "y": 0.0, "z": 3.0 },
+		"Scale": { "value": 1.0 }} },
+	{ "FieldSize": {
+		"value": {
+			"value": 5.0,
+			"modifiers": [
+				{ "Curve": {
+					"Domain": "Age",
+					"Owner": "Self",
+					"DomainScale": 1.0,
+					"DomainBias": 0.0,
+					"Curve": "0,0.82436424,8,,0;0.46383333,0.99699944,9,0.05423677,0.06269479;1,0.8432757,1,0"} }
+			]
+		}} },
+	{ "FieldOpacity": {
+		"value": {
+			"value": 0.2,
+			"modifiers": [
+				{ "Curve": {
+					"Domain": "Age",
+					"Owner": "Self",
+					"DomainScale": 1.0,
+					"DomainBias": 0.0,
+					"Curve": "0,0,8,,0;0.49766666,1,9,0,0;1,0,1,0"} }
+			]
+		},
+		"AlphaScale": { "x": 0.0, "y": 1.0 },
+		"ClipLow": { "x": 0.0, "y": 0.0 },
+		"ClipRange": { "x": 1.0, "y": 1.0 }} },
+	{ "AppearanceVisibility": {
+		"MinCameraDistance": 2.0,
+		"MaxCameraDistance": "Infinity",
+		"MaxScreenSize": 2.0,
+		"ViewDistanceMultiple": 1.0,
+		"IndoorVisibility": "Both",
+		"WaterVisibility": "Both",
+		"DrawNear": false,
+		"DrawOnTop": false} },
+	{ "AppearanceSoftIntersect": { "Softness": 1.0 } },
+	{ "AppearanceLighting": {
+		"Diffuse": 1.0,
+		"BackLight": 0.5,
+		"Emissive": 0.0,
+		"Curvature": 0.5,
+		"EnvironmentLighting": true,
+		"ReceiveShadows": false,
+		"AffectedByFog": true,
+		"VolumeFog": false} },
+	{ "AppearanceMaterial": { "Enabled": false, "Material": "", "Texture": "" } },
+	{ "AppearanceTexture Tiling": {
+		"TilesX": 1,
+		"TilesY": 1,
+		"TileCount": 1,
+		"FirstTile": 0,
+		"VariantMode": "Random",
+		"Animation": {
+			"FrameCount": 1,
+			"FrameRate": 0.0,
+			"CycleMode": "Once",
+			"FrameBlending": true
+		}} },
+	{ "MotionPhysics": {
+		"gravity": { "value": 0.0 },
+		"drag": { "value": 1.0 },
+		"windMultiplier": 1.0,
+		"AngularDragMultiplier": 0.0,
+		"perParticleForceComputation": true,
+		"UniformAcceleration": { "x": 0.0, "y": 0.0, "z": 0.0 },
+		"UniformWind": { "x": 0.0, "y": 0.0, "z": 0.0 },
+		"localEffectors": [ ]} }
+]}

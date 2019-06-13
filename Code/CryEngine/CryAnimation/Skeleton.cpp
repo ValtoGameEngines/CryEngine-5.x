@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "Skeleton.h"
@@ -87,7 +87,7 @@ bool CPoseData::Initialize(const CDefaultSkeleton& skeleton)
 
 bool CPoseData::Initialize(const CPoseData& poseData)
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "Character Pose Data Cloned");
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "Character Pose Data Cloned");
 
 	m_jointCount = poseData.GetJointCount();
 	m_jointsBuffer = poseData.m_jointsBuffer;

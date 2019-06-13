@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "PersonalLog.h"
@@ -10,7 +10,7 @@ void PersonalLog::AddMessage(const EntityId entityId, const char* message)
 
 	m_messages.push_back(message);
 
-	if (gAIEnv.CVars.OutputPersonalLogToConsole)
+	if (gAIEnv.CVars.LegacyOutputPersonalLogToConsole)
 	{
 		const char* name = "(null)";
 

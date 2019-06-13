@@ -1,12 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
-namespace uqs
+namespace UQS
 {
-	namespace core
+	namespace Core
 	{
 
 		//===================================================================================
@@ -23,29 +23,26 @@ namespace uqs
 		{
 		protected:
 			explicit                                 CQuery_SequentialBase(const SCtorContext& ctorContext);
-			                                         ~CQuery_SequentialBase();
 			bool                                     HasMoreChildrenLeftToInstantiate() const;
-			void                                     StoreResultSetForUseInNextChildQuery(const IQueryResultSet& resultSetOfPreviousChildQuery);
-			void                                     InstantiateNextChildQueryBlueprint();
+			void                                     InstantiateNextChildQueryBlueprint(const std::shared_ptr<CItemList>& pResultingItemsOfPotentialPreviousChildQuery);
 
 		private:
 			// CQueryBase
-			virtual bool                             OnInstantiateFromQueryBlueprint(const shared::IVariantDict& runtimeParams, shared::CUqsString& error) override final;
-			virtual EUpdateState                     OnUpdate(const CTimeValue& timeBudget, shared::CUqsString& error) override final;
+			virtual bool                             OnStart(const Shared::IVariantDict& runtimeParams, Shared::IUqsString& error) override final;
+			virtual EUpdateState                     OnUpdate(const CTimeValue& amountOfGrantedTime, Shared::CUqsString& error) override final;
 			virtual void                             OnCancel() override final;
 			virtual void                             OnGetStatistics(SStatistics& out) const override final;
 			// ~CQueryBase
 
-			void                                     OnChildQueryFinished(const SQueryResult& result);
-			virtual void                             HandleChildQueryFinishedWithSuccess(const CQueryID& childQueryID, QueryResultSetUniquePtr&& pResultSet) = 0;
+			virtual void                             HandleChildQueryFinishedWithSuccess(CQueryBase& childQuery) = 0;
 
 		private:
-			shared::CVariantDict                     m_runtimeParams;
+			Shared::CVariantDict                     m_runtimeParams;
+			int                                      m_priority;
 			size_t                                   m_indexOfNextChildToInstantiate;
-			CQueryID                                 m_queryIDOfCurrentlyRunningChild;
-			std::unique_ptr<CItemList>               m_pResultingItemsOfLastChildQuery;
-			bool                                     m_bExceptionOccurredInChild;
-			shared::CUqsString                       m_exceptionMessageFromChild;
+			QueryBaseUniquePtr                       m_pCurrentlyRunningChildQuery;
+			bool                                     m_bExceptionOccurredUponChildInstantiation;
+			Shared::CUqsString                       m_exceptionMessageFromChildInstantiation;
 		};
 
 	}

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "CharacterInstance.h"
@@ -15,8 +15,8 @@ DECLARE_JOB("SkinningTransformationsComputation", TSkinningTransformationsComput
 
 CCharInstance::CCharInstance(const string& strFileName, CDefaultSkeleton* pDefaultSkeleton) : m_skinningTransformationsCount(0), m_skinningTransformationsMovement(0)
 {
-	LOADING_TIME_PROFILE_SECTION(g_pISystem);
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "Character Instance");
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY)(g_pISystem);
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "Character Instance");
 
 	g_pCharacterManager->RegisterInstanceSkel(pDefaultSkeleton, this);
 	m_pDefaultSkeleton = pDefaultSkeleton;
@@ -46,6 +46,9 @@ CCharInstance::CCharInstance(const string& strFileName, CDefaultSkeleton* pDefau
 	m_LastUpdateFrameID_Pre = 0;
 	m_LastUpdateFrameID_Post = 0;
 
+	m_fZoomDistanceSq = std::numeric_limits<float>::max();
+	m_pParentRenderNode = nullptr;
+
 	m_rpFlags = CS_FLAG_DRAW_MODEL;
 	memset(arrSkinningRendererData, 0, sizeof(arrSkinningRendererData));
 	m_processingContext = -1;
@@ -70,7 +73,7 @@ void CCharInstance::RuntimeInit(CDefaultSkeleton* pExtDefaultSkeleton)
 	m_SkeletonAnim.FinishAnimationComputations();
 
 	//-----------------------------------------------
-	if (pExtDefaultSkeleton)
+	if (pExtDefaultSkeleton && pExtDefaultSkeleton != m_pDefaultSkeleton)
 	{
 		g_pCharacterManager->UnregisterInstanceSkel(m_pDefaultSkeleton, this);
 		g_pCharacterManager->RegisterInstanceSkel(pExtDefaultSkeleton, this);
@@ -95,8 +98,8 @@ void CCharInstance::RuntimeInit(CDefaultSkeleton* pExtDefaultSkeleton)
 
 	//
 	m_SkeletonPose.UpdateBBox(1);
-	m_SkeletonPose.m_physics.m_bHasPhysics = m_pDefaultSkeleton->m_bHasPhysics2;
-	m_SkeletonPose.m_physics.m_bHasPhysicsProxies = false;
+	m_SkeletonPose.m_physics.m_bHasPhysics = m_pDefaultSkeleton->m_bHasPhysics[0];
+	m_SkeletonPose.m_physics.m_bHasPhysicsProxies = m_pDefaultSkeleton->m_bHasPhysics[1];
 
 	m_bHasVertexAnimation = false;
 }
@@ -104,6 +107,9 @@ void CCharInstance::RuntimeInit(CDefaultSkeleton* pExtDefaultSkeleton)
 //////////////////////////////////////////////////////////////////////////
 CCharInstance::~CCharInstance()
 {
+	// Make sure all animation jobs are done before releasing the character instance
+	FinishAnimationComputations();
+
 	// The command buffer needs to be flushed here, because if he is flushed
 	// later on, one of the commands might access the
 	// default skeleton which is no longer available
@@ -130,37 +136,55 @@ void CCharInstance::StartAnimationProcessing(const SAnimationProcessParams& para
 {
 	DEFINE_PROFILER_FUNCTION();
 	ANIMATION_LIGHT_PROFILER();
+	MEMSTAT_CONTEXT(EMemStatContextType::Animation, "CCharInstance::StartAnimationProcessing");
 
 	// execute only if start animation processing has not been started for this character
 	if (GetProcessingContext())
 		return;
 
+	SetupThroughParams(&params);
+
+	// Anticipated skip for quasi-static objects
+	// This allows to skip the animation update for those objects which just stay in the same pose / animation loop for a long time
+	AdvanceQuasiStaticSleepTimer();
+	if (IsQuasiStaticSleeping())
+	{
+		g_pCharacterManager->Debug_IncreaseQuasiStaticCullCounter();
+		return;
+	}
+
 	CharacterInstanceProcessing::CContextQueue& queue = g_pCharacterManager->GetContextSyncQueue();
 
 	// generate contexts for me and all my attached instances
 	CharacterInstanceProcessing::SContext& ctx = queue.AppendContext();
-	m_processingContext = ctx.slot;
-	int numberOfChildren = m_AttachmentManager.GenerateAttachedInstanceContexts();
+	SetProcessingContext(ctx);
+	int numberOfChildren = m_AttachmentManager.GenerateAttachedCharactersContexts();
 	ctx.Initialize(this, nullptr, nullptr, numberOfChildren);
 	queue.ExecuteForContextAndAllChildrenRecursively(
 	  m_processingContext, CharacterInstanceProcessing::SStartAnimationProcessing(params));
 
 	bool bImmediate = (Console::GetInst().ca_thread == 0);
 
-	WaitForSkinningJob();
-	ctx.job.Begin(bImmediate);
+	if (ctx.state == CharacterInstanceProcessing::SContext::EState::StartAnimationProcessed)
+	{
+		WaitForSkinningJob();
+		ctx.job.Begin(bImmediate);
+	}
 
 	if (bImmediate)
 	{
 		m_SkeletonAnim.FinishAnimationComputations();
-	}
+	}	
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CCharInstance::CopyPoseFrom(const ICharacterInstance& rICharInstance)
 {
 	const ISkeletonPose* srcIPose = rICharInstance.GetISkeletonPose();
+
+#if defined(USE_CRY_ASSERT)
 	const IDefaultSkeleton& rIDefaultSkeleton = rICharInstance.GetIDefaultSkeleton();
+#endif
 
 	CRY_ASSERT_TRACE(srcIPose, ("CopyPoseFrom: %s Copying from an invalid pose!", GetFilePath()));
 	if (srcIPose)
@@ -172,12 +196,33 @@ void CCharInstance::CopyPoseFrom(const ICharacterInstance& rICharInstance)
 	}
 }
 
+void CCharInstance::SetParentRenderNode(ICharacterRenderNode* pRenderNode)
+{
+	if (m_pParentRenderNode != pRenderNode)
+	{
+		m_pParentRenderNode = pRenderNode;
+
+		// This is a temporary workaround to make sure that reassignment of a render node
+		// propagates properties of the new render node through the attachment hierarchy.
+		SmallFunction<void(CCharInstance*)> recursivelyUpdateAttachedObjects = [&](CCharInstance* pCharacter)
+		{
+			pCharacter->m_AttachmentManager.UpdateAttachedObjects();
+
+			for (CCharInstance* pDependentCharacter : pCharacter->m_AttachmentManager.GetAttachedCharacterInstances())
+			{
+				recursivelyUpdateAttachedObjects(pDependentCharacter);
+			}
+		};
+
+		recursivelyUpdateAttachedObjects(this);
+	}
+}
+
 //////////////////////////////////////////////////////////////////////////
 // TODO: Should be part of CSkeletonPhysics!
 void CCharInstance::UpdatePhysicsCGA(Skeleton::CPoseData& poseData, float fScale, const QuatTS& rAnimLocationNext)
 {
 	DEFINE_PROFILER_FUNCTION();
-	CAnimationSet* pAnimationSet = m_pDefaultSkeleton->m_pAnimationSet;
 
 	if (!m_SkeletonPose.GetCharacterPhysics())
 		return;
@@ -194,8 +239,7 @@ void CCharInstance::UpdatePhysicsCGA(Skeleton::CPoseData& poseData, float fScale
 	assert(numNodes);
 
 	int i, iLayer, iLast = -1;
-	bool bSetVel = 0;
-	uint32 nType = m_SkeletonPose.GetCharacterPhysics()->GetType();
+	bool bSetVel = false;
 	bool bBakeRotation = m_SkeletonPose.GetCharacterPhysics()->GetType() == PE_ARTICULATED;
 	if (bSetVel = bBakeRotation)
 	{
@@ -432,44 +476,48 @@ float CCharInstance::GetExtent(EGeomForm eForm)
 	return extent.TotalExtent();
 }
 
-void CCharInstance::GetRandomPos(PosNorm& ran, CRndGen& seed, EGeomForm eForm) const
+void CCharInstance::GetRandomPoints(Array<PosNorm> points, CRndGen& seed, EGeomForm eForm) const
 {
 	CGeomExtent const& ext = m_Extents[eForm];
-	int iPart = ext.RandomPart(seed);
-
-	if (iPart-- == 0)
+	for (auto part : ext.RandomPartsAliasSum(points, seed))
 	{
-		// Base model.
-		IRenderMesh* pMesh = m_pDefaultSkeleton->GetIRenderMesh();
-
-		SSkinningData* pSkinningData = NULL;
-		int nFrameID = gEnv->pRenderer->EF_GetSkinningPoolID();
-		for (int n = 0; n < 3; n++)
+		if (part.iPart-- == 0)
 		{
-			int nList = (nFrameID - n) % 3;
-			if (arrSkinningRendererData[nList].nFrameID == nFrameID - n)
+			// Base model.
+			if (IRenderMesh* pMesh = m_pDefaultSkeleton->GetIRenderMesh())
 			{
-				pSkinningData = arrSkinningRendererData[nList].pSkinningData;
-				break;
+				SSkinningData* pSkinningData = NULL;
+				int nFrameID = gEnv->pRenderer->EF_GetSkinningPoolID();
+				for (int n = 0; n < 3; n++)
+				{
+					int nList = (nFrameID - n) % 3;
+					if (arrSkinningRendererData[nList].nFrameID == nFrameID - n)
+					{
+						pSkinningData = arrSkinningRendererData[nList].pSkinningData;
+						break;
+					}
+				}
+
+				pMesh->GetRandomPoints(part.aPoints, seed, eForm, pSkinningData);
 			}
+			else
+				part.aPoints.fill(ZERO);
 		}
 
-		return pMesh->GetRandomPos(ran, seed, eForm, pSkinningData);
-	}
+		else if (part.iPart-- == 0)
+		{
+			// Choose CGA joint.
+			m_SkeletonPose.GetRandomPoints(part.aPoints, seed, eForm);
+		}
 
-	if (iPart-- == 0)
-	{
-		// Choose CGA joint.
-		return m_SkeletonPose.GetRandomPos(ran, seed, eForm);
+		else if (part.iPart-- == 0)
+		{
+			// Choose attachment.
+			m_AttachmentManager.GetRandomPoints(part.aPoints, seed, eForm);
+		}
+		else
+			part.aPoints.fill(ZERO);
 	}
-
-	if (iPart-- == 0)
-	{
-		// Choose attachment.
-		return m_AttachmentManager.GetRandomPos(ran, seed, eForm);
-	}
-
-	ran.zero();
 }
 
 void CCharInstance::OnDetach()
@@ -501,7 +549,7 @@ void CCharInstance::Serialize(TSerialize ser)
 {
 	if (ser.GetSerializationTarget() != eST_Network)
 	{
-		MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "Character instance serialization");
+		MEMSTAT_CONTEXT(EMemStatContextType::Other, "Character instance serialization");
 
 		ser.BeginGroup("CCharInstance");
 		ser.Value("fPlaybackScale", (float&)(m_fPlaybackScale));
@@ -560,7 +608,6 @@ void CCharInstance::ReloadCHRPARAMS()
 		if (pIAttachmentObject == 0)
 			continue;
 
-		uint32 type = pIAttachment->GetType();
 		CCharInstance* pCharInstance = (CCharInstance*)pIAttachmentObject->GetICharacterInstance();
 		if (pCharInstance == 0)
 			continue;  //its not a CHR at all
@@ -615,7 +662,6 @@ void CCharInstance::EnableProceduralFacialAnimation(bool bEnable)
 
 void CCharInstance::SkeletonPostProcess()
 {
-	f32 fZoomAdjustedDistanceFromCamera = m_fPostProcessZoomAdjustedDistanceFromCamera;
 	QuatTS rPhysLocation = m_location;
 	m_SkeletonPose.SkeletonPostProcess(m_SkeletonPose.GetPoseDataExplicitWriteable());
 	m_skeletonEffectManager.Update(&m_SkeletonAnim, &m_SkeletonPose, rPhysLocation);
@@ -643,8 +689,8 @@ void CCharInstance::SkinningTransformationsComputation(SSkinningData* pSkinningD
 
 	QuatT defaultInverse;
 	//--- Deliberate querying off the end of arrays for speed, prefetching off the end of an array is safe & avoids extra branches
-	const QuatT* absPose_PreFetchOnly = &pJointsAbsolute[0];
 #ifndef _DEBUG
+	const QuatT* absPose_PreFetchOnly = &pJointsAbsolute[0];
 	CryPrefetch(&pJointsAbsoluteDefault[0]);
 	CryPrefetch(&absPose_PreFetchOnly[0]);
 	CryPrefetch(&pSkinningTransformations[0]);
@@ -683,24 +729,6 @@ void CCharInstance::SkinningTransformationsComputation(SSkinningData* pSkinningD
 		f32 fQdot = q0 | q1;
 		f32 fQdotSign = (f32)__fsel(fQdot, 1.0f, -1.0f);
 		movement += 1.0f - (fQdot * fQdotSign);
-	}
-
-	CAttachmentManager* pAttachmentManager = static_cast<CAttachmentManager*>(GetIAttachmentManager());
-	const uint32 numJoints = pDefaultSkeleton->m_arrModelJoints.size();
-	const uint32 extraBonesCount = pAttachmentManager->GetExtraBonesCount();
-	for (uint32 i = 0; i < extraBonesCount; ++i)
-	{
-		if (IAttachment* pAttachment = pAttachmentManager->m_extraBones[i])
-		{
-			if (pAttachment->IsMerged())
-			{
-				if (pAttachment->GetType() == CA_FACE || (pAttachment->GetType() == CA_BONE && static_cast<CAttachmentBONE*>(pAttachment)->m_nJointID != -1))
-				{
-					DualQuat& dq = pSkinningTransformations[i + numJoints];
-					dq = pAttachment->GetAttModelRelative() * pAttachment->GetAdditionalTransformation();
-				}
-			}
-		}
 	}
 
 	assert(pSkinningData->pMasterSkinningDataList);
@@ -780,6 +808,12 @@ void CCharInstance::GetMemoryUsage(ICrySizer* pSizer) const
 	}
 }
 
+void CCharInstance::SetProcessingContext(CharacterInstanceProcessing::SContext& context)
+{
+	assert(context.slot < g_pCharacterManager->GetContextSyncQueue().GetNumberOfContexts());
+	m_processingContext = context.slot;
+}
+
 CharacterInstanceProcessing::SContext* CCharInstance::GetProcessingContext()
 {
 	if (m_processingContext >= 0)
@@ -809,6 +843,7 @@ void CCharInstance::SetupThroughParent(const CCharInstance* pParent)
 	m_fOriginalDeltaTime = pParent->m_fOriginalDeltaTime;
 	m_fDeltaTime = pParent->m_fDeltaTime;
 	m_nAnimationLOD = pParent->GetAnimationLOD();
+	m_SkeletonPose.m_bVisibleLastFrame = m_SkeletonPose.m_bInstanceVisible;
 	m_SkeletonPose.m_bFullSkeletonUpdate = pParent->m_SkeletonPose.m_bFullSkeletonUpdate;
 	m_SkeletonPose.m_bInstanceVisible = pParent->m_SkeletonPose.m_bInstanceVisible;
 }
@@ -845,6 +880,10 @@ void CCharInstance::SetupThroughParams(const SAnimationProcessParams* pParams)
 	  (float)__fsel(pParams->overrideDeltaTime, pParams->overrideDeltaTime, fNewDeltaTime);
 	m_fOriginalDeltaTime = fNewDeltaTime;
 	m_fDeltaTime = fNewDeltaTime * m_fPlaybackScale;
+
+	//---------------------------------------------------------------------------------
+
+	m_SkeletonPose.m_bVisibleLastFrame = m_SkeletonPose.m_bInstanceVisible;
 
 	//---------------------------------------------------------------------------------
 

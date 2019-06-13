@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   ParticleParamsTypeInfo.h
@@ -23,10 +23,12 @@
 #include "ParticleParams_info.h"
 #include <CryString/Name_TypeInfo.h>
 #include <CryCore/CryTypeInfo.h>
+#include <Cry3DEngine/ISurfaceType.h>
 
 ///////////////////////////////////////////////////////////////////////
 // Implementation of TCurve<> functions.
 
+//! \cond INTERNAL
 //! Helper class for serialization.
 template<class T, class V>
 struct SplineElem
@@ -41,6 +43,7 @@ struct SplineElem
 	VAR_INFO(flags)
 	STRUCT_INFO_END(SplineElem)
 };
+//! \endcond
 
 template<class S>
 string TCurve<S >::ToString(FToString flags) const

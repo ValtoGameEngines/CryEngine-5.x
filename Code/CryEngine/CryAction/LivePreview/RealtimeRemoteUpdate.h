@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -71,7 +71,7 @@ protected:
 
 	typedef std::vector<unsigned char> TDBuffer;
 
-	CryMT::CLocklessPointerQueue<TDBuffer> m_ProcessingQueue;
+	CryMT::queue<TDBuffer*> m_ProcessingQueue;
 };
 
 #endif // RealtimeRemoteUpdate_h__

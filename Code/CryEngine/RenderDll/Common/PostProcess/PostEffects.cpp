@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*=============================================================================
    PostEffects.cpp : Post processing effects implementation
@@ -12,6 +12,9 @@
 #include <Cry3DEngine/I3DEngine.h>
 #include "PostEffects.h"
 #include "PostProcessUtils.h"
+#include "GraphicsPipeline/PostEffects.h"
+
+#include <DriverD3D.h>
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Engine specific post-effects
@@ -25,7 +28,7 @@ int CMotionBlur::Initialize()
 int CMotionBlur::CreateResources()
 {
 	SAFE_RELEASE(m_pBokehShape);
-	m_pBokehShape = CTexture::ForName("EngineAssets/ScreenSpace/bokeh_pentagon.dds", FT_DONT_STREAM, eTF_Unknown);
+	m_pBokehShape = CTexture::ForName("%ENGINE%/EngineAssets/ScreenSpace/bokeh_pentagon.dds", FT_DONT_STREAM, eTF_Unknown);
 
 	return 1;
 }
@@ -62,7 +65,7 @@ int CDepthOfField::CreateResources()
 {
 	SAFE_RELEASE(m_pNoise);
 
-	m_pNoise = CTexture::ForName("EngineAssets/Textures/vector_noise.dds", FT_DONT_STREAM, eTF_Unknown);
+	m_pNoise = CTexture::ForName("%ENGINE%/EngineAssets/Textures/vector_noise.dds", FT_DONT_STREAM, eTF_Unknown);
 
 	return true;
 }
@@ -106,7 +109,7 @@ void CDepthOfField::Reset(bool bOnSpecChange)
 	m_fUserBlurAmountCurr = 0;
 }
 
-bool CDepthOfField::Preprocess()
+bool CDepthOfField::Preprocess(const SRenderViewInfo& viewInfo)
 {
 	// Skip LDR processing, DOF is always performed in HDR
 	return false;
@@ -145,7 +148,7 @@ void CSunShafts::OnLostDevice()
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool CFilterSharpening::Preprocess()
+bool CSharpening::Preprocess(const SRenderViewInfo& viewInfo)
 {
 	bool bQualityCheck = CPostEffectsMgr::CheckPostProcessQuality(eRQ_Medium, eSQ_Medium);
 
@@ -163,7 +166,7 @@ bool CFilterSharpening::Preprocess()
 	return false;
 }
 
-void CFilterSharpening::Reset(bool bOnSpecChange)
+void CSharpening::Reset(bool bOnSpecChange)
 {
 	m_pAmount->ResetParam(1.0f);
 	m_pType->ResetParam(0.0f);
@@ -172,7 +175,7 @@ void CFilterSharpening::Reset(bool bOnSpecChange)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool CFilterBlurring::Preprocess()
+bool CBlurring::Preprocess(const SRenderViewInfo& viewInfo)
 {
 	bool bQualityCheck = CPostEffectsMgr::CheckPostProcessQuality(eRQ_Medium, eSQ_Medium);
 
@@ -190,7 +193,7 @@ bool CFilterBlurring::Preprocess()
 	return false;
 }
 
-void CFilterBlurring::Reset(bool bOnSpecChange)
+void CBlurring::Reset(bool bOnSpecChange)
 {
 	m_pAmount->ResetParam(0.0f);
 	m_pType->ResetParam(0.0f);
@@ -199,8 +202,10 @@ void CFilterBlurring::Reset(bool bOnSpecChange)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool CUberGamePostProcess::Preprocess()
+bool CUberGamePostProcess::Preprocess(const SRenderViewInfo& viewInfo)
 {
+	m_nCurrPostEffectsMask = 0;
+
 	const float fParamThreshold = 1.0f / 255.0f;
 	const Vec4 vWhite = Vec4(1.0f, 1.0f, 1.0f, 1.0f);
 
@@ -262,7 +267,7 @@ void CUberGamePostProcess::Reset(bool bOnSpecChange)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool CColorGrading::Preprocess()
+bool CColorGrading::Preprocess(const SRenderViewInfo& viewInfo)
 {
 	// Depreceated: to be removed / replaced by UberPostProcess shader
 	return false;
@@ -280,20 +285,18 @@ void CColorGrading::Reset(bool bOnSpecChange)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool CUnderwaterGodRays::Preprocess()
+bool CUnderwaterGodRays::Preprocess(const SRenderViewInfo& viewInfo)
 {
 	bool bQualityCheck = CPostEffectsMgr::CheckPostProcessQuality(eRQ_Medium, eSQ_Medium);
 	if (!bQualityCheck)
 		return false;
-
-	static ICVar* pVar = iConsole->GetCVar("e_WaterOcean");
 
 	//bool bOceanVolumeVisible = (gEnv->p3DEngine->GetOceanRenderFlags() & OCR_OCEANVOLUME_VISIBLE) != 0;
 
 	if (CRenderer::CV_r_water_godrays && m_pAmount->GetParam() > 0.005f) // && bOceanEnabled && bOceanVolumeVisible)
 	{
 		float fWatLevel = SPostEffectsUtils::m_fWaterLevel;
-		if (fWatLevel - 0.1f > gRenDev->GetRCamera().vOrigin.z)
+		if (fWatLevel - 0.1f > viewInfo.cameraOrigin.z)
 		{
 			// check water level
 
@@ -313,7 +316,7 @@ void CUnderwaterGodRays::Reset(bool bOnSpecChange)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool CVolumetricScattering::Preprocess()
+bool CVolumetricScattering::Preprocess(const SRenderViewInfo& viewInfo)
 {
 	bool bQualityCheck = CPostEffectsMgr::CheckPostProcessQuality(eRQ_High, eSQ_High);
 	if (!bQualityCheck)
@@ -350,7 +353,7 @@ void CAlienInterference::Reset(bool bOnSpecChange)
 	m_pTintColor->ResetParamVec4(Vec4(Vec3(0.85f, 0.95f, 1.25f) * 0.5f, 1.0f));
 }
 
-bool CAlienInterference::Preprocess()
+bool CAlienInterference::Preprocess(const SRenderViewInfo& viewInfo)
 {
 	bool bQualityCheck = CPostEffectsMgr::CheckPostProcessQuality(eRQ_Medium, eSQ_Medium);
 	if (!bQualityCheck)
@@ -369,7 +372,7 @@ bool CAlienInterference::Preprocess()
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-bool CWaterDroplets::Preprocess()
+bool CWaterDroplets::Preprocess(const SRenderViewInfo& viewInfo)
 {
 	bool bQualityCheck = CPostEffectsMgr::CheckPostProcessQuality(eRQ_Medium, eSQ_Medium);
 	if (!bQualityCheck)
@@ -393,7 +396,7 @@ void CWaterDroplets::Reset(bool bOnSpecChange)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool CWaterFlow::Preprocess()
+bool CWaterFlow::Preprocess(const SRenderViewInfo& viewInfo)
 {
 	bool bQualityCheck = CPostEffectsMgr::CheckPostProcessQuality(eRQ_Medium, eSQ_Medium);
 	if (!bQualityCheck)
@@ -416,33 +419,7 @@ void CWaterFlow::Reset(bool bOnSpecChange)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool CWaterVolume::Preprocess()
-{
-	if(gRenDev->m_nGraphicsPipeline > 0)
-	{
-		return false;
-	}
-
-	if (!gRenDev->m_RP.m_eQuality)
-		return false;
-
-	if (m_pAmount->GetParam() > 0.005f)
-	{
-		return true;
-	}
-
-	return false;
-}
-
-void CWaterVolume::Reset(bool bOnSpecChange)
-{
-	m_pAmount->ResetParam(0.0f);
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-bool CScreenFrost::Preprocess()
+bool CScreenFrost::Preprocess(const SRenderViewInfo& viewInfo)
 {
 	bool bQualityCheck = CPostEffectsMgr::CheckPostProcessQuality(eRQ_Medium, eSQ_Medium);
 	if (!bQualityCheck)
@@ -527,8 +504,8 @@ int CNightVision::CreateResources()
 	SAFE_RELEASE(m_pGradient);
 	SAFE_RELEASE(m_pNoise);
 
-	m_pGradient = CTexture::ForName("EngineAssets/Textures/nightvis_grad.dds", FT_DONT_STREAM, eTF_Unknown);
-	m_pNoise = CTexture::ForName("EngineAssets/Textures/vector_noise.dds", FT_DONT_STREAM, eTF_Unknown);
+	m_pGradient = CTexture::ForName("%ENGINE%/EngineAssets/Textures/nightvis_grad.dds", FT_DONT_STREAM, eTF_Unknown);
+	m_pNoise = CTexture::ForName("%ENGINE%/EngineAssets/Textures/vector_noise.dds", FT_DONT_STREAM, eTF_Unknown);
 
 	return true;
 }
@@ -562,8 +539,8 @@ int CSonarVision::CreateResources()
 	SAFE_RELEASE(m_pGradient);
 	SAFE_RELEASE(m_pNoise);
 
-	m_pGradient = CTexture::ForName("EngineAssets/Shading/SonarVisionGradient.tif", FT_DONT_STREAM, eTF_Unknown);
-	m_pNoise = CTexture::ForName("EngineAssets/Textures/vector_noise.dds", FT_DONT_STREAM, eTF_Unknown);
+	m_pGradient = CTexture::ForName("%ENGINE%/EngineAssets/Shading/SonarVisionGradient.tif", FT_DONT_STREAM, eTF_Unknown);
+	m_pNoise = CTexture::ForName("%ENGINE%/EngineAssets/Textures/vector_noise.dds", FT_DONT_STREAM, eTF_Unknown);
 
 	return true;
 }
@@ -593,8 +570,8 @@ int CThermalVision::CreateResources()
 {
 	Release();
 
-	m_pGradient = CTexture::ForName("EngineAssets/Shading/ThermalVisionGradient.tif", FT_DONT_STREAM, eTF_Unknown);
-	m_pNoise = CTexture::ForName("EngineAssets/Textures/vector_noise.dds", FT_DONT_STREAM, eTF_Unknown);
+	m_pGradient = CTexture::ForName("%ENGINE%/EngineAssets/Shading/ThermalVisionGradient.tif", FT_DONT_STREAM, eTF_Unknown);
+	m_pNoise = CTexture::ForName("%ENGINE%/EngineAssets/Textures/vector_noise.dds", FT_DONT_STREAM, eTF_Unknown);
 
 	return true;
 }
@@ -625,7 +602,7 @@ void CHudSilhouettes::Reset(bool bOnSpecChange)
 	FindIfSilhouettesOptimisedTechAvailable();
 }
 
-bool CHudSilhouettes::Preprocess()
+bool CHudSilhouettes::Preprocess(const SRenderViewInfo& viewInfo)
 {
 	if ((CRenderer::CV_r_customvisions != 3) || (m_bSilhouettesOptimisedTechAvailable))
 	{
@@ -637,9 +614,10 @@ bool CHudSilhouettes::Preprocess()
 			return false;
 		}
 
+		CRenderView* pRenderView = m_pCurrentContext->GetRenderView();
 		// no need to proceed
 		float fType = m_pType->GetParam();
-		uint32 nBatchMask = SRendItem::BatchFlags(EFSLIST_GENERAL) | SRendItem::BatchFlags(EFSLIST_TRANSP);
+		uint32 nBatchMask = pRenderView->GetBatchFlags(EFSLIST_GENERAL) | pRenderView->GetBatchFlags(EFSLIST_TRANSP_BW) | pRenderView->GetBatchFlags(EFSLIST_TRANSP_AW);
 
 		if ((!(nBatchMask & FB_CUSTOM_RENDER)) && fType == 1.0f)
 		{
@@ -670,48 +648,7 @@ void CFlashBang::Reset(bool bOnSpecChange)
 	m_pTime->ResetParam(2.0f);
 	m_pDifractionAmount->ResetParam(1.0f);
 	m_pBlindAmount->ResetParam(0.5f);
-	m_fBlindAmount = 1.0f;
 	m_fSpawnTime = 0.0f;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-void CPostAA::Reset(bool bOnSpecChange)
-{
-	m_bInit = true;
-	m_nScopeZoomTransition = 0;
-	m_pScopeZoom->ResetParam(0.0f);
-}
-
-int CPostAA::CreateResources()
-{
-	SAFE_RELEASE(m_pAreaSMAA);
-	SAFE_RELEASE(m_pSearchSMAA);
-
-	m_pAreaSMAA = CTexture::ForName("EngineAssets/ScreenSpace/AreaTex.dds", FT_DONT_STREAM, eTF_Unknown);
-	m_pSearchSMAA = CTexture::ForName("EngineAssets/ScreenSpace/SearchTex.dds", FT_DONT_STREAM, eTF_Unknown);
-
-	return 1;
-}
-
-void CPostAA::Release()
-{
-	SAFE_RELEASE(m_pAreaSMAA);
-	SAFE_RELEASE(m_pSearchSMAA);
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-void CSoftAlphaTest::Reset(bool bOnSpecChange)
-{
-}
-
-bool CSoftAlphaTest::Preprocess()
-{
-	uint32 nBatchMask = SRendItem::BatchFlags(EFSLIST_GENERAL);
-	return CRenderer::CV_r_SoftAlphaTest != 0 && (nBatchMask & FB_SOFTALPHATEST);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -723,9 +660,9 @@ void CPostStereo::Reset(bool bOnSpecChange)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool CImageGhosting::Preprocess()
+bool CImageGhosting::Preprocess(const SRenderViewInfo& viewInfo)
 {
-	CTexture* pPrevFrame = CTexture::s_ptexPrevFrameScaled;
+	CTexture* pPrevFrame = CRendererResources::s_ptexDisplayTargetScaledPrev;
 	if (!pPrevFrame)
 	{
 		m_bInit = true;
@@ -756,7 +693,7 @@ int CFilterKillCamera::Initialize()
 	return 1;
 }
 
-bool CFilterKillCamera::Preprocess()
+bool CFilterKillCamera::Preprocess(const SRenderViewInfo& viewInfo)
 {
 	if (!CRenderer::CV_r_PostProcessFilters)
 		return false;
@@ -769,6 +706,10 @@ bool CFilterKillCamera::Preprocess()
 			m_blindTimer = 0.0f;
 			m_lastMode = mode;
 		}
+
+		// Update time
+		float frameTime = gEnv->pTimer->GetFrameTime();
+		m_blindTimer += frameTime;
 
 		return true;
 	}
@@ -789,10 +730,10 @@ void CFilterKillCamera::Reset(bool bOnSpecChange)
 int CNanoGlass::CreateResources()
 {
 	Release();
-	m_pHexOutline = CTexture::ForName("EngineAssets/Textures/hex.dds", FT_DONT_STREAM, eTF_Unknown);
-	m_pHexRand = CTexture::ForName("EngineAssets/Textures/hex_rand.dds", FT_DONT_STREAM, eTF_Unknown);
-	m_pHexGrad = CTexture::ForName("EngineAssets/Textures/hex_grad.dds", FT_DONT_STREAM, eTF_Unknown);
-	m_pNoise = CTexture::ForName("EngineAssets/Textures/perlinNoise_sum_small.dds", FT_DONT_STREAM, eTF_Unknown);
+	m_pHexOutline = CTexture::ForName("%ENGINE%/EngineAssets/Textures/hex.dds", FT_DONT_STREAM, eTF_Unknown);
+	m_pHexRand = CTexture::ForName("%ENGINE%/EngineAssets/Textures/hex_rand.dds", FT_DONT_STREAM, eTF_Unknown);
+	m_pHexGrad = CTexture::ForName("%ENGINE%/EngineAssets/Textures/hex_grad.dds", FT_DONT_STREAM, eTF_Unknown);
+	m_pNoise = CTexture::ForName("%ENGINE%/EngineAssets/Textures/perlinNoise_sum_small.dds", FT_DONT_STREAM, eTF_Unknown);
 	return 1;
 }
 
@@ -804,7 +745,7 @@ void CNanoGlass::Release()
 	SAFE_RELEASE(m_pNoise);
 }
 
-bool CNanoGlass::Preprocess()
+bool CNanoGlass::Preprocess(const SRenderViewInfo& viewInfo)
 {
 	//////////////////////////////////////////////////////////////////////////
 	// Logic to determine if we can enable the effect. As m_pActive is not double buffered it's likely that this is
@@ -869,14 +810,28 @@ void CScreenBlood::Reset(bool bOnSpecChange)
 	m_pBorder->ResetParamVec4(Vec4(0.0f, 0.0f, 2.0f, 1.0f)); // Border: x=xOffset y=yOffset z=range w=alpha
 }
 
-bool CScreenBlood::Preprocess()
+bool CScreenBlood::Preprocess(const SRenderViewInfo& viewInfo)
 {
 	return (CRenderer::CV_r_PostProcessGameFx && m_pAmount->GetParam() > 0.005f);
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void CScreenFader::Reset(bool bOnSpecChange)
+{
+	m_pColor->ResetParamVec4(Vec4(0.0f, 0.0f, 0.0f, 0.0f));
+}
+
+bool CScreenFader::Preprocess(const SRenderViewInfo& viewInfo)
+{
+	return (CRenderer::CV_r_PostProcessGameFx && m_pColor->GetParamVec4().w > 0.001f);
+}
+
+//////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 
-bool CPost3DRenderer::Preprocess()
+bool CPost3DRenderer::Preprocess(const SRenderViewInfo& viewInfo)
 {
 	if (IsActive())
 	{
@@ -902,4 +857,59 @@ void CPost3DRenderer::Reset(bool bOnSpecChange)
 	// will get turned off when undesired
 }
 
+//////////////////////////////////////////////////////////////////////////
+void CMotionBlur::SetupObject(CRenderObject* pObj, const SRenderingPassInfo& passInfo)
+{
+	assert(pObj);
+
+	uint32 nThreadID = passInfo.ThreadID();
+
+	if (passInfo.IsRecursivePass())
+		return;
+
+	SRenderObjData* const __restrict pOD = pObj->GetObjData();
+	if (!pOD)
+	{
+		return;
+	}
+
+	pObj->m_ObjFlags &= ~FOB_HAS_PREVMATRIX;
+
+	// don't apply regular object motion blur to skinned objects with bending (foliage)
+	// they get their motion blur in the DrawSkinned Pass
+	if (pOD->m_pSkinningData && pOD->m_pSkinningData->pAsyncJobs == NULL)
+		return;
+
+	if (pOD->m_uniqueObjectId != 0 && pObj->m_fDistance < CRenderer::CV_r_MotionBlurMaxViewDist)
+	{
+		const uint32 nFrameID = passInfo.GetMainFrameID();
+		const uintptr_t ObjID = pOD ? pOD->m_uniqueObjectId : 0;
+		const uint32 nObjFrameWriteID = (nFrameID) % 3;
+		OMBParamsMapItor it = m_pOMBData[nObjFrameWriteID].find(ObjID);
+		if (it != m_pOMBData[nObjFrameWriteID].end())
+		{
+			// if all good, get previous buffered frame
+			const uint32 nObjPrevFrameID = (nFrameID - 1) % 3;
+			OMBParamsMapItor itPrev = m_pOMBData[nObjPrevFrameID].find(ObjID);
+
+			if (itPrev != m_pOMBData[nObjPrevFrameID].end())
+			{
+				SObjMotionBlurParams* pWriteObjMBData = &it->second;
+				SObjMotionBlurParams* pPrevObjMBData = &itPrev->second;
+				pWriteObjMBData->mObjToWorld = pObj->GetMatrix(passInfo);
+
+				const float fThreshold = CRenderer::CV_r_MotionBlurThreshold;
+				if (pObj->m_ObjFlags & (FOB_NEAREST | FOB_MOTION_BLUR) || !Matrix34::IsEquivalent(pPrevObjMBData->mObjToWorld, pWriteObjMBData->mObjToWorld, fThreshold))
+					pObj->m_ObjFlags |= FOB_HAS_PREVMATRIX;
+
+				pWriteObjMBData->nFrameUpdateID = nFrameID;
+				pWriteObjMBData->pRenderObj = pObj;
+
+				return;
+			}
+		}
+
+		m_FillData[nThreadID].push_back(OMBParamsMap::value_type(ObjID, SObjMotionBlurParams(pObj, pObj->GetMatrix(passInfo), nFrameID)));
+	}
+}
 //////////////////////////////////////////////////////////////////////////

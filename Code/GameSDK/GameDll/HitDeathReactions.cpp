@@ -1,4 +1,4 @@
-﻿// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -43,10 +43,6 @@ namespace
 	const char DEFAULT_KILL_REACTION_FUNCTION[] = "DefaultKillReaction";
 	const char DEFAULT_HIT_REACTION_FUNCTION[] = "DefaultHitReaction";
 	const char DEFAULT_VALIDATION_FUNCTION[] = "DefaultValidation";
-
-	const char AI_SIGNAL_ONHIT_MOUNTED_GUN[] = "OnHitMountedGun";
-	const char AI_SIGNAL_FINISHED_REACTION[] = "OnFinishedHitDeathReaction";
-	const char AI_SIGNAL_INTERRUPTED_REACTION[] = "OnHitDeathReactionInterrupted";
 
 	const char DEAD_FACIAL_EXPRESSION[] = "Exp_Dead";
 	const char PAIN_FACIAL_EXPRESSION[] = "Exp_Pain";
@@ -105,7 +101,7 @@ protected:
 		IActor* piActor = GetRootActor();
 		if (!gEnv->bMultiplayer && m_isDeathReaction && piActor && !piActor->IsPlayer() && GetRootScope().CalculateFragmentTimeRemaining() < 0.1f )
 		{
-			IProceduralContext* piProcContext = m_rootScope->GetActionController().FindOrCreateProceduralContext( PROCEDURAL_CONTEXT_RAGDOLL_NAME );
+			IProceduralContext* piProcContext = m_rootScope->GetActionController().FindOrCreateProceduralContext(CProceduralContextRagdoll::GetCID());
 			if( piProcContext && !static_cast<CProceduralContextRagdoll*> (piProcContext)->IsInRagdoll() )
 			{
 				static_cast<CPlayer*>(piActor)->CPlayer::RagDollize( false );
@@ -130,7 +126,7 @@ protected:
 					IActor* piActor = GetRootActor();
 					if( piActor && !piActor->IsPlayer() && !piActor->IsClient() )
 					{
-						IProceduralContext* piProcContext = m_rootScope->GetActionController().FindOrCreateProceduralContext( PROCEDURAL_CONTEXT_RAGDOLL_NAME );
+						IProceduralContext* piProcContext = m_rootScope->GetActionController().FindOrCreateProceduralContext(CProceduralContextRagdoll::GetCID());
 						if( piProcContext )
 						{
 							static_cast<CProceduralContextRagdoll*> (piProcContext)->ForceRagdollFinish(piActor, true);
@@ -245,7 +241,7 @@ public:
 		}
 		if( m_rootScope && (bUseFallback || m_isForced) )
 		{
-			IProceduralContext* piProcContext = m_rootScope->GetActionController().FindOrCreateProceduralContext( PROCEDURAL_CONTEXT_RAGDOLL_NAME );
+			IProceduralContext* piProcContext = m_rootScope->GetActionController().FindOrCreateProceduralContext(CProceduralContextRagdoll::GetCID());
 			static_cast<CProceduralContextRagdoll*> (piProcContext)->EnableRagdoll( m_rootScope->GetEntityId(), false, 20.f );
 		}
 		return TBaseAction::UpdatePending(timePassed);
@@ -264,7 +260,7 @@ protected:
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-struct CHitDeathReactions::SPredFindValidReaction : public std::unary_function<bool, const SReactionParams&>
+struct CHitDeathReactions::SPredFindValidReaction
 {
 	SPredFindValidReaction(const CHitDeathReactions& owner, const HitInfo& hitInfo, float fCausedDamage = 0.0f) : m_owner(owner), m_hitInfo(hitInfo), m_fCausedDamage(fCausedDamage) {}
 
@@ -509,7 +505,7 @@ void CHitDeathReactions::ReleaseReactionAnims(uint32 requestFlags)
 //////////////////////////////////////////////////////////////////////////
 void CHitDeathReactions::Update(float fFrameTime)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	if (IsInReaction())
 	{
@@ -614,7 +610,7 @@ FragmentID CHitDeathReactions::GetHitDeathFragmentID( const IActionController* p
 //////////////////////////////////////////////////////////////////////////
 bool CHitDeathReactions::OnKill(const CActor::KillParams& killParams)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	CRY_ASSERT(m_actor.IsDead());
 
@@ -650,7 +646,7 @@ bool CHitDeathReactions::OnKill(const CActor::KillParams& killParams)
 //////////////////////////////////////////////////////////////////////////
 bool CHitDeathReactions::OnReaction(const HitInfo& hitInfo, int* pAnimIndex)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	bool bSuccess = false;
 
@@ -703,7 +699,7 @@ bool CHitDeathReactions::OnReaction(const HitInfo& hitInfo, int* pAnimIndex)
 
 bool CHitDeathReactions::OnHit(const HitInfo& hitInfo, float fCausedDamage/* = 0.0f*/)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	bool bSuccess = false;
 
@@ -1144,7 +1140,7 @@ bool CHitDeathReactions::StartReaction(EReactionType reactionType, const HitInfo
 
 			if( m_actor.GetActorStats()->mountedWeaponID != 0 )
 			{
-				SendAISignal( AI_SIGNAL_ONHIT_MOUNTED_GUN, NULL );
+				SendAISignal(gEnv->pAISystem->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnHitMountedGun(), NULL );
 			}
 		}
 	}
@@ -1167,7 +1163,7 @@ void CHitDeathReactions::HandleAIStartReaction(const HitInfo& hitInfo, const SRe
 
 	if (gEnv->pAISystem && !reactionParams.sCustomAISignal.empty())
 	{
-		IAISignalExtraData *pData = gEnv->pAISystem->CreateSignalExtraData();
+		AISignals::IAISignalExtraData *pData = gEnv->pAISystem->CreateSignalExtraData();
 		if (pData)
 		{
 			pData->iValue = m_iGoalPipeId;
@@ -1175,7 +1171,7 @@ void CHitDeathReactions::HandleAIStartReaction(const HitInfo& hitInfo, const SRe
 			pData->point2 = hitInfo.dir;
 		}
 
-		SendAISignal(reactionParams.sCustomAISignal.c_str(), pData);
+		SendAISignal_DEPRECATED(reactionParams.sCustomAISignal.c_str(), pData);
 
 		m_AIPausedState = eAIP_ExecutingCustomSignal;
 	}
@@ -1189,13 +1185,13 @@ void CHitDeathReactions::HandleAIEndReaction()
 
 	if (gEnv->pAISystem && IsInReaction())
 	{
-		IAISignalExtraData *pData = gEnv->pAISystem->CreateSignalExtraData();
+		AISignals::IAISignalExtraData *pData = gEnv->pAISystem->CreateSignalExtraData();
 		if (pData)
 		{
 			pData->iValue = m_iGoalPipeId;
 		}
 
-		SendAISignal(AI_SIGNAL_FINISHED_REACTION, pData);
+		SendAISignal(gEnv->pAISystem->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnFinishedHitDeathReaction(), pData);
 	}
 
 	if (eAIP_ExecutingCustomSignal != m_AIPausedState)
@@ -1214,13 +1210,13 @@ void CHitDeathReactions::HandleAIReactionInterrupted()
 
 	if (gEnv->pAISystem && IsInReaction())
 	{
-		IAISignalExtraData *pData = gEnv->pAISystem->CreateSignalExtraData();
+		AISignals::IAISignalExtraData *pData = gEnv->pAISystem->CreateSignalExtraData();
 		if (pData)
 		{
 			pData->iValue = m_iGoalPipeId;
 		}
 
-		SendAISignal(AI_SIGNAL_INTERRUPTED_REACTION, pData);
+		SendAISignal(gEnv->pAISystem->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnHitDeathReactionInterrupted(), pData);
 	}
 }
 
@@ -1788,7 +1784,33 @@ IPipeUser* CHitDeathReactions::GetAIPipeUser() const
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-bool CHitDeathReactions::SendAISignal(const char* szSignal, IAISignalExtraData *pData, bool bWaitOpOnly) const
+bool CHitDeathReactions::SendAISignal(const AISignals::ISignalDescription& signalDesc, AISignals::IAISignalExtraData *pData, bool bWaitOpOnly) const
+{
+
+	bool bResult = false;
+
+	IAIObject *pAI = (IsAI() ? m_actor.GetEntity()->GetAI() : NULL);
+	if (pAI && gEnv->pAISystem)
+	{
+		if (!bWaitOpOnly)
+		{
+			const AISignals::SignalSharedPtr pSignal = gEnv->pAISystem->GetSignalManager()->CreateSignal(AISIGNAL_INCLUDE_DISABLED, signalDesc, pAI->GetEntityID(), pData);
+			gEnv->pAISystem->SendSignal(AISignals::ESignalFilter::SIGNALFILTER_SENDER, pSignal);
+			bResult = true;
+		}
+		else if (IAIActor *pAIActor = CastToIAIActorSafe(pAI))
+		{
+			pAIActor->SetSignal(gEnv->pAISystem->GetSignalManager()->CreateSignal(AISIGNAL_NOTIFY_ONLY, signalDesc, m_actor.GetEntity()->GetId(), pData));
+			bResult = true;
+		}
+	}
+
+	return bResult;
+}
+
+//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
+bool CHitDeathReactions::SendAISignal_DEPRECATED(const char* szSignal, AISignals::IAISignalExtraData *pData, bool bWaitOpOnly) const
 {
 	CRY_ASSERT(szSignal && szSignal[0]);
 
@@ -1799,12 +1821,13 @@ bool CHitDeathReactions::SendAISignal(const char* szSignal, IAISignalExtraData *
 	{
 		if (!bWaitOpOnly)
 		{
-			gEnv->pAISystem->SendSignal(SIGNALFILTER_SENDER, 0, szSignal, pAI, pData);
+			const AISignals::SignalSharedPtr pSignal = gEnv->pAISystem->GetSignalManager()->CreateSignal_DEPRECATED(AISIGNAL_INCLUDE_DISABLED, szSignal, pAI->GetEntityID(), pData);
+			gEnv->pAISystem->SendSignal(AISignals::ESignalFilter::SIGNALFILTER_SENDER, pSignal);
 			bResult = true;
 		}
 		else if (IAIActor *pAIActor = CastToIAIActorSafe(pAI))
 		{
-			pAIActor->SetSignal(AISIGNAL_NOTIFY_ONLY, szSignal, m_actor.GetEntity(), pData);
+			pAIActor->SetSignal(gEnv->pAISystem->GetSignalManager()->CreateSignal_DEPRECATED(AISIGNAL_NOTIFY_ONLY, szSignal, m_actor.GetEntity()->GetId(), pData));
 			bResult = true;
 		}
 	}

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -49,22 +49,23 @@ public:
 	void add(int value, const char* name, const char* label = "")
 	{
 		base_.add(value, name, label);
+		nameToValue_[name] = value;
 	}
 
 	void addAlias(int value, const char* alias)
 	{
-		aliasToValue_[alias] = value;
+		nameToValue_[alias] = value;
 	}
 
 	bool serializeInt(yasli::Archive& ar, int& value, const char* name, const char* label) const
 	{
-		if (!aliasToValue_.empty() && ar.isInput() && !ar.isInPlace() && !ar.isEdit())
+		if (ar.isInput() && !ar.isInPlace() && !ar.isEdit())
 		{
 			string str;
 			if (ar(str, name, label))
 			{
-				auto it = aliasToValue_.find(str);
-				if (it != aliasToValue_.end())
+				auto it = nameToValue_.find(str.c_str());
+				if (it != nameToValue_.end())
 				{
 					value = it->second;
 					return true;
@@ -86,9 +87,15 @@ public:
 	}
 
 private:
+
+	struct LessStrCmpi
+	{
+		bool operator()(const char* l, const char* r) const { return strcmpi(l, r) < 0; }
+	};
+	typedef std::map<cstr, int, LessStrCmpi> NameToValue;
+
 	yasli::EnumDescription& base_;
-	typedef std::map<cstr, int, yasli::LessStrCmp> NameToValue;
-	NameToValue             aliasToValue_;
+	NameToValue             nameToValue_;
 };
 
 // Helper object for tracking enum names and values
@@ -205,8 +212,7 @@ cstr getEnumLabel(Enum val)
 // EnumAliasDescription createad on first call to Serialize.
 // Serialization will only work if called from the same namespace.
 
-#define SERIALIZATION_ENUM_DECLARE(Enum, sizespec, ...)                                           \
-  enum class Enum sizespec { __VA_ARGS__ };                                                       \
+#define SERIALIZATION_ENUM_IMPLEMENT(Enum, ...)                                                   \
   inline Serialization::EnumAliasDescription& makeEnumDescription(Enum*) {                        \
     static Serialization::EnumAliasDescription desc(yasli::getEnumDescription<Enum>());           \
     static char enum_str[] = # __VA_ARGS__;                                                       \
@@ -217,9 +223,10 @@ cstr getEnumLabel(Enum val)
     return makeEnumDescription(&value).serialize(ar, value, name, label);                         \
   }                                                                                               \
 
-// Legacy macros
-#define SERIALIZATION_DECLARE_ENUM(Enum, ...)     \
-  SERIALIZATION_ENUM_DECLARE(Enum, , __VA_ARGS__) \
+#define SERIALIZATION_ENUM_DECLARE(Enum, Base, ...)                                               \
+  enum class Enum Base { __VA_ARGS__ };                                                           \
+  SERIALIZATION_ENUM_IMPLEMENT(Enum, __VA_ARGS__)                                                 \
 
-#define SERIALIZATION_ENUM_DEFINE SERIALIZATION_ENUM_DECLARE
-#define SERIALIZATION_ENUM_IMPLEMENT(Enum)
+// Legacy macros
+#define SERIALIZATION_ENUM_DEFINE               SERIALIZATION_ENUM_DECLARE
+#define SERIALIZATION_DECLARE_ENUM(Enum, ...)   SERIALIZATION_ENUM_DECLARE(Enum, , __VA_ARGS__)

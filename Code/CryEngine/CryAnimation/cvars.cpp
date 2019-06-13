@@ -1,8 +1,9 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "cvars.h"
 #include <CrySerialization/Enum.h>
+
 //need global var as the singleton approach is too expensive
 Console g_Consoleself;
 namespace
@@ -13,6 +14,7 @@ int g_ConsoleInstanceCount;
 Console::Console()
 	: ca_CharEditModel(nullptr)
 	, ca_FilterJoints(nullptr)
+	, ca_DebugCommandBufferFilter(nullptr)
 {
 	if (g_ConsoleInstanceCount++)
 		abort();
@@ -114,12 +116,16 @@ void Console::Init()
 #ifndef _RELEASE
 	REGISTER_CVAR(ca_DebugAnimUsageOnFileAccess, 0, 0, "shows what animation assets are used in the level, triggered by key fileAccess events");
 	REGISTER_CVAR(ca_AttachmentTextureMemoryBudget, 100, 0, "texture budget for e_debugdraw 20 - in megabytes");
+	
+	REGISTER_CVAR(ca_debug_attachmentManager_maxUsedMemSize, 0, VF_NULL, "shows how many elements the memory vector of the AttachmentManager held at most");
+	REGISTER_CVAR(ca_debug_attachmentManager_maxUsedOffsetSize, 0, VF_NULL, "shows how many elements the offsets vector of the AttachmentManager held at most");
 #endif
 
 	ca_CharEditModel = "objects/characters/human/sdk_player/sdk_player.cdf";
 	REGISTER_STRING("ca_CharEditModel", ca_CharEditModel, VF_NULL, "");
 	REGISTER_STRING("ca_FilterJoints", ca_FilterJoints, VF_NULL, "");
 	REGISTER_STRING("ca_DrawPose", NULL, VF_NULL, "");
+	REGISTER_CVAR2("ca_DebugCommandBufferFilter", &ca_DebugCommandBufferFilter, "", VF_NULL, "Limits the command buffer debug output to a cdf containing the given string.");
 	assert(this);
 
 	DefineConstIntCVar(ca_DrawAllSimulatedSockets, 0, VF_CHEAT, "if set to 1, the own bounding box of the character is drawn");
@@ -135,8 +141,6 @@ void Console::Init()
 	DefineConstIntCVar(ca_DrawBinormals, 0, VF_CHEAT, "draws the binormals of the rendered character");
 	DefineConstIntCVar(ca_DrawNormals, 0, VF_CHEAT, "draws the normals of the rendered character");
 	DefineConstIntCVar(ca_DrawAttachments, 1, VF_CHEAT, "if this is 0, will not draw the attachments objects");
-	DefineConstIntCVar(ca_DrawAttachmentsMergedForShadows, 1, VF_REQUIRE_APP_RESTART, "if this is 1 we merge attachments for shadow generation");
-	REGISTER_CVAR(ca_AttachmentMergingMemoryBudget, 25 * 1024 * 1024, VF_NULL, "amount of memory (in bytes) dedicated to merged character attachments");
 	DefineConstIntCVar(ca_DrawAttachmentOBB, 0, VF_CHEAT, "if this is 0, will not draw the attachments objects");
 	DefineConstIntCVar(ca_DrawAttachmentProjection, 0, VF_CHEAT, "if this is 0, will not draw the attachment projections");
 	DefineConstIntCVar(ca_DrawBaseMesh, 1, VF_CHEAT, "if this is 0, will not draw the characters");
@@ -150,6 +154,7 @@ void Console::Init()
 	ca_DebugTextLayer = 0xffffffff;
 	DefineConstIntCVar(ca_DebugCommandBuffer, 0, VF_CHEAT | VF_DUMPTODISK, "if this is 1, it will print the amount of commands for the blend-buffer");
 	DefineConstIntCVar(ca_DebugAnimationStreaming, 0, VF_CHEAT | VF_DUMPTODISK, "if this is 1, then it shows what animations are streamed in");
+	DefineConstIntCVar(ca_DebugAttachmentsProxies, 0, 0, "draw characters attachments proxies: 0 - disabled; 1 - dynamic proxies; 2 - auxiliary proxies; 4 - cloth proxies; 8 - ragdoll proxies");
 	DefineConstIntCVar(ca_LoadUncompressedChunks, 0, VF_CHEAT, "If this 1, then uncompressed chunks prefer compressed while loading");
 	DefineConstIntCVar(ca_UseMorph, 1, VF_CHEAT, "the morph skinning step is skipped (it's part of overall skinning during rendering)");
 	DefineConstIntCVar(ca_NoAnim, 0, VF_CHEAT, "the animation isn't updated (the characters remain in the same pose)");
@@ -172,7 +177,13 @@ void Console::Init()
 	DefineConstIntCVar(ca_DebugModelCache, 0, VF_CHEAT, "shows what models are currently loaded and how much memory they take");
 	DefineConstIntCVar(ca_ReloadAllCHRPARAMS, 0, VF_CHEAT, "reload all CHRPARAMS");
 	DefineConstIntCVar(ca_DebugAnimUpdates, 0, VF_CHEAT, "shows the amount of skeleton-updates");
-	DefineConstIntCVar(ca_DebugAnimUsage, 0, VF_CHEAT, "shows what animation assets are used in the level");
+	DefineConstIntCVar(ca_DebugAnimUsage, 0, VF_CHEAT, "shows what animation assets are used in the level (bitmask)"
+                       "\n BIT 0 - Display general information"
+                       "\n BIT 1 - Display CAF files used"
+                       "\n BIT 2 - Dump CAF files used to console (bit will be reset after use)"
+                       "\n BIT 3 - Display BlendSpaces used"
+                       "\n BIT 4 - Dump BlendSpaces used to console (bit will be reset after use)"
+                      );
 	DefineConstIntCVar(ca_StoreAnimNamesOnLoad, 0, VF_CHEAT, "stores the names of animations during load to allow name lookup for debugging");
 	DefineConstIntCVar(ca_DumpUsedAnims, 0, VF_CHEAT, "writes animation asset statistics to the disk");
 	DefineConstIntCVar(ca_AnimWarningLevel, 3, VF_CHEAT | VF_DUMPTODISK,
@@ -181,6 +192,7 @@ void Console::Init()
 	                   "If set to 1, will prevent models from unloading from memory\nupon destruction of the last referencing character");
 	// if this is not empty string, the animations of characters with the given model will be logged
 	DefineConstIntCVar(ca_DebugSkeletonEffects, 0, VF_CHEAT, "If true, dump log messages when skeleton effects are handled.");
+	DefineConstIntCVar(ca_SkeletonEffectsPlayAudioInEngine, 0, VF_CHEAT, "If true, skeleton audio effects are spawned and played within CE. Otherwise, audio events have to be handled by game code (as it has been done historically).");
 	DefineConstIntCVar(ca_lipsync_phoneme_offset, 20, VF_CHEAT, "Offset phoneme start time by this value in milliseconds");
 	DefineConstIntCVar(ca_lipsync_phoneme_crossfade, 70, VF_CHEAT, "Cross fade time between phonemes in milliseconds");
 	DefineConstIntCVar(ca_eyes_procedural, 1, 0, "Enables/Disables procedural eyes animation");
@@ -191,8 +203,8 @@ void Console::Init()
 	DefineConstIntCVar(ca_DebugADIKTargets, 0, VF_CHEAT, "If 1, then it will show if there are animation-driven IK-Targets for this model.");
 	DefineConstIntCVar(ca_SaveAABB, 0, 0, "if the AABB is invalid, replace it by the default AABB");
 	DefineConstIntCVar(ca_DebugCriticalErrors, 0, VF_CHEAT, "if 1, then we stop with a Fatal-Error if we detect a serious issue");
-	DefineConstIntCVar(ca_UseIMG_CAF, 1, VF_CHEAT, "if 1, then we use the IMG file. In development mode it is suppose to be off");
-	DefineConstIntCVar(ca_UseIMG_AIM, 1, VF_CHEAT, "if 1, then we use the IMG file. In development mode it is suppose to be off");
+	DefineConstIntCVar(ca_UseIMG_CAF, 0, VF_CHEAT, "if 1, then we use the IMG file. In development mode it is suppose to be off");
+	DefineConstIntCVar(ca_UseIMG_AIM, 0, VF_CHEAT, "if 1, then we use the IMG file. In development mode it is suppose to be off");
 	DefineConstIntCVar(ca_UnloadAnimationCAF, 1, VF_DUMPTODISK, "unloading streamed CAFs as soon as they are not used");
 	DefineConstIntCVar(ca_UnloadAnimationDBA, 1, VF_NULL, "if 1, then unload DBA if not used");
 	DefineConstIntCVar(ca_MinInPlaceCAFStreamSize, 128 * 1024, VF_CHEAT, "min size a caf should be for in-place streaming");
@@ -200,6 +212,9 @@ void Console::Init()
 	DefineConstIntCVar(ca_SerializeSkeletonAnim, 0, VF_CHEAT, "Turn on CSkeletonAnim Serialization.");
 	DefineConstIntCVar(ca_AllowMultipleEffectsOfSameName, 1, VF_CHEAT, "Allow a skeleton animation to spawn more than one instance of an effect with the same name on the same instance.");
 	DefineConstIntCVar(ca_UseAssetDefinedLod, 0, VF_CHEAT, "Lowers render LODs for characters with respect to \"consoles_lod0\" UDP. Requires characters to be reloaded.");
+	DefineConstIntCVar(ca_ForceAnimationLod, -1, VF_CHEAT, "Forces a specific LOD to be used for animation updates."
+						"\n-1    - don't force any lod, use the lod system (default)"
+						"\n 0..n - animation lod level");
 	DefineConstIntCVar(ca_Validate, 0, VF_CHEAT, "if set to 1, will run validation on animation data");
 	// animation transition interpolation mode
 	REGISTER_COMMAND("ca_DefaultTransitionInterpolationType", (ConsoleCommandFunc)CADefaultTransitionInterpolationType, VF_CHEAT, "changes transition interpolation method.");
@@ -227,6 +242,14 @@ void Console::Init()
 	DefineConstIntCVar(ca_DisableAnimationUnloading, 0, VF_NULL, "Disable Animation Unloading.");
 
 	DefineConstIntCVar(ca_PreloadAllCAFs, 0, VF_NULL, "Preload all CAFs during level preloading.");
+
+	DefineConstIntCVar(ca_MinAttachmentMemorySize, 4096, VF_NULL, "Default reservation size of the memory vector in the AttachmentManager");
+	DefineConstIntCVar(ca_MinAttachmentOffsetSize, 4096, VF_NULL, "Default reservation size of the offsets vector in the AttachmentManager");
+
+	// Quasi static animation optimization
+	DefineConstIntCVar(ca_CullQuasiStaticAnimationUpdates, 0, VF_NULL, "Drops the animation updates of objects marked as 'quasi-static' when they sleep");
+	DefineConstIntCVar(ca_DebugQuasiStaticAnimationCulling, 0, VF_NULL, "Whether to display debug information about what updates are being culled.");
+	DefineConstIntCVar(ca_QuasiStaticAnimationSleepTimeoutMs, 2500, VF_NULL, "How much to wait (ms) before sleeping on quasi-static objects.");
 
 	// vars in console .cfgs
 	REGISTER_CVAR(ca_DrawVEGInfo, 0.0f, VF_CHEAT, "if set to 1, the VEG debug info is drawn");
@@ -259,10 +282,14 @@ void Console::Init()
 	REGISTER_CVAR(ca_MotionBlurMovementThreshold, 0.0f, 0, "\"advanced\" Set motion blur movement threshold for discarding skinned object");
 
 	REGISTER_CVAR(ca_DeathBlendTime, 0.3f, VF_CHEAT, "Specifies the blending time between low-detail dead body skeleton and current skeleton");
+	REGISTER_CVAR(ca_OverrideBlendWeightSimulatedSockets, 1.0f, 0, "Override helper joint value for blending between socket simulation and animation pose\n 0.0 - full animation\n 1.0 - full simulation (override disabled)");
 	REGISTER_CVAR(ca_lipsync_vertex_drag, 1.2f, VF_CHEAT, "Vertex drag coefficient when blending morph targets");
 	REGISTER_CVAR(ca_lipsync_phoneme_strength, 1.0f, 0, "LipSync phoneme strength");
 	REGISTER_CVAR(ca_AttachmentCullingRation, 200.0f, 0, "ration between size of attachment and distance to camera");
 	REGISTER_CVAR(ca_AttachmentCullingRationMP, 300.0f, 0, "ration between size of attachment and distance to camera for MP");
+
+	// vcloth
+	REGISTER_CVAR(ca_VClothMode, 1, 0, "0 - disabled (disable rendering & simulation)\n1 - enabled (default)\n2 - force skinning (disable simulation)");
 
 	//cloth
 	REGISTER_CVAR(ca_cloth_max_timestep, 0.0f, 0, "");
@@ -277,12 +304,14 @@ void Console::Init()
 	REGISTER_CVAR(ca_FacialAnimationRadius, 30.f, VF_CHEAT, "Maximum distance at which facial animations are updated - handles zooming correctly");
 
 	//sampling
+	REGISTER_CVAR(ca_ResetCulledJointsToBindPose, 1, 0, "Specifies whether culled joints should be reset to bind pose or preserve their transform from last evaluated frame (0 = preserve, 1 = reset).");
 	DefineConstIntCVar(ca_SampleQuatHemisphereFromCurrentPose, 0, VF_NULL, "For override animation sampling, use current pose for quat hemisphere sign");
 
 	DefineConstIntCVar(ca_DrawCloth, 1, VF_CHEAT, "bitfield: 2 shows particles, 4 shows proxies, 6 shows both");
 	DefineConstIntCVar(ca_ClothBlending, 1, VF_CHEAT, "if this is 0 blending with animation is disabled");
 	DefineConstIntCVar(ca_ClothBypassSimulation, 0, VF_CHEAT, "if this is 0 actual cloth simulation is disabled (wrap skinning still works)");
 	DefineConstIntCVar(ca_ClothMaxChars, 20, VF_CHEAT, "max characters with cloth on screen");
+	REGISTER_INT("ca_ClothForceSkinningAfterNFrames", 3, 0, "safety mechanism: if framerate falls below threshold for n-frames, skinning is forced to avoid performance issues");
 
 }
 

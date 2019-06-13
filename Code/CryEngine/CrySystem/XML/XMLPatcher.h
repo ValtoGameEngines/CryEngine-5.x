@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   XMLPatcher.h
@@ -12,12 +12,17 @@
 
 #ifndef __XML_PATCHER_HEADER__
 #define __XML_PATCHER_HEADER__
+#pragma once
+
+#include <CrySystem/XML/IXml.h>
 
 #if CRY_PLATFORM_WINDOWS && !defined(_RELEASE)
 	#define DATA_PATCH_DEBUG 1
 #else
 	#define DATA_PATCH_DEBUG 0
 #endif
+
+struct ICVar;
 
 class CXMLPatcher
 {

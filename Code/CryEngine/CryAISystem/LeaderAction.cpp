@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    -------------------------------------------------------------------------
@@ -31,7 +31,6 @@
 #include <CrySystem/IConsole.h>
 #include <CryNetwork/ISerialize.h>
 #include "AICollision.h"
-#include "HideSpot.h"
 
 const float CLeaderAction_Attack::m_CSearchDistance = 30.f;
 
@@ -160,9 +159,11 @@ void CLeaderAction::CheckNavType(CAIActor* pMember, bool bSignal)
 	IAISystem::ENavigationType navType = gAIEnv.pNavigation->CheckNavigationType(pMember->GetPos(), building, m_NavProperties);
 	if (navType != m_currentNavType && bSignal)
 	{
-		IAISignalExtraData* pData = GetAISystem()->CreateSignalExtraData();
+		AISignals::IAISignalExtraData* pData = GetAISystem()->CreateSignalExtraData();
 		pData->iValue = navType;
-		GetAISystem()->SendSignal(SIGNALFILTER_SENDER, 1, "OnNavTypeChanged", pMember, pData);
+
+		const AISignals::SignalSharedPtr pSignal = GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnNavTypeChanged_DEPRECATED(), pMember->GetEntityID(), pData);
+		GetAISystem()->SendSignal(AISignals::SIGNALFILTER_SENDER, pSignal);
 
 		CCCPOINT(CLeaderAction_CheckNavType);
 	}
@@ -228,7 +229,7 @@ void CLeaderAction::CheckLeaderDistance() const
 				float dist2 = Distance::Point_PointSq(pUnitActor->GetPos(), pAILeader->GetPos());
 				if (dist2 > maxdist2 && !unitItr->IsFar())
 				{
-					pUnitActor->SetSignal(1, "OnLeaderTooFar", (IEntity*)(pAILeader->GetAssociation().GetAIObject()), 0, gAIEnv.SignalCRCs.m_nOnLeaderTooFar);
+					pUnitActor->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnLeaderTooFar_DEPRECATED(), pAILeader->GetAssociation().GetAIObject()->GetEntityID()));
 					unitItr->SetFar();
 				}
 				else
@@ -248,7 +249,6 @@ CLeaderAction_Search::CLeaderAction_Search(CLeader* pLeader, const LeaderActionP
 
 	m_eActionType = LA_SEARCH;
 	m_iSearchSpotAIObjectType = params.iValue ? params.iValue : AIANCHOR_COMBAT_HIDESPOT;
-	m_bUseHideSpots = (m_iSearchSpotAIObjectType & AI_USE_HIDESPOTS) != 0;
 	m_iSearchSpotAIObjectType &= ~AI_USE_HIDESPOTS;
 
 	m_unitProperties = params.unitProperties;
@@ -369,42 +369,6 @@ void CLeaderAction_Search::PopulateSearchSpotList(Vec3& initPos)
 		}
 	}
 
-	if (m_bUseHideSpots)
-	{
-		TUnitList::iterator itu = GetUnitsList().begin();
-		if (itu != itEnd)
-		{
-			CUnitImg& unit = *itu;
-			const CAIActor* pActor = unit.m_refUnit.GetAIObject();
-
-			MultimapRangeHideSpots hidespots;
-			MapConstNodesDistance traversedNodes;
-			GetAISystem()->GetHideSpotsInRange(hidespots, traversedNodes, m_vEnemyPos, m_fSearchDistance,
-			                                   pActor->m_movementAbility.pathfindingProperties.navCapMask, pActor->GetParameters().m_fPassRadius, false);
-
-			MultimapRangeHideSpots::iterator it = hidespots.begin(), ithend = hidespots.end();
-			for (; it != ithend; ++it)
-			{
-				float distance = it->first;
-				const SHideSpot& hs = it->second;
-				Vec3 pos(hs.info.pos);
-				if (hs.info.type == SHideSpotInfo::eHST_TRIANGULAR && hs.pObstacle)
-				{
-					Vec3 dir = (pos - m_vEnemyPos).GetNormalizedSafe();
-					pos += dir * (hs.pObstacle->fApproxRadius + 0.5f + 2 * pActor->m_movementAbility.pathRadius);
-				}
-				if (!bCleared)
-				{
-					// clear the list only if some new spots are actually found around new init position
-					m_HideSpots.clear();
-					bCleared = true;
-				}
-				m_HideSpots.insert(std::make_pair(distance * distance, SSearchPoint(pos, -hs.info.dir, true)));
-			}
-
-		}
-	}
-
 	if (!m_vEnemyPos.IsZero())
 	{
 		// add at least one point
@@ -431,11 +395,11 @@ CLeaderAction_Search::~CLeaderAction_Search()
 {
 }
 
-bool CLeaderAction_Search::ProcessSignal(const AISIGNAL& signal)
+bool CLeaderAction_Search::ProcessSignal(const AISignals::SignalSharedPtr pSignal)
 {
-	IEntity* pEntity = gEnv->pEntitySystem->GetEntity(signal.senderID);
+	IEntity* pEntity = gEnv->pEntitySystem->GetEntity(pSignal->GetSenderID());
 
-	if (signal.Compare(gAIEnv.SignalCRCs.m_nOnUnitMoving))
+	if (pSignal->GetSignalDescription() == GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnUnitMoving_DEPRECATED())
 	{
 		CAIActor* pUnit = CastToCAIActorSafe(pEntity->GetAI());
 		if (pUnit)
@@ -457,7 +421,7 @@ bool CLeaderAction_Search::ProcessSignal(const AISIGNAL& signal)
 		}
 		return true;
 	}
-	else if (signal.Compare(gAIEnv.SignalCRCs.m_nOnUnitStop))
+	else if (pSignal->GetSignalDescription() == GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnUnitStop_DEPRECATED())
 	{
 		// unit can't reach an assigned hidespot
 		CAIActor* pUnit = CastToCAIActorSafe(pEntity->GetAI());
@@ -480,7 +444,7 @@ bool CLeaderAction_Search::ProcessSignal(const AISIGNAL& signal)
 		}
 		return true;
 	}
-	else if (signal.Compare(gAIEnv.SignalCRCs.m_nOnUnitDamaged) || signal.Compare(gAIEnv.SignalCRCs.m_nAIORD_SEARCH))
+	else if (pSignal->GetSignalDescription() == GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnUnitDamaged_DEPRECATED() || pSignal->GetSignalDescription() == GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnOrdSearch_DEPRECATED())
 	{
 		CAIActor* pUnit = CastToCAIActorSafe(pEntity->GetAI());
 		if (pUnit)
@@ -497,10 +461,10 @@ bool CLeaderAction_Search::ProcessSignal(const AISIGNAL& signal)
 						break;
 					}
 				//create new spot
-				if (signal.pEData)
+				if (pSignal->GetExtraData())
 				{
 					m_pLeader->ClearAllPlannings();
-					PopulateSearchSpotList(signal.pEData->point);
+					PopulateSearchSpotList(pSignal->GetExtraData()->point);
 				}
 			}
 
@@ -512,7 +476,7 @@ bool CLeaderAction_Search::ProcessSignal(const AISIGNAL& signal)
 
 CLeaderAction::eActionUpdateResult CLeaderAction_Search::Update()
 {
-	FRAME_PROFILER("CLeaderAction_Attack::CLeaderAction_Search", GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (m_HideSpots.empty())
 	{
@@ -544,7 +508,7 @@ CLeaderAction::eActionUpdateResult CLeaderAction_Search::Update()
 			// find cover fire units first
 			if (m_iCoverUnitsLeft > 0 && (unit.GetProperties() & m_CCoverUnitProperties))
 			{
-				AISignalExtraData data;
+				AISignals::AISignalExtraData data;
 				data.point = m_vEnemyPos;
 				data.point2 = m_pLeader->GetAIGroup()->GetAveragePosition(IAIGroup::AVMODE_PROPERTIES, m_unitProperties);
 				CUnitAction* pAction = new CUnitAction(UA_SIGNAL, true, "ORDER_COVER_SEARCH", data);
@@ -556,7 +520,6 @@ CLeaderAction::eActionUpdateResult CLeaderAction_Search::Update()
 			}
 			else // search units
 			{
-				Vec3 unitPos(unit.m_refUnit.GetAIObject()->GetPos());
 				TPointMap::iterator oit = m_HideSpots.begin(), oend = m_HideSpots.end();
 				Vec3 obstaclePos(ZERO);
 				TPointMap::iterator itFound = oend;
@@ -633,10 +596,11 @@ CLeaderAction_Attack::CLeaderAction_Attack()
 
 CLeaderAction_Attack::~CLeaderAction_Attack()
 {
-	GetAISystem()->SendSignal(SIGNALFILTER_GROUPONLY, 1, "OnFireDisabled", m_pLeader);
+	const AISignals::SignalSharedPtr pSignal = GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnFireDisabled_DEPRECATED(), m_pLeader->GetEntityID());
+	GetAISystem()->SendSignal(AISignals::ESignalFilter::SIGNALFILTER_GROUPONLY, pSignal);
 }
 
-bool CLeaderAction_Attack::ProcessSignal(const AISIGNAL& signal)
+bool CLeaderAction_Attack::ProcessSignal(const AISignals::SignalSharedPtr pSignal)
 {
 	return false;
 }
@@ -753,10 +717,11 @@ void CLeaderAction_Attack_SwitchPositions::CheckNavType(CUnitImg& unit)
 		{
 			CCCPOINT(CLeaderAction_Attack_SwitchPositions_CheckNavType_A);
 
-			IAISignalExtraData* pData = GetAISystem()->CreateSignalExtraData();
+			AISignals::IAISignalExtraData* pData = GetAISystem()->CreateSignalExtraData();
 			pData->iValue = navType;
 			pData->iValue2 = targetNavType;
-			GetAISystem()->SendSignal(SIGNALFILTER_SENDER, 1, "OnNavTypeChanged", pMember, pData);
+			const AISignals::SignalSharedPtr pSignal = GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnNavTypeChanged_DEPRECATED(), pMember->GetEntityID(), pData);
+			GetAISystem()->SendSignal(AISignals::ESignalFilter::SIGNALFILTER_SENDER, pSignal);
 		}
 		tData.navType = navType;
 	}
@@ -768,10 +733,11 @@ void CLeaderAction_Attack_SwitchPositions::CheckNavType(CUnitImg& unit)
 		{
 			CCCPOINT(CLeaderAction_Attack_SwitchPositions_CheckNavType_B);
 
-			IAISignalExtraData* pData = GetAISystem()->CreateSignalExtraData();
+			AISignals::IAISignalExtraData* pData = GetAISystem()->CreateSignalExtraData();
 			pData->iValue = navType;
 			pData->iValue2 = targetNavType;
-			GetAISystem()->SendSignal(SIGNALFILTER_SENDER, 1, "OnTargetNavTypeChanged", pMember, pData);
+			const AISignals::SignalSharedPtr pSignal = GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnNavTypeChanged_DEPRECATED(), pMember->GetEntityID(), pData);
+			GetAISystem()->SendSignal(AISignals::ESignalFilter::SIGNALFILTER_SENDER, pSignal);
 		}
 		tData.targetNavType = targetNavType;
 	}
@@ -839,7 +805,6 @@ void CLeaderAction_Attack_SwitchPositions::UpdatePointList(CAIObject* pTarget)
 		QueryEventMap queryEvents;
 		gAIEnv.pSmartObjectManager->TriggerEvent("CheckTargetNear", pTargetEntity, pDummyEntity, &queryEvents);
 
-		CAIObject* pFormationOwner = m_pLeader->GetFormationOwner().GetAIObject();
 		int size = m_PointProperties.size();
 
 		const QueryEventMap::const_iterator itEnd = queryEvents.end();
@@ -904,13 +869,13 @@ void CLeaderAction_Attack_SwitchPositions::UpdatePointList(CAIObject* pTarget)
 }
 //
 //----------------------------------------------------------------------------------------------------
-bool CLeaderAction_Attack_SwitchPositions::ProcessSignal(const AISIGNAL& signal)
+bool CLeaderAction_Attack_SwitchPositions::ProcessSignal(const AISignals::SignalSharedPtr pSignal)
 {
 	CCCPOINT(CLeaderAction_Attack_SwitchPositions_ProcessSignal);
 
-	IEntity* pSenderEntity = gEnv->pEntitySystem->GetEntity(signal.senderID);
+	IEntity* pSenderEntity = gEnv->pEntitySystem->GetEntity(pSignal->GetSenderID());
 
-	if (signal.Compare(gAIEnv.SignalCRCs.m_nOnFormationPointReached))
+	if (pSignal->GetSignalDescription() == GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnFormationPointReached_DEPRECATED())
 	{
 		CCCPOINT(CLeaderAction_Attack_SwitchPositions_ProcessSignal_A);
 		CAIObject* pUnit;
@@ -923,9 +888,9 @@ bool CLeaderAction_Attack_SwitchPositions::ProcessSignal(const AISIGNAL& signal)
 		}
 		return true;
 	}
-	else if (signal.Compare(gAIEnv.SignalCRCs.m_nAIORD_ATTACK))
+	else if (pSignal->GetSignalDescription() == GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnOrderAttack_DEPRECATED())
 	{
-		if (signal.pEData && static_cast<ELeaderActionSubType>(signal.pEData->iValue) == m_eActionSubType)
+		if (pSignal->GetExtraData() && static_cast<ELeaderActionSubType>(pSignal->GetExtraData()->iValue) == m_eActionSubType)
 		{
 			// unit is requesting this tactic which is active already,
 			// just give him instructions to go
@@ -953,7 +918,7 @@ bool CLeaderAction_Attack_SwitchPositions::ProcessSignal(const AISIGNAL& signal)
 			return true;
 		}
 	}
-	else if (signal.Compare(gAIEnv.SignalCRCs.m_nOnRequestUpdate))
+	else if (pSignal->GetSignalDescription() == GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnRequestUpdate_DEPRECATED())
 	{
 		CAIObject* pUnit;
 		if (pSenderEntity && (pUnit = (CAIObject*)(pSenderEntity->GetAI())))
@@ -974,11 +939,11 @@ bool CLeaderAction_Attack_SwitchPositions::ProcessSignal(const AISIGNAL& signal)
 					itUnit->m_TagPoint = ZERO;
 					itUnit->SetMoving();
 
-					if (signal.pEData)
+					if (pSignal->GetExtraData())
 					{
-						GetBaseSearchPosition(*itUnit, pTarget, signal.pEData->iValue, signal.pEData->fValue);
-						if (signal.pEData->iValue2 > 0)
-							itUnit->m_fDistance2 = (float)signal.pEData->iValue2;
+						GetBaseSearchPosition(*itUnit, pTarget, pSignal->GetExtraData()->iValue, pSignal->GetExtraData()->fValue);
+						if (pSignal->GetExtraData()->iValue2 > 0)
+							itUnit->m_fDistance2 = (float)pSignal->GetExtraData()->iValue2;
 
 					}
 				}
@@ -986,7 +951,7 @@ bool CLeaderAction_Attack_SwitchPositions::ProcessSignal(const AISIGNAL& signal)
 		}
 		return true;
 	}
-	else if (signal.Compare(gAIEnv.SignalCRCs.m_nOnRequestUpdateAlternative))
+	else if (pSignal->GetSignalDescription() == GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnRequestUpdateAlternative_DEPRECATED())
 	{
 		CAIObject* pUnit;
 		if (pSenderEntity && (pUnit = (CAIObject*)(pSenderEntity->GetAI())))
@@ -1007,17 +972,17 @@ bool CLeaderAction_Attack_SwitchPositions::ProcessSignal(const AISIGNAL& signal)
 					itUnit->m_TagPoint = ZERO;
 					itUnit->SetMoving();
 
-					if (signal.pEData)
+					if (pSignal->GetExtraData())
 					{
-						m_ActorForbiddenSpotManager.AddSpot(GetWeakRef(pAIActor), signal.pEData->point);
-						GetBaseSearchPosition(*itUnit, pTarget, signal.pEData->iValue, signal.pEData->fValue);
+						m_ActorForbiddenSpotManager.AddSpot(GetWeakRef(pAIActor), pSignal->GetExtraData()->point);
+						GetBaseSearchPosition(*itUnit, pTarget, pSignal->GetExtraData()->iValue, pSignal->GetExtraData()->fValue);
 					}
 				}
 			}
 		}
 		return true;
 	}
-	else if (signal.Compare(gAIEnv.SignalCRCs.m_nOnClearSpotList))
+	else if (pSignal->GetSignalDescription() == GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnClearSpotList_DEPRECATED())
 	{
 		CAIObject* pUnit;
 		if (pSenderEntity && (pUnit = (CAIObject*)(pSenderEntity->GetAI())))
@@ -1031,7 +996,7 @@ bool CLeaderAction_Attack_SwitchPositions::ProcessSignal(const AISIGNAL& signal)
 		}
 		return true;
 	}
-	else if (signal.Compare(gAIEnv.SignalCRCs.m_nOnRequestUpdateTowards))
+	else if (pSignal->GetSignalDescription() == GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnRequestUpdateTowards_DEPRECATED())
 	{
 		CAIObject* pUnit;
 		if (pSenderEntity && (pUnit = (CAIObject*)(pSenderEntity->GetAI())))
@@ -1050,17 +1015,17 @@ bool CLeaderAction_Attack_SwitchPositions::ProcessSignal(const AISIGNAL& signal)
 
 					itUnit->ClearFollowing();
 					itUnit->SetMoving();
-					if (signal.pEData)
+					if (pSignal->GetExtraData())
 					{
-						if (signal.pEData->iValue) // unit is asking for a particular direction
-							itUnit->m_Group = signal.pEData->iValue;
+						if (pSignal->GetExtraData()->iValue) // unit is asking for a particular direction
+							itUnit->m_Group = pSignal->GetExtraData()->iValue;
 					}
 				}
 			}
 		}
 		return true;
 	}
-	else if (signal.Compare(gAIEnv.SignalCRCs.m_nOnCheckDeadTarget))
+	else if (pSignal->GetSignalDescription() == GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnCheckDeadTarget_DEPRECATED())
 	{
 		CAIObject* pUnit;
 		if (pSenderEntity && (pUnit = (CAIObject*)(pSenderEntity->GetAI())))
@@ -1069,9 +1034,9 @@ bool CLeaderAction_Attack_SwitchPositions::ProcessSignal(const AISIGNAL& signal)
 			if (pPiper)
 			{
 				CAIObject* pTarget = NULL;
-				if (signal.pEData)
+				if (pSignal->GetExtraData())
 				{
-					IEntity* pTargetEntity = gEnv->pEntitySystem->GetEntity((EntityId)signal.pEData->nID.n);
+					IEntity* pTargetEntity = gEnv->pEntitySystem->GetEntity((EntityId)pSignal->GetExtraData()->nID.n);
 					if (pTargetEntity)
 						pTarget = (CAIObject*) pTargetEntity->GetAI();
 				}
@@ -1107,19 +1072,19 @@ bool CLeaderAction_Attack_SwitchPositions::ProcessSignal(const AISIGNAL& signal)
 				{
 					CCCPOINT(CLeaderAction_Attack_SwitchPositions_ProcessSignal_OCDT);
 
-					IAISignalExtraData* pData = GetAISystem()->CreateSignalExtraData();
+					AISignals::IAISignalExtraData* pData = GetAISystem()->CreateSignalExtraData();
 					pData->nID = pTarget->GetEntityID();
-					pInvestigator->SetSignal(0, "OnCheckDeadBody", pInvestigator->GetEntity(), pData, gAIEnv.SignalCRCs.m_nOnCheckDeadBody);
+					pInvestigator->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_INCLUDE_DISABLED, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnCheckDeadBody_DEPRECATED(), pInvestigator->GetEntityID(), pData));
 				}
 				else
-					pPiper->SetSignal(0, "OnNoGroupTarget", 0, 0, gAIEnv.SignalCRCs.m_nOnNoGroupTarget);
+					pPiper->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_INCLUDE_DISABLED, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnNoGroupTarget_DEPRECATED()));
 			}
 		}
 		return true;
 	}
-	else if (signal.Compare(gAIEnv.SignalCRCs.m_nAddDangerPoint))
+	else if (pSignal->GetSignalDescription() == GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnAddDangerPoint_DEPRECATED())
 	{
-		IAISignalExtraData* pData = signal.pEData;
+		AISignals::IAISignalExtraData* pData = pSignal->GetExtraData();
 		if (pData)
 		{
 			Vec3 dpoint = pData->point;
@@ -1155,21 +1120,21 @@ bool CLeaderAction_Attack_SwitchPositions::ProcessSignal(const AISIGNAL& signal)
 		}
 		return true;
 	}
-	else if (!strcmp(signal.strText, "SetDistanceToTarget"))
+	else if (pSignal->GetSignalDescription() == GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnSetMinDistanceToTarget_DEPRECATED())
 	{
-		if (signal.pEData && pSenderEntity)
+		if (pSignal->GetExtraData() && pSenderEntity)
 		{
 			const CAIActor* pAIActor = CastToCAIActorSafe(pSenderEntity->GetAI());
 			TUnitList::iterator itUnit = m_pLeader->GetAIGroup()->GetUnit(pAIActor);
 			if (itUnit != GetUnitsList().end())
 			{
 				CCCPOINT(CLeaderAction_Attack_SwitchPositions_ProcessSignal_I);
-				itUnit->m_fDistance = signal.pEData->fValue;
+				itUnit->m_fDistance = pSignal->GetExtraData()->fValue;
 			}
 		}
 		return true;
 	}
-	else if (!strcmp(signal.strText, "OnExecutingSpecialAction"))
+	else if (pSignal->GetSignalDescription() == GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnExecutingSpecialAction_DEPRECATED())
 	{
 		const CAIActor* pAIActor = CastToCAIActorSafe(pSenderEntity->GetAI());
 		TSpecialActionMap::iterator its = m_SpecialActions.begin(), itsEnd = m_SpecialActions.end();
@@ -1182,7 +1147,7 @@ bool CLeaderAction_Attack_SwitchPositions::ProcessSignal(const AISIGNAL& signal)
 
 		return true;
 	}
-	else if (!strcmp(signal.strText, "OnSpecialActionDone"))
+	else if (pSignal->GetSignalDescription() == GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnSpecialActionDone_DEPRECATED())
 	{
 		const CAIActor* pAIActor = CastToCAIActorSafe(pSenderEntity->GetAI());
 		TSpecialActionMap::iterator its = m_SpecialActions.begin(), itsEnd = m_SpecialActions.end();
@@ -1207,12 +1172,12 @@ bool CLeaderAction_Attack_SwitchPositions::ProcessSignal(const AISIGNAL& signal)
 
 		return true;
 	}
-	else if (!strcmp(signal.strText, "SetMinDistanceToTarget"))
+	else if (pSignal->GetSignalDescription() == GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnSetMinDistanceToTarget_DEPRECATED())
 	{
-		if (signal.pEData)
+		if (pSignal->GetExtraData())
 		{
 			CCCPOINT(CLeaderAction_Attack_SwitchPositions_ProcessSignal_K);
-			m_fMinDistanceToTarget = signal.pEData->fValue;
+			m_fMinDistanceToTarget = pSignal->GetExtraData()->fValue;
 		}
 		return true;
 	}
@@ -1365,7 +1330,7 @@ void CLeaderAction_Attack_SwitchPositions::UpdateSpecialActions()
 				action.refOwner = itUnitSelected->m_refUnit;
 
 				CAIActor* pUnit = itUnitSelected->m_refUnit.GetAIObject();
-				pUnit->SetSignal(1, "OnSpecialAction", pUnit->GetEntity(), NULL, gAIEnv.SignalCRCs.m_nOnSpecialAction);
+				pUnit->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnSpecialAction_DEPRECATED(),  pUnit->GetEntityID()));
 				itUnitSelected->SetSpecial();
 				size--;
 
@@ -1491,7 +1456,6 @@ CLeaderAction::eActionUpdateResult CLeaderAction_Attack_SwitchPositions::Update(
 						if (fabs(pos.z - otherPos.z) < otherUnit.GetHeight() * 1.1f)
 							if (Distance::Point_Line2D(otherPos, pos, targetPos, proj) < otherUnit.GetWidth() / 2)
 							{
-								float distanceToEnemy = Distance::Point_PointSq(targetPos, pos);
 								float unitToEnemy = Distance::Point_PointSq(otherPos, targetPos);
 								if (unitToEnemy > 2 * 2)
 								{
@@ -1506,19 +1470,19 @@ CLeaderAction::eActionUpdateResult CLeaderAction_Attack_SwitchPositions::Update(
 
 			if (curUnit.IsBehind() && !pUnitObstructing)
 			{
-				pUnit->SetSignal(1, "OnNotBehind", pUnit->GetEntity());
+				pUnit->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnNotBehind_DEPRECATED(), pUnit->GetEntityID()));
 				curUnit.ClearBehind();
 			}
 			else if (!curUnit.IsBehind() && pUnitObstructing)
 			{
-				IAISignalExtraData* pData = NULL;
+				AISignals::IAISignalExtraData* pData = NULL;
 				IEntity* pOtherEntity = pUnitObstructing->GetEntity();
 				if (pOtherEntity)
 				{
 					pData = GetAISystem()->CreateSignalExtraData();
 					pData->nID = pOtherEntity->GetId();
 				}
-				pUnit->SetSignal(1, "OnBehind", pUnit->GetEntity(), pData);
+				pUnit->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnBehind_DEPRECATED(), pUnit->GetEntityID(), pData));
 				curUnit.SetBehind();
 			}
 		}
@@ -1557,20 +1521,19 @@ CLeaderAction::eActionUpdateResult CLeaderAction_Attack_SwitchPositions::Update(
 					{
 
 						m_pLeader->AssignFormationPointIndex(curUnit, iPointIndex);
-						pPiper->SetSignal(1, "OnAttackSwitchPosition");
+						pPiper->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnAttackSwitchPosition_DEPRECATED()));
 						curUnit.ClearFollowing();
 					}
 					else
 					{
-						CAIActor* pAIActor = pUnit->CastToCAIActor();
-						IAISignalExtraData* pData = GetAISystem()->CreateSignalExtraData();
+						AISignals::IAISignalExtraData* pData = GetAISystem()->CreateSignalExtraData();
 						if (pData)
 						{
 							pData->point = m_PointProperties[iPointIndex].point;
 							AssignNewShootSpot(pUnit, iPointIndex);
 							CPipeUser* pPipeUser = pUnit->CastToCPipeUser();
 							pPipeUser->SetRefPointPos(pData->point);
-							pPipeUser->SetSignal(1, "OnAttackShootSpot", pUnit->GetEntity(), pData);
+							pPipeUser->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnAttackShootSpot_DEPRECATED(), pUnit->GetAIObjectID(), pData));
 							curUnit.ClearFollowing();
 						}
 					}
@@ -1592,8 +1555,7 @@ CLeaderAction::eActionUpdateResult CLeaderAction_Attack_SwitchPositions::Update(
 						}
 					}
 					pPiper->SetRefPointPos(worstPoint);
-
-					pPiper->SetSignal(1, "OnAvoidDanger", NULL, NULL, gAIEnv.SignalCRCs.m_nOnAvoidDanger);
+					pPiper->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnAvoidDanger_DEPRECATED()));
 				}
 			}
 			m_pLeader->AssignFormationPointIndex(curUnit, iPointIndex);
@@ -1700,19 +1662,18 @@ CLeaderAction::eActionUpdateResult CLeaderAction_Attack_SwitchPositions::Update(
 						{
 							m_pLeader->AssignFormationPointIndex(curUnit, iPointIndex);
 							CAIActor* pAIActor = pUnit->CastToCAIActor();
-							pAIActor->SetSignal(1, "OnAttackSwitchPosition");
+							pAIActor->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnAttackSwitchPosition_DEPRECATED()));
 						}
 						else
 						{
-							CAIActor* pAIActor = pUnit->CastToCAIActor();
-							IAISignalExtraData* pData = GetAISystem()->CreateSignalExtraData();
+							AISignals::IAISignalExtraData* pData = GetAISystem()->CreateSignalExtraData();
 							if (pData)
 							{
 								pData->point = m_PointProperties[iPointIndex].point;
 								AssignNewShootSpot(pUnit, iPointIndex);
 								CPipeUser* pPiper = pUnit->CastToCPipeUser();
 								pPiper->SetRefPointPos(pData->point);
-								pPiper->SetSignal(1, "OnAttackShootSpot", pUnit->GetEntity(), pData);
+								pPiper->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnAttackShootSpot_DEPRECATED(), pUnit->GetEntityID(), pData));
 								curUnit.ClearFollowing();
 							}
 						}
@@ -2136,7 +2097,6 @@ void CLeaderAction_Search::Serialize(TSerialize ser)
 	ser.Value("m_vEnemyPos", m_vEnemyPos);
 	ser.Value("m_fSearchDistance", m_fSearchDistance);
 	ser.Value("m_bInitialized", m_bInitialized);
-	ser.Value("m_bUseHideSpots", m_bUseHideSpots);
 	ser.Value("m_iSearchSpotAIObjectType", m_iSearchSpotAIObjectType);
 
 	ser.BeginGroup("HideSpots");

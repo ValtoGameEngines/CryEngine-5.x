@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   MiniButton.h
@@ -13,6 +13,8 @@
 #define __MiniButton_h__
 
 #include "MiniGUI.h"
+
+struct ICVar;
 
 MINIGUI_BEGIN
 

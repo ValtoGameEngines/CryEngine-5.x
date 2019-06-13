@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -16,8 +16,11 @@
 #include <CryNetwork/IServiceNetwork.h>
 #include <CryNetwork/CrySocks.h>
 #include <CryThreading/IThreadManager.h>
+#include <CryThreading/MultiThread_Containers.h>
+#include <CryMath/LCGRandom.h>
 
 class CServiceNetwork;
+struct ICVar;
 
 //-----------------------------------------------------------------------------
 
@@ -173,14 +176,14 @@ private:
 	volatile uint32 m_statsNumDataReceived;
 
 	// Queue of messages to send (thread access possible)
-	typedef CryMT::CLocklessPointerQueue<CServiceNetworkMessage> TSendQueue;
+	typedef CryMT::queue<CServiceNetworkMessage*> TSendQueue;
 	CServiceNetworkMessage* m_pSendedMessages;
 	TSendQueue              m_pSendQueue;
 	uint32                  m_messageDataSentSoFar;
 	volatile int            m_sendQueueDataSize;
 
 	// Queue of received message
-	typedef CryMT::CLocklessPointerQueue<CServiceNetworkMessage> TReceiveQueue;
+	typedef CryMT::queue<CServiceNetworkMessage*> TReceiveQueue;
 	TReceiveQueue m_pReceiveQueue;
 	uint32        m_receiveQueueDataSize;
 	uint32        m_messageDataReceivedSoFar;
@@ -413,15 +416,9 @@ public:
 		return this;
 	}
 
-	ILINE const uint32 GetReceivedDataQueueLimit() const
-	{
-		return m_pReceiveDataQueueLimit->GetIVal();
-	}
+	const uint32 GetReceivedDataQueueLimit() const;
 
-	ILINE const uint32 GetSendDataQueueLimit() const
-	{
-		return m_pSendDataQueueLimit->GetIVal();
-	}
+	const uint32 GetSendDataQueueLimit() const;
 
 public:
 	CServiceNetwork();

@@ -1,23 +1,15 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// -------------------------------------------------------------------------
-//  File name:   RenderMesh.h
-//  Version:     v1.00
-//  Created:     01/07/2009 by Andrey Honich.
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
-
-#ifndef __RENDERMESH_H__
-#define __RENDERMESH_H__
+#pragma once
 
 #include <CryCore/Containers/intrusive_list.hpp>
 #include <CryMemory/CryPool/PoolAlloc.h>
 #include <CryCore/Containers/VectorMap.h>
 #include <CryCore/Containers/VectorSet.h>
 #include <CryMath/GeomQuery.h>
+#include <3rdParty/concqueue/concqueue-mpsc.hpp>
+#include <CryThreading/IJobManager.h>
+#include <CryThreading/CryThreadSafePushContainer.h>
 
 #include "ComputeSkinningStorage.h"
 
@@ -29,9 +21,9 @@
 struct SMeshSubSetIndicesJobEntry
 {
 	JobManager::SJobState jobState;
-	_smart_ptr<IRenderMesh> m_pSrcRM;							// source mesh to create a new index mesh from
-	_smart_ptr<IRenderMesh> m_pIndexRM;						// when finished: newly created index mesh for this mask, else NULL
-	hidemask m_nMeshSubSetMask;						// mask to use
+	_smart_ptr<IRenderMesh> m_pSrcRM;   // source mesh to create a new index mesh from
+	_smart_ptr<IRenderMesh> m_pIndexRM; // when finished: newly created index mesh for this mask, else NULL
+	hidemask m_nMeshSubSetMask;         // mask to use
 
 	void CreateSubSetRenderMesh();
 
@@ -59,44 +51,37 @@ public:
 	}
 };
 
-struct SBufInfoTable
-{
-  int OffsTC;
-  int OffsColor;
-	int OffsNorm;
-};
-
 struct SMeshStream
 {
-  buffer_handle_t m_nID;   // device buffer handle from device buffer manager 
-  void *m_pUpdateData;     // system buffer for updating (used for async. mesh updates)
-  void *m_pLockedData;     // locked device buffer data (hmm, not a good idea to store)
-  uint32 m_nLockFlags : 16;
-  uint32 m_nLockCount : 16;
-  uint32 m_nElements;
-  int32  m_nFrameAccess;
-  int32  m_nFrameRequest;
-  int32  m_nFrameUpdate;
-  int32  m_nFrameCreate;
+	buffer_handle_t m_nID;   // device buffer handle from device buffer manager 
+	void *m_pUpdateData;     // system buffer for updating (used for async. mesh updates)
+	void *m_pLockedData;     // locked device buffer data (hmm, not a good idea to store)
+	uint32 m_nLockFlags : 16;
+	uint32 m_nLockCount : 16;
+	uint32 m_nElements;
+	int32  m_nFrameAccess;
+	int32  m_nFrameRequest;
+	int32  m_nFrameUpdate;
+	int32  m_nFrameCreate;
 
-  SMeshStream()
-  {
-    m_nID = ~0u;
-    m_pUpdateData = NULL;
-    m_pLockedData = NULL;
+	SMeshStream()
+	{
+		m_nID = ~0u;
+		m_pUpdateData = NULL;
+		m_pLockedData = NULL;
 
 		// m_nFrameRequest MUST be <= m_nFrameUpdate initially to prevent a case where LockIB(FSL_READ) will pull the GPU buffer to the CPU (because FreeIB happened in the past)
 		// In this case, while thread X is halfway through memcpy of the data as part of LockIB, the RenderThread sees m_pUpdateData without FSL_WRITE flag, and re-uploads the incompletely copied data.
-		m_nFrameRequest = -1;
-    m_nFrameUpdate = -1;
-    m_nFrameAccess = -1;
+		m_nFrameRequest = 0x7FFFFFFF;
+		m_nFrameUpdate = -1;
+		m_nFrameAccess = -1;
 		m_nFrameCreate = -1;
-    m_nLockFlags = 0;
-    m_nLockCount = 0;
-    m_nElements = 0;
-  }
+		m_nLockFlags = 0;
+		m_nLockCount = 0;
+		m_nElements = 0;
+	}
 
-  ~SMeshStream() { memset(this, 0x0, sizeof(*this)); }
+	~SMeshStream() { memset(this, 0x0, sizeof(*this)); }
 };
 
 // CRenderMesh::m_nFlags
@@ -109,7 +94,11 @@ struct SMeshStream
 #define FRM_ENABLE_NORMALSTREAM   BIT(6)
 #define FRM_SKINNED_EIGHT_WEIGHTS BIT(7)
 
-#define MAX_RELEASED_MESH_FRAMES (2)
+#if defined(FEATURE_SVO_GI)
+  #define MAX_RELEASED_MESH_FRAMES (4) // GI voxelization threads may keep using render mesh for several frames
+#else
+  #define MAX_RELEASED_MESH_FRAMES (2)
+#endif
 
 struct SSetMeshIntData
 {
@@ -148,26 +137,27 @@ private:
 
 	struct SBoneIndexStreamRequest
 	{
-		SBoneIndexStreamRequest(uint32 _guid, SVF_W4B_I4S *_pStream, SMeshBoneMapping_uint16 *_pExtraStream) :
+		SBoneIndexStreamRequest(int _frameId, uint32 _guid, SVF_W4B_I4S *_pStream, SMeshBoneMapping_uint16 *_pExtraStream) :
 			pStream(_pStream), 
 			pExtraStream(_pExtraStream), 
-			guid(_guid), refcount(1) 
+			guid(_guid), refcount(1), frameId(_frameId)
 		{}
 
 		SVF_W4B_I4S *pStream;
 		SMeshBoneMapping_uint16 *pExtraStream;
 		uint32 guid; 
 		uint32 refcount; 
+		int    frameId;
 	};
 
 	std::vector<SBoneIndexStream> m_RemappedBoneIndices;
-	std::vector< SBoneIndexStreamRequest > m_CreatedBoneIndices[2];
-	std::vector< uint32 > m_DeletedBoneIndices[2];
+	std::vector<SBoneIndexStreamRequest> m_CreatedBoneIndices;
+	std::vector<uint32> m_DeletedBoneIndices;	// guid
 
 	uint32 m_nInds;
 	uint32 m_nVerts;
   int   m_nRefCounter;
-	EVertexFormat m_eVF;          // Base stream vertex format (optional streams are hardcoded: VSF_)
+	InputLayoutHandle m_eVF;          // Base stream vertex format (optional streams are hardcoded: VSF_)
 
   Vec3 *m_pCachePos;         // float positions (cached)
   int   m_nFrameRequestCachePos;
@@ -192,7 +182,6 @@ private:
 	ERenderPrimitiveType m_nPrimetiveType;
 	ERenderMeshType m_eType;
 	uint16 m_nFlags														: 8;          // FRM_
-  int16  m_nLod                             : 4;          // used for LOD debug visualization
   bool m_keepSysMesh                        : 1;
   bool m_nFlagsCachePos                     : 1;          // only checked for FSL_WRITE, which can be represented as a single bit
 	bool m_nFlagsCacheUVs											: 1;
@@ -208,15 +197,13 @@ public:
 private:
   SMeshStream* GetVertexStream(int nStream, uint32 nFlags = 0);
   SMeshStream* GetVertexStream(int nStream, uint32 nFlags = 0) const { return m_VBStream[nStream]; }
-  bool UpdateVidIndices(SMeshStream& IBStream, bool stall=true);
 
-  bool CreateVidVertices(int nVerts=0, EVertexFormat eVF=eVF_Unknown, int nStream=VSF_GENERAL);
-  bool UpdateVidVertices(int nStream, bool stall=true);
+  bool UpdateVidIndices(SMeshStream& IBStream);
+
+  bool CreateVidVertices(int nVerts=0, InputLayoutHandle eVF=InputLayoutHandle::Unspecified, int nStream=VSF_GENERAL);
+  bool UpdateVidVertices(int nStream);
 
   bool CopyStreamToSystemForUpdate(SMeshStream& MS, size_t nSize);
-
-  void ReleaseVB(int nStream);
-  void ReleaseIB();
 
   void InitTriHash(IMaterial * pMaterial);
 
@@ -256,7 +243,8 @@ public:
 	//! destructor
 	~CRenderMesh();
 
-	virtual bool CanRender() final {return (m_nFlags & FRM_ALLOCFAILURE) == 0; }
+	virtual bool CanUpdate() final { return (m_nFlags & FRM_ALLOCFAILURE) == 0; }
+	virtual bool CanRender() final { return (m_nFlags & FRM_ALLOCFAILURE) == 0 && CheckStreams(); }
 
 	inline bool IsSkinned() const
 	{
@@ -286,47 +274,67 @@ public:
     }
   }
 
-  // ----------------------------------------------------------------
-  // Helper functions
-  inline int GetStreamStride(int nStream) const
-  {
-    if (nStream == VSF_GENERAL)
-      return  m_cSizeVF[m_eVF];
-    else
-      return m_cSizeStream[nStream];
-  }
+	// ----------------------------------------------------------------
+	// Helper functions
+	inline int GetStreamStride(int nStream) const
+	{
+		InputLayoutHandle eVF = m_eVF;
 
-  inline uint32 _GetFlags() const { return m_nFlags; }
-  inline int GetStreamSize(int nStream, int nVerts=0) const { return GetStreamStride(nStream) * (nVerts ? nVerts : m_nVerts); }
-  inline const buffer_handle_t _GetVBStream(int nStream) const { if (!m_VBStream[nStream]) return ~0u; return m_VBStream[nStream]->m_nID; }
-  inline const buffer_handle_t _GetIBStream() const { return m_IBStream.m_nID; }
-  inline bool _HasVBStream(int nStream) const { return m_VBStream[nStream] && m_VBStream[nStream]->m_nID!=~0u; }
-  inline bool _HasIBStream() const { return m_IBStream.m_nID!=~0u; }
-  inline int _IsVBStreamLocked(int nStream) const { if (!m_VBStream[nStream]) return 0; return (m_VBStream[nStream]->m_nLockFlags & FSL_LOCKED); }
-  inline int _IsIBStreamLocked() const { return m_IBStream.m_nLockFlags & FSL_LOCKED; }
-  inline EVertexFormat _GetVertexFormat() const { return m_eVF; }
-  inline void _SetVertexFormat(EVertexFormat eVF) { m_eVF = eVF; }
-  inline int _GetNumVerts() const { return m_nVerts; }
-  inline void _SetNumVerts(int nVerts) { m_nVerts = max(nVerts, 0); }
-  inline int _GetNumInds() const { return m_nInds; }
-  inline void _SetNumInds(int nInds) { m_nInds = nInds; }
-	inline const ERenderPrimitiveType _GetPrimitiveType() const                               { return m_nPrimetiveType; }
-	inline void                       _SetPrimitiveType(const ERenderPrimitiveType nPrimType) { m_nPrimetiveType = nPrimType; }
-  inline void _SetRenderMeshType(ERenderMeshType eType) { m_eType = eType; }
-  inline CRenderMesh *_GetVertexContainer()
-  {
-    if (m_pVertexContainer)
-      return m_pVertexContainer;
-    return this;
-  }
+		if (nStream != VSF_GENERAL)
+		{
+			switch (nStream)
+			{
+		#ifdef TANG_FLOATS
+				case VSF_TANGENTS       : eVF = EDefaultInputLayouts::T4F_B4F; break;
+				case VSF_QTANGENTS      : eVF = EDefaultInputLayouts::Q4F; break;
+		#else
+				case VSF_TANGENTS       : eVF = EDefaultInputLayouts::T4S_B4S; break;
+				case VSF_QTANGENTS      : eVF = EDefaultInputLayouts::Q4S; break;
+		#endif
+				case VSF_HWSKIN_INFO    : eVF = EDefaultInputLayouts::W4B_I4S; break;
+				case VSF_VERTEX_VELOCITY: eVF = EDefaultInputLayouts::V3F; break;
+				case VSF_NORMALS        : eVF = EDefaultInputLayouts::N3F; break;
+				default:
+					CryWarning(EValidatorModule::VALIDATOR_MODULE_RENDERER, EValidatorSeverity::VALIDATOR_WARNING, "Unknown nStream");
+					return 0;
+			}
+		}
 
-  D3DBuffer* _GetD3DVB(int nStream, size_t* offs) const;
-  D3DBuffer* _GetD3DIB(size_t* offs) const;
+		uint16 Stride = CDeviceObjectFactory::GetInputLayoutDescriptor(eVF)->m_Strides[0];
+		assert(Stride != 0);
 
-  size_t Size(uint32 nFlags) const;
-	void Size(uint32 nFlags, ICrySizer *pSizer ) const;
+		return Stride;
+	}
 
-  void *LockVB(int nStream, uint32 nFlags, int nOffset=0, int nVerts=0, int *nStride=NULL, bool prefetchIB=false, bool inplaceCachePos=false);
+	inline uint32 _GetFlags() const { return m_nFlags; }
+	inline int GetStreamSize(int nStream, int nVerts=0) const { return GetStreamStride(nStream) * (nVerts ? nVerts : m_nVerts); }
+
+	inline const buffer_handle_t _GetVBStream(int nStream) const { if (!m_VBStream[nStream]) return ~0u; return m_VBStream[nStream]->m_nID; }
+	inline const buffer_handle_t _GetIBStream(           ) const {                                       return m_IBStream.          m_nID; }
+
+	inline bool _NeedsVBStream(int32 nFrame, int nStream) const { return m_VBStream[nStream] && m_VBStream[nStream]->m_nFrameRequest <= nFrame && m_VBStream[nStream]->m_pUpdateData && (m_VBStream[nStream]->m_nFrameAccess != nFrame) && (m_VBStream[nStream]->m_nFrameRequest > m_VBStream[nStream]->m_nFrameUpdate); }
+	inline bool _NeedsIBStream(int32 nFrame             ) const { return m_IBStream.                                 m_nFrameRequest <= nFrame && m_IBStream.          m_pUpdateData && (m_IBStream.          m_nFrameAccess != nFrame) && (m_IBStream.          m_nFrameRequest > m_IBStream.          m_nFrameUpdate); }
+
+	inline bool _HasVBStream(int nStream) const { return m_VBStream[nStream] && m_VBStream[nStream]->m_nID != ~0u; }
+	inline bool _HasIBStream(           ) const { return m_IBStream.                                 m_nID != ~0u; }
+
+	inline int _IsVBStreamLocked(int nStream) const { if (!m_VBStream[nStream]) return 0; return (m_VBStream[nStream]->m_nLockFlags & FSL_LOCKED); }
+	inline int _IsIBStreamLocked(           ) const {                                     return (m_IBStream.          m_nLockFlags & FSL_LOCKED); }
+
+	D3DBuffer* _GetD3DVB(int nStream, buffer_size_t* offs) const;
+	D3DBuffer* _GetD3DIB(             buffer_size_t* offs) const;
+
+	void*    LockVB(int nStream, uint32 nFlags, int nOffset = 0, int nVerts = 0, int *nStride=NULL, bool prefetchIB=false, bool inplaceCachePos=false);
+	vtx_idx* LockIB(             uint32 nFlags, int nOffset = 0, int nInds  = 0);
+
+	void UnlockVB(int nStream);
+	void UnlockIB();
+
+	void ReleaseVB(int nStream);
+	void ReleaseIB();
+
+	void FreeVB(int nStream);
+	void FreeIB();
 
 	template<class T>
 	T* GetStridedArray(strided_pointer<T>& arr, EStreamIDs stream)
@@ -336,22 +344,47 @@ public:
 		return arr.data;
 	}
 
-  vtx_idx *LockIB(uint32 nFlags, int nOffset=0, int nInds=0);
-  void UnlockVB(int nStream);
-  void UnlockIB();
+	template<class T>
+	T* GetStridedArray(strided_pointer<T>& arr, EStreamIDs stream, int dataType)
+	{
+		if (GetStridedArray(arr, stream))
+		{
+			const auto vertexFormatDescriptor = CDeviceObjectFactory::GetInputLayoutDescriptor(_GetVertexFormat());
+			int8 offset = vertexFormatDescriptor ? vertexFormatDescriptor->m_Offsets[dataType] : -1;
+			if (offset < 0)
+				arr.data = nullptr;
+			else
+				arr.data = (T*)((char*)arr.data + offset);
+		}
+		return arr.data;
+	}
 
-  bool RT_CheckUpdate(CRenderMesh *pVContainer, EVertexFormat eVF, uint32 nStreamMask, bool bTessellation = false, bool stall=true);
-	void RT_SetMeshCleanup();
-	void RT_AllocationFailure(const char* sPurpose, uint32 nSize);
-  bool CheckUpdate(EVertexFormat eVF, uint32 nStreamMask);
+	buffer_size_t Size(uint32 nFlags) const;
+	void Size(uint32 nFlags, ICrySizer *pSizer) const;
+	inline InputLayoutHandle _GetVertexFormat() const { return m_eVF; }
+	inline void _SetVertexFormat(InputLayoutHandle eVF) { m_eVF = eVF; }
+	inline int _GetNumVerts() const { return m_nVerts; }
+	inline void _SetNumVerts(int nVerts) { m_nVerts = max(nVerts, 0); }
+	inline int _GetNumInds() const { return m_nInds; }
+	inline void _SetNumInds(int nInds) { m_nInds = nInds; }
+	inline const ERenderPrimitiveType _GetPrimitiveType() const { return m_nPrimetiveType; }
+	inline void                       _SetPrimitiveType(const ERenderPrimitiveType nPrimType) { m_nPrimetiveType = nPrimType; }
+	inline void _SetRenderMeshType(ERenderMeshType eType) { m_eType = eType; }
+	inline CRenderMesh *_GetVertexContainer()
+	{
+		if (m_pVertexContainer)
+			return m_pVertexContainer;
+		return this;
+	}
+
+  bool RT_CheckUpdate(CRenderMesh *pVContainer, InputLayoutHandle eVF, uint32 nStreamMask, bool bTessellation = false);
+  void RT_AllocationFailure(const char* sPurpose, uint32 nSize);
+
   void AssignChunk(CRenderChunk *pChunk, class CREMeshImpl *pRE);
-	void InitRenderChunk( CRenderChunk &rChunk );
+  void InitRenderChunk( CRenderChunk &rChunk );
 
-  void FreeVB(int nStream);
-  void FreeIB();
   void FreeDeviceBuffers(bool bRestoreSys);
   void FreeSystemBuffers();
-  void FreePreallocatedData();
 
 	bool SyncAsyncUpdate(int threadId, bool block = true);
 	void MarkRenderElementsDirty();
@@ -364,7 +397,7 @@ public:
 	virtual int GetIndicesCount() final  { return m_nInds; }
 	virtual int GetVerticesCount() final { return m_nVerts; }
 
-	virtual EVertexFormat   GetVertexFormat() final { return m_eVF; }
+	virtual InputLayoutHandle   GetVertexFormat() final { return m_eVF; }
 	virtual ERenderMeshType GetMeshType() final     { return m_eType; }
 
 	virtual void SetSkinned(bool bSkinned = true) final
@@ -416,8 +449,6 @@ public:
 	virtual void SetREUserData(float* pfCustomData, float fFogScale = 0, float fAlpha = 1) final;
 	virtual void AddRE(IMaterial* pMaterial, CRenderObject* pObj, IShader* pEf, const SRenderingPassInfo& passInfo, int nList, int nAW) final;
 
-  virtual void DrawImmediately();
-
 	virtual byte* GetPosPtrNoCache(int32& nStride, uint32 nFlags, int32 nOffset = 0) final;
 	virtual byte* GetPosPtr(int32& nStride, uint32 nFlags, int32 nOffset = 0) final;
 	virtual byte* GetNormPtr(int32& nStride, uint32 nFlags, int32 nOffset = 0) final;
@@ -437,7 +468,7 @@ public:
 	virtual vtx_idx*                              GetIndexPtr(uint32 nFlags, int32 nOffset = 0) final;
 	virtual const PodArray<std::pair<int, int> >* GetTrisForPosition(const Vec3& vPos, IMaterial* pMaterial) final;
 	virtual float                                 GetExtent(EGeomForm eForm) final;
-	virtual void                                  GetRandomPos(PosNorm& ran, CRndGen& seed, EGeomForm eForm, SSkinningData const* pSkinning = NULL) final;
+	virtual void                                  GetRandomPoints(Array<PosNorm> points, CRndGen& seed, EGeomForm eForm, SSkinningData const* pSkinning = NULL) final;
 	virtual uint32*                               GetPhysVertexMap() final { return NULL; }
 	virtual bool                                  IsEmpty() final;
 
@@ -449,7 +480,7 @@ public:
 	virtual int GetAllocatedBytes(bool bVideoMem) const final;
 
 	virtual void SetBBox(const Vec3& vBoxMin, const Vec3& vBoxMax) final { m_vBoxMin = vBoxMin; m_vBoxMax = vBoxMax; }
-	virtual void GetBBox(Vec3& vBoxMin, Vec3& vBoxMax) final             { vBoxMin = m_vBoxMin; vBoxMax = m_vBoxMax; };
+	virtual void GetBBox(Vec3& vBoxMin, Vec3& vBoxMax) final             { vBoxMin = m_vBoxMin; vBoxMax = m_vBoxMax; }
 	virtual void UpdateBBoxFromMesh() final;
 
   // Debug draw this render mesh.
@@ -459,8 +490,6 @@ public:
 	virtual void LockForThreadAccess() final;
 	virtual void UnLockForThreadAccess() final;
 
-	virtual void SetMeshLod(int nLod) final { m_nLod = nLod; }
-
 	virtual volatile int* SetAsyncUpdateState() final;
 	void CreateRemappedBoneIndicesPair(const uint pairGuid, const TRenderChunkArray& Chunks);
  	virtual void CreateRemappedBoneIndicesPair(const DynArray<JointIdType> &arrRemapTable, const uint pairGuid, const void* tag) final;
@@ -468,59 +497,60 @@ public:
 
 	virtual void OffsetPosition(const Vec3& delta) final { m_vBoxMin += delta; m_vBoxMax += delta; }
 
+	virtual bool RayIntersectMesh(const Ray& ray, Vec3& hitpos, Vec3& p0, Vec3& p1, Vec3& p2, Vec2& uv0, Vec2& uv1, Vec2& uv2) final;
+
   IRenderMesh* GetRenderMeshForSubsetMask(SRenderObjData *pOD, hidemask nMeshSubSetMask, IMaterial * pMaterial, const SRenderingPassInfo &passInfo);
 	void GarbageCollectSubsetRenderMeshes();
 	void CreateSubSetRenderMesh();
 
   void ReleaseRenderChunks(TRenderChunkArray* pChunks);
 
-	void BindStreamsToRenderPipeline();
-
 	bool GetRemappedSkinningData(uint32 guid, SStreamInfo& streamInfo);
 	bool FillGeometryInfo(CRenderElement::SGeometryInfo& geomInfo);
+	bool CheckStreams();
 
 private:
 	void AddHUDRenderElement(CRenderObject* pObj, IMaterial* pMaterial, const SRenderingPassInfo& passInfo);
 
 public:
 	// --------------------------------------------------------------
-  // Members
-
-	static int32         m_cSizeVF[eVF_MaxRenderMesh];
-  static int32 m_cSizeStream[VSF_NUM];
-	static SBufInfoTable m_cBufInfoTable[eVF_MaxRenderMesh];
+	// Members
 
 	// When modifying or traversing any of the lists below, be sure to always hold the link lock
-  static CryCriticalSection m_sLinkLock;
+	static CryCriticalSection      m_sLinkLock;
 
 	// intrusive list entries - a mesh can be in multiple lists at the same time
-	util::list<CRenderMesh>          m_Chain; // mesh will either be in the mesh list or garbage mesh list
-	util::list<CRenderMesh>          m_Dirty[2]; // if linked, mesh has volatile data (data read back from vram)
-	util::list<CRenderMesh>          m_Modified[2]; // if linked, mesh has modified data (to be uploaded to vram)
+	util::list<CRenderMesh>        m_Chain;       // mesh will either be in the mesh list or garbage mesh list
+	util::list<CRenderMesh>        m_Dirty[2];    // if linked, mesh has volatile data (data read back from vram)
+	util::list<CRenderMesh>        m_Modified[2]; // if linked, mesh has modified data (to be uploaded to vram)
 
 	// The static list heads, corresponds to the entries above
-	static util::list<CRenderMesh> m_MeshList;
-	static util::list<CRenderMesh> m_MeshGarbageList[MAX_RELEASED_MESH_FRAMES];
-	static util::list<CRenderMesh> m_MeshDirtyList[2];
-	static util::list<CRenderMesh> m_MeshModifiedList[2];
+	static util::list<CRenderMesh> s_MeshList;
+	static util::list<CRenderMesh> s_MeshGarbageList[MAX_RELEASED_MESH_FRAMES];
+	static util::list<CRenderMesh> s_MeshDirtyList[2];
+	static util::list<CRenderMesh> s_MeshModifiedList[2];
+	
+	// this queue is used when RENDERMESH_BUFFER_ENABLE_DIRECT_ACCESS is off to clean up the mesh pool allocations after the data is uploaded
+	static concqueue::mpsc_queue_t<void*> s_FreeableMeshDataList; 
+	
+	TRenderChunkArray              m_Chunks;
+	TRenderChunkArray              m_ChunksSubObjects; // Chunks of sub-objects.
+	TRenderChunkArray              m_ChunksSkinned;
 
-	TRenderChunkArray  m_Chunks;
-	TRenderChunkArray  m_ChunksSubObjects; // Chunks of sub-objects.
-  TRenderChunkArray  m_ChunksSkinned;
+	int                            m_nClientTextureBindID;
+	Vec3                           m_vBoxMin;
+	Vec3                           m_vBoxMax;
 
-  int                     m_nClientTextureBindID;
-  Vec3                    m_vBoxMin;
-  Vec3                    m_vBoxMax;
-
-  float                   m_fGeometricMeanFaceArea;
-	CGeomExtents						m_Extents;
+	float                          m_fGeometricMeanFaceArea;
+	CGeomExtents                   m_Extents;
+	DynArray<PosNorm>              m_PosNorms;
 
 	// Frame id when this render mesh was last rendered.
-	uint32                  m_nLastRenderFrameID;
-	uint32                  m_nLastSubsetGCRenderFrameID;
+	uint32                         m_nLastRenderFrameID;
+	uint32                         m_nLastSubsetGCRenderFrameID;
 
-	string									m_sType;          //!< pointer to the type name in the constructor call
-	string									m_sSource;        //!< pointer to the source  name in the constructor call
+	string                         m_sType;          //!< pointer to the type name in the constructor call
+	string                         m_sSource;        //!< pointer to the source  name in the constructor call
 
 	// For debugging purposes to catch longstanding data accesses
 # if !defined(_RELEASE) && defined(RM_CATCH_EXCESSIVE_LOCKS)
@@ -530,40 +560,56 @@ public:
 	typedef VectorMap<hidemask,_smart_ptr<IRenderMesh> > MeshSubSetIndices;
 	MeshSubSetIndices m_meshSubSetIndices;
 
-	static CThreadSafeRendererContainer<SMeshSubSetIndicesJobEntry> m_meshSubSetRenderMeshJobs[RT_COMMAND_BUF_COUNT];
-	static CThreadSafeRendererContainer<CRenderMesh*> m_deferredSubsetGarbageCollection[RT_COMMAND_BUF_COUNT];
+	static CryMT::CThreadSafePushContainer<SMeshSubSetIndicesJobEntry> m_meshSubSetRenderMeshJobs[RT_COMMAND_BUF_COUNT];
+	static CryMT::CThreadSafePushContainer<CRenderMesh*> m_deferredSubsetGarbageCollection[RT_COMMAND_BUF_COUNT];
 
 #ifdef RENDER_MESH_TRIANGLE_HASH_MAP_SUPPORT
   CryCriticalSection m_getTrisForPositionLock;
 #endif
 
+	SMeshBoneMapping_uint16* m_pExtraBoneMapping; //!< 8 weight skinning - complementary data to 4 weight skinning: weights and boneIds for 4-7; i.e., cpu buffer
+	std::shared_ptr<compute_skinning::IPerMeshDataSupply> m_computeSkinningDataSupply;
+	uint32 m_nMorphs;
+
+	//
+	std::vector<SVF_W4B_I4S> m_pExtraBoneMappingRemapped[RT_COMMAND_BUF_COUNT];
+	CGpuBuffer m_extraBonesBuffer;                //!< 8 weight skinning - gpu buffer for vertex skinning
+
 #ifdef MESH_TESSELLATION_RENDERER
 	CGpuBuffer m_adjBuffer;                // buffer containing adjacency information to fix displacement seams
 #endif
 
-	CGpuBuffer m_extraBonesBuffer;
-
-	// shared inputs
-	std::shared_ptr<compute_skinning::IPerMeshDataSupply> m_computeSkinningDataSupply;
-	uint32 m_nMorphs;
-
-	void ComputeSkinningCreateSkinningBuffers(const SVF_W4B_I4S* pBoneMapping, const SMeshBoneMapping_uint16* pExtraBoneMapping);
+	void ComputeSkinningCreateSkinningBuffers(uint32 guid, const SVF_W4B_I4S* pBoneMapping, const SMeshBoneMapping_uint16* pExtraBoneMapping);
 	void ComputeSkinningCreateBindPoseAndMorphBuffers(CMesh& mesh);
-	SMeshBoneMapping_uint16* m_pExtraBoneMapping;
 
 	static void Initialize();
-  static void ShutDown();
-  static void Tick();
+	static void ShutDown();
+	static void Tick(uint numFrames = 1);
 	static void UpdateModified();
-	static void UpdateModifiedMeshes(bool bLocked, int threadId);
-	static bool ClearStaleMemory(bool bLocked, int threadId);
+	static void UpdateModifiedMeshes(bool bAcquireLock, int threadId);
+	static bool ClearStaleMemory(bool bAcquireLock, int threadId);
 	static void PrintMeshLeaks();
 	static void GetPoolStats(SMeshPoolStatistics* stats);
 
 	void* operator new(size_t size);
 	void operator delete(void* ptr);
 
-	static void FinalizeRendItems(int nThreadID);
+	static void RT_PerFrameTick();
+
+
+private:
+
+	//! Create buffers for 8 weight skinning and ensure they are filled with latest mapped boneIds.
+	//! Bones are remapped according to the remapping table m_arrRemapTable.
+	//! To ensure a correct mapping, the mapping table as well as the original (i.e., unmapped) boneIds are stored.
+	//! The unmapped ids are used in each invocation of mapping to ensure a correct mapping from original boneId to mapped boneId.
+	//! Thus, correct results are achieved for each subsequent invocation, independent of any previous mapping.
+	//! \param pExtraBoneMapping Initial bone mapping.
+	//! \param bDoRemapping Enables remapping according to actual mapping table (i.e., m_arrRemapTable).
+	void CreateExtraBoneMappingBuffers(struct SMeshBoneMapping_uint16 *pExtraBoneMapping, bool bDoRemapping = false);
+	
+	DynArray<JointIdType> m_arrRemapTable; //!< Mapping of skin's bone indices to skeleton's bone indices
+	DynArray<SMeshBoneMapping_uint16> m_arrOriginalBoneIds; //!< Original boneIds after loading / i.e., without remapping
 };
 
 //////////////////////////////////////////////////////////////////////
@@ -573,10 +619,10 @@ class CVertexBuffer
 public:
 	CVertexBuffer()
 	{
-		m_eVF = eVF_Unknown;
+		m_eVF = InputLayoutHandle::Unspecified;
 		m_nVerts = 0;
 	}
-	CVertexBuffer(void* pData, EVertexFormat eVF, int nVerts = 0)
+	CVertexBuffer(void* pData, InputLayoutHandle eVF, int nVerts = 0)
 	{
 		m_VData = pData;
 		m_eVF = eVF;
@@ -584,7 +630,7 @@ public:
 	}
 
 	void* m_VData;
-	EVertexFormat m_eVF;
+	InputLayoutHandle m_eVF;
 	int32 m_nVerts;
 };
 
@@ -605,5 +651,3 @@ public:
 	void* m_IData;
 	int32 m_nInds;
 };
-
-#endif // __RenderMesh2_h__

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "CET_GameRules.h"
@@ -75,13 +75,19 @@ public:
 
 	EContextEstablishTaskResult OnStep(SContextEstablishState& state)
 	{
+		CGameContext* pGameContext = CCryAction::GetCryAction()->GetGameContext();
+		if (!pGameContext)
+		{
+			return eCETR_Ok;
+		}
+
 		// check our game rules have been registered
-		if (CCryAction::GetCryAction()->GetGameContext()->GetRequestedGameRules().empty())
+		if (pGameContext->GetRequestedGameRules().empty())
 		{
 			GameWarning("SendGameRules: No game rules set");
 			return eCETR_Failed;
 		}
-		if (CCryAction::GetCryAction()->GetGameContext()->GetLevelName().empty())
+		if (pGameContext->GetLevelName().empty())
 		{
 			GameWarning("SendGameRules: no level name set");
 			return eCETR_Failed;
@@ -93,10 +99,10 @@ public:
 		IGameRulesSystem* pGameRulesSystem = CCryAction::GetCryAction()->GetIGameRulesSystem();
 		const char* gameRulesName = pGameRulesSystem->GetGameRulesName(CCryAction::GetCryAction()->GetGameContext()->GetRequestedGameRules());
 
-		if (!gameRulesName || !m_pRep->ClassIdFromName(id, string(gameRulesName)) || id == (uint16)(~uint16(0)))
+		if ((!gameRulesName || !m_pRep->ClassIdFromName(id, string(gameRulesName)) || id == (uint16)(~uint16(0)))
+			&& !CCryAction::GetCryAction()->GetGameContext()->HasContextFlag(eGSF_NoGameRules))
 		{
 			GameWarning("Cannot find rules %s in network class registry", CCryAction::GetCryAction()->GetGameContext()->GetRequestedGameRules().c_str());
-			return eCETR_Failed;
 		}
 
 		// called on the server, we should send any information about the
@@ -331,3 +337,59 @@ void AddClientTimeSync(IContextEstablisher* pEst, EContextViewState state)
 }
 
 #endif
+
+class CCET_GameChannelLoadingTask : public CCET_Base
+{
+public:
+	CCET_GameChannelLoadingTask (IGameLevelLoadListener *pLoader, EContextViewState state, const char* szStateSstr, bool isServer)
+	: m_pLoader(pLoader)
+	, m_state(state)
+	, m_name("GameChannelLoadingTask  ")
+	, m_server(isServer)
+	{
+		m_name += szStateSstr;
+	}
+
+	const char * GetName() { return m_name.c_str(); }
+
+	virtual EContextEstablishTaskResult OnStep(SContextEstablishState& state)
+	{
+		if (INetChannel * pNC = state.pSender)
+		{
+			if(m_server)
+			{
+				if(uint16 channelId = CCryAction::GetCryAction()->GetGameChannelId(pNC))
+				{
+					return m_pLoader->OnLoadingStepServer(m_state, channelId);
+				}
+			}
+			else
+			{
+				return m_pLoader->OnLoadingStepClient(m_state);
+			}
+		}
+
+		return eCETR_Ok;
+	}
+
+	virtual void OnFailLoading(bool hasEntered )
+	{
+		m_pLoader->OnLoadingFailed(m_server, hasEntered);
+	}
+
+private:
+
+	IGameLevelLoadListener *m_pLoader;
+	string						m_name;
+	bool							m_server;
+	EContextViewState m_state;
+};
+
+void AddGameChannelLoadingTasks(IContextEstablisher * pEst, bool isServer)
+{
+	if (IGameLevelLoadListener* pLoader = CCryAction::GetCryAction()->GetGameLevelLoadListener())
+	{
+		pEst->AddTask(eCVS_Begin,							new CCET_GameChannelLoadingTask(pLoader, eCVS_Begin,							"Begin",							isServer) );
+		pEst->AddTask(eCVS_EstablishContext,	new CCET_GameChannelLoadingTask(pLoader, eCVS_EstablishContext,		"EstablishContext",		isServer) );
+	}
+}

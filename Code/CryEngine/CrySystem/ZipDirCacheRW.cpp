@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include <CryCore/smartptr.h>
@@ -13,11 +13,13 @@
 #include "ZipDirFindRW.h"
 #include "CryPak.h"
 #include "ZipEncrypt.h"
+#include "FileIOWrapper.h"
 
 #ifndef OPTIMIZED_READONLY_ZIP_ENTRY
 
-	#include <zlib.h> // declaration of Z_OK for ZipRawDecompress
-	#include <CryCore/Platform/CryWindows.h>
+#include <zlib.h> // declaration of Z_OK for ZipRawDecompress
+#include <CryCore/Platform/CryWindows.h>
+#include <CryMath/Random.h>
 
 using namespace ZipFile;
 
@@ -679,9 +681,11 @@ ZipDir::FileEntry* ZipDir::CacheRW::FindFile(const char* szPathSrc, bool bFullIn
 	ZipDir::FindFileRW fd(GetRoot());
 	if (!fd.FindExact(szPath))
 	{
+		// cppcheck-suppress assertWithSideEffect
 		assert(!fd.GetFileEntry());
 		return NULL;
 	}
+	// cppcheck-suppress assertWithSideEffect
 	assert(fd.GetFileEntry());
 	return fd.GetFileEntry();
 }
@@ -744,8 +748,12 @@ bool ZipDir::CacheRW::WriteCDR(FILE* fTarget)
 	//arrFiles.SortByFileOffset();
 	size_t nSizeCDR = arrFiles.GetStats().nSizeCDR;
 	void* pCDR = m_pHeap->TempAlloc(nSizeCDR, "ZipDir::CacheRW::WriteCDR");
+#if defined(USE_CRY_ASSERT)
 	size_t nSizeCDRSerialized = arrFiles.MakeZipCDR(m_lCDROffset, pCDR, m_encryptedHeaders == HEADERS_ENCRYPTED_TEA);
 	assert(nSizeCDRSerialized == nSizeCDR);
+#else
+	arrFiles.MakeZipCDR(m_lCDROffset, pCDR, m_encryptedHeaders == HEADERS_ENCRYPTED_TEA);
+#endif
 	if (m_encryptedHeaders == HEADERS_ENCRYPTED_TEA)
 	{
 	#if defined(SUPPORT_XTEA_PAK_ENCRYPTION)
@@ -836,7 +844,6 @@ bool ZipDir::CacheRW::RelinkZip(FILE* fTmp)
 {
 	FileRecordList arrFiles(GetRoot());
 	arrFiles.SortByFileOffset();
-	FileRecordList::ZipStats Stats = arrFiles.GetStats();
 
 	// we back up our file entries, because we'll need to restore them
 	// in case the operation fails

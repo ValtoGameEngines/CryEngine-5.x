@@ -1,10 +1,10 @@
-// CRYENGINE Source Code File
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 
-/// Un-Tweakables ////////////////////// 
+//////////////////////////////////////////////////////////////////////////
 
-float4 VisionParams : PI_VisionParams;
+SamplerState            ssTrilinearWrap      : register(s14);
+
 float4 VisionMtlParams : PB_VisionMtlParams;
 
 ///////////////// vertex input/output //////////////////
@@ -37,11 +37,11 @@ vert2fragCustomRender Common_CustomRenderPassVS(app2vertCustomViews IN)
   
   streamPos vertPassPos = (streamPos)0;
   streamPos_FromCustomViews(IN, vertPassPos);
-
-#if %_RT_INSTANCING_ATTR
-  OUT.cVision = vertPassPos.InstVisionParams;
+  
+#if !%_RT_ENVIRONMENT_CUBEMAP
+	OUT.cVision = CD_CustomData1;
 #else
-  OUT.cVision = VisionParams;
+	OUT.cVision = 0.0f;
 #endif
 
   float4 HPosition = Pos_VS_General(g_VS_ViewProjZeroMatr, vertPassPos);
@@ -83,23 +83,13 @@ vert2fragCustomRender Common_CustomRenderPassVS(app2vertCustomViews IN)
 
 #endif
 
-  return OUT;            
+  return OUT;
 }
-
-sampler2D PNoiseSampler = sampler_state
-{
-  Texture = EngineAssets/Textures/perlinNoise2D.dds;
-  MinFilter = LINEAR;
-  MagFilter = LINEAR;
-  MipFilter = LINEAR;
-  AddressU = Wrap;
-  AddressV = Wrap;	
-};
 
 ///////////////// pixel shaders //////////////////
 
-// Silhouete vision (Crysis1)
-half4 SilhoueteVision( vert2fragCustomRender IN ) 
+// Silhouette vision (Crysis1)
+half4 SilhouetteVision( vert2fragCustomRender IN ) 
 {
 	half fMask = 1.0f;
 	
@@ -109,26 +99,25 @@ half4 SilhoueteVision( vert2fragCustomRender IN )
 	fMask =  clamp((fDepth - 1.5f) * 0.333f, 0, 1);
 #endif
 
-	return half4(fMask.xxx * IN.cVision, IN.baseTC.w);
+	return half4(fMask.xxx * IN.cVision.xyz, IN.baseTC.w);
 }
 
-// Silhouete vision (Optimised for console)
-half4 SilhoueteVisionOptimised( vert2fragCustomRender IN ) 
+// Silhouette vision (Optimised for console)
+half4 SilhouetteVisionOptimised( vert2fragCustomRender IN ) 
 {	
 	half fMask = 1.0f;
-
 
 #if !%TEMP_EYES && !%_RT_SAMPLE5
 	float fDepth = GetLinearDepthScaledProj(sceneLinearDepthTex, IN.screenProj);
 	fMask = clamp((fDepth - 1.5f) * 0.333f, 0, 1);
 #endif
 
-	half3 finalColor = fMask.xxx * IN.cVision;
-	return half4(finalColor.rgb, dot(finalColor, 0.333f) > 0.0f);
+	half3 finalColor = fMask.xxx * IN.cVision.xyz;
+	return half4(finalColor.rgb, (IN.cVision.w <= 0) ? IN.cVision.w : (dot(finalColor, 0.333f) > 0.0f));
 }
 
-// Silhouete geometry highlights (used for hinting weapons, pickups, etc - Crysis 2)
-half4 SilhoueteGeometryHighlights( vert2fragCustomRender IN ) 
+// Silhouette geometry highlights (used for hinting weapons, pickups, etc - Crysis 2)
+half4 SilhouetteGeometryHighlights( vert2fragCustomRender IN ) 
 {
   half3 vNormal = DecodeGBufferNormal( GetSceneTexProj( sceneNormalsTex, IN.screenProj.xyzw ) );
   half3 vView = normalize( -IN.vView.xyz );
@@ -140,7 +129,7 @@ half4 SilhoueteGeometryHighlights( vert2fragCustomRender IN )
   half fInterlace = abs( frac( (IN.screenProj.y / IN.screenProj.w )  * PS_ScreenSize.y * 0.35 ) *2-1 )*0.5+0.5;
 
   // Test using inverse cloud noise for interesting electrical look
-  half fNoise = tex2D(PNoiseSampler, IN.baseTC.xy).x; 
+  half fNoise = GetTexture2D(perlinNoiseTex, ssMaterialTrilinear, IN.baseTC.xy).x;
   half fAnimNoise = abs( frac( fNoise + IN.cVision.w ) - 0.5 ); 
 
   return half4( fInterlace * IN.cVision.xyz * fEdotN *  fAnimNoise, 1 );
@@ -184,7 +173,7 @@ pixout Common_CustomRenderPassPS(vert2fragCustomRender IN)
 
 #if %_RT_SAMPLE0
 
-	OUT.Color = SilhoueteGeometryHighlights( IN );
+	OUT.Color = SilhouetteGeometryHighlights( IN );
 
 #elif %_RT_SAMPLE1
 
@@ -193,11 +182,11 @@ pixout Common_CustomRenderPassPS(vert2fragCustomRender IN)
 
 #elif %_RT_SAMPLE2
 
-	OUT.Color = SilhoueteVisionOptimised( IN );
+	OUT.Color = SilhouetteVisionOptimised( IN );
 
 #else
 
-  OUT.Color = SilhoueteVision( IN );
+  OUT.Color = SilhouetteVision( IN );
 #endif
 
 #if %_RT_ALPHATEST

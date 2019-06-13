@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*=============================================================================
    ShaderTemplate.cpp : implementation of the Shaders templates support.
@@ -14,6 +14,8 @@
 #include <CryString/StringUtils.h>                // stristr()
 #include <CrySystem/Scaleform/IFlashUI.h>
 #include "../Common/Textures/TextureHelpers.h"
+#include "../XRenderD3D9/GraphicsPipeline/ShadowMap.h"
+#include "../XRenderD3D9/GraphicsPipeline/VolumetricClouds.h"
 
 #if CRY_PLATFORM_WINDOWS
 	#include <direct.h>
@@ -87,12 +89,12 @@ CShaderResources* CShaderMan::mfCreateShaderResources(const SInputShaderResource
 	}
 
 	CShaderResources* pSR = new CShaderResources(&RS);
-	pSR->m_nRefCounter = 1;
+	pSR->AddRef();
 	if (!CShader::s_ShaderResources_known.Num())
 	{
 		CShader::s_ShaderResources_known.AddIndex(1);
 		CShaderResources* pSRNULL = new CShaderResources;
-		pSRNULL->m_nRefCounter = 1;
+		pSRNULL->AddRef();
 		CShader::s_ShaderResources_known[0] = pSRNULL;
 	}
 	else if (nFree < 0 && CShader::s_ShaderResources_known.Num() >= MAX_REND_SHADER_RES)
@@ -123,10 +125,6 @@ uint32 SShaderItem::PostLoad()
 	CShader* pSH = (CShader*)m_pShader;
 	CShaderResources* pR = (CShaderResources*)m_pShaderResources;
 
-	if (pSH->m_Flags2 & EF2_PREPR_GENSPRITES)
-		nPreprocessFlags |= FSPR_GENSPRITES | FB_PREPROCESS;
-	if (pSH->m_Flags2 & EF2_PREPR_GENCLOUDS)
-		nPreprocessFlags |= FSPR_GENCLOUDS;
 	if (pSH->m_Flags2 & EF2_PREPR_SCANWATER)
 		nPreprocessFlags |= FSPR_SCANTEXWATER | FB_PREPROCESS;
 
@@ -140,7 +138,7 @@ uint32 SShaderItem::PostLoad()
 			if (!pR->m_Textures[i] || !pR->m_Textures[i]->m_Sampler.m_pTarget)
 				continue;
 
-			if (gRenDev->m_RP.m_eQuality == eRQ_Low)
+			if (gRenDev->EF_GetRenderQuality() == eRQ_Low)
 			{
 				STexSamplerRT& sampler(pR->m_Textures[i]->m_Sampler);
 				if (sampler.m_eTexType == eTT_Auto2D || sampler.m_eTexType == eTT_Dyn2D)
@@ -163,20 +161,17 @@ uint32 SShaderItem::PostLoad()
 	// Update persistent batch flags
 	if (pTech)
 	{
-		if (pTech->m_nTechnique[TTYPE_Z] > 0)
-		{
+		// Supports DepthBuffer-pass (CommonZPrePass)
+		if (pTech->m_nTechnique[TTYPE_ZPREPASS] > 0)
+			nPreprocessFlags |= FB_ZPREPASS;
+
+		// Supports GBuffer-pass (CommonZPass)
+		if (pTech->m_nTechnique[TTYPE_Z] > 0 && pSH->m_Flags & EF_SUPPORTSDEFERREDSHADING_FULL)
 			nPreprocessFlags |= FB_Z;
 
-			// ZPrepass only for non-alpha tested/blended geometry (decals, terrain).
-			// We assume vegetation is special case due to potential massive overdraw
-			if (pTech->m_nTechnique[TTYPE_ZPREPASS] > 0)
-			{
-				const bool bAlphaTested = (pR && pR->IsAlphaTested());
-				const bool bVegetation = (pSH && pSH->GetShaderType() == eST_Vegetation);
-				if (!bAlphaTested && !bVegetation || bAlphaTested && bVegetation)
-					nPreprocessFlags |= FB_ZPREPASS;
-			}
-		}
+		// Supports Forward+-pass (General)
+		if (pSH->m_Flags & EF_SUPPORTSDEFERREDSHADING_MIXED)
+			nPreprocessFlags |= FB_TILED_FORWARD;
 
 		if (!(pTech->m_Flags & FHF_POSITION_INVARIANT) && ((pTech->m_Flags & FHF_TRANSPARENT) || (pR && pR->IsTransparent())))
 			nPreprocessFlags |= FB_TRANSPARENT;
@@ -187,17 +182,8 @@ uint32 SShaderItem::PostLoad()
 		if (pTech->m_nTechnique[TTYPE_WATERCAUSTICPASS] > 0)
 			nPreprocessFlags |= FB_WATER_CAUSTIC;
 
-		if ((pSH->m_Flags2 & EF2_SKINPASS))
-			nPreprocessFlags |= FB_SKIN;
-
-		if (CRenderer::CV_r_SoftAlphaTest && pTech->m_nTechnique[TTYPE_SOFTALPHATESTPASS] > 0)
-			nPreprocessFlags |= FB_SOFTALPHATEST;
-
 		if (pSH->m_Flags2 & EF2_EYE_OVERLAY)
 			nPreprocessFlags |= FB_EYE_OVERLAY;
-
-		if ((pSH->m_Flags & EF_SUPPORTSDEFERREDSHADING_MIXED) && !(pSH->m_Flags & EF_SUPPORTSDEFERREDSHADING_FULL))
-			nPreprocessFlags |= FB_TILED_FORWARD;
 
 		if (CRenderer::CV_r_Refraction && (pSH->m_Flags & EF_REFRACTIVE))
 			nPreprocessFlags |= FB_TRANSPARENT;
@@ -220,14 +206,14 @@ void CShaderResources::SetShaderParams(SInputShaderResources* pDst, IShader* pSH
 	ReleaseParams();
 	m_ShaderParams = pDst->m_ShaderParams;
 
-	gRenDev->m_pRT->RC_UpdateMaterialConstants(this, pSH);
+	UpdateConstants(pSH);
 }
 
 EEfResTextures CShaderMan::mfCheckTextureSlotName(const char* mapname)
 {
 	EEfResTextures slot = EFTT_UNKNOWN;
 
-	if (!stricmp(mapname, "$Diffuse"))            slot = EFTT_DIFFUSE;
+	if (!stricmp(mapname, "$Diffuse")) slot = EFTT_DIFFUSE;
 	else if (!strnicmp(mapname, "$Normals", 7))
 		slot = EFTT_NORMALS;
 	else if (!stricmp(mapname, "$Specular"))
@@ -284,126 +270,94 @@ CTexture* CShaderMan::mfCheckTemplateTexName(const char* mapname, ETEX_Type eTT)
 		EEfResTextures slot = mfCheckTextureSlotName(mapname);
 
 		if (slot != EFTT_MAX)
-			return &CTexture::s_ShaderTemplates[slot];
+			return &CRendererResources::s_ShaderTemplates[slot];
 	}
+	auto* pShadowMapStage = gcpRendD3D->GetActiveGraphicsPipeline()->GetStage<CShadowMapStage>();
+	auto* pVolumetricCloudStage = gcpRendD3D->GetActiveGraphicsPipeline()->GetStage<CVolumetricCloudsStage>();
+
+	const CGraphicsPipelineResources& pipelineResources = gcpRendD3D->GetActiveGraphicsPipeline()->GetPipelineResources();
 
 	if (!stricmp(mapname, "$ShadowPoolAtlas"))
-		TexPic = CTexture::s_ptexRT_ShadowPool;
+		TexPic = pShadowMapStage->m_pTexRT_ShadowPool;
 	else if (!strnicmp(mapname, "$ShadowID", 9))
 	{
 		int n = atoi(&mapname[9]);
-		TexPic = CTexture::s_ptexShadowID[n];
+		TexPic = CRendererResources::s_ptexShadowID[n];
 	}
 	else if (!stricmp(mapname, "$FromRE") || !stricmp(mapname, "$FromRE0"))
-		TexPic = CTexture::s_ptexFromRE[0];
+		TexPic = CRendererResources::s_ptexFromRE[0];
 	else if (!stricmp(mapname, "$FromRE1"))
-		TexPic = CTexture::s_ptexFromRE[1];
+		TexPic = CRendererResources::s_ptexFromRE[1];
 	else if (!stricmp(mapname, "$FromRE2"))
-		TexPic = CTexture::s_ptexFromRE[2];
+		TexPic = CRendererResources::s_ptexFromRE[2];
 	else if (!stricmp(mapname, "$FromRE3"))
-		TexPic = CTexture::s_ptexFromRE[3];
+		TexPic = CRendererResources::s_ptexFromRE[3];
 	else if (!stricmp(mapname, "$FromRE4"))
-		TexPic = CTexture::s_ptexFromRE[4];
+		TexPic = CRendererResources::s_ptexFromRE[4];
 	else if (!stricmp(mapname, "$FromRE5"))
-		TexPic = CTexture::s_ptexFromRE[5];
+		TexPic = CRendererResources::s_ptexFromRE[5];
 	else if (!stricmp(mapname, "$FromRE6"))
-		TexPic = CTexture::s_ptexFromRE[6];
+		TexPic = CRendererResources::s_ptexFromRE[6];
 	else if (!stricmp(mapname, "$FromRE7"))
-		TexPic = CTexture::s_ptexFromRE[7];
-	else if (!stricmp(mapname, "$VolObj_Density"))
-		TexPic = CTexture::s_ptexVolObj_Density;
-	else if (!stricmp(mapname, "$VolObj_Shadow"))
-		TexPic = CTexture::s_ptexVolObj_Shadow;
+		TexPic = CRendererResources::s_ptexFromRE[7];
 	else if (!stricmp(mapname, "$ColorChart"))
-		TexPic = CTexture::s_ptexColorChart;
+		TexPic = CRendererResources::s_ptexColorChart;
 	else if (!stricmp(mapname, "$FromObj"))
-		TexPic = CTexture::s_ptexFromObj;
-	else if (!stricmp(mapname, "$SvoTree"))
-		TexPic = CTexture::s_ptexSvoTree;
-	else if (!stricmp(mapname, "$SvoTris"))
-		TexPic = CTexture::s_ptexSvoTris;
-	else if (!stricmp(mapname, "$SvoGlobalCM"))
-		TexPic = CTexture::s_ptexSvoGlobalCM;
-	else if (!stricmp(mapname, "$SvoRgbs"))
-		TexPic = CTexture::s_ptexSvoRgbs;
-	else if (!stricmp(mapname, "$SvoNorm"))
-		TexPic = CTexture::s_ptexSvoNorm;
-	else if (!stricmp(mapname, "$SvoOpac"))
-		TexPic = CTexture::s_ptexSvoOpac;
+		TexPic = CRendererResources::s_ptexFromObj;
 	else if (!stricmp(mapname, "$FromObjCM")) // NOTE: deprecated
-		TexPic = CTexture::s_ptexBlackCM;
+		TexPic = CRendererResources::s_ptexBlackCM;
 	else if (!strnicmp(mapname, "$White", 6))
-		TexPic = CTexture::s_ptexWhite;
+		TexPic = CRendererResources::s_ptexWhite;
 	else if (!strnicmp(mapname, "$RT_2D", 6))
 	{
-		TexPic = CTexture::s_ptexRT_2D;
+		TexPic = CRendererResources::s_ptexRT_2D;
 	}
 	else if (!stricmp(mapname, "$PrevFrameScaled"))
-		TexPic = CTexture::s_ptexPrevFrameScaled;
-	else if (!stricmp(mapname, "$BackBuffer"))
-		TexPic = CTexture::s_ptexBackBuffer;
+		TexPic = CRendererResources::s_ptexDisplayTargetScaledPrev;
+	else if (!stricmp(mapname, "$DisplayTarget"))
+		TexPic = pipelineResources.m_pTexDisplayTargetSrc;
 	else if (!stricmp(mapname, "$ModelHUD"))
-		TexPic = CTexture::s_ptexModelHudBuffer;
-	else if (!stricmp(mapname, "$BackBufferScaled_d2"))
-		TexPic = CTexture::s_ptexBackBufferScaled[0];
-	else if (!stricmp(mapname, "$BackBufferScaled_d4"))
-		TexPic = CTexture::s_ptexBackBufferScaled[1];
-	else if (!stricmp(mapname, "$BackBufferScaled_d8"))
-		TexPic = CTexture::s_ptexBackBufferScaled[2];
+		TexPic = pipelineResources.m_pTexModelHudBuffer;
+	else if (!stricmp(mapname, "$DisplayTargetScaled_d2"))
+		TexPic = pipelineResources.m_pTexDisplayTargetScaled[0];
+	else if (!stricmp(mapname, "$DisplayTargetScaled_d4"))
+		TexPic = pipelineResources.m_pTexDisplayTargetScaled[1];
+	else if (!stricmp(mapname, "$DisplayTargetScaled_d8"))
+		TexPic = pipelineResources.m_pTexDisplayTargetScaled[2];
 	else if (!stricmp(mapname, "$HDR_BackBuffer"))
-		TexPic = CTexture::s_ptexSceneTarget;
-	else if (!stricmp(mapname, "$HDR_BackBufferScaled_d2"))
-		TexPic = CTexture::s_ptexHDRTargetScaled[0];
-	else if (!stricmp(mapname, "$HDR_BackBufferScaled_d4"))
-		TexPic = CTexture::s_ptexHDRTargetScaled[1];
-	else if (!stricmp(mapname, "$HDR_BackBufferScaled_d8"))
-		TexPic = CTexture::s_ptexHDRTargetScaled[2];
+		TexPic = pipelineResources.m_pTexSceneTarget;
 	else if (!stricmp(mapname, "$HDR_FinalBloom"))
-		TexPic = CTexture::s_ptexHDRFinalBloom;
+		TexPic = pipelineResources.m_pTexHDRFinalBloom;
 	else if (!stricmp(mapname, "$HDR_TargetPrev"))
-		TexPic = CTexture::s_ptexHDRTargetPrev;
+		TexPic = pipelineResources.m_pTexHDRTargetPrev;
 	else if (!stricmp(mapname, "$HDR_AverageLuminance"))
-		TexPic = CTexture::s_ptexHDRMeasuredLuminanceDummy;
+		TexPic = CRendererResources::s_ptexHDRMeasuredLuminanceDummy;
 	else if (!stricmp(mapname, "$ZTarget"))
-		TexPic = CTexture::s_ptexZTarget;
+		TexPic = pipelineResources.m_pTexLinearDepth;
 	else if (!stricmp(mapname, "$ZTargetScaled"))
-		TexPic = CTexture::s_ptexZTargetScaled;
+		TexPic = pipelineResources.m_pTexLinearDepthScaled[0];
 	else if (!stricmp(mapname, "$ZTargetScaled2"))
-		TexPic = CTexture::s_ptexZTargetScaled2;
+		TexPic = pipelineResources.m_pTexLinearDepthScaled[1];
 	else if (!stricmp(mapname, "$SceneTarget"))
-		TexPic = CTexture::s_ptexSceneTarget;
+		TexPic = pipelineResources.m_pTexSceneTarget;
 	else if (!stricmp(mapname, "$CloudsLM"))
-		TexPic = CTexture::s_ptexCloudsLM;
+		TexPic = CRendererResources::s_ptexCloudsLM;
 	else if (!stricmp(mapname, "$WaterVolumeDDN"))
-		TexPic = CTexture::s_ptexWaterVolumeDDN;
+		TexPic = CRendererResources::s_ptexWaterVolumeDDN;
 	else if (!stricmp(mapname, "$WaterVolumeReflPrev"))
-		TexPic = CTexture::s_ptexWaterVolumeRefl[1];
+		TexPic = pipelineResources.m_pTexWaterVolumeRefl[1];
 	else if (!stricmp(mapname, "$WaterVolumeRefl"))
-		TexPic = CTexture::s_ptexWaterVolumeRefl[0];
-	else if (!stricmp(mapname, "$WaterVolumeCaustics"))
-		TexPic = CTexture::s_ptexWaterCaustics[0];
-	else if (!stricmp(mapname, "$WaterVolumeCausticsTemp"))
-		TexPic = CTexture::s_ptexWaterCaustics[1];
+		TexPic = pipelineResources.m_pTexWaterVolumeRefl[0];
 	else if (!stricmp(mapname, "$SceneNormalsMap"))
-		TexPic = CTexture::s_ptexSceneNormalsMap;
-	else if (!stricmp(mapname, "$SceneNormalsMapMS"))
-		TexPic = CTexture::s_ptexSceneNormalsMapMS;
+		TexPic = pipelineResources.m_pTexSceneNormalsMap;
 	else if (!stricmp(mapname, "$SceneDiffuse"))
-		TexPic = CTexture::s_ptexSceneDiffuse;
+		TexPic = pipelineResources.m_pTexSceneDiffuse;
 	else if (!stricmp(mapname, "$SceneSpecular"))
-		TexPic = CTexture::s_ptexSceneSpecular;
+		TexPic = pipelineResources.m_pTexSceneSpecular;
 	else if (!stricmp(mapname, "$SceneNormalsBent"))
-		TexPic = CTexture::s_ptexSceneNormalsBent;
-	else if (!stricmp(mapname, "$SceneDiffuseAcc"))
-		TexPic = CTexture::s_ptexCurrentSceneDiffuseAccMap;
-	else if (!stricmp(mapname, "$SceneSpecularAcc"))
-		TexPic = CTexture::s_ptexSceneSpecularAccMap;
-	else if (!stricmp(mapname, "$SceneDiffuseAccMS"))
-		TexPic = CTexture::s_ptexSceneDiffuseAccMapMS;
-	else if (!stricmp(mapname, "$SceneSpecularAccMS"))
-		TexPic = CTexture::s_ptexSceneSpecularAccMapMS;
+		TexPic = pipelineResources.m_pTexSceneNormalsBent;
 	else if (!stricmp(mapname, "$VolCloudShadows"))
-		TexPic = CTexture::s_ptexVolCloudShadow;
+		TexPic = pVolumetricCloudStage->m_pTexVolCloudShadow;
 
 	return TexPic;
 }
@@ -457,8 +411,8 @@ STexAnim* CShaderMan::mfReadTexSequence(const char* na, int Flags, bool bFindOnl
 	tx = NULL;
 
 	cry_strcpy(name, na);
-	const char* ext = fpGetExtension(na);
-	fpStripExtension(name, name);
+	const char* ext = PathUtil::GetExt(na);
+	PathUtil::RemoveExtension(name);
 
 	char chSep = '#';
 	nm = strchr(name, chSep);
@@ -479,7 +433,7 @@ STexAnim* CShaderMan::mfReadTexSequence(const char* na, int Flags, bool bFindOnl
 		{
 			name[nm - nName] = 0;
 			char* speed = &nName[nm - nName + 1];
-			if (nm = strchr(speed, ')'))
+			if ((nm = strchr(speed, ')')))
 				speed[nm - speed] = 0;
 			fSpeed = (float)atof(speed);
 		}
@@ -548,7 +502,7 @@ STexAnim* CShaderMan::mfReadTexSequence(const char* na, int Flags, bool bFindOnl
 
 	cry_strcpy(frm, "%s%.");
 	cry_strcat(frm, frd);
-	cry_strcat(frm, "d%s%s");
+	cry_strcat(frm, "d%s.%s");
 	STexAnim* ta = NULL;
 	for (i = 0; i < nums; i++)
 	{
@@ -568,7 +522,6 @@ STexAnim* CShaderMan::mfReadTexSequence(const char* na, int Flags, bool bFindOnl
 			ta->m_Time = fSpeed;
 		}
 
-		ITexture* pTex = (ITexture*)tp;
 		ta->m_TexPics.AddElem(tp);
 		n++;
 	}
@@ -607,10 +560,12 @@ void CShaderMan::mfSetResourceTexState(SEfResTexture* Tex)
 {
 	if (Tex)
 	{
-		STexState ST;
+		SSamplerState ST;
+
 		ST.SetFilterMode(Tex->m_Filter);
-		ST.SetClampMode(Tex->m_bUTile ? TADDR_WRAP : TADDR_CLAMP, Tex->m_bVTile ? TADDR_WRAP : TADDR_CLAMP, Tex->m_bUTile ? TADDR_WRAP : TADDR_CLAMP);
-		Tex->m_Sampler.m_nTexState = CTexture::GetTexState(ST);
+		ST.SetClampMode(Tex->m_bUTile ? eSamplerAddressMode_Wrap : eSamplerAddressMode_Clamp, Tex->m_bVTile ? eSamplerAddressMode_Wrap : eSamplerAddressMode_Clamp, Tex->m_bUTile ? eSamplerAddressMode_Wrap : eSamplerAddressMode_Clamp);
+
+		Tex->m_Sampler.m_nTexState = CDeviceObjectFactory::GetOrCreateSamplerStateHandle(ST);
 	}
 }
 
@@ -618,7 +573,7 @@ CTexture* CShaderMan::mfTryToLoadTexture(const char* nameTex, STexSamplerRT* smp
 {
 	if (nameTex && strchr(nameTex, '#')) // test for " #" to skip max material names
 	{
-		int n = mfReadTexSequence(smp, nameTex, Flags, bFindOnly);
+		mfReadTexSequence(smp, nameTex, Flags, bFindOnly);
 	}
 
 	CTexture* tx = smp->m_pTex;
@@ -677,7 +632,7 @@ bool CShaderMan::mfLoadResourceTexture(EEfResTextures Id, SInputShaderResources&
 
 		if (!(bReturn = RS.m_Textures[Id].m_Sampler.m_pTex->IsTextureLoaded()) && bReplaceMeOnFail)
 		{
-			RS.m_Textures[Id].m_Sampler.m_pTex = mfLoadResourceTexture("EngineAssets/TextureMsg/ReplaceMe.tif", RS.m_TexturePath.c_str(), RS.m_Textures[Id].m_Sampler.GetTexFlags() | CustomFlags, &RS.m_Textures[Id]);
+			RS.m_Textures[Id].m_Sampler.m_pTex = mfLoadResourceTexture("%ENGINE%/EngineAssets/TextureMsg/ReplaceMe.tif", RS.m_TexturePath.c_str(), RS.m_Textures[Id].m_Sampler.GetTexFlags() | CustomFlags, &RS.m_Textures[Id]);
 		}
 	}
 
@@ -703,7 +658,7 @@ bool CShaderMan::mfLoadResourceTexture(EEfResTextures Id, CShaderResources& RS, 
 
 		if (!(bTextureLoaded = RS.m_Textures[Id]->m_Sampler.m_pTex->IsTextureLoaded()) && bReplaceMeOnFail)
 		{
-			RS.m_Textures[Id]->m_Sampler.m_pTex = mfLoadResourceTexture("EngineAssets/TextureMsg/ReplaceMe.tif", RS.m_TexturePath.c_str(), RS.m_Textures[Id]->m_Sampler.GetTexFlags() | CustomFlags, RS.m_Textures[Id]);
+			RS.m_Textures[Id]->m_Sampler.m_pTex = mfLoadResourceTexture("%ENGINE%/EngineAssets/TextureMsg/ReplaceMe.tif", RS.m_TexturePath.c_str(), RS.m_Textures[Id]->m_Sampler.GetTexFlags() | CustomFlags, RS.m_Textures[Id]);
 		}
 	}
 
@@ -830,7 +785,7 @@ void CShaderMan::mfRefreshResources(CShaderResources* Res, const IRenderer::SLoa
 			if (Tex->m_Sampler.m_eTexType == eTT_NearestCube)
 			{
 				SAFE_RELEASE(Tex->m_Sampler.m_pTex);
-				Tex->m_Sampler.m_pTex = CTexture::s_ptexBlackCM;
+				Tex->m_Sampler.m_pTex = CRendererResources::s_ptexBlackCM;
 			}
 
 			if (Tex->m_Sampler.m_eTexType == eTT_Dyn2D)
@@ -853,15 +808,14 @@ void CShaderMan::mfRefreshResources(CShaderResources* Res, const IRenderer::SLoa
 
 					Tex->m_Sampler.m_pTarget->m_refSamplerID = i;
 					Tex->m_Sampler.m_pTarget->m_bTempDepth = true;
-					Tex->m_Sampler.m_pTarget->m_eOrder = eRO_PreProcess;
+					Tex->m_Sampler.m_pTarget->m_eOrder = eRO_Managed;
 					Tex->m_Sampler.m_pTarget->m_eTF = eTF_R8G8B8A8;
 					Tex->m_Sampler.m_pTarget->m_nIDInPool = -1;
-					Tex->m_Sampler.m_pTarget->m_nFlags |= FRT_RENDTYPE_RECURSIVECURSCENE | FRT_CAMERA_CURRENT;
 					Tex->m_Sampler.m_pTarget->m_nFlags |= FRT_CLEAR_DEPTH | FRT_CLEAR_STENCIL | FRT_CLEAR_COLOR;
 				}
 				else
 				{
-					Tex->m_Sampler.m_pTex = mfLoadResourceTexture("EngineAssets/TextureMsg/NotFound.tif", Res->m_TexturePath.c_str(), Res->m_Textures[i]->m_Sampler.GetTexFlags() | Flags, Res->m_Textures[i]);
+					Tex->m_Sampler.m_pTex = mfLoadResourceTexture("%ENGINE%/EngineAssets/TextureMsg/NotFound.tif", Res->m_TexturePath.c_str(), Res->m_Textures[i]->m_Sampler.GetTexFlags() | Flags, Res->m_Textures[i]);
 				}
 			}
 			else if (!Tex->m_Sampler.m_pTex)
@@ -875,12 +829,12 @@ void CShaderMan::mfRefreshResources(CShaderResources* Res, const IRenderer::SLoa
 						SAFE_RELEASE(Tex->m_Sampler.m_pTarget);
 						Tex->m_Sampler.m_pTarget = new SHRenderTarget;
 
-						Tex->m_Sampler.m_pTex = CTexture::s_ptexRT_2D;
-						Tex->m_Sampler.m_pTarget->m_pTarget[0] = CTexture::s_ptexRT_2D;
+						Tex->m_Sampler.m_pTex = CRendererResources::s_ptexRT_2D;
+						Tex->m_Sampler.m_pTarget->m_pTarget = CRendererResources::s_ptexRT_2D;
 
 						Tex->m_Sampler.m_pTarget->m_bTempDepth = true;
 						Tex->m_Sampler.m_pTarget->m_eOrder = eRO_PreProcess;
-						Tex->m_Sampler.m_pTarget->m_eTF = eTF_R8G8B8A8;
+						Tex->m_Sampler.m_pTarget->m_eTF = CRendererResources::GetHDRFormat(false, true);
 						Tex->m_Sampler.m_pTarget->m_nIDInPool = -1;
 						Tex->m_Sampler.m_pTarget->m_nFlags |= FRT_RENDTYPE_RECURSIVECURSCENE | FRT_CAMERA_CURRENT;
 						Tex->m_Sampler.m_pTarget->m_nFlags |= FRT_CLEAR_DEPTH | FRT_CLEAR_STENCIL | FRT_CLEAR_COLOR;
@@ -895,9 +849,9 @@ void CShaderMan::mfRefreshResources(CShaderResources* Res, const IRenderer::SLoa
 			}
 
 			// assign streaming priority based on the importance (sampler slot)
-			if (Tex && Tex->m_Sampler.m_pITex && Tex->m_Sampler.m_pITex->IsTextureLoaded() && Tex->m_Sampler.m_pITex->IsStreamedVirtual())
+			if (Tex && Tex->m_Sampler.m_pITex && Tex->m_Sampler.m_pTex->IsTextureLoaded() && Tex->m_Sampler.m_pTex->IsStreamed())
 			{
-				CTexture* tp = (CTexture*)Tex->m_Sampler.m_pITex;
+				CTexture* tp = Tex->m_Sampler.m_pTex;
 				tp->SetStreamingPriority(EFTT_MAX - i);
 			}
 		}

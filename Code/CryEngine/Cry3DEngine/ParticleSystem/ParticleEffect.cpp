@@ -1,25 +1,25 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  Created:     23/09/2014 by Filipe amim
-//  Description:
-// -------------------------------------------------------------------------
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2015-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
+#include "ParticleEffect.h"
+#include "ParticleEmitter.h"
+#include "ParticleSystem.h"
+#include "Material.h"
 #include <CrySerialization/STL.h>
 #include <CrySerialization/IArchive.h>
 #include <CrySerialization/SmartPtr.h>
 #include <CryParticleSystem/ParticleParams.h>
-#include "ParticleEffect.h"
-#include "ParticleEmitter.h"
-#include "ParticleFeature.h"
-
-CRY_PFX2_DBG
 
 namespace pfx2
 {
+
+uint GetVersion(Serialization::IArchive& ar)
+{
+	SSerializationContext* pContext = ar.context<SSerializationContext>();
+	if (!pContext)
+		return gCurrentVersion;
+	return pContext->m_documentVersion;
+}
 
 //////////////////////////////////////////////////////////////////////////
 // CParticleEffect
@@ -27,8 +27,9 @@ namespace pfx2
 CParticleEffect::CParticleEffect()
 	: m_editVersion(0)
 	, m_dirty(true)
-	, m_numRenderObjects(0)
+	, m_substitutedPfx1(false)
 {
+	m_pAttributes = TAttributeTablePtr(new CAttributeTable);
 }
 
 cstr CParticleEffect::GetName() const
@@ -38,73 +39,132 @@ cstr CParticleEffect::GetName() const
 
 void CParticleEffect::Compile()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_PARTICLE);
+	CRY_PFX2_PROFILE_DETAIL;
 
 	if (!m_dirty)
 		return;
 
-	m_numRenderObjects = 0;
-	m_attributeInstance.Reset(&m_attributes, EAttributeScope::PerEffect);
-	for (size_t i = 0; i < m_components.size(); ++i)
+	for (auto& component : m_components)
 	{
-		m_components[i]->m_pEffect = this;
-		m_components[i]->m_componentId = i;
-		m_components[i]->SetChanged();
-		m_components[i]->m_componentParams.Reset();
-		m_components[i]->PreCompile();
-	}
-	for (auto& component : m_components)
+		component->m_pEffect = this;
+		component->SetChanged();
+		component->PreCompile();
 		component->ResolveDependencies();
+	}
+
+	Sort();
+
+	uint id = 0;
 	for (auto& component : m_components)
+	{
+		component->m_componentId = id++;
+		if (!component->IsActive())
+			continue;
 		component->Compile();
+	}
+
+	m_topComponents.clear();
 	for (auto& component : m_components)
+	{
 		component->FinalizeCompile();
+		if (!component->GetParentComponent())
+			m_topComponents.push_back(component);
+	}
 
 	m_dirty = false;
 }
 
-TComponentId CParticleEffect::FindComponentIdByName(const char* name) const
+struct SortedComponents: TComponents
 {
-	const auto it = std::find_if(m_components.begin(), m_components.end(), [name](TComponentPtr pComponent)
+	SortedComponents(const TComponents& src)
 	{
-		if (!pComponent)
-			return false;
-		return strcmp(pComponent->GetName(), name) == 0;
-	});
-	if (it == m_components.end())
-		return gInvalidId;
-	return TComponentId(it - m_components.begin());
+		for (auto pComp : src)
+		{
+			if (!pComp->GetParentComponent())
+				AddTree(pComp);
+		}
+	}
+
+	void AddTree(CParticleComponent* pComp)
+	{
+		push_back(pComp);
+		for (auto pChild : pComp->GetChildComponents())
+			AddTree(pChild);
+	}
+};
+
+void CParticleEffect::Sort()
+{
+	SortedComponents sortedComponents(m_components);
+	assert(sortedComponents.size() == m_components.size());
+	m_components.swap(sortedComponents);
 }
 
-string CParticleEffect::MakeUniqueName(TComponentId forComponentId, const char* name)
+void CParticleEffect::SortFromTop()
 {
-	TComponentId foundId = FindComponentIdByName(name);
-	if (foundId == forComponentId || foundId == gInvalidId)
+	SortedComponents sortedComponents(m_topComponents);
+	assert(sortedComponents.size() == m_components.size());
+	m_components.swap(sortedComponents);
+}
+
+CParticleComponent* CParticleEffect::FindComponentByName(const char* name) const
+{
+	for (const auto& pComponent : m_components)
+	{
+		if (pComponent->m_name == name)
+			return pComponent;
+	}
+	return nullptr;
+}
+
+string CParticleEffect::MakeUniqueName(const CParticleComponent* forComponent, const char* name)
+{
+	CParticleComponent* found = FindComponentByName(name);
+	if (!found || found == forComponent)
 		return string(name);
 
-	CryStackStringT<char, 256> newName(name);
-	const uint sz = strlen(name);
-	if (isdigit(name[sz - 2]) && isdigit(name[sz - 1]))
+	string newName = name;
+	int pos = newName.length() - 1;
+
+	do
 	{
-		const uint newIdent = (name[sz - 2] - '0') * 10 + (name[sz - 1] - '0') + 1;
-		newName.replace(sz - 2, 1, 1, (newIdent / 10) % 10 + '0');
-		newName.replace(sz - 1, 1, 1, newIdent % 10 + '0');
+		while (pos >= 0 && newName[pos] == '9')
+		{
+			newName.replace(pos, 1, 1, '0');
+			pos--;
+		}
+		if (pos < 0 || !isdigit(newName[pos]))
+			newName.insert(++pos, '1');
+		else
+			newName.replace(pos, 1, 1, newName[pos] + 1);
 	}
-	else
-	{
-		newName.append("01");
-	}
-	return MakeUniqueName(forComponentId, newName);
+	while (FindComponentByName(newName));
+
+	return newName;
 }
 
-uint CParticleEffect::AddRenderObjectId()
+string CParticleEffect::GetShortName() const
 {
-	return m_numRenderObjects++;
+	string name = m_name;
+	if (name.Right(4).MakeLower() == ".pfx")
+		name.resize(name.length() - 4);
+	if (name.Left(10).MakeLower() == "particles/")
+		name.erase(0, 10);
+	return name;
 }
 
-uint CParticleEffect::GetNumRenderObjectIds() const
+int CParticleEffect::GetEditVersion() const
 {
-	return m_numRenderObjects;
+	uint32 version = m_editVersion;
+	uint32 shift = 1;
+	for (const CParticleComponent* pComponent : m_components)
+	{
+		const SComponentParams& params = pComponent->GetComponentParams();
+		if (const CMatInfo* pMatInfo = (CMatInfo*)params.m_pMaterial.get())
+			version += pMatInfo->GetModificationId() << shift;
+		shift = (shift + 1) & 31;
+	}
+	return version;
 }
 
 void CParticleEffect::SetName(cstr name)
@@ -114,6 +174,8 @@ void CParticleEffect::SetName(cstr name)
 
 void CParticleEffect::Serialize(Serialization::IArchive& ar)
 {
+	CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
+
 	uint documentVersion = 1;
 	if (ar.isOutput())
 		documentVersion = gCurrentVersion;
@@ -121,7 +183,11 @@ void CParticleEffect::Serialize(Serialization::IArchive& ar)
 	SSerializationContext documentContext(documentVersion);
 	Serialization::SContext context(ar, &documentContext);
 
-	ar(m_attributes, "Attributes");
+	if (documentVersion < gMinimumVersion || documentVersion > gCurrentVersion)
+		gEnv->pLog->LogError("Particle effect %s has unsupported version %d. Valid versions are %d to %d. Some values may be incorrectly read.", 
+			GetName(), documentVersion, gMinimumVersion, gCurrentVersion);
+
+	ar(*m_pAttributes, "Attributes");
 
 	if (ar.isInput() && documentVersion < 3)
 	{
@@ -132,12 +198,17 @@ void CParticleEffect::Serialize(Serialization::IArchive& ar)
 			m_components.push_back(new CParticleComponent(oldComponent));
 	}
 	else
+	{
+		if (ar.isInput() && !ar.isEdit())
+			m_components.clear();
+		Serialization::SContext effectContext(ar, this);
 		ar(m_components, "Components", "+Components");
+	}
 
 	if (ar.isInput())
 	{
-		auto it = std::remove_if(m_components.begin(), m_components.end(), [](TComponentPtr ptr){ return !ptr; });
-		m_components.erase(it, m_components.end());
+		stl::find_and_erase_all(m_components, nullptr);
+		m_components.shrink_to_fit();
 		SetChanged();
 		for (auto& component : m_components)
 			component->SetChanged();
@@ -147,7 +218,7 @@ void CParticleEffect::Serialize(Serialization::IArchive& ar)
 
 IParticleEmitter* CParticleEffect::Spawn(const ParticleLoc& loc, const SpawnParams* pSpawnParams)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_PARTICLE);
+	CRY_PFX2_PROFILE_DETAIL;
 
 	PParticleEmitter pEmitter = GetPSystem()->CreateEmitter(this);
 	CParticleEmitter* pCEmitter = static_cast<CParticleEmitter*>(pEmitter.get());
@@ -158,20 +229,27 @@ IParticleEmitter* CParticleEffect::Spawn(const ParticleLoc& loc, const SpawnPara
 	return pEmitter;
 }
 
-void CParticleEffect::AddComponent(uint componentIdx)
+IParticleComponent* CParticleEffect::AddComponent()
 {
-	uint idx = m_components.size();
 	CParticleComponent* pNewComponent = new CParticleComponent();
 	pNewComponent->m_pEffect = this;
-	pNewComponent->m_componentId = componentIdx;
+	pNewComponent->m_componentId = m_components.size();
 	pNewComponent->SetName("Component01");
-	m_components.insert(m_components.begin() + componentIdx, pNewComponent);
+	m_components.push_back(pNewComponent);
 	SetChanged();
+	return pNewComponent;
 }
 
-void CParticleEffect::RemoveComponent(uint componentIdx)
+void CParticleEffect::RemoveComponent(uint componentIdx, bool all)
 {
-	m_components.erase(m_components.begin() + componentIdx);
+	CParticleComponent* pComp = m_components[componentIdx];
+	stl::find_and_erase(pComp->GetParentChildren(), pComp);
+	while (all && pComp->m_children.size())
+		pComp = pComp->m_children.back();
+	size_t endIdx = pComp->GetComponentId() + 1;
+	m_components.erase(m_components.begin() + componentIdx, m_components.begin() + endIdx);
+	for (uint id = componentIdx; id < m_components.size(); ++id)
+		m_components[id]->m_componentId = id;
 	SetChanged();
 }
 
@@ -182,9 +260,36 @@ void CParticleEffect::SetChanged()
 	m_dirty = true;
 }
 
+bool CParticleEffect::LoadResources()
+{
+	for (auto& comp : m_components)
+	{
+		if (!comp->IsActive())
+			continue;
+		comp->LoadResources(*comp);
+		comp->FinalizeCompile();
+	}
+	return true;
+}
+
+void CParticleEffect::UnloadResources()
+{
+	for (auto& comp : m_components)
+	{
+		auto& params = comp->ComponentParams();
+		params.m_pMaterial = nullptr;
+		params.m_pMesh = nullptr;
+	}
+}
+
 Serialization::SStruct CParticleEffect::GetEffectOptionsSerializer() const
 {
-	return Serialization::SStruct(m_attributes);
+	return Serialization::SStruct(*m_pAttributes);
+}
+
+TParticleAttributesPtr CParticleEffect::CreateAttributesInstance() const
+{
+	return TParticleAttributesPtr(new CAttributeInstance(m_pAttributes));
 }
 
 const ParticleParams& CParticleEffect::GetDefaultParams() const

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "FontRenderer.h"
@@ -220,8 +220,6 @@ int CFontRenderer::GetGlyph(CGlyphBitmap* pGlyphBitmap, uint8* iGlyphWidth, uint
 
 	if (iGlyphHeight)
 		*iGlyphHeight = m_pGlyph->bitmap.rows;
-
-	int iTopOffset = (m_iGlyphBitmapHeight - (int)(m_iGlyphBitmapHeight * m_fSizeRatio)) + m_pGlyph->bitmap_top;
 
 	iCharOffsetX = (char)m_pGlyph->bitmap_left;
 	//	iCharOffsetY = (char)m_pGlyph->bitmap_top;

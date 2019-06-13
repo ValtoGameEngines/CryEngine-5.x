@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -14,6 +14,7 @@ History:
 #define __PICK_AND_THROW_PROXY
 
 #include <SharedParams/ISharedParams.h>
+#include <CryPhysics/physinterface.h>
 
 class CPlayer;
 struct IItemParamsNode;

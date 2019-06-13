@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   UIManager.cpp
@@ -105,7 +105,7 @@ void CUIManager::Init()
 
 	InitSound();
 
-	gEnv->pSystem->GetISystemEventDispatcher()->RegisterListener( this );
+	gEnv->pSystem->GetISystemEventDispatcher()->RegisterListener( this, "CUIManager");
 	g_pGame->GetIGameFramework()->RegisterListener(this, "CUIManager", FRAMEWORKLISTENERPRIORITY_HUD);
 	m_bRegistered = true;
 }

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ProgressBar.h"
@@ -60,9 +60,6 @@ void RenderBar(const Vec2& normalizedCentrePosOffset, const float barwidth,  con
 	// TEST - draw a big X or text 
 	float nBarWidth    =  barwidth;
 	float nBarHeight   =  barHeight;
-
-	float x = normalizedCentrePosOffset.x; 
-	float y = normalizedCentrePosOffset.y; 
 
 	// Setup Tri indices
 	vtx_idx indTri[ 6 ] = 
@@ -136,8 +133,8 @@ void CProgressBar::Render()
 		colour[3] = m_params.m_textColor[3];
 		
 		float pixelPosX, pixelPosY;
-		pixelPosX = m_params.m_normalisedScreenPosition.x * gEnv->pRenderer->GetWidth();
-		pixelPosY = (m_params.m_normalisedScreenPosition.y-m_params.m_height*0.5f) * gEnv->pRenderer->GetHeight();
+		pixelPosX = m_params.m_normalisedScreenPosition.x * gEnv->pRenderer->GetOverlayWidth();
+		pixelPosY = (m_params.m_normalisedScreenPosition.y-m_params.m_height*0.5f) * gEnv->pRenderer->GetOverlayHeight();
 		IRenderAuxText::Draw2dLabel(pixelPosX, pixelPosY, 3.0f, colour, true, "%s", m_params.m_text.c_str());
 	}
 

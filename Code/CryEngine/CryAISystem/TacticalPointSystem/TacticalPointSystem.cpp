@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /* Notes
    MTJ 22/07/07
@@ -31,6 +31,8 @@
 #include "Puppet.h"
 
 #include "Navigation/NavigationSystem/NavigationSystem.h"
+#include <CryAISystem/NavigationSystem/INavMeshQueryManager.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 // Maximum time that an async query can execute before it is aborted as an error
 const float MAX_SYNC_TIME_MS = 20;
@@ -451,9 +453,8 @@ int CTacticalPointSystem::SyncQuery(TPSQueryID queryID, const QueryContext& cont
 int CTacticalPointSystem::SyncQueryShortlist
   (TPSQueryID queryID, const QueryContext& context, TTacticalPoints& vPoints, int n)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
-	CAISystem* pAISystem = GetAISystem();
 	vPoints.clear();
 
 	const CTacticalPointQuery* pQuery = GetQuery(queryID);
@@ -511,7 +512,9 @@ int CTacticalPointSystem::SyncQueryShortlist
 	bOk = ContinueQueryEvaluation(evaluation, timeLimit);
 
 	// Check the actual time taken and issue a warning below
+#ifdef CRYAISYSTEM_DEBUG
 	CTimeValue elapsed = gEnv->pTimer->GetAsyncTime() - startTime;
+#endif
 
 	CAIActor* pAIActor = static_cast<CAIActor*>(context.pAIActor);
 	if (!bOk)
@@ -767,7 +770,7 @@ bool CTacticalPointSystem::ContinueQueryEvaluation(SQueryEvaluation& eval, CTime
 bool CTacticalPointSystem::SetupHeapEvaluation(const std::vector<CCriterion>& vConditions, const std::vector<CCriterion>& vWeights, const QueryContext& context, const std::vector<CTacticalPoint>& vPoints, int n, SQueryEvaluation& eval) const
 {
 	// Do we have proper error handling, when the cheap tests fail? Probably need goto.
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	// Note: Points are always currently in consideration, or chosen as results, or rejected, which are all mutually exclusive.
 
@@ -859,7 +862,6 @@ bool CTacticalPointSystem::SetupHeapEvaluation(const std::vector<CCriterion>& vC
 	std::vector<SPointEvaluation>::iterator itHeapBegin = eval.vPoints.begin();       // Start of valid heap area
 	std::vector<SPointEvaluation>::iterator itHeapEnd = eval.vPoints.begin();         // Initially heap is 0-size
 	std::vector<SPointEvaluation>::iterator itRejectedBegin = eval.vPoints.end();     // Initially there are 0 rejected points
-	std::vector<SPointEvaluation>::iterator itRejectedEnd = eval.vPoints.end();       // Rejected points end the vector
 	// Note that accepted points will later fill in from the end of the vector, but only in the evaluation phase
 
 	// Are there any expensive weights or conditions?
@@ -937,7 +939,6 @@ bool CTacticalPointSystem::ContinueHeapEvaluation(SQueryEvaluation& eval, CTimeV
 
 	// For readability, provide these aliases for the beginning and end of the entire points vector
 	const std::vector<SPointEvaluation>::iterator itHeapBegin = eval.vPoints.begin();       // Start of valid heap area
-	const std::vector<SPointEvaluation>::iterator itAcceptedEnd = eval.vPoints.end();       // End of the accepted points area
 
 	// Note these iterators have need to be written back to the structure at the end of this call
 	std::vector<SPointEvaluation>::iterator itHeapEndRejectedBegin = eval.GetIterHeapEndRejectedBegin();
@@ -1131,8 +1132,6 @@ HeapReturn:
 
 bool CTacticalPointSystem::Test(const CCriterion& criterion, const CTacticalPoint& point, const QueryContext& context, bool& result) const
 {
-	CAISystem* pAISystem = GetAISystem();
-
 	// Query we will use for the test and type of query
 	TTacticalPointQuery query = criterion.GetQuery();
 	TTacticalPointQuery queryType = (TTacticalPointQuery) (query & eTPQ_MASK_QUERY_TYPE);
@@ -1190,8 +1189,6 @@ TestFail:
 AsyncState CTacticalPointSystem::DeferredTest(const CCriterion& criterion, const CTacticalPoint& point, SQueryEvaluation& eval,
                                               bool& result) const
 {
-	CAISystem* pAISystem = GetAISystem();
-
 	// Query we will use for the test and type of query
 	TTacticalPointQuery query = criterion.GetQuery();
 	TTacticalPointQuery queryType = (TTacticalPointQuery) (query & eTPQ_MASK_QUERY_TYPE);
@@ -1241,8 +1238,6 @@ bool CTacticalPointSystem::Weight(const CCriterion& criterion, const CTacticalPo
 
 	// if a boolean query, call Test and return 0 or 1
 	// if real, will need to call absolute and normalise to 0-1
-
-	CAISystem* pAISystem = GetAISystem();
 
 	// Query we will use for the test and type of query
 	TTacticalPointQuery query = criterion.GetQuery();
@@ -1324,7 +1319,7 @@ WeightFail:
 
 bool CTacticalPointSystem::Generate(const CCriterion& criterion, const QueryContext& context, const COptionCriteria* pOption, TTacticalPoints& accumulator) const
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	// (MATT) Should pOption be a reference, or optional? {2008/04/23}
 	assert(pOption);
@@ -1409,8 +1404,7 @@ bool CTacticalPointSystem::Generate(const CCriterion& criterion, const QueryCont
 bool CTacticalPointSystem::GenerateInternal(TTacticalPointQuery query, const QueryContext& context, float fSearchDist, const COptionCriteria* pOption,
                                             CAIObject* pObject, const Vec3& vObjectPos, CAIObject* pObjectAux, const Vec3& vObjectAuxPos, TTacticalPoints& accumulator) const
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
-	CAISystem* pAISystem = GetAISystem();
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	// ACTOR HACK
 	Vec3 objPos = vObjectPos;
@@ -1424,9 +1418,9 @@ bool CTacticalPointSystem::GenerateInternal(TTacticalPointQuery query, const Que
 	{
 	case eTPQ_GO_Cover:
 	case eTPQ_GO_Hidespots:
-		if (gAIEnv.CVars.CoverSystem)
+		if (gAIEnv.CVars.legacyCoverSystem.CoverSystem)
 		{
-			FRAME_PROFILER("TPS Generate Cover Locations", gEnv->pSystem, PROFILE_AI);
+			CRY_PROFILE_SECTION(PROFILE_AI, "TPS Generate Cover Locations");
 
 			m_cover.resize(0);
 			gAIEnv.pCoverSystem->GetCover(objPos, fSearchDist, m_cover);
@@ -1436,17 +1430,20 @@ bool CTacticalPointSystem::GenerateInternal(TTacticalPointQuery query, const Que
 			if (!pipeUser)
 				return false;
 
-			m_avoidCircles.resize(0);
-			GatherAvoidCircles(objPos, fSearchDist, pipeUser, m_avoidCircles);
+			ICoverUser* pCoverUser = pipeUser->GetCoverUser();
+			if (!pCoverUser)
+				return false;
 
-			Vec3 eyes[8];
-			const uint32 MaxEyeCount = std::min<uint32>(gAIEnv.CVars.CoverMaxEyeCount, CRY_ARRAY_COUNT(eyes));
+			// Manually update cover eyes with our object
+			pipeUser->UpdateCoverEyesWithTarget(pObjectAux, vObjectAuxPos);
+			const DynArray<Vec3>& eyes = pCoverUser->GetCoverEyes();
 
-			uint32 eyeCount = pipeUser->GetCoverEyes(pObjectAux, vObjectAuxPos, eyes, MaxEyeCount);
-
-			if (eyeCount)
+			if (eyes.size())
 			{
-				FRAME_PROFILER("TPS Generate Cover Locations [GetOcclusion]", gEnv->pSystem, PROFILE_AI);
+				CRY_PROFILE_SECTION(PROFILE_AI, "TPS Generate Cover Locations [GetOcclusion]");
+
+				m_avoidCircles.resize(0);
+				GatherAvoidCircles(objPos, fSearchDist, pipeUser, m_avoidCircles);
 
 				IPersistantDebug* pPD = 0;
 				if (CVars.DebugTacticalPointsBlocked)
@@ -1455,17 +1452,16 @@ bool CTacticalPointSystem::GenerateInternal(TTacticalPointQuery query, const Que
 					pPD->Begin("BadHideSpots", false);
 				}
 
-				if (CAIActor* pAIActor = static_cast<CAIActor*>(context.pAIActor))
+				if (context.pAIActor != nullptr)
 				{
 					float distanceToCover = std::max<float>(context.distanceToCover, fAgentRadius);
-					float inCoverRadius = std::min<float>(context.inCoverRadius, context.actorRadius) + 0.05f;
-					float occupyRadius = fAgentRadius + gAIEnv.CVars.CoverSpacing;
+					float occupyRadius = fAgentRadius + gAIEnv.CVars.legacyCoverSystem.CoverSpacing;
 
 					for (uint32 i = 0; i < coverCount; ++i)
 					{
 						const CoverID& coverID = m_cover[i];
 
-						if (pipeUser && pipeUser->IsCoverBlacklisted(coverID))
+						if (pCoverUser->IsCoverBlackListed(coverID))
 							continue;
 
 						Vec3 normal;
@@ -1496,36 +1492,17 @@ bool CTacticalPointSystem::GenerateInternal(TTacticalPointQuery query, const Que
 						if (occupied)
 							continue;
 
-						bool inCover = true;
-
-						float lowestSq = FLT_MAX;
-						float heightSq;
-
-						const CoverSurface& surface = gAIEnv.pCoverSystem->GetCoverSurface(coverID);
-
-						for (uint e = 0; e < eyeCount; ++e)
+						const float effectiveCoverHeight = pCoverUser->CalculateEffectiveHeightAt(location, coverID);
+						if (effectiveCoverHeight != -1.0f)
 						{
-							if (!surface.GetCoverOcclusionAt(eyes[e], location, inCoverRadius, &heightSq))
-							{
-								inCover = false;
-								break;
-							}
-
-							if (heightSq < lowestSq)
-								lowestSq = heightSq;
-						}
-
-						if (inCover)
-						{
-							if ((heightSq >= sqr(context.effectiveCoverHeight)) || (context.effectiveCoverHeight <= 0.0001f))
+							if ((effectiveCoverHeight >= context.effectiveCoverHeight) || (context.effectiveCoverHeight <= 0.0001f))
 								accumulator.push_back(CTacticalPoint(coverID, location));
 							else
 							{
-								float height = sqrt_tpl(heightSq);
-								location.z += height;
+								location.z += effectiveCoverHeight;
 
 								if (pPD)
-									pPD->AddCone(location, Vec3(0.0f, 0.0f, -1.0f), 0.25f, height, Col_Red, 3.5f);
+									pPD->AddCone(location, Vec3(0.0f, 0.0f, -1.0f), 0.25f, effectiveCoverHeight, Col_Red, 3.5f);
 							}
 						}
 						else if (pPD)
@@ -1559,79 +1536,6 @@ bool CTacticalPointSystem::GenerateInternal(TTacticalPointQuery query, const Que
 					accumulator.push_back(CTacticalPoint(coverID, location));
 				}
 			}
-		}
-		else
-		{
-			// We could go deeper than this and reap greater benefits
-			CAIActor* pAIActor = static_cast<CAIActor*>(context.pAIActor);
-			CPipeUser* pPipeUser = pAIActor->CastToCPipeUser();
-
-			if (pPipeUser)
-			{
-				// MATT Actor is checked for NULL internally
-				pAISystem->GetOccupiedHideObjectPositions(pPipeUser, m_occupiedSpots);
-			}
-
-			IPersistantDebug* pPD = NULL;
-			if (CVars.DebugTacticalPointsBlocked)
-			{
-				pPD = gEnv->pGameFramework->GetIPersistantDebug();
-				pPD->Begin("OccupiedOrUnreachablePoints", false);
-			}
-
-			MultimapRangeHideSpots hidespots;
-			MapConstNodesDistance traversedNodes;
-
-			IEntity* pEntity = gEnv->pEntitySystem->GetEntity(context.actorEntityId);
-
-			bool skipNavigationTest = 0 != (context.actorNavCaps & IAISystem::NAV_VOLUME);
-			pAISystem->GetHideSpotsInRange(hidespots, traversedNodes, objPos, fSearchDist,
-			                               context.actorNavCaps, fAgentRadius, skipNavigationTest, pEntity);
-
-			Vec3 dir;
-			MultimapRangeHideSpots::iterator itHEnd = hidespots.end();
-			for (MultimapRangeHideSpots::iterator itH = hidespots.begin(); itH != itHEnd; ++itH)
-			{
-				SHideSpot& hideSpot = itH->second;
-
-				// Check if this spot is occupied
-				if (HasPointInRange(m_occupiedSpots, hideSpot.info.pos, 2.0f) // In original code, this was 0.5f, but that doesn't work...
-				                                                              // Marcio: Avoid hidepoints the actor couldn't reach recently
-				    || ((pPipeUser != NULL) && pPipeUser->WasHideObjectRecentlyUnreachable(hideSpot.info.pos)))
-				{
-					if (pPD) pPD->AddSphere(hideSpot.info.pos + Vec3(0, 0, 0.05f), 2.00f, ColorF(0, 1, 0, 1), 1.0f);
-					continue;
-				}
-
-				// We use an auxiliary object (to hide from)
-				// Kevin - Can be None, meaning we just want a hidespot
-				if (!vObjectAuxPos.IsZero())
-				{
-					// Check if this is directional (an anchor)
-					// if ( !hideSpot.dir.IsZero() )
-					if (fabsf(hideSpot.info.dir.x) + fabsf(hideSpot.info.dir.y) + fabsf(hideSpot.info.dir.z) > 0.0003f)
-					{
-						// check that the enemy is vaguely in the dir of the hide anchor
-						Vec3 dirSpotToAuxObj = vObjectAuxPos - hideSpot.info.pos;
-						dirSpotToAuxObj.NormalizeSafe();
-						float fDot = dirSpotToAuxObj.Dot(hideSpot.info.dir);
-						if (fDot < HIDESPOT_COVERAGE_ANGLE_COS)
-						{
-							if (pPD) pPD->AddSphere(hideSpot.info.pos + Vec3(0, 0, 0.05f), 0.75f, ColorF(1, 0, 0, 1), 1.0f);
-							continue;
-						}
-					}
-
-					if (hideSpot.pObstacle) // If obstacle, move point from centre to behind it, w.r.t. object
-						pAISystem->AdjustOmniDirectionalCoverPosition(hideSpot.info.pos, dir,
-						                                              max(hideSpot.pObstacle->fApproxRadius, 0.0f), fAgentRadius, vObjectAuxPos, true);
-				}
-
-				CTacticalPoint point(hideSpot);
-				accumulator.push_back(point);
-			}
-
-			m_occupiedSpots.resize(0);
 		}
 		break;
 
@@ -1738,8 +1642,11 @@ bool CTacticalPointSystem::GenerateInternal(TTacticalPointQuery query, const Que
 		{
 			// This isn't quite right I think, because last hidespot doesn't imply you got there
 			CPipeUser* pObjectPipeUser = pObject ? pObject->CastToCPipeUser() : 0;
-			if (pObjectPipeUser)
-				accumulator.push_back(CTacticalPoint(pObjectPipeUser->m_CurrentHideObject.GetObjectPos()));
+			if (CoverID coverId = pObjectPipeUser->GetCoverID())
+			{
+				const float distanceToCover = pObjectPipeUser->GetParameters().distanceToCover;
+				accumulator.push_back(CTacticalPoint(gAIEnv.pCoverSystem->GetCoverLocation(coverId, distanceToCover)));
+			}
 		}
 		break;
 	case eTPQ_G_Objects:
@@ -1801,17 +1708,17 @@ bool CTacticalPointSystem::GenerateInternal(TTacticalPointQuery query, const Que
 
 			if (navAgentTypeId != undefinedNavAgentTypeId)
 			{
-				AABB searchAABB;
-				searchAABB.max = objPos + Vec3(+fSearchDist, +fSearchDist, 0.2f);
-				searchAABB.min = objPos + Vec3(-fSearchDist, -fSearchDist, -20.0f);
+				const MNM::aabb_t searchAABB(
+					 MNM::vector3_t(objPos + Vec3(-fSearchDist, -fSearchDist, -20.0f)),
+					 MNM::vector3_t(objPos + Vec3(fSearchDist, +fSearchDist, 0.2f))
+				);
 
 				if (const NavigationMeshID meshID = gAIEnv.pNavigationSystem->GetEnclosingMeshID(navAgentTypeId, searchPivotPos))
 				{
-					const size_t maxCenterLocationCount = 512;
-					Vec3 centerLocations[maxCenterLocationCount];
-					if (size_t locationCount = gAIEnv.pNavigationSystem->GetTriangleCenterLocationsInMesh(meshID, objPos, searchAABB, centerLocations, maxCenterLocationCount))
+					const DynArray<Vec3> centerLocations = gAIEnv.pNavigationSystem->QueryTriangleCenterLocationsInMesh(meshID, searchAABB);
+					if (!centerLocations.empty())
 					{
-						for (size_t i = 0; i < locationCount; ++i)
+						for (size_t i = 0; i < centerLocations.size(); ++i)
 						{
 							accumulator.push_back(CTacticalPoint(centerLocations[i]));
 						}
@@ -1864,57 +1771,25 @@ bool CTacticalPointSystem::BoolPropertyInternal(TTacticalPointQuery query, const
 {
 	assert(query & eTPQ_FLAG_PROP_BOOL);
 
-	// Variables we may need
-	const SHideSpot* pHS;
-
 	switch (query)
 	{
 	case eTPQ_PB_CoverSoft:
-		{
-			pHS = point.GetHidespot();
-			result = pHS ? pHS->IsSecondary() : false;
-		}
+		AIWarningID("<CTacticalPointSystem::BoolPropertyInternal> ", "eTPQ_PB_CoverSoft: HideSpots aren't supported anymore");
+		result = false;
 		break;
 
 	case eTPQ_PB_CoverSuperior:
+		AIWarningID("<CTacticalPointSystem::BoolPropertyInternal> ", "eTPQ_PB_CoverSuperior: HideSpots aren't supported anymore");
+		result = false;
+		break;
 	case eTPQ_PB_CoverInferior:
-		{
-			pHS = point.GetHidespot();
-			if (pHS->info.type == SHideSpotInfo::eHST_TRIANGULAR && pHS->pObstacle && pHS->pObstacle->IsCollidable())
-			{
-				result = pHS->pObstacle->fApproxRadius > 0.25f;   // Qualifies as superior
-				if (query == eTPQ_PB_CoverInferior) result = !result;
-			}
-			else if (pHS->info.type == SHideSpotInfo::eHST_ANCHOR)
-			{
-				result = (query != eTPQ_PB_CoverInferior); // I.e. anchors are always superior
-			}
-		}
+		AIWarningID("<CTacticalPointSystem::BoolPropertyInternal> ", "eTPQ_PB_CoverInferior: HideSpots aren't supported anymore");
+		result = false;
 		break;
 
 	case eTPQ_PB_CurrentlyUsedObject:
-		{
-			result = false;
-
-			if (context.pAIActor)
-			{
-				CAIActor* pAIActor = static_cast<CAIActor*>(context.pAIActor);
-				CPipeUser* pPipeUser = pAIActor->CastToCPipeUser();
-				if ((pPipeUser != NULL) && pPipeUser->m_CurrentHideObject.IsValid())
-				{
-					// This isn't quite right I think, because last hidespot doesn't imply you got there
-					pHS = point.GetHidespot();
-					if (pHS)
-					{
-						const ObstacleData* pObst = pHS->pObstacle;
-						if (pObst && IsEquivalent(pPipeUser->m_CurrentHideObject.GetObjectPos(), pObst->vPos))
-						{
-							result = true;
-						}
-					}
-				}
-			}
-		}
+		AIWarningID("<CTacticalPointSystem::BoolPropertyInternal> ", "eTPQ_PB_CurrentlyUsedObject: HideSpots aren't supported anymore");
+		result = false;
 		break;
 
 	case eTPQ_PB_Reachable:
@@ -1946,7 +1821,7 @@ bool CTacticalPointSystem::BoolPropertyInternal(TTacticalPointQuery query, const
 				if (pAIActor)
 				{
 					const Vec3 testPosition(point.GetPos());
-					result = pNavigationSystem->IsLocationValidInNavigationMesh(pAIActor->GetNavigationTypeID(), testPosition);
+					result = pNavigationSystem->IsLocationValidInNavigationMesh(pAIActor->GetNavigationTypeID(), testPosition, nullptr);
 				}
 			}
 		}
@@ -2166,7 +2041,9 @@ ETacticalPointDeferredState CTacticalPointSystem::DeferredBoolTestInternal(TTact
 				                                             RayCastRequest(
 				                                               vWaistPos, vDelta, COVER_OBJECT_TYPES,
 				                                               AI_VISION_RAY_CAST_FLAG_BLOCKED_BY_SOLID_COVER),
-				                                             functor(*const_cast<CTacticalPointSystem*>(this), &CTacticalPointSystem::VisibleRayComplete));
+				                                             functor(*const_cast<CTacticalPointSystem*>(this), &CTacticalPointSystem::VisibleRayComplete),
+				                                             nullptr,
+					                                         AIRayCast::SRequesterDebugInfo("TacticalPointSystem", pObject ? pObject->GetEntityID() : INVALID_ENTITYID));
 
 				if (CVars.DebugTacticalPoints != 0 && gAIEnv.CVars.DebugDraw != 0)
 				{
@@ -2210,7 +2087,9 @@ ETacticalPointDeferredState CTacticalPointSystem::DeferredBoolTestInternal(TTact
 					                                              RayCastRequest(
 					                                                vPoint, vDelta, COVER_OBJECT_TYPES,
 					                                                AI_VISION_RAY_CAST_FLAG_BLOCKED_BY_SOLID_COVER),
-					                                              functor(*const_cast<CTacticalPointSystem*>(this), &CTacticalPointSystem::CanShootRayComplete));
+					                                              functor(*const_cast<CTacticalPointSystem*>(this), &CTacticalPointSystem::CanShootRayComplete),
+						                                          nullptr,
+						                                          AIRayCast::SRequesterDebugInfo("TacticalPointSystem", pObject ? pObject->GetEntityID() : INVALID_ENTITYID));
 
 					if (CVars.DebugTacticalPoints != 0 && gAIEnv.CVars.DebugDraw != 0)
 					{
@@ -2290,14 +2169,17 @@ ETacticalPointDeferredState CTacticalPointSystem::DeferredBoolTestInternal(TTact
 				                                              RayCastRequest(
 				                                                vPointLeft, vDeltaLeft, COVER_OBJECT_TYPES,
 				                                                AI_VISION_RAY_CAST_FLAG_BLOCKED_BY_SOLID_COVER),
-				                                              functor(*const_cast<CTacticalPointSystem*>(this), &CTacticalPointSystem::CanShootRayComplete));
+				                                              functor(*const_cast<CTacticalPointSystem*>(this), &CTacticalPointSystem::CanShootRayComplete),
+				                                              nullptr,
+					                                          AIRayCast::SRequesterDebugInfo("TacticalPointSystem", pObject ? pObject->GetEntityID() : INVALID_ENTITYID));
 
 				eval.canShootSecondRayID = gAIEnv.pRayCaster->Queue(RayCastRequest::HighestPriority,
 				                                                    RayCastRequest(
 				                                                      vPointRight, vDeltaRight, COVER_OBJECT_TYPES,
 				                                                      AI_VISION_RAY_CAST_FLAG_BLOCKED_BY_SOLID_COVER),
-				                                                    functor(*const_cast<CTacticalPointSystem*>(this), &CTacticalPointSystem::CanShootSecondRayComplete));
-
+				                                                    functor(*const_cast<CTacticalPointSystem*>(this), &CTacticalPointSystem::CanShootSecondRayComplete),
+				                                                    nullptr,
+					                                                AIRayCast::SRequesterDebugInfo("TacticalPointSystem", pObject ? pObject->GetEntityID() : INVALID_ENTITYID));
 				if (CVars.DebugTacticalPoints != 0 && gAIEnv.CVars.DebugDraw != 0)
 				{
 					IPersistantDebug* debug = gEnv->pGameFramework->GetIPersistantDebug();
@@ -2523,7 +2405,7 @@ bool CTacticalPointSystem::RealPropertyInternal(TTacticalPointQuery query, const
 			fY *= fHeight * 0.01f;
 
 			// [2/5/2009 evgeny] Reject points that are behind the frustrum near plane
-			CCamera& camera = GetISystem()->GetViewCamera();
+			const CCamera& camera = GetISystem()->GetViewCamera();
 			Vec3 vCameraNormalizedDirection = camera.GetViewdir().normalize();
 			Vec3 vPointRelativeToCameraNearPlane =
 			  point.GetPos() - camera.GetPosition() - camera.GetNearPlane() * vCameraNormalizedDirection;
@@ -3240,9 +3122,14 @@ bool CTacticalPointSystem::Parse(const char* sSpec, TTacticalPointQuery& _query,
 	string sWords[MAXWORDS];
 
 	int iC = 0, iWord = 0;
-	for (; iWord < MAXWORDS; !sWords[iWord].empty(), iWord++)
+
+	for (; iWord < MAXWORDS; iWord++)
 	{
 		sWords[iWord] = sInput.Tokenize("_", iC);
+		if (sWords[iWord].empty())
+		{
+			break;
+		}
 	}
 
 	TTacticalPointQuery token;
@@ -3544,7 +3431,7 @@ void CTacticalPointSystem::DestroyAllQueries()
 	m_mQueryEvaluationsInProgress.clear();
 }
 
-void CTacticalPointSystem::Update(float fBudgetSeconds)
+void CTacticalPointSystem::Update(const float fBudgetSeconds)
 {
 	// Convert to absolute integer values time limit for precision and efficiency
 	// Convert to floats only for debugging
@@ -3553,7 +3440,9 @@ void CTacticalPointSystem::Update(float fBudgetSeconds)
 	CTimeValue lastTime = timeStart;
 
 	int nQueriesProcessed = 0;
+#ifdef CRYAISYSTEM_DEBUG
 	bool bDebugging = (CVars.DebugTacticalPoints != 0);
+#endif
 
 	do
 	{
@@ -3683,14 +3572,6 @@ void CTacticalPointSystem::CallbackQuery(SQueryEvaluation& evaluation)
 
 			a.vPos = b.GetPos();
 			a.flags |= eTPDF_Pos;
-
-			if (const SHideSpotInfo* pInfo = b.GetHidespotInfo())
-			{
-				a.vObjDir = pInfo->dir;
-				a.vObjPos = pInfo->pos;
-				a.flags |= eTPDF_ObjectDir | eTPDF_ObjectPos | eTPDF_Hidespot;
-				a.aiObjectId = b.GetHidespot()->pAnchorObject ? b.GetHidespot()->pAnchorObject->GetAIObjectID() : 0;
-			}
 
 			if (b.GetType() == ITacticalPoint::eTPT_CoverID)
 			{
@@ -3900,9 +3781,12 @@ TPSQueryTicket CTacticalPointSystem::AsyncQuery(TPSQueryID queryID, const QueryC
 	// Check the instance for validity
 	if (!VerifyQueryInstance(instance))
 		return INVALID_TICKET;
-
+#if defined(USE_CRY_ASSERT)
 	bool bInserted = m_mQueryInstanceQueue.insert(std::make_pair(m_nQueryInstanceTicket, instance)).second;
 	assert(bInserted);
+#else
+	m_mQueryInstanceQueue.insert(std::make_pair(m_nQueryInstanceTicket, instance)).second;
+#endif
 
 	return m_nQueryInstanceTicket;
 }
@@ -4004,19 +3888,17 @@ void CTacticalPointSystem::DebugDraw() const
 #ifdef CRYAISYSTEM_DEBUG
 	// Note that time-related updating of the debug lists is done in Update
 
-	CAISystem* pAISystem = GetAISystem();
-
 	if (CVars.DebugTacticalPoints == 0)
 		return;
 
 	// Make sure the target AI is the current AI Stats Target, unless this is a 'special case'
 	EntityId id = 0;
-	if (gAIEnv.CVars.StatsTarget)
+	if (gAIEnv.CVars.legacyDebugDraw.StatsTarget)
 	{
-		const char* sTarget = gAIEnv.CVars.StatsTarget;
+		const char* sTarget = gAIEnv.CVars.legacyDebugDraw.StatsTarget;
 		if (CAIObject* pTargetObject = gAIEnv.pAIObjectManager->GetAIObjectByName(sTarget))
 			id = pTargetObject->GetEntityID();
-		else if (!strcmp(gAIEnv.CVars.StatsTarget, "all"))
+		else if (!strcmp(gAIEnv.CVars.legacyDebugDraw.StatsTarget, "all"))
 			id = -1;
 	}
 
@@ -4069,7 +3951,6 @@ void CTacticalPointSystem::DebugDraw() const
 		}
 
 		// Iterate through point vector
-		int iFirstN = 0;
 		std::vector<SPointEvaluation>::const_iterator pointIter;
 		for (pointIter = sEntry.vPoints.begin(); pointIter != sEntry.vPoints.end(); ++pointIter)
 		{
@@ -4203,14 +4084,6 @@ void CTacticalPointSystem::CanShootSecondRayComplete(const QueuedRayID& rayID, c
 	assert(eval.canShootSecondRayID);
 	eval.canShootSecondRayResult = result ? 0 : 1;
 	eval.canShootSecondRayID = 0;
-}
-
-//----------------------------------------------------------------------------------------------//
-
-bool CTacticalPointGenerateResult::AddHideSpot(const SHideSpot& hidespot)
-{
-	m_Points.push_back(CTacticalPoint(hidespot));
-	return true;
 }
 
 //----------------------------------------------------------------------------------------------//

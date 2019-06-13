@@ -1,9 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __CRY_HASH_UTIL_H__
 #define __CRY_HASH_UTIL_H__
 
 #include <CryString/StringUtils.h>
+#include <CryMemory/CrySizer.h>
 
 //-----------------------------------------------------------------------------------
 // HASH Tools.

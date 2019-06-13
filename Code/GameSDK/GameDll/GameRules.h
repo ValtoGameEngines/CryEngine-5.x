@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -22,27 +22,25 @@
 #include <IGameObject.h>
 #include <IGameRulesSystem.h>
 #include <IItemSystem.h>
-#include "Game.h"
 #include "IViewSystem.h"
-#include "GameCVars.h"
 #include "GameRulesTypes.h"
 #include "CinematicInput.h"
 #include "Audio/AudioSignalPlayer.h"
 #include "Utility/CryHash.h"
 #include "Voting.h"
+#include "GameRulesModules/GameRulesModulesRegistration.h"
+#include "AutoEnum.h"
+#include <Cry3DEngine/IMaterial.h>
+#include <queue>
 
 #define MAX_CONCURRENT_EXPLOSIONS 64
 
-struct IActor;
 class CActor;
 class CPlayer;
 
-struct IGameObject;
-struct IActorSystem;
-struct SGameRulesScoreInfo;
 struct SGameRulesPlayerStat;
+struct CryUserID;
 
-class CEquipmentLoadout;
 class CBattlechatter;
 class CAreaAnnouncer;
 class CMiscAnnouncer;
@@ -71,8 +69,6 @@ class IGameRulesPrematchListener;
 
 class CMPTrackViewManager;
 class CMPPathFollowingManager;
-
-#include "GameRulesModules/GameRulesModulesRegistration.h"
 
 #define EQUIPMENT_LOADOUT_NUM_SLOTS     10
 
@@ -476,9 +472,9 @@ public:
 	virtual ISerializableInfoPtr GetSpawnInfo() {return 0;}
 	virtual void Update( SEntityUpdateContext& ctx, int updateSlot );
 	virtual void HandleEvent( const SGameObjectEvent& );
-	virtual void ProcessEvent( SEntityEvent& );
+	virtual void ProcessEvent( const SEntityEvent& );
+	virtual Cry::Entity::EventFlags GetEventMask() const;
 	virtual void SetChannelId(uint16 id) {};
-	virtual void SetAuthority( bool auth );
 	virtual void PostUpdate( float frameTime );
 	virtual void PostRemoteSpawn() {};
 	virtual void GetMemoryUsage(ICrySizer *pSizer) const;
@@ -529,6 +525,7 @@ public:
 	virtual void OnVehicleDestroyed(EntityId id);
 	virtual void OnVehicleSubmerged(EntityId id, float ratio);
 	virtual bool CanEnterVehicle(EntityId playerId);
+	virtual void OnVehicleEvent(IVehicle* pVehicle, EVehicleEvent event, const SVehicleEventParams& params);
 
 	virtual void CreateEntityRespawnData(EntityId entityId);
 	virtual bool HasEntityRespawnData(EntityId entityId) const;
@@ -590,7 +587,7 @@ public:
 	// ~IHostMigrationEventListener
 
 	// IEntityEventListener
-	virtual void OnEntityEvent(IEntity *pEntity, SEntityEvent &event);
+	virtual void OnEntityEvent(IEntity *pEntity, const SEntityEvent &event);
 	// ~IEntityEventListener
 
 	// IInputEventListener

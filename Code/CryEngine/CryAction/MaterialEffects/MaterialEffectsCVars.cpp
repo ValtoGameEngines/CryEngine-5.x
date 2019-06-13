@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -17,6 +17,7 @@
 
 #include "MaterialEffects.h"
 #include "MaterialFGManager.h"
+#include <CrySystem/ConsoleRegistration.h>
 
 CMaterialEffectsCVars* CMaterialEffectsCVars::s_pThis = 0;
 
@@ -78,6 +79,7 @@ CMaterialEffectsCVars::~CMaterialEffectsCVars()
 
 	IConsole* pConsole = gEnv->pConsole;
 
+	pConsole->RemoveCommand("mfx_ReloadFGEffects");
 	pConsole->RemoveCommand("mfx_Reload");
 	pConsole->RemoveCommand("mfx_ReloadHUDEffects");
 
@@ -87,6 +89,7 @@ CMaterialEffectsCVars::~CMaterialEffectsCVars()
 	pConsole->UnregisterVariable("mfx_Debug", true);
 	pConsole->UnregisterVariable("mfx_DebugVisual", true);
 	pConsole->UnregisterVariable("mfx_DebugVisualFilter", true);
+	pConsole->UnregisterVariable("mfx_DebugFlowGraphFX", true);
 	pConsole->UnregisterVariable("mfx_Enable", true);
 	pConsole->UnregisterVariable("mfx_pfx_minScale", true);
 	pConsole->UnregisterVariable("mfx_pfx_maxScale", true);

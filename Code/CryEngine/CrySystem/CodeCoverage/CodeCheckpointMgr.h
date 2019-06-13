@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  Created:     08/04/2010 by Will W (based on work by Matthew J)
@@ -14,6 +14,7 @@
 #pragma once
 
 #include <CrySystem/ICodeCheckpointMgr.h>
+#include <CryThreading/CryThread.h>
 
 /// The global manager of code coverage checkpoints. Must be thread safe.
 class CCodeCheckpointMgr : public ICodeCheckpointMgr

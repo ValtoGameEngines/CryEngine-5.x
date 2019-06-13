@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   BoidObject.cpp
@@ -13,19 +13,20 @@
 
 #include "StdAfx.h"
 #include "BoidObject.h"
-
-#include <CryEntitySystem/IEntitySystem.h>
 #include "BoidsProxy.h"
+#include "Flock.h"
 
-#include <float.h>
-#include <limits.h>
+#include <Cry3DEngine/IMaterial.h>
+#include <Cry3DEngine/ISurfaceType.h>
 #include <CrySystem/ITimer.h>
 #include <CryScriptSystem/IScriptSystem.h>
 #include <CryAnimation/ICryAnimation.h>
 #include <CryMath/Cry_Camera.h>
 #include <CryString/CryPath.h>
-#include "Flock.h"
 #include <CryEntitySystem/IBreakableManager.h>
+#include <CryEntitySystem/IEntitySystem.h>
+#include <float.h>
+#include <limits.h>
 
 #define BIRDS_PHYSICS_DENSITY 200
 #define BIRDS_PHYSICS_INWATER_DENSITY 900
@@ -176,7 +177,7 @@ int CBoidObject::GetGeometrySurfaceType()
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CBoidObject::OnEntityEvent( SEntityEvent &event )
+void CBoidObject::OnEntityEvent( const SEntityEvent &event )
 {
 	switch (event.event)
 	{
@@ -193,7 +194,7 @@ void CBoidObject::OnEntityEvent( SEntityEvent &event )
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CBoidObject::OnCollision( SEntityEvent &event )
+void CBoidObject::OnCollision( const SEntityEvent &event )
 {
 	EventPhysCollision *pCollision = (EventPhysCollision *)(event.nParam[0]);
 
@@ -704,8 +705,8 @@ void CBoidObject::UpdateDisplay(SBoidContext& bc)
 	if(bc.animationMaxDistanceSq ==0)
 		return;
 
-	Vec3 cameraPos( gEnv->pRenderer->GetCamera().GetPosition());
-	Vec3 cameraDir(gEnv->pRenderer->GetCamera().GetMatrix().GetColumn1());
+	Vec3 cameraPos(GetISystem()->GetViewCamera().GetPosition());
+	Vec3 cameraDir(GetISystem()->GetViewCamera().GetMatrix().GetColumn1());
 
 	float  dot = (m_pos - cameraPos).Dot(cameraDir);
 

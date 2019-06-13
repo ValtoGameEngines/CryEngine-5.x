@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    -------------------------------------------------------------------------
@@ -23,17 +23,12 @@
 #include "AIVehicle.h"
 #include "AIPlayer.h"
 #include "ObjectContainer.h"
-#include "CodeCoverageManager.h"
-#include "CodeCoverageGUI.h"
 #include <CryAISystem/IVisionMap.h>
-#include <CryAISystem/HidespotQueryContext.h>
-#include <CryAISystem/AISystemListener.h>
-#include "PerceptionManager.h"
+#include <CryAISystem/IAISystemComponent.h>
+#include "AuditionMap/AuditionMap.h"
 #include "SmartObjects.h"
-#include "CalculationStopper.h"
 #include "AIRadialOcclusion.h"
 #include "AIActions.h"
-#include "GraphNodeManager.h"
 #include "FireCommand.h"
 #include "CentralInterestManager.h"
 #include "TacticalPointSystem/TacticalPointSystem.h"
@@ -42,20 +37,17 @@
 #include "Cover/CoverSystem.h"
 #include "Navigation/NavigationSystem/NavigationSystem.h"
 #include "PathfinderNavigationSystemUser.h"
-#include "SelectionTree/SelectionTreeManager.h"
 #include "BehaviorTree/BehaviorTreeManager.h"
 #include "BehaviorTree/BehaviorTreeNodeRegistration.h"
 #include "CollisionAvoidance/CollisionAvoidanceSystem.h"
-#include "BehaviorTree/BehaviorTreeGraft.h"
 #include <CryAISystem/IMovementSystem.h>
 #include "Movement/MovementSystemCreator.h"
 #include "Group/GroupManager.h"
-#include "Factions/FactionMap.h"
-#include "Walkability/WalkabilityCacheManager.h"
+#include "Factions/FactionSystem.h"
 #include "DebugDrawContext.h"
-#include "FlightNavRegion2.h"
 #include "Sequence/SequenceManager.h"
 #include "ClusterDetector.h"
+#include "Formation/FormationManager.h"
 #include "SmartPathFollower.h"
 
 #include "AIObjectIterators.h"
@@ -73,11 +65,17 @@
 #endif
 
 #include "Sequence/SequenceFlowNodes.h"
-#include "FlyHelpers_TacticalPointLanguageExtender.h"
 
-#include <algorithm>  // std::min()
+#include "Navigation/NavigationSystemSchematyc.h"
+#include "Factions/FactionSystemSchematyc.h"
+#include "Cover/CoverSystemSchematyc.h"
+#include "Perception/PerceptionSystemSchematyc.h"
 
-FlyHelpers::CTacticalPointLanguageExtender g_flyHelpersTacticalLanguageExtender;
+#include "Components/BehaviorTree/BehaviorTreeComponent.h"
+
+#include <CryCore/StaticInstanceList.h>
+#include <algorithm>
+#include <CrySystem/ConsoleRegistration.h>
 
 // Description:
 //	 Helper class for declaring fire command descriptors.
@@ -98,14 +96,11 @@ protected:
 // used to determine if a forbidden area should be rasterised
 
 static const size_t AILogMaxIdLen = 32;
-static const char* sCodeCoverageContextFile = "ccContext.txt";
 
-#define BroadcastToListeners(call)                                       \
-  SystemListenerSet::iterator listenerIt = m_setSystemListeners.begin(); \
-  SystemListenerSet::iterator listenerEnd = m_setSystemListeners.end();  \
-  for (; listenerIt != listenerEnd; ++listenerIt)                        \
+#define SubSystemCall(call)                                              \
+  for (auto& systemComponent : m_setSystemComponents)                    \
   {                                                                      \
-    (*listenerIt)->call;                                                 \
+  	systemComponent->call;                                               \
   }
 
 template<> std::vector<SAIObjectMapIter<CWeakRef>*> SAIObjectMapIter<CWeakRef>::pool = std::vector<SAIObjectMapIter<CWeakRef>*>();
@@ -153,37 +148,12 @@ void ClearAIObjectIteratorPools()
 	stl::free_container(SAIObjectMapIterOfTypeInShape<CCountedRef>::pool);
 }
 
-void RemoveNonActors(CAISystem::AIActorSet& actorSet)
-{
-	for (CAISystem::AIActorSet::iterator it = actorSet.begin(); it != actorSet.end(); )
-	{
-		IAIObject* pAIObject = it->GetAIObject();
-		CRY_ASSERT_TRACE(pAIObject, ("An AI Actors set contains a null entry for object id %d!", it->GetObjectID()));
-
-		// [AlexMcC|29.06.10] We can't trust that this is an AI Actor, because CWeakRef::GetAIObject()
-		// doesn't do any type checking. If this weakref becomes invalid, then the id is used by another
-		// object (which can happen if we chainload or load a savegame), this might not be an actor anymore.
-		const bool bIsActor = pAIObject ? (pAIObject->CastToCAIActor() != NULL) : false;
-		CRY_ASSERT_MESSAGE(bIsActor, "A non-actor is in an AI actor set!");
-
-		if (pAIObject && bIsActor)
-		{
-			++it;
-		}
-		else
-		{
-			it = actorSet.erase(it);
-		}
-	}
-}
-
 //====================================================================
 // CAISystem
 //====================================================================
 CAISystem::CAISystem(ISystem* pSystem)
 	: m_actorProxyFactory(nullptr)
 	, m_groupProxyFactory(nullptr)
-	, m_pGraph(nullptr)
 	, m_pNavigation(nullptr)
 	, m_pAIActionManager(nullptr)
 	, m_pSmartObjectManager(nullptr)
@@ -215,15 +185,12 @@ CAISystem::CAISystem(ISystem* pSystem)
 
 	//TODO see if we can init the actual environment yet?
 	gAIEnv.CVars.Init(); // CVars need to be init before any logging takes place
-	gAIEnv.SignalCRCs.Init();
 
 	REGISTER_COMMAND("ai_reload", (ConsoleCommandFunc)ReloadConsoleCommand, VF_CHEAT, "Reload AI system scripts and data");
 	REGISTER_COMMAND("ai_CheckGoalpipes", (ConsoleCommandFunc)CheckGoalpipes, VF_CHEAT, "Checks goalpipes and dumps report to console.");
-	REGISTER_COMMAND("ai_dumpCheckpoints", (ConsoleCommandFunc)DumpCodeCoverageCheckpoints, VF_CHEAT, "Dump CodeCoverage checkpoints to file");
 	REGISTER_COMMAND("ai_Recorder_Start", (ConsoleCommandFunc)StartAIRecorder, VF_CHEAT, "Reset and start the AI Recorder on demand");
 	REGISTER_COMMAND("ai_Recorder_Stop", (ConsoleCommandFunc)StopAIRecorder, VF_CHEAT, "Stop the AI Recorder. If logging in memory, saves it to disk.");
 
-	CFlightNavRegion2::InitCVars();
 	CTacticalPointSystem::RegisterCVars();
 
 #ifdef CRYAISYSTEM_DEBUG
@@ -291,24 +258,22 @@ CAISystem::~CAISystem()
 	delete m_pNavigation;
 	gAIEnv.pNavigation = m_pNavigation = 0;
 
-	delete m_pGraph;
-	gAIEnv.pGraph = m_pGraph = 0;
-
-	SAFE_DELETE(gAIEnv.pPerceptionManager);
 	SAFE_DELETE(gAIEnv.pCommunicationManager);
 	SAFE_DELETE(gAIEnv.pCoverSystem);
 	SAFE_DELETE(gAIEnv.pNavigationSystem);
-	SAFE_DELETE(gAIEnv.pSelectionTreeManager);
 	SAFE_DELETE(gAIEnv.pBehaviorTreeManager);
-	SAFE_DELETE(gAIEnv.pGraftManager);
 	SAFE_DELETE(gAIEnv.pVisionMap);
-	SAFE_DELETE(gAIEnv.pFactionMap);
+	SAFE_DELETE(gAIEnv.pAuditionMap);
+	SAFE_DELETE(gAIEnv.pFactionSystem);
+	gAIEnv.pFactionMap = nullptr;
+
 	SAFE_DELETE(gAIEnv.pGroupManager);
 	SAFE_DELETE(gAIEnv.pRayCaster);
 	SAFE_DELETE(gAIEnv.pIntersectionTester);
 	SAFE_DELETE(gAIEnv.pMovementSystem);
 	SAFE_DELETE(gAIEnv.pSequenceManager);
 	SAFE_DELETE(gAIEnv.pClusterDetector);
+	SAFE_DELETE(gAIEnv.pCollisionAvoidanceSystem);
 
 #ifdef CRYAISYSTEM_DEBUG
 	SAFE_DELETE(gAIEnv.pBubblesSystem);
@@ -321,26 +286,24 @@ CAISystem::~CAISystem()
 
 bool CAISystem::Init()
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	AILogProgress("[AISYSTEM] Initialization started.");
 
-	GetISystem()->GetISystemEventDispatcher()->RegisterListener(this);
+	GetISystem()->GetISystemEventDispatcher()->RegisterListener(this,"CAISystem");
 
 	SetupAIEnvironment();
 
-	// ensure the available communications are ready before the AI scripts get loaded (they in turn might load GoalPipes and other stuff that depend on communication data)
-	gAIEnv.pCommunicationManager->LoadConfigurationAndScanRootFolder("Scripts/AI/Communication");
+	TrySubsystemInitScriptBind();
 
-	if (!m_pScriptAI)
-		m_pScriptAI = new CScriptBind_AI();
+	SubSystemCall(Init());
 
 	Reset(IAISystem::RESET_INTERNAL);
 
 	m_nTickCount = 0;
 	gAIEnv.pWorld = gEnv->pPhysicalWorld;
 
-	m_frameStartTime = gEnv->pTimer->GetFrameStartTime();
+	m_frameStartTime = GetAISystem()->GetFrameStartTime();
 	m_fLastPuppetUpdateTime = m_frameStartTime;
 	m_frameDeltaTime = 0.0f;
 	m_frameStartTimeSeconds = m_frameStartTime.GetSeconds();
@@ -366,31 +329,19 @@ bool CAISystem::Init()
 	if (gAIEnv.pTargetTrackManager)
 		gAIEnv.pTargetTrackManager->Init();
 
-	gAIEnv.pSelectionTreeManager->ScanFolder("Scripts/AI/SelectionTrees");
-
 	BehaviorTree::RegisterBehaviorTreeNodes();
 
 	AILogProgress("[AISYSTEM] Initialization finished.");
 
 	if (gEnv->IsEditor())
 	{
-		if (!gAIEnv.pGraph)
-		{
-			gAIEnv.pGraph = m_pGraph = new CGraph;
-		}
 		if (!gAIEnv.pNavigation)
 		{
 			gAIEnv.pNavigation = m_pNavigation = new CNavigation(gEnv->pSystem);
-			m_pNavigation->Init();
 		}
-		if (!gAIEnv.pCoverSystem)
-		{
-			gAIEnv.pCoverSystem = new CCoverSystem("Scripts/AI/Cover.xml");
-		}
-		if (!gAIEnv.pNavigationSystem)
-		{
-			gAIEnv.pNavigationSystem = new NavigationSystem("Scripts/AI/Navigation.xml");
-		}
+
+		TrySubsystemInitCoverSystem();
+
 		if (!gAIEnv.pMNMPathfinder)
 		{
 			gAIEnv.pPathfinderNavigationSystemUser = new MNM::PathfinderNavigationSystemUser;
@@ -398,14 +349,17 @@ bool CAISystem::Init()
 			assert(gAIEnv.pNavigationSystem);
 			gAIEnv.pNavigationSystem->RegisterUser(gAIEnv.pPathfinderNavigationSystemUser, "PathfinderExtension");
 		}
+		if (!gAIEnv.pAuditionMap)
+		{
+			gAIEnv.pAuditionMap = new Perception::CAuditionMap();
+		}
 		if (!gAIEnv.pVisionMap)
 		{
 			gAIEnv.pVisionMap = new CVisionMap();
 		}
-		if (!gAIEnv.pGroupManager)
-		{
-			gAIEnv.pGroupManager = new CGroupManager();
-		}
+
+		TrySubsystemInitGroupSystem();
+
 		if (!gAIEnv.pAIActionManager)
 		{
 			gAIEnv.pAIActionManager = m_pAIActionManager = new CAIActionManager();
@@ -416,12 +370,12 @@ bool CAISystem::Init()
 		}
 		if (!gAIEnv.pRayCaster)
 		{
-			gAIEnv.pRayCaster = new SAIEnvironment::GlobalRayCaster;
+			gAIEnv.pRayCaster = new IAISystem::GlobalRayCaster;
 			gAIEnv.pRayCaster->SetQuota(gAIEnv.CVars.RayCasterQuota);
 		}
 		if (!gAIEnv.pIntersectionTester)
 		{
-			gAIEnv.pIntersectionTester = new SAIEnvironment::GlobalIntersectionTester;
+			gAIEnv.pIntersectionTester = new IAISystem::GlobalIntersectionTester;
 			gAIEnv.pIntersectionTester->SetQuota(gAIEnv.CVars.IntersectionTesterQuota);
 		}
 		if (!gAIEnv.pMovementSystem)
@@ -440,33 +394,40 @@ bool CAISystem::Init()
 		{
 			gAIEnv.pActorLookUp = new ActorLookUp();
 		}
-		if (!gAIEnv.pFactionMap)
+		if (!gAIEnv.pFactionSystem)
 		{
-			gAIEnv.pFactionMap = new CFactionMap();
+			gAIEnv.pFactionSystem = new CFactionSystem();
+
+			gAIEnv.pFactionMap = gAIEnv.pFactionSystem->GetFactionMap();
+			gAIEnv.pFactionMap->RegisterFactionReactionChangedCallback(functor(*this, &CAISystem::OnFactionReactionChanged));
 		}
-		if (!gAIEnv.pWalkabilityCacheManager)
-		{
-			gAIEnv.pWalkabilityCacheManager = new WalkabilityCacheManager();
-		}
-		if (!gAIEnv.pTacticalPointSystem)
-		{
-			gAIEnv.pTacticalPointSystem = new CTacticalPointSystem();
-			g_flyHelpersTacticalLanguageExtender.Initialize();
-		}
+
+		TrySubsystemInitTacticalPointSystem();
 	}
 
 	m_AIObjectManager.Init();
 	m_globalPerceptionScale.Reload();
+
+	gEnv->pAISystem->GetSequenceManager()->SetAgentAdapter(&m_sequenceAgentAdapter);
 
 	return true;
 }
 
 bool CAISystem::CompleteInit()
 {
-#ifndef _LIB
-	AIFlowBaseNode::RegisterFlowNodes();
-#endif
+	SubSystemCall(PostInit());
+	
+	IScriptSystem* pSS = gEnv->pScriptSystem;
+	CRY_ASSERT(pSS);
 
+	SmartScriptTable pScriptAI;
+	if (pSS->GetGlobalValue("AI", pScriptAI))
+	{
+		if (pScriptAI->HaveValue("AIPostInit"))
+		{
+			Script::CallMethod(pScriptAI, "AIPostInit");
+		}
+	}
 	return true;
 }
 
@@ -475,7 +436,7 @@ void CAISystem::SetAIHacksConfiguration()
 	/////////////////////////////////////////////////////////////
 	//TODO This is hack support and should go away at some point!
 	// Set the compatibility mode for feature/setting emulation
-	const char* sValue = gAIEnv.CVars.CompatibilityMode;
+	const char* sValue = gAIEnv.CVars.LegacyCompatibilityMode;
 
 	EConfigCompatabilityMode eCompatMode = ECCM_CRYSIS2;
 
@@ -495,13 +456,15 @@ void CAISystem::SetupAIEnvironment()
 {
 	SetAIHacksConfiguration();
 
+	if (!gAIEnv.pNavigationSystem)
+	{
+		gAIEnv.pNavigationSystem = new NavigationSystem("Scripts/AI/Navigation.xml");
+	}
+
 	//TODO make these members of CAISystem that are pointed to, NOT allocated!
 
 	if (!gAIEnv.pActorLookUp)
 		gAIEnv.pActorLookUp = new ActorLookUp();
-
-	if (!gAIEnv.pWalkabilityCacheManager)
-		gAIEnv.pWalkabilityCacheManager = new WalkabilityCacheManager();
 
 	gAIEnv.pAIObjectManager = &m_AIObjectManager;
 
@@ -529,44 +492,33 @@ void CAISystem::SetupAIEnvironment()
 	if (!gAIEnv.pObjectContainer)
 		gAIEnv.pObjectContainer = new CObjectContainer;
 
-#if !defined(_RELEASE)
-	// CodeCoverage
-	if (!gAIEnv.pCodeCoverageTracker)
-		gAIEnv.pCodeCoverageTracker = new CCodeCoverageTracker;
-	if (!gAIEnv.pCodeCoverageManager)
-		gAIEnv.pCodeCoverageManager = new CCodeCoverageManager;
-	if (!gAIEnv.pCodeCoverageGUI)
-		gAIEnv.pCodeCoverageGUI = new CCodeCoverageGUI;
-#endif
-
 	// StatsManager
 	if (!gAIEnv.pStatsManager)
 		gAIEnv.pStatsManager = new CStatsManager;
 
-	if (!gAIEnv.pTargetTrackManager)
-		gAIEnv.pTargetTrackManager = new CTargetTrackManager();
+	TrySubsystemInitTargetTrackSystem();
 
 	gAIEnv.pAIActionManager = m_pAIActionManager = new CAIActionManager();
 	gAIEnv.pSmartObjectManager = m_pSmartObjectManager = new CSmartObjectManager();
 
-	gAIEnv.pPerceptionManager = new CPerceptionManager();
-	gAIEnv.pCommunicationManager = new CCommunicationManager("Scripts/AI/Communication/CommunicationSystemConfiguration.xml");
-	gAIEnv.pSelectionTreeManager = new CSelectionTreeManager();
+	TrySubsystemInitCommunicationSystem();
 	gAIEnv.pBehaviorTreeManager = new BehaviorTree::BehaviorTreeManager();
-	gAIEnv.pGraftManager = new BehaviorTree::GraftManager();
 
-	if (!gAIEnv.pFactionMap)
+	if (!gAIEnv.pFactionSystem)
 	{
-		gAIEnv.pFactionMap = new CFactionMap();
-		m_globalPerceptionScale.Reload();
+		gAIEnv.pFactionSystem = new CFactionSystem();
+
+		gAIEnv.pFactionMap = gAIEnv.pFactionSystem->GetFactionMap();
+		gAIEnv.pFactionMap->RegisterFactionReactionChangedCallback(functor(*this, &CAISystem::OnFactionReactionChanged));
 	}
 
-	gAIEnv.pCollisionAvoidanceSystem = new CollisionAvoidanceSystem();
+	TrySubsystemInitFormationSystem();
+	TrySubsystemInitORCA();
 
-	gAIEnv.pRayCaster = new SAIEnvironment::GlobalRayCaster;
+	gAIEnv.pRayCaster = new IAISystem::GlobalRayCaster;
 	gAIEnv.pRayCaster->SetQuota(gAIEnv.CVars.RayCasterQuota);
 
-	gAIEnv.pIntersectionTester = new SAIEnvironment::GlobalIntersectionTester;
+	gAIEnv.pIntersectionTester = new IAISystem::GlobalIntersectionTester;
 	gAIEnv.pIntersectionTester->SetQuota(gAIEnv.CVars.IntersectionTesterQuota);
 
 	gAIEnv.pMovementSystem = MovementSystemCreator().CreateMovementSystem();
@@ -582,6 +534,118 @@ void CAISystem::SetupAIEnvironment()
 		gAIEnv.pBubblesSystem->Init();
 	}
 #endif // CRYAISYSTEM_DEBUG
+
+	if (!gAIEnv.pSignalManager)
+	{
+		gAIEnv.pSignalManager = new AISignals::CSignalManager();
+	}
+}
+
+void CAISystem::TrySubsystemInitScriptBind()
+{
+	if (gAIEnv.CVars.LegacyScriptBind)
+	{
+		if (m_pScriptAI == nullptr)
+		{
+			m_pScriptAI = new CScriptBind_AI();
+			m_pScriptAI->RunStartupScript(false);
+			return;
+		}
+		CRY_ASSERT_MESSAGE(m_pScriptAI, "AI Script Bind is already initialized.");
+	}
+}
+
+// ensure the available communications are ready before the AI scripts get loaded (they in turn might load GoalPipes and other stuff that depend on communication data)
+void CAISystem::TrySubsystemInitCommunicationSystem()
+{
+	if (gAIEnv.CVars.legacyCommunicationSystem.CommunicationSystem)
+	{
+		if (gAIEnv.pCommunicationManager == nullptr)
+		{
+			gAIEnv.pCommunicationManager = new CCommunicationManager("Scripts/AI/Communication/CommunicationSystemConfiguration.xml");
+			gAIEnv.pCommunicationManager->LoadConfigurationAndScanRootFolder("Scripts/AI/Communication");
+			return;
+		}
+		CRY_ASSERT_MESSAGE(gAIEnv.pCommunicationManager, "AI Communication System is already initialized.");
+	}
+}
+
+void CAISystem::TrySubsystemInitFormationSystem()
+{
+	if (gAIEnv.CVars.legacyFormationSystem.FormationSystem)
+	{
+		if (gAIEnv.pFormationManager == nullptr)
+		{
+			gAIEnv.pFormationManager = new CFormationManager();
+			return;
+		}
+		CRY_ASSERT_MESSAGE(gAIEnv.pFormationManager, "AI Formation system is already initialized.");
+	}
+}
+
+void CAISystem::TrySubsystemInitGroupSystem()
+{
+	if (gAIEnv.CVars.legacyGroupSystem.GroupSystem)
+	{
+		if (gAIEnv.pGroupManager == nullptr)
+		{
+			gAIEnv.pGroupManager = new CGroupManager();
+			return;
+		}
+		CRY_ASSERT_MESSAGE(gAIEnv.pGroupManager, "AI Group System is already initialized.");
+	}
+}
+
+void CAISystem::TrySubsystemInitTacticalPointSystem()
+{
+	if (gAIEnv.CVars.legacyTacticalPointSystem.TacticalPointSystem)
+	{
+		if (gAIEnv.pTacticalPointSystem == nullptr)
+		{
+			gAIEnv.pTacticalPointSystem = new CTacticalPointSystem();
+			return;
+		}
+		CRY_ASSERT_MESSAGE(gAIEnv.pTacticalPointSystem, "AI Tactical Point System is already initialized.");
+	}
+}
+
+void CAISystem::TrySubsystemInitCoverSystem()
+{
+	if (gAIEnv.CVars.legacyCoverSystem.CoverSystem)
+	{
+		if (gAIEnv.pCoverSystem == nullptr)
+		{
+			gAIEnv.pCoverSystem = new CCoverSystem("Scripts/AI/Cover.xml");
+			return;
+		}
+		CRY_ASSERT_MESSAGE(gAIEnv.pCoverSystem, "AI Cover System is already initialized.");
+	}
+}
+
+void CAISystem::TrySubsystemInitORCA()
+{
+	if (gAIEnv.CVars.collisionAvoidance.EnableORCA)
+	{
+		if (gAIEnv.pCollisionAvoidanceSystem == nullptr)
+		{
+			gAIEnv.pCollisionAvoidanceSystem = new Cry::AI::CollisionAvoidance::CCollisionAvoidanceSystem();
+			return;
+		}
+		CRY_ASSERT_MESSAGE(gAIEnv.pCollisionAvoidanceSystem, "AI ORCA System is already initialized.");
+	}
+}
+
+void CAISystem::TrySubsystemInitTargetTrackSystem()
+{
+	if (gAIEnv.CVars.legacyTargetTracking.TargetTracking)
+	{
+		if (gAIEnv.pTargetTrackManager == nullptr)
+		{
+			gAIEnv.pTargetTrackManager = new CTargetTrackManager();
+			return;
+		}
+		CRY_ASSERT_MESSAGE(gAIEnv.pTargetTrackManager, "AI Target Track System is already initialized.");
+	}
 }
 
 //
@@ -608,18 +672,18 @@ void CAISystem::Reload()
 	// Clear out any state that would otherwise persist over a reload (e.g. goalpipes)
 	ClearForReload();
 
-	gAIEnv.pCommunicationManager->Reload();
-	gAIEnv.pSelectionTreeManager->Reload();
+	if (gAIEnv.pCommunicationManager)
+		gAIEnv.pCommunicationManager->Reload();
 
 	gAIEnv.pFactionMap->Reload();
 	m_globalPerceptionScale.Reload();
-	g_flyHelpersTacticalLanguageExtender.Initialize();
 
 	// Reload the root of the AI system scripts, forcing reload of this and all dependencies
-	IScriptSystem* pSS = gEnv->pScriptSystem;
-	CRY_ASSERT(pSS);
-	if (pSS->ExecuteFile("Scripts/AI/aiconfig.lua", true, true))
+	if (m_pScriptAI && m_pScriptAI->RunStartupScript(true))
 	{
+		IScriptSystem* pSS = gEnv->pScriptSystem;
+		CRY_ASSERT(pSS);
+		
 		// Reset blackboards etc.
 		pSS->BeginCall("AIReset");
 		pSS->EndCall();
@@ -632,10 +696,10 @@ void CAISystem::Reload()
 	if (gAIEnv.pTargetTrackManager)
 		gAIEnv.pTargetTrackManager->ReloadConfig();
 
-	gAIEnv.pCoverSystem->ReloadConfig();
+	if (gAIEnv.pCoverSystem)
+		gAIEnv.pCoverSystem->ReloadConfig();
 
 	gAIEnv.pBehaviorTreeManager->Reset();
-	gAIEnv.pGraftManager->Reset();
 }
 
 //====================================================================
@@ -647,25 +711,19 @@ void CAISystem::SetLevelPath(const char* sPath)
 }
 
 //====================================================================
-// RegisterListener
+// RegisterSystemComponent
 //====================================================================
-bool CAISystem::RegisterListener(IAISystemListener* pListener)
+bool CAISystem::RegisterSystemComponent(IAISystemComponent* pComponent)
 {
-	bool result;
-	result = m_setSystemListeners.insert(pListener).second;
-	return result;
+	return m_setSystemComponents.insert(pComponent).second;
 }
 
 //====================================================================
-// UnregisterListener
+// UnregisterSystemComponent
 //====================================================================
-bool CAISystem::UnregisterListener(IAISystemListener* pListener)
+bool CAISystem::UnregisterSystemComponent(IAISystemComponent* pComponent)
 {
-	int nErased;
-	nErased = m_setSystemListeners.erase(pListener);
-	if (m_setSystemListeners.empty())
-		stl::free_container(m_setSystemListeners);
-	return (nErased == 1);
+	return m_setSystemComponents.erase(pComponent) == 1;
 }
 
 //====================================================================
@@ -673,7 +731,7 @@ bool CAISystem::UnregisterListener(IAISystemListener* pListener)
 //====================================================================
 void CAISystem::OnAgentDeath(EntityId deadEntityID, EntityId killerID)
 {
-	BroadcastToListeners(OnAgentDeath(deadEntityID, killerID));
+	m_callbacks.AgentDied().Call(deadEntityID, killerID);
 }
 
 //====================================================================
@@ -748,8 +806,8 @@ int CAISystem::GetAlertness(const IAIAlertnessPredicate& alertnessPredicate)
 void CAISystem::ClearForReload(void)
 {
 	m_PipeManager.ClearAllGoalPipes();
-	g_flyHelpersTacticalLanguageExtender.Deinitialize();
-	gAIEnv.pTacticalPointSystem->DestroyAllQueries();
+	if (gAIEnv.pTacticalPointSystem)
+		gAIEnv.pTacticalPointSystem->DestroyAllQueries();
 }
 
 //
@@ -821,18 +879,6 @@ void CAISystem::CheckGoalpipes(IConsoleCmdArgs*)
 	GetAISystem()->m_PipeManager.CheckGoalpipes();
 }
 
-void CAISystem::DumpCodeCoverageCheckpoints(IConsoleCmdArgs* pArgs)
-{
-#if !defined(_RELEASE)
-	if (gAIEnv.pCodeCoverageManager)
-	{
-		// Any second argument triggers dump to file rather than log
-		bool bLogToFile = (pArgs->GetArgCount() > 1);
-		gAIEnv.pCodeCoverageManager->DumpCheckpoints(bLogToFile);
-	}
-#endif
-}
-
 //
 //-----------------------------------------------------------------------------------------------------------
 CAIObject* CAISystem::GetPlayer() const
@@ -846,27 +892,34 @@ CAIObject* CAISystem::GetPlayer() const
 // Sends a signal using the desired filter to the desired agents
 //
 //-----------------------------------------------------------------------------------------------------------
-void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szText, IAIObject* pSenderObject, IAISignalExtraData* pData, uint32 crcCode /*= 0*/)
+void CAISystem::SendSignal(unsigned char cFilter, const AISignals::SignalSharedPtr& pSignal)
 {
-	// (MATT) This is quite a switch statement. Needs replacing. {2009/02/11}
 	CCCPOINT(CAISystem_SendSignal);
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
-	// This deletes the passed pData parameter if it wasn't set to NULL
+	AISignals::IAISignalExtraData* pData = pSignal->GetExtraData();
+
+	// This deletes the passed pSignal extra data if it wasn't set to NULL
 	struct DeleteBeforeReturning
 	{
-		IAISignalExtraData** _p;
-		DeleteBeforeReturning(IAISignalExtraData** p) : _p(p) {}
+		const AISignals::SignalSharedPtr& _pSignal;
+		AISignals::IAISignalExtraData** _pData;
+		DeleteBeforeReturning(const AISignals::SignalSharedPtr& pSignal, AISignals::IAISignalExtraData** pData) : _pSignal(pSignal), _pData(pData) {}
 		~DeleteBeforeReturning()
 		{
-			if (*_p)
-				delete (AISignalExtraData*)*_p;
+			if (_pData)
+			{
+				GetAISystem()->FreeSignalExtraData(_pSignal->GetExtraData());
+				_pSignal->SetExtraData(nullptr);
+			}
 		}
-	} autoDelete(&pData);
+	} autoDelete(pSignal, &pData);
 
 	// Calling this with no senderObject is an error
-	assert(pSenderObject);
+	CRY_ASSERT(pSignal->GetSenderID() != INVALID_ENTITYID);
 
+	const IEntity* pEntity = gEnv->pEntitySystem->GetEntity(pSignal->GetSenderID());
+	IAIObject* pSenderObject = pEntity ? gAIEnv.pAIObjectManager->GetAIObject(pEntity->GetAIObjectID()) : nullptr;
 	CAIActor* pSender = CastToCAIActorSafe(pSenderObject);
 	//filippo: can be that sender is null, for example when you send this signal in multiplayer.
 	if (!pSender)
@@ -875,20 +928,18 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 	float fRange = pSender->GetParameters().m_fCommRange;
 	fRange *= pSender->GetParameters().m_fCommRange;
 	Vec3 pos = pSender->GetPos();
-	IEntity* pSenderEntity(pSender->GetEntity());
-
 	CWeakRef<CAIObject> refSender = GetWeakRefSafe(pSender);
 
 	switch (cFilter)
 	{
 
-	case SIGNALFILTER_SENDER:
+	case AISignals::ESignalFilter::SIGNALFILTER_SENDER:
 		{
-			pSender->SetSignal(nSignalId, szText, pSenderEntity, pData, crcCode);
-			pData = NULL;
+			pSender->SetSignal(pSignal);
+			pData = nullptr;
 			break;
 		}
-	case SIGNALFILTER_HALFOFGROUP:
+	case AISignals::ESignalFilter::SIGNALFILTER_HALFOFGROUP:
 		{
 			CCCPOINT(CAISystem_SendSignal_HALFOFGROUP);
 
@@ -909,7 +960,7 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 					CAIActor* pReciever = CastToCAIActorSafe(ai->second.GetAIObject());
 					if ((pReciever != NULL) && pReciever != pSenderObject)
 					{
-						pReciever->SetSignal(nSignalId, szText, pSenderEntity, pData ? new AISignalExtraData(*(AISignalExtraData*)pData) : NULL, crcCode);
+						pReciever->SetSignal(pSignal);
 					}
 					else
 						++groupmembers;   // dont take into account sender
@@ -919,7 +970,7 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 			}
 		}
 		break;
-	case SIGNALFILTER_NEARESTGROUP:
+	case AISignals::ESignalFilter::SIGNALFILTER_NEARESTGROUP:
 		{
 			int groupid = pSender->GetGroupId();
 			AIObjects::iterator ai;
@@ -948,14 +999,14 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 
 				if (pNearest)
 				{
-					pNearest->SetSignal(nSignalId, szText, pSenderEntity, pData, crcCode);
-					pData = NULL;
+					pNearest->SetSignal(pSignal);
+					pData = nullptr;
 				}
 			}
 		}
 		break;
 
-	case SIGNALFILTER_NEARESTINCOMM:
+	case AISignals::ESignalFilter::SIGNALFILTER_NEARESTINCOMM:
 		{
 			int groupid = pSender->GetGroupId();
 			AIObjects::iterator ai;
@@ -987,13 +1038,13 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 
 				if (pNearest)
 				{
-					pNearest->SetSignal(nSignalId, szText, pSenderEntity, pData, crcCode);
-					pData = NULL;
+					pNearest->SetSignal(pSignal);
+					pData = nullptr;
 				}
 			}
 		}
 		break;
-	case SIGNALFILTER_NEARESTINCOMM_LOOKING:
+	case AISignals::ESignalFilter::SIGNALFILTER_NEARESTINCOMM_LOOKING:
 		{
 			int groupid = pSender->GetGroupId();
 			AIObjects::iterator ai;
@@ -1022,13 +1073,13 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 				}
 				if (pNearest)
 				{
-					pNearest->SetSignal(nSignalId, szText, pSenderEntity, pData, crcCode);
-					pData = NULL;
+					pNearest->SetSignal(pSignal);
+					pData = nullptr;
 				}
 			}
 		}
 		break;
-	case SIGNALFILTER_NEARESTINCOMM_FACTION:
+	case AISignals::ESignalFilter::SIGNALFILTER_NEARESTINCOMM_FACTION:
 		{
 			uint8 factionID = pSender->GetFactionID();
 			AIObjects::iterator ai;
@@ -1057,13 +1108,13 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 
 				if (pNearest)
 				{
-					pNearest->SetSignal(nSignalId, szText, pSenderEntity, pData, crcCode);
-					pData = NULL;
+					pNearest->SetSignal(pSignal);
+					pData = nullptr;
 				}
 			}
 		}
 		break;
-	case SIGNALFILTER_SUPERGROUP:
+	case AISignals::ESignalFilter::SIGNALFILTER_SUPERGROUP:
 		{
 			int groupid = pSender->GetGroupId();
 			AIObjects::iterator ai;
@@ -1075,7 +1126,7 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 					if (ai->first != groupid)
 						break;
 					if (pReciever)
-						pReciever->SetSignal(nSignalId, szText, pSenderEntity, pData ? new AISignalExtraData(*(AISignalExtraData*)pData) : NULL, crcCode);
+						pReciever->SetSignal(pSignal);
 				}
 				// don't delete pData!!! - it will be deleted at the end of this function
 			}
@@ -1086,12 +1137,12 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 #pragma warning(push)
 #pragma warning(disable:6011)
 				if (pSender->GetParameters().m_nGroup == pPlayer->GetParameters().m_nGroup)
-					pPlayer->SetSignal(nSignalId, szText, pSenderEntity, pData ? new AISignalExtraData(*(AISignalExtraData*)pData) : NULL, crcCode);
+					pPlayer->SetSignal(pSignal);
 #pragma warning(pop)
 			}
 		}
 		break;
-	case SIGNALFILTER_SUPERFACTION:
+	case AISignals::ESignalFilter::SIGNALFILTER_SUPERFACTION:
 		{
 			uint8 factionID = pSender->GetFactionID();
 			AIObjects::iterator ai;
@@ -1104,7 +1155,7 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 					if (ai->first != factionID)
 						break;
 					if (pReciever)
-						pReciever->SetSignal(nSignalId, szText, pSenderEntity, pData ? new AISignalExtraData(*(AISignalExtraData*)pData) : NULL, crcCode);
+						pReciever->SetSignal(pSignal);
 					++ai;
 				}
 				// don't delete pData!!! - it will be deleted at the end of this function
@@ -1113,13 +1164,13 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 			CAIPlayer* pPlayer = CastToCAIPlayerSafe(GetPlayer());
 			if (pPlayer)
 			{
-				pPlayer->SetSignal(nSignalId, szText, pSenderEntity, pData ? new AISignalExtraData(*(AISignalExtraData*)pData) : NULL, crcCode);
+				pPlayer->SetSignal(pSignal);
 			}
 		}
 		break;
 
-	case SIGNALFILTER_GROUPONLY:
-	case SIGNALFILTER_GROUPONLY_EXCEPT:
+	case AISignals::ESignalFilter::SIGNALFILTER_GROUPONLY:
+	case AISignals::ESignalFilter::SIGNALFILTER_GROUPONLY_EXCEPT:
 		{
 			int groupid = pSender->GetGroupId();
 
@@ -1135,9 +1186,9 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 						CAIActor* pReciever = CastToCAIActorSafe(ai->second.GetAIObject());
 						if (ai->first != groupid)
 							break;
-						if ((pReciever != NULL) && !(cFilter == SIGNALFILTER_GROUPONLY_EXCEPT && pReciever == pSender))
+						if ((pReciever != NULL) && !(cFilter == AISignals::ESignalFilter::SIGNALFILTER_GROUPONLY_EXCEPT && pReciever == pSender))
 						{
-							pReciever->SetSignal(nSignalId, szText, pSenderEntity, pData ? new AISignalExtraData(*(AISignalExtraData*)pData) : NULL, crcCode);
+							pReciever->SetSignal(pSignal);
 						}
 					}
 					// don't delete pData!!! - it will be deleted at the end of this function
@@ -1147,13 +1198,13 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 				CAIPlayer* pPlayer = CastToCAIPlayerSafe(GetPlayer());
 				if (pPlayer)
 				{
-					if (pSender->GetParameters().m_nGroup == pPlayer->GetParameters().m_nGroup && Distance::Point_PointSq(pPlayer->GetPos(), pos) < fRange && !(cFilter == SIGNALFILTER_GROUPONLY_EXCEPT && pPlayer == pSender))
-						pPlayer->SetSignal(nSignalId, szText, pSenderEntity, pData ? new AISignalExtraData(*(AISignalExtraData*)pData) : NULL, crcCode);
+					if (pSender->GetParameters().m_nGroup == pPlayer->GetParameters().m_nGroup && Distance::Point_PointSq(pPlayer->GetPos(), pos) < fRange && !(cFilter == AISignals::ESignalFilter::SIGNALFILTER_GROUPONLY_EXCEPT && pPlayer == pSender))
+						pPlayer->SetSignal(pSignal);
 				}
 			}
 		}
 		break;
-	case SIGNALFILTER_FACTIONONLY:
+	case AISignals::ESignalFilter::SIGNALFILTER_FACTIONONLY:
 		{
 			uint8 factionID = pSender->GetFactionID();
 			AIObjects::iterator ai;
@@ -1171,7 +1222,7 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 						mypos -= pos;
 
 						if (mypos.GetLengthSquared() < fRange)
-							pReciever->SetSignal(nSignalId, szText, pSenderEntity, pData ? new AISignalExtraData(*(AISignalExtraData*)pData) : NULL, crcCode);
+							pReciever->SetSignal(pSignal);
 					}
 				}
 				// don't delete pData!!! - it will be deleted at the end of this function
@@ -1181,12 +1232,12 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 			if (pPlayer)
 			{
 				if (pSender->GetFactionID() == pPlayer->GetFactionID() && Distance::Point_PointSq(pPlayer->GetPos(), pos) < fRange)
-					pPlayer->SetSignal(nSignalId, szText, pSenderEntity, pData ? new AISignalExtraData(*(AISignalExtraData*)pData) : NULL, crcCode);
+					pPlayer->SetSignal(pSignal);
 			}
 		}
 		break;
-	case SIGNALFILTER_ANYONEINCOMM:
-	case SIGNALFILTER_ANYONEINCOMM_EXCEPT:
+	case AISignals::ESignalFilter::SIGNALFILTER_ANYONEINCOMM:
+	case AISignals::ESignalFilter::SIGNALFILTER_ANYONEINCOMM_EXCEPT:
 		{
 			// send to puppets and aware objects in the communications range of the sender
 
@@ -1212,8 +1263,8 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 							if (ai->first == *ki)
 							{
 								CAIActor* pReciever = ai->second->CastToCAIActor();
-								if (pReciever && Distance::Point_PointSq(pReciever->GetPos(), pos) < fRange && !(cFilter == SIGNALFILTER_ANYONEINCOMM_EXCEPT && pReciever == pSender))
-									pReciever->SetSignal(nSignalId, szText, pSenderEntity, pData ? new AISignalExtraData(*(AISignalExtraData*)pData) : NULL, crcCode);
+								if (pReciever && Distance::Point_PointSq(pReciever->GetPos(), pos) < fRange && !(cFilter == AISignals::ESignalFilter::SIGNALFILTER_ANYONEINCOMM_EXCEPT && pReciever == pSender))
+									pReciever->SetSignal(pSignal);
 							}
 						++ai;
 					}
@@ -1234,7 +1285,7 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 						Vec3 mypos = pReciever->GetPos();
 						mypos -= pos;
 						if (mypos.GetLengthSquared() < fRange)
-							pReciever->SetSignal(nSignalId, szText, pSenderEntity, pData ? new AISignalExtraData(*(AISignalExtraData*)pData) : NULL, crcCode);
+							pReciever->SetSignal(pSignal);
 					}
 					++ai;
 				}
@@ -1244,17 +1295,17 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 			CAIPlayer* pPlayer = CastToCAIPlayerSafe(GetPlayer());
 			if (pPlayer)
 			{
-				if (Distance::Point_PointSq(pPlayer->GetPos(), pos) < fRange && !(cFilter == SIGNALFILTER_ANYONEINCOMM_EXCEPT && pPlayer == pSender))
+				if (Distance::Point_PointSq(pPlayer->GetPos(), pos) < fRange && !(cFilter == AISignals::ESignalFilter::SIGNALFILTER_ANYONEINCOMM_EXCEPT && pPlayer == pSender))
 				{
 					PREFAST_SUPPRESS_WARNING(6011)
-					pPlayer->SetSignal(nSignalId, szText, pSenderEntity, pData ? new AISignalExtraData(*(AISignalExtraData*)pData) : NULL, crcCode);
+					pPlayer->SetSignal(pSignal);
 				}
 			}
 			// don't delete pData!!! - it will be deleted at the end of this function
 		}
 		break;
-	case SIGNALFILTER_LEADER:
-	case SIGNALFILTER_LEADERENTITY:
+	case AISignals::ESignalFilter::SIGNALFILTER_LEADER:
+	case AISignals::ESignalFilter::SIGNALFILTER_LEADERENTITY:
 		{
 			int groupid = pSender->GetGroupId();
 			AIObjects::iterator ai;
@@ -1267,12 +1318,12 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 						break;
 					if (pLeader)
 					{
-						CAIObject* pRecipientObj = (cFilter == SIGNALFILTER_LEADER ? pLeader : pLeader->GetAssociation().GetAIObject());
+						CAIObject* pRecipientObj = (cFilter == AISignals::ESignalFilter::SIGNALFILTER_LEADER ? pLeader : pLeader->GetAssociation().GetAIObject());
 						if (pRecipientObj)
 						{
 							CAIActor* pRecipient = pRecipientObj->CastToCAIActor();
 							if (pRecipient)
-								pRecipient->SetSignal(nSignalId, szText, pSenderEntity, pData ? new AISignalExtraData(*(AISignalExtraData*)pData) : NULL, crcCode);
+								pRecipient->SetSignal(pSignal);
 						}
 						break;
 					}
@@ -1283,12 +1334,14 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 		}
 		break;
 
-	case SIGNALFILTER_FORMATION:
-	case SIGNALFILTER_FORMATION_EXCEPT:
+	case AISignals::ESignalFilter::SIGNALFILTER_FORMATION:
+	case AISignals::ESignalFilter::SIGNALFILTER_FORMATION_EXCEPT:
 		{
-			for (FormationMap::iterator fi(m_mapActiveFormations.begin()); fi != m_mapActiveFormations.end(); ++fi)
+			const CFormationManager::FormationMap& activeFormations = gAIEnv.pFormationManager->GetActiveFormations();
+		
+			for (auto it = activeFormations.begin(); it != activeFormations.end(); ++it)
 			{
-				CFormation* pFormation = fi->second;
+				const CFormation* pFormation = it->second;
 				if (pFormation && pFormation->GetFormationPoint(refSender))
 				{
 					CCCPOINT(CAISystem_SendSignal_Formation);
@@ -1297,11 +1350,11 @@ void CAISystem::SendSignal(unsigned char cFilter, int nSignalId, const char* szT
 					for (int i = 0; i < s; i++)
 					{
 						CAIObject* pMember = pFormation->GetPointOwner(i);
-						if (pMember && (cFilter == SIGNALFILTER_FORMATION || pMember != pSender))
+						if (pMember && (cFilter == AISignals::ESignalFilter::SIGNALFILTER_FORMATION || pMember != pSender))
 						{
 							CAIActor* pRecipient = pMember->CastToCAIActor();
 							if (pRecipient)
-								pRecipient->SetSignal(nSignalId, szText, pSenderEntity, pData ? new AISignalExtraData(*(AISignalExtraData*)pData) : NULL, crcCode);
+								pRecipient->SetSignal(pSignal);
 						}
 					}
 					break;
@@ -1464,149 +1517,18 @@ void CAISystem::AddToFaction(CAIObject* pObject, uint8 factionID)
 	}
 }
 
-// creates a formation and associates it with a group of agents
-//
-//-----------------------------------------------------------------------------------------------------------
-CFormation* CAISystem::CreateFormation(CWeakRef<CAIObject> refOwner, const char* szFormationName, Vec3 vTargetPos)
+void CAISystem::OnFactionReactionChanged(uint8 factionOne, uint8 factionTwo, IFactionMap::ReactionType reaction)
 {
-	FormationMap::iterator fi;
-	fi = m_mapActiveFormations.find(refOwner);
-	if (fi == m_mapActiveFormations.end())
+	for (auto rangeIt = m_mapFaction.equal_range(factionOne); rangeIt.first != rangeIt.second; ++rangeIt.first)
 	{
-		FormationDescriptorMap::iterator di;
-		di = m_mapFormationDescriptors.find(szFormationName);
-		if (di != m_mapFormationDescriptors.end())
+		if (CAIObject* pObject = rangeIt.first->second.GetAIObject())
 		{
-			CCCPOINT(CAISystem_CreateFormation);
-
-			CFormation* pFormation = new CFormation();
-			pFormation->Create(di->second, refOwner, vTargetPos);
-			m_mapActiveFormations.insert(FormationMap::iterator::value_type(refOwner, pFormation));
-			return pFormation;
-		}
-	}
-	else
-		return (fi->second);
-	return 0;
-}
-
-string CAISystem::GetFormationNameFromCRC32(unsigned int nCrc32ForFormationName) const
-{
-	FormationDescriptorMap::const_iterator currentFormation = m_mapFormationDescriptors.begin();
-	FormationDescriptorMap::const_iterator end = m_mapFormationDescriptors.end();
-	for (; currentFormation != end; ++currentFormation)
-	{
-		if (currentFormation->second.m_nNameCRC32 == nCrc32ForFormationName)
-			return currentFormation->first;
-	}
-
-	return "";
-}
-
-// return a formation by id (used for serialization)
-//
-//-----------------------------------------------------------------------------------------------------------
-CFormation* CAISystem::GetFormation(CFormation::TFormationID id)
-{
-	for (FormationMap::const_iterator it = m_mapActiveFormations.begin(), end = m_mapActiveFormations.end(); it != end; ++it)
-	{
-		if (it->second->GetId() == id)
-			return it->second;
-	}
-
-	return NULL;
-}
-
-// change the current formation for the given group
-//
-//-----------------------------------------------------------------------------------------------------------
-bool CAISystem::ChangeFormation(IAIObject* pOwner, const char* szFormationName, float fScale)
-{
-	if (pOwner)
-	{
-		CFormation* pFormation = ((CAIObject*)pOwner)->m_pFormation;
-		if (pFormation)
-		{
-			FormationDescriptorMap::iterator di;
-			di = m_mapFormationDescriptors.find(szFormationName);
-			if (di != m_mapFormationDescriptors.end())
+			if (CAIActor* pAIActor = pObject->CastToCAIActor())
 			{
-				CCCPOINT(CAISystem_ChangeFormation);
-
-				pFormation->Change(di->second, fScale);
-				return true;
+				pAIActor->ReactionChanged(factionTwo, reaction);
 			}
 		}
 	}
-	return false;
-}
-
-// scale the current formation for the given group
-//
-//-----------------------------------------------------------------------------------------------------------
-bool CAISystem::ScaleFormation(IAIObject* pOwner, float fScale)
-{
-	CWeakRef<CAIObject> refOwner = GetWeakRef(static_cast<CAIObject*>(pOwner));
-	FormationMap::iterator fi;
-	fi = m_mapActiveFormations.find(refOwner);
-	if (fi != m_mapActiveFormations.end())
-	{
-		CFormation* pFormation = fi->second;
-		if (pFormation)
-		{
-			CCCPOINT(CAISystem_ScaleFormation);
-
-			pFormation->SetScale(fScale);
-			return true;
-		}
-	}
-	return false;
-}
-
-// scale the current formation for the given group
-//
-//-----------------------------------------------------------------------------------------------------------
-bool CAISystem::SetFormationUpdate(IAIObject* pOwner, bool bUpdate)
-{
-	CWeakRef<CAIObject> refOwner = GetWeakRef(static_cast<CAIObject*>(pOwner));
-	FormationMap::iterator fi;
-	fi = m_mapActiveFormations.find(refOwner);
-	if (fi != m_mapActiveFormations.end())
-	{
-		CFormation* pFormation = fi->second;
-		if (pFormation)
-		{
-			pFormation->SetUpdate(bUpdate);
-			return true;
-		}
-	}
-	return false;
-}
-
-// check if puppet and vehicle are in the same formation
-//
-//-----------------------------------------------------------------------------------------------------------
-bool CAISystem::SameFormation(const CPuppet* pHuman, const CAIVehicle* pVehicle)
-{
-	if (pHuman->IsHostile(pVehicle))
-		return false;
-	for (FormationMap::iterator fi(m_mapActiveFormations.begin()); fi != m_mapActiveFormations.end(); ++fi)
-	{
-		CFormation* pFormation = fi->second;
-		if (pFormation->GetFormationPoint(GetWeakRef(pHuman)))
-		{
-			CAIObject* pFormationOwner(pFormation->GetPointOwner(0));
-			if (!pFormationOwner)
-				return false;
-			if (pFormationOwner == pVehicle->GetAttentionTarget())
-			{
-				CCCPOINT(CAISystem_SameFormation);
-				return true;
-			}
-			return false;
-		}
-	}
-	return false;
 }
 
 // Resets all agent states to initial
@@ -1659,8 +1581,10 @@ void CAISystem::Reset(IAISystem::EResetReason reason)
 		}
 	}
 
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "AI Reset");
-	LOADING_TIME_PROFILE_SECTION;
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "AI Reset");
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
+
+	SubSystemCall(Reset(reason));
 
 	switch (reason)
 	{
@@ -1668,43 +1592,37 @@ void CAISystem::Reset(IAISystem::EResetReason reason)
 #if CAPTURE_REPLAY_LOG
 		CryGetIMemReplay()->AddLabelFmt("AILoad");
 #endif
-		if (!gAIEnv.pTacticalPointSystem)
-		{
-			gAIEnv.pTacticalPointSystem = new CTacticalPointSystem();
-			g_flyHelpersTacticalLanguageExtender.Initialize();
-		}
-		if (!gAIEnv.pGraph)
-		{
-			gAIEnv.pGraph = m_pGraph = new CGraph;
-		}
+
+		TrySubsystemInitTacticalPointSystem();
+
 		if (!gAIEnv.pNavigation)
 		{
 			gAIEnv.pNavigation = m_pNavigation = new CNavigation(gEnv->pSystem);
-			m_pNavigation->Init();
 		}
-		if (!gAIEnv.pCoverSystem)
-		{
-			gAIEnv.pCoverSystem = new CCoverSystem("Scripts/AI/Cover.xml");
-		}
-		if (!gAIEnv.pNavigationSystem)
-		{
-			gAIEnv.pNavigationSystem = new NavigationSystem("Scripts/AI/Navigation.xml");
-		}
+
+		TrySubsystemInitCoverSystem();
+
+		CRY_ASSERT(gAIEnv.pNavigationSystem);
+		gAIEnv.pNavigationSystem->Clear();
+
 		if (!gAIEnv.pMNMPathfinder)
 		{
 			gAIEnv.pPathfinderNavigationSystemUser = new MNM::PathfinderNavigationSystemUser;
 			gAIEnv.pMNMPathfinder = gAIEnv.pPathfinderNavigationSystemUser->GetPathfinderImplementation();
-			assert(gAIEnv.pNavigationSystem);
+			CRY_ASSERT(gAIEnv.pNavigationSystem);
 			gAIEnv.pNavigationSystem->RegisterUser(gAIEnv.pPathfinderNavigationSystemUser, "PathfinderExtension");
+		}
+		if (!gAIEnv.pAuditionMap)
+		{
+			gAIEnv.pAuditionMap = new Perception::CAuditionMap();
 		}
 		if (!gAIEnv.pVisionMap)
 		{
 			gAIEnv.pVisionMap = new CVisionMap();
 		}
-		if (!gAIEnv.pGroupManager)
-		{
-			gAIEnv.pGroupManager = new CGroupManager();
-		}
+
+		TrySubsystemInitGroupSystem();
+
 		if (!gAIEnv.pAIActionManager)
 		{
 			gAIEnv.pAIActionManager = m_pAIActionManager = new CAIActionManager();
@@ -1715,12 +1633,12 @@ void CAISystem::Reset(IAISystem::EResetReason reason)
 		}
 		if (!gAIEnv.pRayCaster)
 		{
-			gAIEnv.pRayCaster = new SAIEnvironment::GlobalRayCaster;
+			gAIEnv.pRayCaster = new IAISystem::GlobalRayCaster;
 			gAIEnv.pRayCaster->SetQuota(gAIEnv.CVars.RayCasterQuota);
 		}
 		if (!gAIEnv.pIntersectionTester)
 		{
-			gAIEnv.pIntersectionTester = new SAIEnvironment::GlobalIntersectionTester;
+			gAIEnv.pIntersectionTester = new IAISystem::GlobalIntersectionTester;
 			gAIEnv.pIntersectionTester->SetQuota(gAIEnv.CVars.IntersectionTesterQuota);
 		}
 		if (!gAIEnv.pMovementSystem)
@@ -1731,18 +1649,10 @@ void CAISystem::Reset(IAISystem::EResetReason reason)
 		{
 			gAIEnv.pActorLookUp = new ActorLookUp();
 		}
-		if (!gAIEnv.pWalkabilityCacheManager)
-		{
-			gAIEnv.pWalkabilityCacheManager = new WalkabilityCacheManager();
-		}
 
 		if (gAIEnv.pTargetTrackManager)
 		{
 			gAIEnv.pTargetTrackManager->Reset(reason);
-		}
-		if (gAIEnv.pPerceptionManager)
-		{
-			gAIEnv.pPerceptionManager->Reset(reason);
 		}
 
 		m_bInitialized = true;
@@ -1755,25 +1665,18 @@ void CAISystem::Reset(IAISystem::EResetReason reason)
 			if (gAIEnv.pTargetTrackManager)
 				gAIEnv.pTargetTrackManager->Reset(RESET_UNLOAD_LEVEL);
 
-#if !defined(_RELEASE)
-			if (gAIEnv.pCodeCoverageGUI)
-				gAIEnv.pCodeCoverageGUI->Reset(RESET_UNLOAD_LEVEL);
-#endif
-
 			for (AIGroupMap::iterator it = m_mapAIGroups.begin(); it != m_mapAIGroups.end(); ++it)
 				delete it->second;
 			stl::free_container(m_mapAIGroups);
 
-			SAFE_DELETE(m_pGraph);
-			gAIEnv.pGraph = NULL;
 			SAFE_DELETE(m_pNavigation);
 			gAIEnv.pNavigation = NULL;
 			gAIEnv.pNavigationSystem->UnRegisterUser(gAIEnv.pPathfinderNavigationSystemUser);
 			gAIEnv.pMNMPathfinder = NULL;
 			SAFE_DELETE(gAIEnv.pPathfinderNavigationSystemUser);
+			SAFE_DELETE(gAIEnv.pAuditionMap);
 			SAFE_DELETE(gAIEnv.pVisionMap);
 			SAFE_DELETE(gAIEnv.pCoverSystem);
-			SAFE_DELETE(gAIEnv.pNavigationSystem);
 			SAFE_DELETE(gAIEnv.pGroupManager);
 			SAFE_DELETE(m_pAIActionManager);
 			gAIEnv.pAIActionManager = NULL;
@@ -1782,13 +1685,15 @@ void CAISystem::Reset(IAISystem::EResetReason reason)
 			SAFE_DELETE(gAIEnv.pRayCaster);
 			SAFE_DELETE(gAIEnv.pIntersectionTester);
 			SAFE_DELETE(gAIEnv.pActorLookUp);
-			SAFE_DELETE(gAIEnv.pWalkabilityCacheManager);
 			SAFE_DELETE(gAIEnv.pTacticalPointSystem);
-			m_mapAuxSignalsFired.clear();
+
+			gAIEnv.pNavigationSystem->Clear();
+
 			stl::free_container(m_sWorkingFolder);
-			stl::free_container(m_priorityTargets);
-			gAIEnv.pPerceptionManager->Reset(reason);
-			gAIEnv.pCommunicationManager->Reset();
+
+			if (gAIEnv.pCommunicationManager)
+				gAIEnv.pCommunicationManager->Reset();
+
 			m_PipeManager.ClearAllGoalPipes();
 			CPuppet::ClearStaticData();
 			stl::free_container(m_walkabilityPhysicalEntities);
@@ -1798,26 +1703,21 @@ void CAISystem::Reset(IAISystem::EResetReason reason)
 				m_walkabilityGeometryBox = NULL;
 			}
 
-			gAIEnv.pCollisionAvoidanceSystem->Reset(true);
-
 			CleanupAICollision();
 			ClearAIObjectIteratorPools();
 
 			CPathObstacles::ResetOfStaticData();
-			AISignalExtraData::CleanupPool();
+			AISignals::AISignalExtraData::CleanupPool();
 
 			stl::free_container(m_tmpFullUpdates);
 			stl::free_container(m_tmpDryUpdates);
 			stl::free_container(m_tmpAllUpdates);
 
 #ifdef CRYAISYSTEM_DEBUG
-			stl::free_container(m_DEBUG_fakeTracers);
-			stl::free_container(m_DEBUG_fakeHitEffect);
 			stl::free_container(m_DEBUG_fakeDamageInd);
 #endif //CRYAISYSTEM_DEBUG
 
 			gAIEnv.pBehaviorTreeManager->Reset();
-			gAIEnv.pGraftManager->Reset();
 			gAIEnv.pMovementSystem->Reset();
 
 			m_bInitialized = false;
@@ -1827,14 +1727,16 @@ void CAISystem::Reset(IAISystem::EResetReason reason)
 		return;
 	}
 
+	if (gAIEnv.pCollisionAvoidanceSystem)
+	{
+		if (reason == RESET_UNLOAD_LEVEL)
+			gAIEnv.pCollisionAvoidanceSystem->Clear();
+		else
+			gAIEnv.pCollisionAvoidanceSystem->Reset();
+	}
+
 	AILogEvent("CAISystem::Reset %d", reason);
 	m_bUpdateSmartObjects = false;
-
-	// Notify listeners
-	for (SystemListenerSet::iterator it = m_setSystemListeners.begin(); it != m_setSystemListeners.end(); ++it)
-	{
-		(*it)->OnEvent(IAISystemListener::eAISE_Reset);
-	}
 
 	if (gAIEnv.pTargetTrackManager)
 		gAIEnv.pTargetTrackManager->Reset(reason);
@@ -1862,10 +1764,6 @@ void CAISystem::Reset(IAISystem::EResetReason reason)
 
 	m_lightManager.Reset();
 
-#if !defined(_RELEASE)
-	gAIEnv.pCodeCoverageGUI->Reset(reason);
-#endif
-
 	// reset the groups.
 	for (AIGroupMap::iterator it = m_mapAIGroups.begin(); it != m_mapAIGroups.end(); ++it)
 		it->second->Reset();
@@ -1876,7 +1774,7 @@ void CAISystem::Reset(IAISystem::EResetReason reason)
 	if (!m_bInitialized)
 		return;
 
-	const char* sStatsTarget = gAIEnv.CVars.StatsTarget;
+	const char* sStatsTarget = gAIEnv.CVars.legacyDebugDraw.StatsTarget;
 	if ((*sStatsTarget != '\0') && (stricmp("none", sStatsTarget) != 0))
 		Record(NULL, IAIRecordable::E_RESET, NULL);
 
@@ -1922,7 +1820,6 @@ void CAISystem::Reset(IAISystem::EResetReason reason)
 	if (editorToGameMode)
 	{
 		gAIEnv.pBehaviorTreeManager->Reset();
-		gAIEnv.pGraftManager->Reset();
 
 		CallReloadTPSQueriesScript();
 	}
@@ -1942,7 +1839,7 @@ void CAISystem::Reset(IAISystem::EResetReason reason)
 		// Reset the AI recordable stuff when entering game mode.
 		if (reason == IAISystem::RESET_ENTER_GAME)
 		{
-			CTimeValue startTime = gEnv->pTimer->GetFrameStartTime();
+			CTimeValue startTime = GetAISystem()->GetFrameStartTime();
 			CRecorderUnit* pRecord = static_cast<CRecorderUnit*>(pObject->GetAIDebugRecord());
 			if (pRecord)
 			{
@@ -1959,53 +1856,49 @@ void CAISystem::Reset(IAISystem::EResetReason reason)
 	m_lastStatsTargetTrajectoryPoint.Set(0, 0, 0);
 	m_lstStatsTargetTrajectory.clear();
 
-	m_DEBUG_fakeTracers.clear();
-	m_DEBUG_fakeHitEffect.clear();
 	m_DEBUG_fakeDamageInd.clear();
 	m_DEBUG_screenFlash = 0.0f;
 
 #endif //CRYAISYSTEM_DEBUG
 
-	if (!m_mapActiveFormations.empty())
-	{
-		FormationMap::iterator fi;
-		for (fi = m_mapActiveFormations.begin(); fi != m_mapActiveFormations.end(); ++fi)
-		{
-			CFormation* pFormation = fi->second;
-			if (pFormation)
-			{
-				delete pFormation;
-			}
-		}
-		m_mapActiveFormations.clear();
-	}
+	if (gAIEnv.pFormationManager)
+		gAIEnv.pFormationManager->Reset();
 
 	if (reason == RESET_EXIT_GAME)
 	{
-		gAIEnv.pTacticalPointSystem->Reset();
-		gAIEnv.pCommunicationManager->Reset();
-		gAIEnv.pSelectionTreeManager->Reset();
-		gAIEnv.pVisionMap->Reset();
-		gAIEnv.pFactionMap->Reload();
+		if (gAIEnv.pTacticalPointSystem)
+			gAIEnv.pTacticalPointSystem->Reset();
 
-		gAIEnv.pRayCaster->ResetContentionStats();
-		gAIEnv.pIntersectionTester->ResetContentionStats();
+		if (gAIEnv.pCommunicationManager)
+			gAIEnv.pCommunicationManager->Reset();
+
+		if (gAIEnv.pVisionMap)
+			gAIEnv.pVisionMap->Reset();
+
+		//gAIEnv.pAuditionMap->Reset();
+
+		if (gAIEnv.pFactionMap)
+			gAIEnv.pFactionMap->Reload();
+
+		if (gAIEnv.pRayCaster)
+			gAIEnv.pRayCaster->ResetContentionStats();
+
+		if (gAIEnv.pIntersectionTester)
+			gAIEnv.pIntersectionTester->ResetContentionStats();
 	}
 
-	gAIEnv.pGroupManager->Reset(objectResetType);
+	if (gAIEnv.pGroupManager)
+		gAIEnv.pGroupManager->Reset(objectResetType);
 
 	ClearAIObjectIteratorPools();
-	m_pNavigation->Reset(reason);
-	gAIEnv.pNavigationSystem->Reset();
 
-	m_pGraph->ClearMarks();
-	m_pGraph->Reset();
+	if (m_pNavigation)
+		m_pNavigation->Reset(reason);
+
+	if (gAIEnv.pNavigationSystem)
+		gAIEnv.pNavigationSystem->Reset();
 
 	CPathObstacles::ResetOfStaticData();
-
-	m_dynHideObjectManager.Reset();
-
-	m_mapAuxSignalsFired.clear();
 
 	m_mapBeacons.clear();
 
@@ -2021,7 +1914,8 @@ void CAISystem::Reset(IAISystem::EResetReason reason)
 			++it;
 	}
 
-	m_pSmartObjectManager->ResetBannedSOs();
+	if (m_pSmartObjectManager)
+		m_pSmartObjectManager->ResetBannedSOs();
 
 	m_lastAmbientFireUpdateTime.SetSeconds(-10.0f);
 	m_lastExpensiveAccessoryUpdateTime.SetSeconds(-10.0f);
@@ -2030,23 +1924,9 @@ void CAISystem::Reset(IAISystem::EResetReason reason)
 
 	m_delayedExpAccessoryUpdates.clear();
 
-	gAIEnv.pPerceptionManager->Reset(reason);
-
 	ResetAIActorSets(reason != RESET_ENTER_GAME);
 
 	DebugOutputObjects("End of reset");
-
-#ifdef CALIBRATE_STOPPER
-	AILogAlways("Calculation stopper calibration:");
-	for (CCalculationStopper::TMapCallRate::const_iterator it = CCalculationStopper::m_mapCallRate.begin(); it != CCalculationStopper::m_mapCallRate.end(); ++it)
-	{
-		const std::pair<unsigned, float>& result = it->second;
-		const string& name = it->first;
-		float rate = result.second > 0.0f ? result.first / result.second : -1.0f;
-		AILogAlways("%s calls = %d time = %6.2f sec call-rate = %7.2f", f
-		            name.c_str(), result.first, result.second, rate);
-	}
-#endif
 
 #ifdef CRYAISYSTEM_DEBUG
 	if (gAIEnv.pBubblesSystem)
@@ -2055,16 +1935,98 @@ void CAISystem::Reset(IAISystem::EResetReason reason)
 
 	if (reason == IAISystem::RESET_ENTER_GAME || reason == IAISystem::RESET_UNLOAD_LEVEL)
 	{
-		gAIEnv.pSequenceManager->Reset();
-		gAIEnv.pClusterDetector->Reset();
+		if (gAIEnv.pSequenceManager)
+			gAIEnv.pSequenceManager->Reset();
+
+		if (gAIEnv.pClusterDetector)
+			gAIEnv.pClusterDetector->Reset();
 	}
 
 	if (reason == RESET_EXIT_GAME || reason == RESET_UNLOAD_LEVEL)
 	{
-		gAIEnv.pBehaviorTreeManager->Reset();
-		gAIEnv.pGraftManager->Reset();
+		if (gAIEnv.pBehaviorTreeManager)
+			gAIEnv.pBehaviorTreeManager->Reset();
 	}
 }
+
+//-----------------------------------------------------------------------------------------------------------
+void CAISystem::OnAIObjectCreated(CAIObject* pObject)
+{
+	m_callbacks.ObjectCreated().Call(pObject);
+}
+
+//-----------------------------------------------------------------------------------------------------------
+void CAISystem::OnAIObjectRemoved(CAIObject* pObject)
+{
+	m_callbacks.ObjectRemoved().Call(pObject);
+
+	//TODO: can be some stuff done in IAIObject::OnObjectRemoved?
+
+	// (MATT) Remove from player - especially as attention target {2009/02/05}
+	CAIPlayer* pPlayer = CastToCAIPlayerSafe(GetPlayer());
+	if (pPlayer)
+		pPlayer->OnObjectRemoved(pObject);
+
+	for (CAISystem::AIGroupMap::iterator it = m_mapAIGroups.begin(); it != m_mapAIGroups.end(); ++it)
+		it->second->OnObjectRemoved(pObject);
+
+	for (auto oi = m_mapFaction.begin(); oi != m_mapFaction.end(); ++oi)
+	{
+		if (oi->second == pObject)
+		{
+			m_mapFaction.erase(oi);
+			break;
+		}
+	}
+
+	for (auto oi = m_mapGroups.begin(); oi != m_mapGroups.end(); ++oi)
+	{
+		if (oi->second == pObject)
+		{
+			m_mapGroups.erase(oi);
+			break;
+		}
+	}
+
+	if (CLeader* pLeader = pObject->CastToCLeader())
+	{
+		if (CAIGroup* pAIGroup = pLeader->GetAIGroup())
+		{
+			pAIGroup->SetLeader(0);
+		}
+	}
+
+	//remove this object from any pending paths generated for him
+	CAIActor* pActor = pObject->CastToCAIActor();
+	if (pActor)
+	{
+		pActor->CancelRequestedPath(true);
+	}
+
+	if (gAIEnv.pTargetTrackManager)
+		gAIEnv.pTargetTrackManager->OnObjectRemoved(pObject);
+
+	CPuppet* pPuppet = pObject->CastToCPuppet();
+	if (pPuppet)
+	{
+		for (unsigned i = 0; i < m_delayedExpAccessoryUpdates.size(); )
+		{
+			if (m_delayedExpAccessoryUpdates[i].pPuppet == pPuppet)
+			{
+				m_delayedExpAccessoryUpdates[i] = m_delayedExpAccessoryUpdates.back();
+				m_delayedExpAccessoryUpdates.pop_back();
+			}
+			else
+				++i;
+		}
+	}
+
+	if (gEnv->IsEditing() && pObject->GetAIType() == AIOBJECT_NAV_SEED)
+	{
+		gAIEnv.pNavigationSystem->RequestUpdateAccessibilityAfterSeedChange(pObject->GetPos(), pObject->GetPos());
+	}
+}
+
 
 //-----------------------------------------------------------------------------------------------------------
 int CAISystem::GetGroupCount(int nGroupID, int flags, int type)
@@ -2224,14 +2186,10 @@ IAIGroup* CAISystem::GetIAIGroup(int nGroupID)
 //====================================================================
 // ReadAreasFromFile
 //====================================================================
-#if defined(SEG_WORLD)
-void CAISystem::ReadAreasFromFile(const char* fileNameAreas, const Vec3& vSegmentOffset)
-#else
 void CAISystem::ReadAreasFromFile(const char* fileNameAreas)
-#endif
 {
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Navigation, 0, "Areas (%s)", fileNameAreas);
-	LOADING_TIME_PROFILE_SECTION
+	MEMSTAT_CONTEXT_FMT(EMemStatContextType::Navigation, "Areas (%s)", fileNameAreas);
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY)
 
 	CCryBufferedFileReader file;
 	if (false != file.Open(fileNameAreas, "rb"))
@@ -2250,22 +2208,10 @@ void CAISystem::ReadAreasFromFile(const char* fileNameAreas)
 			return;
 		}
 
-		if (iNumber < BAI_AREA_FILE_VERSION_WRITE)
-			m_pNavigation->ReadAreasFromFile_Old(file, iNumber);
-		else
+		if (iNumber >= BAI_AREA_FILE_VERSION_WRITE)
 		{
-#if defined(SEG_WORLD)
-			m_pNavigation->ReadAreasFromFile(file, iNumber, vSegmentOffset);
-#else
 			m_pNavigation->ReadAreasFromFile(file, iNumber);
-#endif
 		}
-
-#if defined(SEG_WORLD)
-		// don't flush all areas here if we're in segmented world
-		if (!gEnv->p3DEngine->GetSegmentsManager()) //@TODO: make seg-world manager available from gEnv.
-			FlushAllAreas();
-#endif
 
 		unsigned numAreas;
 
@@ -2315,9 +2261,9 @@ void CAISystem::ReadAreasFromFile(const char* fileNameAreas)
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::LoadNavigationData(const char* szLevel, const char* szMission, const EAILoadDataFlags loadDataFlags /*= eAILoadDataFlag_AllSystems*/)
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Navigation, 0, "AI Navigation");
+	MEMSTAT_CONTEXT(EMemStatContextType::Navigation, "AI Navigation");
 
-	LOADING_TIME_PROFILE_SECTION(GetISystem());
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	if (!IsEnabled())
 		return;
@@ -2357,36 +2303,30 @@ void CAISystem::LoadMNM(const char* szLevel, const char* szMission, bool bAfterE
 	/// First clear any previous data, and then load stored meshes
 	/// Note smart objects must go after, they will link to the mesh after is loaded
 	gAIEnv.pNavigationSystem->Clear();
-	ISegmentsManager* pSegmentsManager = gEnv->p3DEngine->GetSegmentsManager();
-	if (gEnv->IsEditor() || !pSegmentsManager)
-	{
-		char mnmFileName[1024] = { 0 };
-		cry_sprintf(mnmFileName, "%s/mnmnav%s.bai", szLevel, szMission);
-		gAIEnv.pNavigationSystem->ReadFromFile(mnmFileName, bAfterExporting);
-	}
-#ifdef DEDICATED_SERVER
-	else
-	{
-		// load ai data from segment pak instead
-		pSegmentsManager->ForceLoadSegments(ISegmentsManager::slfNavigation);
-	}
-#endif
+
+	char mnmFileName[1024] = { 0 };
+	cry_sprintf(mnmFileName, "%s/mnmnav%s.bai", szLevel, szMission);
+	gAIEnv.pNavigationSystem->ReadFromFile(mnmFileName, bAfterExporting);
 }
 
 void CAISystem::LoadCover(const char* szLevel, const char* szMission)
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Navigation, 0, "Cover system");
-	LOADING_TIME_PROFILE_SECTION(GetISystem());
-	gAIEnv.pCoverSystem->Clear();
+	MEMSTAT_CONTEXT(EMemStatContextType::Navigation, "Cover system");
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
-	char coverFileName[1024] = { 0 };
-	cry_sprintf(coverFileName, "%s/cover%s.bai", szLevel, szMission);
-	gAIEnv.pCoverSystem->ReadSurfacesFromFile(coverFileName);
+	if (gAIEnv.pCoverSystem)
+	{
+		gAIEnv.pCoverSystem->Clear();
+
+		char coverFileName[1024] = { 0 };
+		cry_sprintf(coverFileName, "%s/cover%s.bai", szLevel, szMission);
+		gAIEnv.pCoverSystem->ReadSurfacesFromFile(coverFileName);
+	}
 }
 
 void CAISystem::LoadLevelData(const char* szLevel, const char* szMission, const EAILoadDataFlags loadDataFlags /*= eAILoadDataFlag_AllSystems*/)
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	CRY_ASSERT(szLevel);
 	CRY_ASSERT_TRACE(szMission && szMission[0],
@@ -2422,37 +2362,8 @@ void CAISystem::LoadLevelData(const char* szLevel, const char* szMission, const 
 //====================================================================
 void CAISystem::OnMissionLoaded()
 {
-	m_pNavigation->OnMissionLoaded();
-}
-
-//
-//-----------------------------------------------------------------------------------------------------------
-void CAISystem::ReleaseFormation(CWeakRef<CAIObject> refOwner, bool bDelete)
-{
-	CCCPOINT(CAISystem_ReleaseFormation);
-
-	FormationMap::iterator fi;
-	fi = m_mapActiveFormations.find(refOwner);
-	if (fi != m_mapActiveFormations.end())
-	{
-		CFormation* pFormation = fi->second;
-		if (bDelete && pFormation)
-		{
-			//pFormation->ReleasePoints();
-			delete pFormation;
-		}
-		m_mapActiveFormations.erase(fi);
-	}
-}
-
-//
-//-----------------------------------------------------------------------------------------------------------
-void CAISystem::FreeFormationPoint(CWeakRef<CAIObject> refOwner)
-{
-	FormationMap::iterator fi;
-	fi = m_mapActiveFormations.find(refOwner);
-	if (fi != m_mapActiveFormations.end())
-		(fi->second)->FreeFormationPoint(refOwner);
+	// Need to enable off-mesh link registering in the case navigation data wasn't loaded (for example when creating a new level).
+	gAIEnv.pNavigationSystem->GetOffMeshNavigationManager()->Enable();
 }
 
 //
@@ -2474,19 +2385,18 @@ void CAISystem::FlushSystem(bool bDeleteAll)
 	if (m_pSmartObjectManager)
 		m_pSmartObjectManager->ResetBannedSOs();
 
-	m_dynHideObjectManager.Reset();
-
 	m_mapFaction.clear();
 	m_mapGroups.clear();
 	m_mapBeacons.clear();
 
-	FormationMap::iterator iFormation = m_mapActiveFormations.begin(), iEnd = m_mapActiveFormations.end();
-	for (; iFormation != iEnd; ++iFormation)
-		delete iFormation->second;
-	m_mapActiveFormations.clear();
+	if(gAIEnv.pFormationManager)
+		gAIEnv.pFormationManager->Reset();
 
 	if (gAIEnv.pVisionMap)
 		gAIEnv.pVisionMap->Reset();
+
+	//if (gAIEnv.pAuditionMap)
+	//	gAIEnv.pAuditionMap->Reset();
 
 	if (gAIEnv.pGroupManager)
 		gAIEnv.pGroupManager->Reset(AIOBJRESET_SHUTDOWN);
@@ -2537,16 +2447,11 @@ void CAISystem::FlushSystem(bool bDeleteAll)
 	stl::free_container(m_mapGenericShapes);
 
 	gAIEnv.pBehaviorTreeManager->Reset();
-	gAIEnv.pGraftManager->Reset();
 }
 
 void CAISystem::LayerEnabled(const char* layerName, bool enabled, bool serialized)
 {
-	if (enabled)
-	{
-		if (m_pNavigation)
-			m_pNavigation->BumpDynamicLinkConnectionUpdateTime(gAIEnv.CVars.LayerSwitchDynamicLinkBump, gAIEnv.CVars.LayerSwitchDynamicLinkBumpDuration);
-	}
+	
 }
 
 //
@@ -2575,11 +2480,6 @@ void CAISystem::FlushSystemNavigation(bool bDeleteAll)
 			pObject->Reset(AIOBJRESET_INIT);
 		}
 	}
-
-	if (m_pNavigation)
-	{
-		m_pNavigation->FlushSystemNavigation(bDeleteAll);
-	}
 }
 
 float CAISystem::GetUpdateInterval() const
@@ -2599,11 +2499,9 @@ int CAISystem::GetAITickCount(void)
 
 //
 //-----------------------------------------------------------------------------------------------------------
-void CAISystem::SendAnonymousSignal(int signalID, const char* text, const Vec3& pos, float radius, IAIObject* pSenderObject, IAISignalExtraData* pData)
+void CAISystem::SendAnonymousSignal(const AISignals::SignalSharedPtr& pSignal, const Vec3& pos, float radius)
 {
 	CCCPOINT(CAISystem_SendAnonymousSignal);
-
-	IEntity* const pSenderEntity = pSenderObject ? pSenderObject->GetEntity() : NULL;
 
 	// Go trough all the puppets and vehicles in the surrounding area.
 	// Still makes precise radius check inside because the grid might
@@ -2631,16 +2529,17 @@ void CAISystem::SendAnonymousSignal(int signalID, const char* text, const Vec3& 
 				    pReceiverPuppet->GetParameters().m_PerceptionParams.perceptionScale.audio > 0.01f &&
 				    Distance::Point_PointSq(pReceiverPuppet->GetPos(), pos) < radiusSq)
 				{
-					pReceiverPuppet->SetSignal(signalID, text, pSenderEntity, (pData ? new AISignalExtraData(*(AISignalExtraData*)pData) : NULL));
+					pReceiverPuppet->SetSignal(pSignal);
 				}
 			}
 		}
 	}
 
 	// Finally delete pData since all recipients have their own copies
-	if (pData)
+	if (pSignal->GetExtraData())
 	{
-		delete (AISignalExtraData*)pData;
+		GetAISystem()->FreeSignalExtraData(pSignal->GetExtraData());
+		pSignal->SetExtraData(nullptr);
 	}
 }
 
@@ -2648,573 +2547,149 @@ void CAISystem::OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR lpar
 {
 	switch (event)
 	{
-	case ESYSTEM_EVENT_SW_SHIFT_WORLD:
-		// offset all AI areas when segmented world shifts.
-		OffsetAllAreas(*(const Vec3*)wparam);
+	case ESYSTEM_EVENT_GAME_POST_INIT_DONE: //= ESYSTEM_EVENT_REGISTER_SCHEMATYC_ENV
+	{
+		CompleteInit();
+
+		gEnv->pSchematyc->GetEnvRegistry().RegisterPackage(
+			SCHEMATYC_MAKE_ENV_PACKAGE(
+				"8bdb92e7-cf17-4773-99d2-92a18a86dcb6"_cry_guid,
+				"AISystem", Schematyc::g_szCrytek, "AI System",
+				SCHEMATYC_MEMBER_DELEGATE(&CAISystem::RegisterSchematycEnvPackage, *this)));
 		break;
+	}
 	}
 }
 
-//
 //-----------------------------------------------------------------------------------------------------------
-void CAISystem::ReleaseFormationPoint(CAIObject* pReserved)
+void CAISystem::RegisterSchematycEnvPackage(Schematyc::IEnvRegistrar& registrar)
 {
-	if (m_mapActiveFormations.empty())
-		return;
+	const CryGUID AISystemGUID = "a3f43e4f-589c-4384-bb91-4a5424b6c5d5"_cry_guid;
 
-	CCCPOINT(CAISystem_ReleaseFormationPoint);
+	registrar.RootScope().Register(SCHEMATYC_MAKE_ENV_MODULE(AISystemGUID, "AI"));
+	Schematyc::CEnvRegistrationScope AIScope = registrar.Scope(AISystemGUID);
+	{
+		NavigationSystemSchematyc::Register(registrar, AIScope);
+		FactionSystemSchematyc::Register(registrar, AIScope);
+		CoverSystemSchematyc::Register(registrar, AIScope);
+		PerceptionSystemSchematyc::Register(registrar, AIScope);
 
-	CWeakRef<CAIObject> refReserved = GetWeakRef(pReserved);
+		CEntityAIBehaviorTreeComponent::Register(registrar);
+	}
 
-	FormationMap::iterator fi;
-	CAIActor* pActor = pReserved->CastToCAIActor();
-	CLeader* pLeader = GetLeader(pActor);
-	if (pLeader)
-		pLeader->FreeFormationPoint(refReserved);
-	else
-		for (fi = m_mapActiveFormations.begin(); fi != m_mapActiveFormations.end(); ++fi)
-			(fi->second)->FreeFormationPoint(refReserved);
+#ifndef CRY_IS_MONOLITHIC_BUILD
+	Detail::CStaticAutoRegistrar<Schematyc::IEnvRegistrar&>::InvokeStaticCallbacks(registrar);
+#endif
 }
 
 //
 //-----------------------------------------------------------------------------------------------------------
-void CAISystem::Update(CTimeValue frameStartTime, float frameDeltaTime)
+void CAISystem::Update(const CTimeValue frameStartTime, const float frameDeltaTime)
 {
-	CRY_PROFILE_REGION(PROFILE_AI, "AI System: Update");
-	CRYPROFILE_SCOPE_PROFILE_MARKER("AI System: Update");
+	CRY_PROFILE_SECTION(PROFILE_AI, "AI System: Update");
 	AISYSTEM_LIGHT_PROFILER();
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "AISystem::Update");
 
-	static CTimeValue lastFrameStartTime;
-	if (frameStartTime == lastFrameStartTime)
-		return;
-
-	lastFrameStartTime = frameStartTime;
-
-	if (!m_bInitialized || !IsEnabled())
-		return;
-
-	if (!gAIEnv.CVars.AiSystem)
+	if (!InitUpdate(frameStartTime, frameDeltaTime))
 		return;
 
 	CCCPOINT(CAISystem_Update);
-
-	//	for (AIGroupMap::iterator it = m_mapAIGroups.begin(); it != m_mapAIGroups.end(); ++it)
-	//		it->second->Validate();
-
+	const bool isAutomaticUpdate = true;
 	{
-		FRAME_PROFILER("AIUpdate - 1", gEnv->pSystem, PROFILE_AI)
-
-		if (m_pSmartObjectManager && !m_pSmartObjectManager->IsInitialized())
-			InitSmartObjects();
-
-		if (m_pAIActionManager)
-			m_pAIActionManager->Update();
-
-		m_frameStartTime = frameStartTime;
-		m_frameStartTimeSeconds = frameStartTime.GetSeconds();
-		m_frameDeltaTime = frameDeltaTime;
-
-		CAIRadialOcclusionRaycast::UpdateActiveCount();
-
-		m_lightManager.Update(false);
-
-#ifdef STOPPER_CAN_USE_COUNTER
-		CCalculationStopper::m_useCounter = gAIEnv.CVars.UseCalculationStopperCounter != 0;
-#endif
-
-		m_pNavigation->Update(frameStartTime, frameDeltaTime);
-
-		assert(m_pSmartObjectManager);
-		PREFAST_ASSUME(m_pSmartObjectManager);
-		m_pSmartObjectManager->UpdateBannedSOs(m_frameDeltaTime);
+		CRY_PROFILE_SECTION(PROFILE_AI, "AIUpdate 1")
+		InitializeSmartObjectsIfNotInitialized();
+		SubsystemUpdateActionManager();
+		SubsystemUpdateRadialOcclusionRaycast();
+		SubsystemUpdateLightManager();
+		SubsystemUpdateNavigation();
+		SubsystemUpdateBannedSOs();
 	}
 
 	{
-		FRAME_PROFILER("AIUpdate - 2", gEnv->pSystem, PROFILE_AI);
-
-		UpdateAmbientFire();
-		UpdateExpensiveAccessoryQuota();
-
-		gAIEnv.pPerceptionManager->Update(m_frameDeltaTime);
-
-		gAIEnv.pCommunicationManager->Update(frameDeltaTime);
-		gAIEnv.pVisionMap->Update(frameDeltaTime);
-		gAIEnv.pGroupManager->Update(frameDeltaTime);
-		gAIEnv.pCoverSystem->Update(frameDeltaTime);
-
-		{
-			FRAME_PROFILER("AIUpdate - 2 - NavigationSystem", gEnv->pSystem, PROFILE_AI);
-
-			gAIEnv.pNavigationSystem->Update(false);
-		}
-
-		{
-			FRAME_PROFILER("AIUpdate - 2 - Walkability Cache", gEnv->pSystem, PROFILE_AI);
-
-			gAIEnv.pWalkabilityCacheManager->PreUpdate();
-		}
+		CRY_PROFILE_SECTION(PROFILE_AI, "AIUpdate 2")
+		SubsystemUpdateSystemComponents();
+		SubsystemUpdateAmbientFire();
+		SubsystemUpdateExpensiveAccessoryQuota();
+		SubsystemUpdateCommunicationManager();
+		TrySubsystemUpdateVisionMap(frameStartTime, frameDeltaTime, isAutomaticUpdate);
+		TrySubsystemUpdateAuditionMap(frameStartTime, frameDeltaTime, isAutomaticUpdate);
+		SubsystemUpdateGroupManager();
+		TrySubsystemUpdateCoverSystem(frameStartTime, frameDeltaTime, isAutomaticUpdate);
+		TrySubsystemUpdateNavigationSystem(frameStartTime, frameDeltaTime, isAutomaticUpdate);
 	}
 
 	{
-		FRAME_PROFILER("AIUpdate 3", gEnv->pSystem, PROFILE_AI)
-
-		// Marcio: Update all players.
-		AIObjectOwners::const_iterator ai = gAIEnv.pAIObjectManager->m_Objects.find(AIOBJECT_PLAYER);
-
-		for (; ai != gAIEnv.pAIObjectManager->m_Objects.end() && ai->first == AIOBJECT_PLAYER; ++ai)
-		{
-			CAIPlayer* pPlayer = CastToCAIPlayerSafe(ai->second.GetAIObject());
-			if (pPlayer)
-				pPlayer->Update(AIUPDATE_FULL);
-		}
-
-		{
-			FRAME_PROFILER("AIUpdate 3 - Groups", gEnv->pSystem, PROFILE_AI);
-
-			const int64 dt = (frameStartTime - m_lastGroupUpdateTime).GetMilliSecondsAsInt64();
-			if (dt > gAIEnv.CVars.AIUpdateInterval)
-			{
-				for (AIGroupMap::iterator it = m_mapAIGroups.begin(); it != m_mapAIGroups.end(); ++it)
-					it->second->Update();
-
-				m_lastGroupUpdateTime = frameStartTime;
-			}
-		}
-
-		UpdateAuxSignalsMap();
+		CRY_PROFILE_SECTION(PROFILE_AI, "AIUpdate 3")
+		SubsystemUpdatePlayers();
+		SubsystemUpdateGroups();
 	}
 
-	{
-		FRAME_PROFILER("MovementSystem", gEnv->pSystem, PROFILE_AI);
+	TrySubsystemUpdateMovementSystem(frameStartTime, frameDeltaTime, isAutomaticUpdate);
 
-		gAIEnv.pMovementSystem->Update(frameDeltaTime);
+	{
+		CRY_PROFILE_SECTION(PROFILE_AI, "AIUpdate 4");
+		SubsystemUpdateActorsAndTargetTrackAndORCA();
+		SubsystemUpdateLeaders();
+		SubsystemUpdateSmartObjectManager();	
+		SubsystemUpdateInterestManager();
 	}
 
-	{
-		FRAME_PROFILER("AIUpdate 4 - Puppet Update", gEnv->pSystem, PROFILE_AI);
-
-		AIAssert(!m_iteratingActorSet);
-		m_iteratingActorSet = true;
-
-		RemoveNonActors(m_enabledAIActorsSet);
-
-		AIActorVector& fullUpdates = m_tmpFullUpdates;
-		fullUpdates.resize(0);
-
-		AIActorVector& dryUpdates = m_tmpDryUpdates;
-		dryUpdates.resize(0);
-
-		AIActorVector& allUpdates = m_tmpAllUpdates;
-		allUpdates.resize(0);
-
-		uint32 activeAIActorCount = m_enabledAIActorsSet.size();
-		gAIEnv.pStatsManager->SetStat(eStat_ActiveActors, static_cast<float>(activeAIActorCount));
-
-		if (activeAIActorCount > 0)
-		{
-			const float updateInterval = max(gAIEnv.CVars.AIUpdateInterval, 0.0001f);
-			const float updatesPerSecond = (activeAIActorCount / updateInterval) + m_enabledActorsUpdateError;
-			unsigned actorUpdateCount = (unsigned)floorf(updatesPerSecond * m_frameDeltaTime);
-			if (m_frameDeltaTime > 0.0f)
-				m_enabledActorsUpdateError = updatesPerSecond - actorUpdateCount / m_frameDeltaTime;
-
-			// Collect list of enabled priority targets (players, grenades, projectiles, etc).
-			m_priorityTargets.resize(0);
-
-			for (unsigned i = 0, ni = m_priorityObjectTypes.size(); i < ni; ++i)
-			{
-				short type = m_priorityObjectTypes[i];
-				AIObjectOwners::iterator ai = gAIEnv.pAIObjectManager->m_Objects.find(type);
-				for (; ai != gAIEnv.pAIObjectManager->m_Objects.end() && ai->first == type; ++ai)
-				{
-					CAIObject* pTarget = ai->second.GetAIObject();
-					if (!pTarget->IsEnabled())
-						continue;
-
-					m_priorityTargets.push_back(pTarget);
-				}
-			}
-
-			uint32 fullUpdateCount = 0;
-			uint32 skipped = 0;
-			m_enabledActorsUpdateHead %= activeAIActorCount;
-			uint32 idx = m_enabledActorsUpdateHead;
-
-			for (uint32 i = 0; i < activeAIActorCount; ++i)
-			{
-				// [AlexMcC|29.06.10] We can't trust that this is an AI Actor, because CWeakRef::GetAIObject()
-				// doesn't do any type checking. If this weakref becomes invalid, then the id is used by another
-				// object (which can happen if we chainload or load a savegame), this might not be an actor anymore.
-
-				IAIObject* object = m_enabledAIActorsSet[idx++ % activeAIActorCount].GetAIObject();
-				CAIActor* actor = object->CastToCAIActor();
-				AIAssert(actor);
-
-				if (actor)
-				{
-					if (object->GetAIType() != AIOBJECT_PLAYER)
-					{
-						if (fullUpdates.size() < actorUpdateCount)
-							fullUpdates.push_back(actor);
-						else
-							dryUpdates.push_back(actor);
-					}
-					else if (fullUpdates.size() < actorUpdateCount)
-					{
-						++skipped;
-					}
-
-					allUpdates.push_back(actor);
-				}
-			}
-
-			{
-				FRAME_PROFILER("AIUpdate 4 - Full Updates", gEnv->pSystem, PROFILE_AI);
-
-				AIActorVector::iterator it = fullUpdates.begin();
-				AIActorVector::iterator end = fullUpdates.end();
-
-				for (; it != end; ++it)
-				{
-					CAIActor* pAIActor = *it;
-					if (CPuppet* pPuppet = pAIActor->CastToCPuppet())
-						pPuppet->SetUpdatePriority(CalcPuppetUpdatePriority(pPuppet));
-
-					// Full update
-					gAIEnv.pPerceptionManager->UpdatePerception(pAIActor, m_priorityTargets);
-					pAIActor->Update(AIUPDATE_FULL);
-
-					BroadcastToListeners(OnAgentUpdate(pAIActor->GetEntityID()));
-
-					if (!pAIActor->m_bUpdatedOnce && m_bUpdateSmartObjects && pAIActor->IsEnabled())
-					{
-						if (CPipeUser* pPipeUser = pAIActor->CastToCPipeUser())
-						{
-							if (!pPipeUser->GetCurrentGoalPipe() || !pPipeUser->GetCurrentGoalPipe()->GetSubpipe())
-							{
-								pAIActor->m_bUpdatedOnce = true;
-							}
-						}
-						else
-						{
-							pAIActor->m_bUpdatedOnce = true;
-						}
-					}
-
-					m_totalActorsUpdateCount++;
-
-					if (m_totalActorsUpdateCount >= (int)activeAIActorCount)
-					{
-						// full update cycle finished on all ai objects
-						// now allow updating smart objects
-						m_bUpdateSmartObjects = true;
-						m_totalActorsUpdateCount = 0;
-					}
-
-					fullUpdateCount++;
-				}
-
-				// CE-1629: special case if there is only a CAIPlayer (and no other CAIActor) to ensure that smart-objects will get updated
-				if (fullUpdates.empty() && actorUpdateCount > 0)
-				{
-					m_bUpdateSmartObjects = true;
-				}
-
-				// Advance update head.
-				m_enabledActorsUpdateHead += fullUpdateCount;
-				m_enabledActorsUpdateHead += skipped;
-			}
-
-			{
-				FRAME_PROFILER("AIUpdate 4 - Dry Updates", gEnv->pSystem, PROFILE_AI);
-
-				AIActorVector::iterator it = dryUpdates.begin();
-				AIActorVector::iterator end = dryUpdates.end();
-
-				for (; it != end; ++it)
-					SingleDryUpdate(*it);
-			}
-
-			{
-				gAIEnv.pTargetTrackManager->ShareFreshestTargetData();
-			}
-
-			{
-				FRAME_PROFILER("AIUpdate 4 - Collision Avoidance", gEnv->pSystem, PROFILE_AI);
-
-				if (gAIEnv.CVars.EnableORCA)
-					UpdateCollisionAvoidance(allUpdates, frameDeltaTime);
-			}
-
-			{
-				FRAME_PROFILER("AIUpdate 4 - Proxy Updates", gEnv->pSystem, PROFILE_AI);
-
-				{
-					{
-						AIActorVector::iterator fit = fullUpdates.begin();
-						AIActorVector::iterator fend = fullUpdates.end();
-
-						for (; fit != fend; ++fit)
-							(*fit)->UpdateProxy(AIUPDATE_FULL);
-					}
-
-					{
-						AIActorVector::iterator dit = dryUpdates.begin();
-						AIActorVector::iterator dend = dryUpdates.end();
-
-						for (; dit != dend; ++dit)
-							(*dit)->UpdateProxy(AIUPDATE_DRY);
-					}
-				}
-			}
-
-			gAIEnv.pStatsManager->SetStat(eStat_FullUpdates, static_cast<float>(fullUpdateCount));
-
-			RemoveNonActors(m_disabledAIActorsSet);
-		}
-		else
-		{
-			// No active puppets, allow updating smart objects
-			m_bUpdateSmartObjects = true;
-		}
-
-		// Update disabled
-
-		RemoveNonActors(m_disabledAIActorsSet);
-
-		if (!m_disabledAIActorsSet.empty())
-		{
-			uint32 inactiveAIActorCount = m_disabledAIActorsSet.size();
-			const float updateInterval = 0.3f;
-			const float updatesPerSecond = (inactiveAIActorCount / updateInterval) + m_disabledActorsUpdateError;
-			unsigned aiActorDisabledUpdateCount = (unsigned)floorf(updatesPerSecond * m_frameDeltaTime);
-			if (m_frameDeltaTime > 0.0f)
-				m_disabledActorsUpdateError = updatesPerSecond - aiActorDisabledUpdateCount / m_frameDeltaTime;
-
-			m_disabledActorsHead %= inactiveAIActorCount;
-			uint32 idx = m_disabledActorsHead;
-
-			for (unsigned i = 0; (i < aiActorDisabledUpdateCount) && inactiveAIActorCount; ++i)
-			{
-				// [AlexMcC|29.06.10] We can't trust that this is an AI Actor, because CWeakRef::GetAIObject()
-				// doesn't do any type checking. If this weakref becomes invalid, then the id is used by another
-				// object (which can happen if we chainload or load a savegame), this might not be an actor anymore.
-				IAIObject* object = m_disabledAIActorsSet[idx++ % inactiveAIActorCount].GetAIObject();
-				CAIActor* actor = object ? object->CastToCAIActor() : NULL;
-				AIAssert(actor);
-
-				actor->UpdateDisabled(AIUPDATE_FULL);
-
-				// [AlexMcC|28.09.09] UpdateDisabled might remove the puppet from the disabled set, so the size might change
-				inactiveAIActorCount = m_disabledAIActorsSet.size();
-			}
-
-			// Advance update head.
-			m_disabledActorsHead += aiActorDisabledUpdateCount;
-		}
-
-		AIAssert(m_iteratingActorSet);
-		m_iteratingActorSet = false;
-
-		//
-		//	update all leaders here (should be not every update (full update only))
-		const static float leaderUpdateRate(.2f);
-		static float leaderNoUpdatedTime(.0f);
-		leaderNoUpdatedTime += m_frameDeltaTime;
-		if (leaderNoUpdatedTime > leaderUpdateRate)
-		{
-			leaderNoUpdatedTime = 0.0f;
-			AIObjectOwners::iterator aio = gAIEnv.pAIObjectManager->m_Objects.find(AIOBJECT_LEADER);
-
-			for (; aio != gAIEnv.pAIObjectManager->m_Objects.end(); ++aio)
-			{
-				if (aio->first != AIOBJECT_LEADER)
-					break;
-
-				CLeader* pLeader = aio->second.GetAIObject()->CastToCLeader();
-				if (pLeader)
-					pLeader->Update(AIUPDATE_FULL);
-			}
-		}
-		// leaders update over
-		if (m_bUpdateSmartObjects)
-			m_pSmartObjectManager->Update();
-
-		//	fLastUpdateTime = currTime;
-		++m_nTickCount;
+	TrySubsystemUpdateBehaviorTreeManager(frameStartTime, frameDeltaTime, isAutomaticUpdate);
+	TrySubsystemUpdateGlobalRayCaster(frameStartTime, frameDeltaTime, isAutomaticUpdate);
+	TrySubsystemUpdateGlobalIntersectionTester(frameStartTime, frameDeltaTime, isAutomaticUpdate);
+	TrySubsystemUpdateClusterDetector(frameStartTime, frameDeltaTime, isAutomaticUpdate);
+	SubsystemUpdateTacticalPointSystem();
 
 #ifdef CRYAISYSTEM_DEBUG
-		UpdateDebugStuff();
+	TryUpdateDebugFakeDamageIndicators();
+	TryDebugDrawPhysicsAccess();
 #endif //CRYAISYSTEM_DEBUG
 
-		// Update interest system
-		ICentralInterestManager* pInterestManager = CCentralInterestManager::GetInstance();
-		if (pInterestManager->Enable(gAIEnv.CVars.InterestSystem != 0))
-		{
-			pInterestManager->Update(frameDeltaTime);
-		}
-	}
-
-	gAIEnv.pBehaviorTreeManager->Update();
-
-	{
-		{
-			FRAME_PROFILER("GlobalRayCaster", gEnv->pSystem, PROFILE_AI);
-
-			gAIEnv.pRayCaster->SetQuota(gAIEnv.CVars.RayCasterQuota);
-			gAIEnv.pRayCaster->Update(frameDeltaTime);
-		}
-
-		{
-			FRAME_PROFILER("GlobalIntersectionTester", gEnv->pSystem, PROFILE_AI);
-
-			gAIEnv.pIntersectionTester->SetQuota(gAIEnv.CVars.IntersectionTesterQuota);
-			gAIEnv.pIntersectionTester->Update(frameDeltaTime);
-		}
-
-		{
-			FRAME_PROFILER("ClusterDetector", gEnv->pSystem, PROFILE_AI);
-
-			gAIEnv.pClusterDetector->Update(frameDeltaTime);
-		}
-
-		if (gAIEnv.CVars.DebugDrawPhysicsAccess)
-		{
-			SAIEnvironment::GlobalRayCaster::ContentionStats rstats = gAIEnv.pRayCaster->GetContentionStats();
-			stack_string text;
-
-			text.Format(
-			  "RayCaster\n"
-			  "---------\n"
-			  "Quota: %u\n"
-			  "Queue Size: %u / %u\n"
-			  "Immediate Count: %u / %u\n"
-			  "Immediate Average: %.1f\n"
-			  "Deferred Count: %u / %u\n"
-			  "Deferred Average: %.1f",
-			  rstats.quota,
-			  rstats.queueSize,
-			  rstats.peakQueueSize,
-			  rstats.immediateCount,
-			  rstats.peakImmediateCount,
-			  rstats.immediateAverage,
-			  rstats.deferredCount,
-			  rstats.peakDeferredCount,
-			  rstats.deferredAverage);
-
-			bool warning = (rstats.immediateCount + rstats.deferredCount) > rstats.quota;
-			warning = warning || (rstats.immediateAverage + rstats.deferredAverage) > rstats.quota;
-			warning = warning || rstats.queueSize > (3 * rstats.quota);
-
-			CDebugDrawContext dc;
-			dc->Draw2dLabel((float)dc->GetWidth() * 0.1f, (float)dc->GetHeight() * 0.25f, 1.25f, warning ? Col_Red : Col_DarkTurquoise, false, "%s", text.c_str());
-
-			SAIEnvironment::GlobalIntersectionTester::ContentionStats istats = gAIEnv.pIntersectionTester->GetContentionStats();
-			text.Format(
-			  "IntersectionTester\n"
-			  "------------------\n"
-			  "Quota: %u\n"
-			  "Queue Size: %u / %u\n"
-			  "Immediate Count: %u / %u\n"
-			  "Immediate Average: %.1f\n"
-			  "Deferred Count: %u / %u\n"
-			  "Deferred Average: %.1f",
-			  istats.quota,
-			  istats.queueSize,
-			  istats.peakQueueSize,
-			  istats.immediateCount,
-			  istats.peakImmediateCount,
-			  istats.immediateAverage,
-			  istats.deferredCount,
-			  istats.peakDeferredCount,
-			  istats.deferredAverage);
-
-			warning = (istats.immediateCount + istats.deferredCount) > istats.quota;
-			warning = warning || (istats.immediateAverage + istats.deferredAverage) > istats.quota;
-			warning = warning || istats.queueSize > (3 * istats.quota);
-
-			dc->Draw2dLabel(600.0, 745.0f, 1.25f, warning ? Col_Red : Col_DarkTurquoise, false, "%s", text.c_str());
-		}
-		/*
-		    static Vec3 LastFrom(0.0f, 0.0f, 0.0f);
-		    static Vec3 LastTo(0.0f, 0.0f, 0.0f);
-
-		    IAIObject* fromObject = gAIEnv.pAIObjectManager->GetAIObjectByName("CheckWalkabilityFrom");
-		    IAIObject* toObject = gAIEnv.pAIObjectManager->GetAIObjectByName("CheckWalkabilityTo");
-
-		    if (fromObject && toObject)
-		    {
-		      if (((LastFrom-fromObject->GetPos()).len2() > 0.001f) || ((LastTo-toObject->GetPos()).len2() > 0.001f))
-		      {
-		        AccurateStopTimer fast;
-		        AccurateStopTimer normal;
-
-		        {
-		          ScopedAutoTimer __fast(fast);
-		          CheckWalkabilityFast(fromObject->GetPos(), toObject->GetPos(), 0.4, AICE_ALL);
-		        }
-
-		        {
-		          ScopedAutoTimer __normal(normal);
-		          ListPositions b;
-		          CheckWalkability(SWalkPosition(fromObject->GetPos()), SWalkPosition(toObject->GetPos()), 0.15, false,
-		            b, AICE_ALL);
-		        }
-
-		        LastFrom = fromObject->GetPos();
-		        LastTo = toObject->GetPos();
-
-		        if (fast.GetTime() < normal.GetTime())
-		          CryLogAlways("$3Fast: %.5f  // Normal: %.5f", fast.GetTime().GetMilliSeconds(), normal.GetTime().GetMilliSeconds());
-		        else
-		          CryLogAlways("$4Fast: %.5f  // Normal: %.5f", fast.GetTime().GetMilliSeconds(), normal.GetTime().GetMilliSeconds());
-		      }
-		    }
-		 */
-	}
-
-	// Monitor code coverage
-	int nCodeCoverageMode = gAIEnv.CVars.CodeCoverage;
-
-#if !defined(_RELEASE)
-	// First, try to load context if required
-	CCodeCoverageManager* pCCManager = gAIEnv.pCodeCoverageManager;
-	if (nCodeCoverageMode && !m_bCodeCoverageFailed && !pCCManager->IsContextValid())
-	{
-		stack_string filePath = PathUtil::Make(m_sWorkingFolder, sCodeCoverageContextFile);
-		FILE* ccFile = gEnv->pCryPak->FOpen(filePath.c_str(), "r");
-		bool bOk = false;
-		if (ccFile)
-		{
-			bOk = pCCManager->ReadCodeCoverageContext(ccFile);
-			gEnv->pCryPak->FClose(ccFile);
-
-			if (bOk)
-				AILogAlways("CodeCoverageManager: Successfully loaded code coverage context file \"%s\"", filePath.c_str());
-			else
-				AILogAlways("CodeCoverageManager: Failed during read of code coverage context file \"%s\"", filePath.c_str());
-		}
-		else
-		{
-			AILogAlways("CodeCoverageManager: Failed to find code coverage context file \"%s\"", filePath.c_str());
-		}
-
-		m_bCodeCoverageFailed = !bOk;
-	}
-
-	if (gAIEnv.pCodeCoverageManager && gAIEnv.pCodeCoverageManager->IsContextValid())
-		gAIEnv.pCodeCoverageManager->Update();
-
-	if (nCodeCoverageMode > 0)
-		gAIEnv.pCodeCoverageGUI->Update(frameStartTime, frameDeltaTime);
-#endif
-
-	// Update asynchronous TPS processing
-	float fMaxTime = gAIEnv.CVars.TacticalPointUpdateTime;
-	gAIEnv.pTacticalPointSystem->Update(fMaxTime);
+#ifdef SIGNAL_MANAGER_DEBUG
+	GetSignalManager()->DebugDrawSignalsHistory();
+#endif //SIGNAL_MANAGER_DEBUG
 
 	// Housekeeping
 	gAIEnv.pObjectContainer->ReleaseDeregisteredObjects(false);
+	++m_nTickCount;
+}
+
+void CAISystem::UpdateSubsystem(const CTimeValue frameStartTime, const float frameDeltaTime, const ESubsystemUpdateFlag subsystemUpdateFlag)
+{
+	const bool isAutomaticUpdate = false;
+	switch (subsystemUpdateFlag)
+	{
+	case IAISystem::ESubsystemUpdateFlag::AuditionMap:
+		TrySubsystemUpdateAuditionMap(frameStartTime, frameDeltaTime, isAutomaticUpdate);
+		break;
+	case IAISystem::ESubsystemUpdateFlag::BehaviorTreeManager:
+		TrySubsystemUpdateBehaviorTreeManager(frameStartTime, frameDeltaTime,isAutomaticUpdate);
+		break;
+	case IAISystem::ESubsystemUpdateFlag::ClusterDetector:
+		TrySubsystemUpdateClusterDetector(frameStartTime, frameDeltaTime, isAutomaticUpdate);
+		break;
+	case IAISystem::ESubsystemUpdateFlag::CoverSystem:
+		TrySubsystemUpdateCoverSystem(frameStartTime, frameDeltaTime, isAutomaticUpdate);
+		break;
+	case IAISystem::ESubsystemUpdateFlag::MovementSystem:
+		TrySubsystemUpdateMovementSystem(frameStartTime, frameDeltaTime, isAutomaticUpdate);
+		break;
+	case IAISystem::ESubsystemUpdateFlag::NavigationSystem:
+		TrySubsystemUpdateNavigationSystem(frameStartTime, frameDeltaTime, isAutomaticUpdate);
+		break;
+	case IAISystem::ESubsystemUpdateFlag::VisionMap:
+		TrySubsystemUpdateVisionMap(frameStartTime, frameDeltaTime, isAutomaticUpdate);
+		break;
+	case IAISystem::ESubsystemUpdateFlag::GlobalIntersectionTester:
+		TrySubsystemUpdateGlobalIntersectionTester(frameStartTime, frameDeltaTime, isAutomaticUpdate);
+		break;
+	case IAISystem::ESubsystemUpdateFlag::GlobalRaycaster:
+		TrySubsystemUpdateGlobalRayCaster(frameStartTime, frameDeltaTime, isAutomaticUpdate);
+		break;
+	default:
+		CRY_ASSERT_MESSAGE(false, "Provided flag is not valid.");
+		break;
+	}
 }
 
 //
@@ -3300,25 +2775,6 @@ int CAISystem::GetBeaconGroupId(CAIObject* pBeacon)
 			return bi->first;
 		}
 	return -1;
-}
-
-//
-//-----------------------------------------------------------------------------------------------------------
-void CAISystem::SetAssesmentMultiplier(unsigned short type, float fMultiplier)
-{
-	if (fMultiplier <= 0.f)
-		fMultiplier = 0.01f;
-
-	MapMultipliers::iterator mi;
-
-	mi = m_mapMultipliers.find(type);
-	if (mi == m_mapMultipliers.end())
-		m_mapMultipliers.insert(MapMultipliers::iterator::value_type(type, fMultiplier));
-	else
-		mi->second = fMultiplier;
-
-	if (std::find(m_priorityObjectTypes.begin(), m_priorityObjectTypes.end(), type) == m_priorityObjectTypes.end())
-		m_priorityObjectTypes.push_back(type);
 }
 
 //
@@ -4074,10 +3530,10 @@ void CAISystem::EnableGenericShape(const char* shapeName, bool state)
 			// Shape enabled
 			if (shape.IsPointInsideShape(puppet->GetPos(), true))
 			{
-				IAISignalExtraData* pData = CreateSignalExtraData();
+				AISignals::IAISignalExtraData* pData = CreateSignalExtraData();
 				pData->SetObjectName(shapeName);
 				pData->iValue = shape.type;
-				puppet->SetSignal(1, "OnShapeEnabled", puppet->GetEntity(), pData, gAIEnv.SignalCRCs.m_nOnShapeEnabled);
+				puppet->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnShapeEnabled(), puppet->GetEntityID(), pData));
 			}
 		}
 		else
@@ -4090,12 +3546,45 @@ void CAISystem::EnableGenericShape(const char* shapeName, bool state)
 				val |= 2;
 			if (val)
 			{
-				IAISignalExtraData* pData = CreateSignalExtraData();
+				AISignals::IAISignalExtraData* pData = CreateSignalExtraData();
 				pData->iValue = val;
-				puppet->SetSignal(1, "OnShapeDisabled", puppet->GetEntity(), pData, gAIEnv.SignalCRCs.m_nOnShapeDisabled);
+				puppet->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnShapeDisabled(), puppet->GetEntityID(), pData));
 			}
 		}
 	}
+}
+
+//-----------------------------------------------------------------------------------------------------------
+int CAISystem::RayOcclusionPlaneIntersection(const Vec3& start, const Vec3& end)
+{
+	const ShapeMap& occPlanes = GetOcclusionPlanes();
+
+	if (occPlanes.empty())
+		return 0;
+
+	ShapeMap::const_iterator di = occPlanes.begin(), diend = occPlanes.end();
+	for (; di != diend; ++di)
+	{
+		if (!di->second.shape.empty())
+		{
+			float fShapeHeight = ((di->second.shape).front()).z;
+			if ((start.z < fShapeHeight) && (end.z < fShapeHeight))
+				continue;
+			if ((start.z > fShapeHeight) && (end.z > fShapeHeight))
+				continue;
+
+			// find out where ray hits horizontal plane fShapeHeigh (with a nasty hack)
+			Vec3 vIntersection;
+			float t = (start.z - fShapeHeight) / (start.z - end.z);
+			vIntersection = start + t * (end - start);
+
+			// is it inside the polygon?
+			if (Overlap::Point_Polygon2D(vIntersection, di->second.shape, &di->second.aabb))
+				return 1;
+		}
+	}
+
+	return 0;
 }
 
 void CAISystem::FlushAllAreas()
@@ -4118,62 +3607,6 @@ void CAISystem::OffsetAllAreas(const Vec3& additionalOffset)
 		m_pNavigation->OffsetAllAreas(additionalOffset);
 }
 
-//====================================================================
-// GetOccupiedHideObjectPositions
-//====================================================================
-void CAISystem::GetOccupiedHideObjectPositions(const CPipeUser* pRequester, std::vector<Vec3>& hideObjectPositions)
-{
-	CCCPOINT(GetOccupiedHideObjectPositions);
-
-	// Iterate over the list of active puppets and collect positions of the valid hidespots in use.
-	hideObjectPositions.clear();
-
-	AIActorSet::const_iterator it = m_enabledAIActorsSet.begin();
-	AIActorSet::const_iterator end = m_enabledAIActorsSet.end();
-
-	for (; it != end; ++it)
-	{
-		CPipeUser* pOther = it->GetAIObject()->CastToCPipeUser();
-		if (!pOther || (pRequester && (pRequester == pOther)))
-			continue;
-
-		// Include the position of each enemy regardless of the validity of the hidepoint itself - seems to get better results
-		hideObjectPositions.push_back(pOther->GetPos());
-
-		if (!pOther->m_CurrentHideObject.IsValid())
-			continue;
-
-		// One reason why it can be important to also add the hidepoint itself is because the AI may not have reached it yet
-		hideObjectPositions.push_back(pOther->m_CurrentHideObject.GetObjectPos());
-	}
-}
-
-// Mrcio: Seriously, we need to get some kind of ID system for HideSpots.
-// God kills a kitten each time he looks at this code.
-bool CAISystem::IsHideSpotOccupied(CPipeUser* pRequester, const Vec3& pos) const
-{
-	AIActorSet::const_iterator it = m_enabledAIActorsSet.begin();
-	AIActorSet::const_iterator end = m_enabledAIActorsSet.end();
-
-	for (; it != end; ++it)
-	{
-		CPipeUser* pOther = it->GetAIObject()->CastToCPipeUser();
-		if (!pOther || (pRequester && (pRequester == pOther)))
-			continue;
-
-		if ((pOther->GetPos() - pos).len2() < 0.5 * 0.5f)
-			return true;
-
-		if (!pOther->m_CurrentHideObject.IsValid())
-			continue;
-
-		if ((pOther->m_CurrentHideObject.GetObjectPos() - pos).len2() < 0.5 * 0.5f)
-			return true;
-	}
-
-	return false;
-}
-
 //
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::NotifyEnableState(CAIActor* pAIActor, bool state)
@@ -4188,7 +3621,7 @@ void CAISystem::NotifyEnableState(CAIActor* pAIActor, bool state)
 	assert(pAIActor);
 	CWeakRef<CAIActor> refAIActor = GetWeakRef(pAIActor);
 
-	gAIEnv.pWalkabilityCacheManager->EnableActor(pAIActor->GetAIObjectID(), state);
+	m_callbacks.EnabledStateChanged().Call(pAIActor->GetAIObjectID(), state);
 
 	if (state)
 	{
@@ -4213,8 +3646,6 @@ void CAISystem::NotifyEnableState(CAIActor* pAIActor, bool state)
 		gAIEnv.pSequenceManager->AgentDisabled(pAIActor->GetEntityID());
 
 		gAIEnv.pActorLookUp->RemoveActor(pAIActor);
-
-		pAIActor->ClearProbableTargets();
 
 		bool bErased = m_enabledAIActorsSet.erase(refAIActor) > 0;
 		bool bInserted = m_disabledAIActorsSet.insert(refAIActor).second;
@@ -4253,11 +3684,11 @@ void CAISystem::NotifyTargetDead(IAIObject* pDeadObject)
 
 		if (pAIActor->GetAttentionTarget() == pDeadObject)
 		{
-			IAISignalExtraData* pData = GetAISystem()->CreateSignalExtraData();
+			AISignals::IAISignalExtraData* pData = GetAISystem()->CreateSignalExtraData();
 			pData->SetObjectName(pDeadObject->GetName());
 			pData->nID = pDeadObject->GetEntityID();
 			pData->string1 = gAIEnv.pFactionMap->GetFactionName(pDeadObject->GetFactionID());
-			pAIActor->SetSignal(0, "OnTargetDead", pAIActor->GetEntity(), pData, gAIEnv.SignalCRCs.m_nOnTargetDead);
+			pAIActor->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_INCLUDE_DISABLED, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnTargetDead(), pAIActor->GetEntityID(), pData));
 		}
 	}
 
@@ -4290,7 +3721,7 @@ void CAISystem::NotifyTargetDead(IAIObject* pDeadObject)
 				if (!CheckVisibilityToBody(pPuppet, pDeadActor, dist, pNearestThrownEntPhys))
 					continue;
 
-				pPuppet->SetSignal(1, "OnGroupMemberMutilated", pDeadObject->GetEntity(), 0);
+				pPuppet->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnGroupMemberMutilated(), pDeadObject->GetEntityID()));
 			}
 		}
 	}
@@ -4302,56 +3733,9 @@ std::shared_ptr<IPathFollower> CAISystem::CreateAndReturnNewDefaultPathFollower(
 	return IPathFollowerPtr(new CSmartPathFollower(params, pathObstacleObject));
 }
 
-//===================================================================
-// ExitNodeImpossible
-//===================================================================
-bool CAISystem::ExitNodeImpossible(CGraphLinkManager& linkManager, const GraphNode* pNode, float fRadius) const
+std::shared_ptr<INavPath> CAISystem::CreateAndReturnNewNavPath()
 {
-	int16 radiusInCm = NavGraphUtils::InCentimeters(fRadius);
-	for (unsigned gl = pNode->firstLinkIndex; gl; gl = linkManager.GetNextLink(gl))
-	{
-		if (linkManager.GetRadiusInCm(gl) >= radiusInCm)
-			return false;
-	}
-	return true;
-}
-
-//===================================================================
-// EnterNodeImpossible
-//===================================================================
-bool CAISystem::EnterNodeImpossible(CGraphNodeManager& nodeManager, CGraphLinkManager& linkManager, const GraphNode* pNode, float fRadius) const
-{
-	int16 radiusInCm = NavGraphUtils::InCentimeters(fRadius);
-	for (unsigned link = pNode->firstLinkIndex; link; link = linkManager.GetNextLink(link))
-	{
-		unsigned nextNodeIndex = linkManager.GetNextNode(link);
-		GraphNode* nextNode = nodeManager.GetNode(nextNodeIndex);
-		unsigned incomingLink = nextNode->GetLinkTo(nodeManager, linkManager, pNode);
-		if (incomingLink && linkManager.GetRadiusInCm(incomingLink) >= radiusInCm)
-			return false;
-	}
-	return true;
-}
-
-//===================================================================
-// SetFactionThreatMultiplier
-//===================================================================
-void CAISystem::SetFactionThreatMultiplier(uint8 factionID, float fMultiplier)
-{
-	if (fMultiplier > 1.f)
-		fMultiplier = 1.f;
-
-	if (fMultiplier < 0.f) // Modified from <= 0 -> = 0.01
-		fMultiplier = 0.0f;
-
-	// will use this multiplier any time a puppet perceives a target of these species
-	MapMultipliers::iterator mi;
-
-	mi = m_mapFactionThreatMultipliers.find(factionID);
-	if (mi == m_mapFactionThreatMultipliers.end())
-		m_mapFactionThreatMultipliers.insert(MapMultipliers::iterator::value_type(factionID, fMultiplier));
-	else
-		mi->second = fMultiplier;
+	return std::make_shared<CNavPath>();
 }
 
 //
@@ -4385,9 +3769,9 @@ float CAISystem::GetRayPerceptionModifier(const Vec3& start, const Vec3& end, co
 	float intersects[max_intersects];
 	float fPerception = 1.0f;
 	Vec3 hit;
-
-	int icvDrawPerceptionDebugging = gAIEnv.CVars.DrawPerceptionDebugging;
-
+#ifdef CRYAISYSTEM_DEBUG
+	int icvDrawPerceptionDebugging = gAIEnv.CVars.legacyPerception.DrawPerceptionDebugging;
+#endif
 	PerceptionModifierShapeMap::iterator pmsi = m_mapPerceptionModifiers.begin(), pmsiEnd = m_mapPerceptionModifiers.end();
 	for (; pmsi != pmsiEnd; ++pmsi)
 	{
@@ -4570,69 +3954,12 @@ IAIObjectIter* CAISystem::GetFirstAIObjectInShape(EGetFirstFilter filter, short 
 void CAISystem::Event(int event, const char* name)
 {
 	CCCPOINT(CAISystem_Event);
-
-	switch (event)
-	{
-	case AISYSEVENT_DISABLEMODIFIER:
-		{
-			CCCPOINT(CAISystem_Event_DM);
-			m_pNavigation->DisableModifier(name);
-			break;
-		}
-	default:
-		break;
-	}
-}
-
-//-----------------------------------------------------------------------------------------------------------
-void CAISystem::CreateFormationDescriptor(const char* name)
-{
-	FormationDescriptorMap::iterator itD = m_mapFormationDescriptors.find(name);
-	if (itD != m_mapFormationDescriptors.end())
-		m_mapFormationDescriptors.erase(itD);
-	CFormationDescriptor fdesc;
-	fdesc.m_sName = name;
-	fdesc.m_nNameCRC32 = CCrc32::Compute(name);
-	m_mapFormationDescriptors.insert(FormationDescriptorMap::iterator::value_type(fdesc.m_sName, fdesc));
 }
 
 //-----------------------------------------------------------------------------------------------------------
 void CAISystem::EnumerateFormationNames(unsigned int maxNames, const char** names, unsigned int* nameCount) const
 {
-	CRY_ASSERT(names);
-	CRY_ASSERT(nameCount);
-
-	*nameCount = 0;
-
-	FormationDescriptorMap::const_iterator it = m_mapFormationDescriptors.begin();
-	FormationDescriptorMap::const_iterator end = m_mapFormationDescriptors.end();
-
-	for (; it != end; ++it)
-	{
-		if (*nameCount == maxNames)
-		{
-			gEnv->pLog->LogError("CAISystem::EnumerateFormationNames: Can't fit more formation names. Number of names = %" PRISIZE_T ", maximum number of names = %u.", m_mapFormationDescriptors.size(), maxNames);
-			return;
-		}
-
-		names[(*nameCount)++] = it->first.c_str();
-	}
-}
-
-//-----------------------------------------------------------------------------------------------------------
-bool CAISystem::IsFormationDescriptorExistent(const char* name)
-{
-	return m_mapFormationDescriptors.find(name) != m_mapFormationDescriptors.end();
-}
-//-----------------------------------------------------------------------------------------------------------
-
-void CAISystem::AddFormationPoint(const char* name, const FormationNode& nodeDescriptor)
-{
-	FormationDescriptorMap::iterator fdit = m_mapFormationDescriptors.find(name);
-	if (fdit != m_mapFormationDescriptors.end())
-	{
-		fdit->second.AddNode(nodeDescriptor);
-	}
+	gAIEnv.pFormationManager->EnumerateFormationNames(maxNames, names, nameCount);
 }
 
 //-----------------------------------------------------------------------------------------------------------
@@ -4648,29 +3975,6 @@ IAIObject* CAISystem::GetLeaderAIObject(IAIObject* pObject)
 	CAIActor* pActor = pObject->CastToCAIActor();
 	CLeader* pLeader = GetLeader(pActor);
 	return pLeader ? pLeader->GetAssociation().GetAIObject() : NULL;
-}
-
-IAIObject* CAISystem::GetFormationPoint(IAIObject* pObject)
-{
-	CAIActor* pActor = pObject->CastToCAIActor();
-	CLeader* pLeader = GetLeader(pActor);
-	if (pLeader)
-	{
-		CCCPOINT(CAISystem_GetFormationPoint);
-		return pLeader->GetFormationPoint(GetWeakRef((CAIObject*)pObject)).GetAIObject();
-	}
-	return NULL;
-}
-
-int CAISystem::GetFormationPointClass(const char* descriptorName, int position)
-{
-	FormationDescriptorMap::iterator di;
-	di = m_mapFormationDescriptors.find(descriptorName);
-	if (di != m_mapFormationDescriptors.end())
-	{
-		return di->second.GetNodeClass(position);
-	}
-	return -1;
 }
 
 //====================================================================
@@ -4834,14 +4138,12 @@ void CAISystem::SerializeObjectIDs(TSerialize ser)
 //====================================================================
 void CAISystem::Serialize(TSerialize ser)
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "AI serialization");
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "AI serialization");
 
 	DebugOutputObjects("Start of serialize");
 
 	if (ser.IsReading())
 	{
-		gAIEnv.pWalkabilityCacheManager->Reset();
-
 		if (m_pAIActionManager)
 			m_pAIActionManager->Reset();
 	}
@@ -4876,7 +4178,7 @@ void CAISystem::Serialize(TSerialize ser)
 		gAIEnv.pObjectContainer->Serialize(ser);
 		ser.EndGroup();
 
-		if (gAIEnv.CVars.ForceSerializeAllObjects)
+		if (gAIEnv.CVars.LegacyForceSerializeAllObjects)
 		{
 			ser.Value("ObjectOwners", gAIEnv.pAIObjectManager->m_Objects);
 			ser.Value("MapDummyObjects", gAIEnv.pAIObjectManager->m_mapDummyObjects);
@@ -4914,7 +4216,8 @@ void CAISystem::Serialize(TSerialize ser)
 
 	CCentralInterestManager::GetInstance()->Serialize(ser);
 
-	gAIEnv.pPerceptionManager->Serialize(ser);
+	SubSystemCall(Serialize(ser));
+
 	if (ser.IsReading())
 		gAIEnv.pFactionMap->Reload();
 	gAIEnv.pFactionMap->Serialize(ser);
@@ -4927,6 +4230,7 @@ void CAISystem::Serialize(TSerialize ser)
 	{
 		SmartScriptTable pScriptAI;
 		if (pSS->GetGlobalValue("AI", pScriptAI))
+		{
 			if (pScriptAI->HaveValue("OnSave") && pScriptAI->HaveValue("OnLoad"))
 			{
 				ser.BeginGroup("ScriptBindAI");
@@ -4938,6 +4242,7 @@ void CAISystem::Serialize(TSerialize ser)
 					Script::CallMethod(pScriptAI, "OnLoad", persistTable);
 				ser.EndGroup();
 			}
+		}
 	}
 
 	// Call post serialize on systems that need it -
@@ -4949,54 +4254,6 @@ void CAISystem::Serialize(TSerialize ser)
 
 	if (ser.IsReading())
 		gAIEnv.pSequenceManager->Reset();
-}
-
-//===================================================================
-// Serialize
-//===================================================================
-void PathfindRequest::Serialize(TSerialize ser)
-{
-	ser.BeginGroup("PathFindRequest");
-	ser.Value("startPos", startPos);
-	ser.Value("startDir", startDir);
-	ser.Value("endPos", endPos);
-	ser.Value("endDir", endDir);
-	ser.Value("bSuccess", bSuccess);
-
-	// (MATT) Locally convert to weak ref just here - this may or may not work in this case. {2009/02/16}
-	CWeakRef<CAIActor> refRequester;
-	if (ser.IsReading())
-	{
-		refRequester.Serialize(ser, "refRequester");
-		pRequester = refRequester.GetAIObject(); // Just use the IAIPathAgent
-	}
-	else if (IEntity* requesterEntity = pRequester->GetPathAgentEntity())
-	{
-		if (IAIObject* requesterAIObject = requesterEntity->GetAI())
-			refRequester = GetWeakRef(CastToCAIActorSafe(requesterAIObject));
-		refRequester.Serialize(ser, "refRequester");
-	}
-
-	ser.Value("bSuccess", bSuccess);
-	ser.Value("nForceTargetBuildingId", nForceTargetBuildingId);
-	ser.Value("allowDangerousDestination", allowDangerousDestination);
-	ser.Value("endTol", endTol);
-	ser.Value("endDistance", endDistance);
-	ser.Value("isDirectional", isDirectional);
-	ser.Value("bPathEndIsAsRequested", bPathEndIsAsRequested);
-	ser.Value("id", id);
-	ser.Value("navCapMask", navCapMask);
-	AIAssert(navCapMask != IAISystem::NAV_UNSET);
-
-	ser.Value("passRadius", passRadius);
-	ser.EnumValue("type", type, TYPE_ACTOR, TYPE_RAW);
-
-	if (ser.IsReading())
-	{
-		startIndex = 0;
-		endIndex = 0;
-	}
-	ser.EndGroup();
 }
 
 //====================================================================
@@ -5057,55 +4314,8 @@ void CAISystem::SerializeInternal(TSerialize ser)
 
 		m_lightManager.Serialize(ser);
 
-		// Active formations
-		ser.BeginGroup("ActiveFormations");
-		{
-			int count = m_mapActiveFormations.size();
-			ser.Value("numObjects", count);
-
-			if (ser.IsReading())
-			{
-				FormationMap::iterator iFormation = m_mapActiveFormations.begin(), iEnd = m_mapActiveFormations.end();
-				for (; iFormation != iEnd; ++iFormation)
-				{
-					delete iFormation->second;
-				}
-
-				m_mapActiveFormations.clear();
-			}
-
-			char formationName[32];
-			while (--count >= 0)
-			{
-				CFormation* pFormationObject(0);
-				CWeakRef<CAIObject> refOwner;
-
-				if (ser.IsWriting())
-				{
-					FormationMap::iterator iFormation = m_mapActiveFormations.begin();
-					std::advance(iFormation, count);
-					refOwner = iFormation->first;
-					pFormationObject = iFormation->second;
-				}
-				else
-				{
-					pFormationObject = new CFormation();
-				}
-
-				cry_sprintf(formationName, "Formation_%d", count);
-				ser.BeginGroup(formationName);
-				{
-					refOwner.Serialize(ser, "formationOwner");
-					pFormationObject->Serialize(ser);
-				}
-				ser.EndGroup();
-				if (ser.IsReading())
-				{
-					m_mapActiveFormations.insert(FormationMap::iterator::value_type(refOwner, pFormationObject));
-				}
-			}
-		}
-		ser.EndGroup(); // "ActiveFormations"
+		if (gAIEnv.pFormationManager)
+			gAIEnv.pFormationManager->Serialize(ser);
 
 		// Serialize temporary shapes.
 		ser.BeginGroup("TempGenericShapes");
@@ -5203,9 +4413,8 @@ void CAISystem::SerializeInternal(TSerialize ser)
 		}
 		ser.EndGroup(); // "DisabledGenericShapes"
 
-		m_pNavigation->Serialize(ser);
-
-		ser.Value("m_priorityObjectTypes", m_priorityObjectTypes);
+		// TODO: serialize m_mapDesignerPaths? 
+		//m_pNavigation->Serialize(ser);
 
 		ser.Value("m_frameStartTime", m_frameStartTime);
 		ser.Value("m_frameStartTimeSeconds", m_frameStartTimeSeconds);
@@ -5275,7 +4484,8 @@ void CAISystem::SerializeInternal(TSerialize ser)
 		}
 		ser.EndGroup(); // "AI_Groups"
 
-		gAIEnv.pGroupManager->Serialize(ser);
+		if (gAIEnv.pGroupManager)
+			gAIEnv.pGroupManager->Serialize(ser);
 
 		char name[32];
 		ser.BeginGroup("AI_Alertness");
@@ -5288,8 +4498,6 @@ void CAISystem::SerializeInternal(TSerialize ser)
 
 		ser.Value("m_nTickCount", m_nTickCount);
 		ser.Value("m_bUpdateSmartObjects", m_bUpdateSmartObjects);
-
-		ser.Value("m_mapAuxSignalsFired", m_mapAuxSignalsFired);
 	}
 	ser.EndGroup();
 }
@@ -5301,7 +4509,12 @@ void CAISystem::NotifyAIObjectMoved(IEntity* pEntity, SEntityEvent event)
 		return;
 
 	AIAssert(m_pSmartObjectManager);
-	((IEntitySystemSink*)m_pSmartObjectManager)->OnEvent(pEntity, event);
+	m_pSmartObjectManager->OnEntityEvent(pEntity, event);
+
+	if (gEnv->IsEditing() && pEntity->GetAI()->GetAIType() == AIOBJECT_NAV_SEED)
+	{
+		gAIEnv.pNavigationSystem->RequestUpdateAccessibilityAfterSeedChange(pEntity->GetAI()->GetPos(), pEntity->GetWorldPos());
+	}
 }
 
 //====================================================================
@@ -5385,8 +4598,6 @@ unsigned int CAISystem::GetDangerSpots(const IAIObject* requester, float range, 
 
 	const Vec3& reqPos = requester->GetPos();
 
-	const CAIActor* pActor = requester->CastToCAIActor();
-	uint8 factionID = pActor->GetFactionID();
 	uint32 i = 0;
 
 	if (flags & DANGER_EXPLOSIVE)
@@ -5441,7 +4652,7 @@ unsigned int CAISystem::GetDangerSpots(const IAIObject* requester, float range, 
 //===================================================================
 void CAISystem::DynOmniLightEvent(const Vec3& pos, float radius, EAILightEventType type, EntityId shooterId, float time)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	// Do not handle events while serializing.
 	if (gEnv->pSystem->IsSerializingFile())
@@ -5461,7 +4672,7 @@ void CAISystem::DynOmniLightEvent(const Vec3& pos, float radius, EAILightEventTy
 //===================================================================
 void CAISystem::DynSpotLightEvent(const Vec3& pos, const Vec3& dir, float radius, float fov, EAILightEventType type, EntityId shooterId, float time)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	// Do not handle events while serializing.
 	if (gEnv->pSystem->IsSerializingFile())
@@ -5477,51 +4688,6 @@ void CAISystem::DynSpotLightEvent(const Vec3& pos, const Vec3& dir, float radius
 }
 
 //===================================================================
-// RegisterAIEventListener
-//===================================================================
-void CAISystem::RegisterAIEventListener(IAIEventListener* pListener, const Vec3& pos, float rad, int flags)
-{
-	gAIEnv.pPerceptionManager->RegisterAIEventListener(pListener, pos, rad, flags);
-}
-
-//===================================================================
-// UnregisterAIEventListener
-//===================================================================
-void CAISystem::UnregisterAIEventListener(IAIEventListener* pListener)
-{
-	gAIEnv.pPerceptionManager->UnregisterAIEventListener(pListener);
-}
-
-//===================================================================
-// RegisterStimulus
-//===================================================================
-void CAISystem::RegisterStimulus(const SAIStimulus& stim)
-{
-	// Do not handle events while serializing.
-	if (gEnv->pSystem->IsSerializingFile())
-		return;
-	if (!IsEnabled())
-		return;
-
-	gAIEnv.pPerceptionManager->RegisterStimulus(stim);
-}
-
-//===================================================================
-// IgnoreStimulusFrom
-//===================================================================
-void CAISystem::IgnoreStimulusFrom(EntityId sourceId, EAIStimulusType type, float time)
-{
-	// Do not handle events while serializing.
-	if (gEnv->pSystem->IsSerializingFile())
-		return;
-
-	if (!IsEnabled())
-		return;
-
-	gAIEnv.pPerceptionManager->IgnoreStimulusFrom(sourceId, type, time);
-}
-
-//===================================================================
 // RegisterDamageRegion
 //===================================================================
 void CAISystem::RegisterDamageRegion(const void* pID, const Sphere& sphere)
@@ -5530,197 +4696,6 @@ void CAISystem::RegisterDamageRegion(const void* pID, const Sphere& sphere)
 		m_damageRegions[pID] = sphere;
 	else
 		m_damageRegions.erase(pID);
-}
-
-//===================================================================
-// GetHidespotsInRange
-//===================================================================
-MultimapRangeHideSpots& CAISystem::GetHideSpotsInRange(MultimapRangeHideSpots& hidespots,
-                                                       MapConstNodesDistance& traversedNodes,
-                                                       const Vec3& startPos, float maxDist,
-                                                       IAISystem::tNavCapMask navCapMask, float passRadius, bool skipNavigationTest,
-                                                       IEntity* pSmartObjectUserEntity,
-                                                       unsigned lastNavNodeIndex,
-                                                       const class CAIObject* pRequester)
-{
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
-	hidespots.clear();
-
-	float maxDistSq = square(maxDist);
-
-	if (!skipNavigationTest)
-	{
-		m_pGraph->GetNodesInRange(traversedNodes, startPos, maxDist, navCapMask, passRadius, lastNavNodeIndex, pRequester);
-		if (traversedNodes.empty())
-			return hidespots;
-	}
-
-	// waypoint
-	if (navCapMask & (IAISystem::NAV_WAYPOINT_HUMAN | IAISystem::NAV_WAYPOINT_3DSURFACE))
-	{
-		if (skipNavigationTest)
-		{
-			// (MATT) Commented out the warning for milestone.
-			// Ideally, we would not skip the test anyway, and gain performance by avoiding the hash spacelookup of graph hidespots {2009/12/11}
-			//AIWarning("Not implemented skipNavigationTest for waypoint");
-		}
-		else
-		{
-			const MapConstNodesDistance::const_iterator itEnd = traversedNodes.end();
-			for (MapConstNodesDistance::const_iterator it = traversedNodes.begin(); it != itEnd; ++it)
-			{
-				const GraphNode* pNode = it->first;
-				if (pNode->navType & (IAISystem::NAV_WAYPOINT_HUMAN | IAISystem::NAV_WAYPOINT_3DSURFACE))
-				{
-					float distance = it->second;
-					const SWaypointNavData* pData = pNode->GetWaypointNavData();
-					if (pData->type != WNT_HIDE)
-						continue;
-					MultimapRangeHideSpots::iterator resultIt = hidespots.insert(MultimapRangeHideSpots::value_type(distance,
-					                                                                                                SHideSpot(SHideSpotInfo::eHST_WAYPOINT, pNode->GetPos(), pData->dir)));
-					resultIt->second.pNavNode = pNode;
-				}
-			}
-		}
-	}
-
-	// triangular
-	if (navCapMask & IAISystem::NAV_TRIANGULAR)
-	{
-		assert(false);
-	}
-
-	// hide anchors
-	{
-		int anchorTypes[2] = { AIANCHOR_COMBAT_HIDESPOT, AIANCHOR_COMBAT_HIDESPOT_SECONDARY };
-		for (int at = 0; at < 2; ++at)
-		{
-			const AIObjectOwners::const_iterator oiEnd = gAIEnv.pAIObjectManager->m_Objects.end();
-			for (AIObjectOwners::const_iterator oi = gAIEnv.pAIObjectManager->m_Objects.find(anchorTypes[at]); oi != oiEnd; ++oi)
-			{
-				CAIObject* object = oi->second.GetAIObject();
-				if (object->GetType() != anchorTypes[at])
-					break;
-				if (!object->IsEnabled())
-					continue;
-				float distanceSq = Distance::Point_PointSq(object->GetPos(), startPos);
-				if (distanceSq > maxDistSq)
-					continue;
-
-				const GraphNode* pNode = gAIEnv.pGraph->GetNode(object->GetNavNodeIndex());
-				if (!pNode)
-					continue;
-
-				float distance;
-				MapConstNodesDistance::const_iterator it;
-				if (!skipNavigationTest)
-				{
-					it = traversedNodes.find(pNode);
-					if (it == traversedNodes.end())
-						continue;
-					distance = it->second;
-				}
-				else
-				{
-					distance = sqrtf(distanceSq);
-				}
-
-				MultimapRangeHideSpots::iterator resultIt = hidespots.insert(MultimapRangeHideSpots::value_type(distance,
-				                                                                                                SHideSpot(SHideSpotInfo::eHST_ANCHOR, object->GetPos(), object->GetMoveDir())));
-				resultIt->second.pNavNode = pNode;
-				resultIt->second.pAnchorObject = object;
-			}
-		}
-	}
-
-	// Dynamic hidespots.
-	if (gAIEnv.CVars.DynamicHidespotsEnabled != 0)
-	{
-		typedef std::vector<SDynamicObjectHideSpot> TDynamicHideSpots;
-		static TDynamicHideSpots dynamicHideSpots;
-		m_dynHideObjectManager.GetHidePositionsWithinRange(dynamicHideSpots, startPos, maxDist, navCapMask, passRadius, lastNavNodeIndex);
-
-		const TDynamicHideSpots::const_iterator diEnd = dynamicHideSpots.end();
-		for (TDynamicHideSpots::const_iterator di = dynamicHideSpots.begin(); di != diEnd; ++di)
-		{
-			const SDynamicObjectHideSpot& hs = *di;
-			GraphNode* pNode = m_pGraph->GetNodeManager().GetNode(hs.nodeIndex);
-			if (!pNode)
-				continue;
-			float distance;
-			MapConstNodesDistance::const_iterator it;
-			if (!skipNavigationTest)
-			{
-				it = traversedNodes.find(pNode);
-				if (it == traversedNodes.end())
-					continue;
-				distance = it->second;
-			}
-			else
-			{
-				distance = Distance::Point_Point(hs.pos, startPos);
-			}
-
-			MultimapRangeHideSpots::iterator resultIt = hidespots.insert(MultimapRangeHideSpots::value_type(distance,
-			                                                                                                SHideSpot(SHideSpotInfo::eHST_DYNAMIC, hs.pos, hs.dir)));
-			resultIt->second.pNavNode = pNode;
-			resultIt->second.entityId = hs.entityId;
-		}
-	}
-
-	// smart objects
-	if (pSmartObjectUserEntity)
-	{
-		QueryEventMap query;
-		IEntity* pObjectEntity = NULL;
-		m_pSmartObjectManager->TriggerEvent("Hide", pSmartObjectUserEntity, pObjectEntity, &query);
-
-		const QueryEventMap::const_iterator itEnd = query.end();
-		for (QueryEventMap::const_iterator it = query.begin(); it != itEnd; ++it)
-		{
-			const CQueryEvent* pQueryEvent = &it->second;
-
-			Vec3 pos;
-			if (pQueryEvent->pRule->pObjectHelper)
-				pos = pQueryEvent->pObject->GetHelperPos(pQueryEvent->pRule->pObjectHelper);
-			else
-				pos = pQueryEvent->pObject->GetPos();
-			Vec3 dir = pQueryEvent->pObject->GetOrientation(pQueryEvent->pRule->pObjectHelper);
-
-			// [AlexMc|08.06.10]: This doesn't actually get a SO navnode! It gets a non-SO navnode that
-			// encloses the SO. Do we want to call GetCorrespondingNavNode instead?
-			unsigned nodeIndex = pQueryEvent->pObject->GetEnclosingNavNode(pQueryEvent->pRule->pObjectHelper);
-			if (nodeIndex)
-			{
-				const GraphNode* pNavNode = m_pGraph->GetNodeManager().GetNode(nodeIndex);
-				AIAssert(pNavNode);
-				MapConstNodesDistance::const_iterator dit(traversedNodes.end());
-				if (!skipNavigationTest)
-					dit = traversedNodes.find(pNavNode);
-				if (skipNavigationTest || dit != traversedNodes.end())
-				{
-					float distance = skipNavigationTest ? Distance::Point_Point(pos, startPos) : dit->second;
-					MultimapRangeHideSpots::iterator resultIt = hidespots.insert(MultimapRangeHideSpots::value_type(distance,
-					                                                                                                SHideSpot(SHideSpotInfo::eHST_SMARTOBJECT, pos, dir)));
-					resultIt->second.pNavNode = pNavNode;
-					resultIt->second.SOQueryEvent = *pQueryEvent;
-				}
-			}
-		}
-	}
-
-	// Volume hidespots
-	if (navCapMask & IAISystem::NAV_VOLUME)
-	{
-		// well.. it could be done but it's not used?
-		/*
-		    static std::vector<SVolumeHideSpot> hidePositions;
-		    hidePositions.resize(0);
-		    m_pVolumeNavRegion->GetHideSpotsWithinRadius(startPos, maxDist, SVolumeHideFunctor(hidePositions));
-		 */
-	}
-
-	return hidespots;
 }
 
 //===================================================================
@@ -5787,150 +4762,6 @@ void CAISystem::AdjustOmniDirectionalCoverPosition(Vec3& pos, Vec3& dir, float h
 	}
 
 	pos -= dir * (max(hideRadius, 0.0f) + agentRadius + AGENT_COVER_CLEARANCE);
-}
-
-//===================================================================
-// TempHideSpot
-// Structure to hold hide points.
-// Includes distance to sort the points and both the found hide pos and the object pos/dir.
-//===================================================================
-struct TempHideSpot
-{
-	TempHideSpot(const Vec3& pos, const Vec3& objPos, const Vec3& objDir, float rad, float dist, bool collidable, bool directional) :
-		pos(pos), objDir(objDir), rad(rad), dist(dist), collidable(collidable), directional(directional) {}
-	bool operator<(const TempHideSpot& rhs) const { return dist < rhs.dist; }
-	Vec3  pos, objDir;
-	float rad;
-	float dist;
-	bool  collidable;
-	bool  directional;
-};
-
-//===================================================================
-// GetHideSpotsInRange
-//===================================================================
-unsigned int CAISystem::GetHideSpotsInRange(IAIObject* requester, const Vec3& reqPos,
-                                            const Vec3& hideFrom, float minRange, float maxRange, bool collidableOnly, bool validatedOnly,
-                                            unsigned int maxPts, Vec3* coverPos, Vec3* coverObjPos, Vec3* coverObjDir, float* coverRad, bool* coverCollidable)
-{
-	CPuppet* puppet = CastToCPuppetSafe(requester);
-
-	IAISystem::tNavCapMask navCapMask = IAISystem::NAV_TRIANGULAR | IAISystem::NAV_WAYPOINT_HUMAN | IAISystem::NAV_SMARTOBJECT;
-	float passRadius = 0.5f;
-	IEntity* pRequesterEnt = 0;
-	unsigned lastNavNodeIndex = 0;
-
-	if (puppet)
-	{
-		navCapMask = puppet->GetMovementAbility().pathfindingProperties.navCapMask;
-		passRadius = puppet->GetParameters().m_fPassRadius;
-		pRequesterEnt = puppet->GetEntity();
-		lastNavNodeIndex = puppet->GetNavNodeIndex();
-	}
-
-	MultimapRangeHideSpots hidespots;
-	MapConstNodesDistance traversedNodes;
-
-	GetHideSpotsInRange(hidespots, traversedNodes, reqPos, maxRange,
-	                    navCapMask, passRadius, false, pRequesterEnt, lastNavNodeIndex, (CAIObject*)requester);
-
-	// Only update the obstacles if validation is requested.
-	const CPathObstacles* obstacles = 0;
-
-	if (puppet)
-		obstacles = &puppet->GetPathAdjustmentObstacles(validatedOnly);
-
-	float minRangeSq = sqr(minRange);
-	float maxRangeSq = sqr(maxRange);
-
-	std::vector<TempHideSpot> spots;
-	spots.reserve(hidespots.size());
-
-	const MultimapRangeHideSpots::iterator liEnd = hidespots.end();
-	for (MultimapRangeHideSpots::iterator li = hidespots.begin(); li != liEnd; ++li)
-	{
-		const SHideSpot& hs = li->second;
-
-		if (hs.info.type == SHideSpotInfo::eHST_SMARTOBJECT)
-			continue;
-
-		bool collidable(true);
-		float rad = 0.0f;
-
-		if (hs.pObstacle && !hs.pObstacle->IsCollidable())
-			collidable = false;
-		if (hs.pAnchorObject && hs.pAnchorObject->GetType() == AIANCHOR_COMBAT_HIDESPOT_SECONDARY)
-		{
-			collidable = false;
-			rad = 0.2f;
-		}
-
-		if (collidableOnly && !collidable)
-			continue;
-
-		if (hs.pObstacle)
-			rad = hs.pObstacle->fApproxRadius;
-
-		Vec3 pos = hs.info.pos;
-		Vec3 dir = hs.info.dir;
-		const Vec3& objPos(hs.info.pos); // AlexMcC: should this be referencing pos or objPos?
-
-		if (hs.pObstacle || (hs.pAnchorObject && hs.pAnchorObject->GetType() == AIANCHOR_COMBAT_HIDESPOT_SECONDARY))
-			AdjustOmniDirectionalCoverPosition(pos, dir, max(rad, 0.0f), passRadius, hideFrom);
-
-		float d = Distance::Point_PointSq(pos, reqPos);
-
-		if (d >= minRangeSq && d <= maxRangeSq)
-			spots.push_back(TempHideSpot(pos, objPos, dir, rad, d, collidable,
-			                             hs.info.type == SHideSpotInfo::eHST_ANCHOR || hs.info.type == SHideSpotInfo::eHST_WAYPOINT || hs.info.type == SHideSpotInfo::eHST_DYNAMIC));
-	}
-
-	// Output best points.
-	std::sort(spots.begin(), spots.end());
-
-	unsigned int npts = 0;
-
-	for (unsigned i = 0, n = spots.size(); i < n; ++i)
-	{
-		TempHideSpot& spot = spots[i];
-		// Check if the point is inside another cover object and skip if it is.
-		bool embedded = false;
-		for (unsigned j = 0, m = spots.size(); j < m; ++j)
-		{
-			TempHideSpot& spotj = spots[j];
-			if (i == j || !spotj.collidable || spotj.rad < 0.01f) continue;
-			if (Distance::Point_Point2DSq(spot.pos, spotj.pos) < sqr(spotj.rad + passRadius))
-			{
-				embedded = true;
-				break;
-			}
-		}
-		if (embedded)
-			continue;
-
-		// Discard points which do not offer cover.
-		if (validatedOnly)
-		{
-			if (spot.directional)
-			{
-				Vec3 dirHideToEnemy = hideFrom - spot.pos;
-				dirHideToEnemy.NormalizeSafe();
-				if (dirHideToEnemy.Dot(spot.objDir) < HIDESPOT_COVERAGE_ANGLE_COS)
-					continue;
-			}
-		}
-
-		if (coverPos) coverPos[npts] = spot.pos;
-		if (coverObjPos) coverObjPos[npts] = spot.pos;
-		if (coverObjDir) coverObjDir[npts] = spot.objDir;
-		if (coverRad) coverRad[npts] = spot.rad;
-		if (coverCollidable) coverCollidable[npts] = spot.collidable;
-		++npts;
-
-		if (npts >= maxPts) break;
-	}
-
-	return npts;
 }
 
 //===================================================================
@@ -6074,7 +4905,7 @@ void CAISystem::NotifyDeath(IAIObject* pVictim)
 //===================================================================
 bool CAISystem::WouldHumanBeVisible(const Vec3& footPos, bool fullCheck) const
 {
-	int ignore = gAIEnv.CVars.IgnoreVisibilityChecks;
+	int ignore = gAIEnv.CVars.LegacyIgnoreVisibilityChecks;
 	if (ignore)
 		return false;
 
@@ -6093,47 +4924,12 @@ bool CAISystem::WouldHumanBeVisible(const Vec3& footPos, bool fullCheck) const
 	return true;
 }
 
-// Static formation point
-struct SAIStatFormPt
-{
-	enum ETested { NOT_TESTED, VALID, INVALID };
-	SAIStatFormPt(const Vec3& p, float w, IAISystem::ENavigationType navType) : pos(p), w(w), d(0), vis(0), test(NOT_TESTED), navType(navType) {}
-	Vec3                       pos;
-	float                      d;
-	float                      w;
-	unsigned char              vis;
-	ETested                    test;
-	IAISystem::ENavigationType navType;
-};
-
-// Static formation histogram island
-struct SAIStatFormIsland
-{
-	SAIStatFormIsland(int a, int b, float v) : a(a), b(b), v(v) {}
-	inline bool operator<(const SAIStatFormIsland& rhs) const { return v < rhs.v; }
-	inline bool operator>(const SAIStatFormIsland& rhs) const { return v > rhs.v; }
-	int   a, b;
-	float v;
-};
-
-// Static formation unit
-struct SAIStatFormUnit
-{
-	SAIStatFormUnit(const Vec3& pos, unsigned i) : pos(pos), i(i), targetPos(0, 0, 0), d(0) {}
-	inline bool operator<(const SAIStatFormUnit& rhs) const { return d < rhs.d; }
-	inline bool operator>(const SAIStatFormUnit& rhs) const { return d > rhs.d; }
-	Vec3     pos;
-	Vec3     targetPos;
-	float    d;
-	unsigned i;
-};
-
 //===================================================================
 // ProcessBalancedDamage
 //===================================================================
 float CAISystem::ProcessBalancedDamage(IEntity* pShooterEntity, IEntity* pTargetEntity, float damage, const char* damageType)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (!pShooterEntity || !pTargetEntity || !pShooterEntity->HasAI() || !pTargetEntity->HasAI())
 		return damage;
@@ -6281,9 +5077,7 @@ bool CAISystem::GetNearestPunchableObjectPosition(IAIObject* pRef, const Vec3& s
 	PhysicalEntityListAutoPtr entities;
 	unsigned nEntities = GetEntitiesFromAABB(entities, aabb, AICE_DYNAMIC);
 
-	const CPathObstacles& pathAdjustmentObstacles = pPuppet->GetPathAdjustmentObstacles();
-	IAISystem::tNavCapMask navCapMask = pPuppet->GetMovementAbility().pathfindingProperties.navCapMask;
-	const float passRadius = pPuppet->GetParameters().m_fPassRadius;
+	pPuppet->GetPathAdjustmentObstacles();
 
 	Vec3 dirToTarget = targetPos - searchPos;
 	dirToTarget.Normalize();
@@ -6402,80 +5196,6 @@ bool CAISystem::GetNearestPunchableObjectPosition(IAIObject* pRef, const Vec3& s
 	return false;
 }
 
-// NOTE Mai 21, 2007: <pvl> I put this function here because there's no AllNodesContainer.cpp
-// and creating it for a single debugging function that might go away any time seems overkill.
-// It's also too complex in terms of dependencies to go into AllNodesContainer.h .
-// ATTN Mai 21, 2007: <pvl> if something seems strange in this function, it might well be
-// a bug.  This is a piece of debugging code that was written too fast.
-// Update: <mikko> Changed the validation to reflect the changes in hash space code.
-bool CAllNodesContainer::ValidateHashSpace() const
-{
-	std::unique_ptr<Iterator> nodeIt(new Iterator(*this, IAISystem::NAV_WAYPOINT_HUMAN));
-	int numWayptNodes = 0;
-
-	AILogProgress(">>> Validating HashSpace");
-	while (unsigned int nodeIndex = nodeIt->GetNode())
-	{
-		GraphNode* node = gAIEnv.pGraph->GetNodeManager().GetNode(nodeIndex);
-
-		++numWayptNodes;
-
-		typedef std::vector<std::pair<float, unsigned>> TNodes;
-		static TNodes nodes;
-		nodes.resize(0);
-
-		GetAllNodesWithinRange(nodes, node->GetPos(), 0.05f, IAISystem::NAV_WAYPOINT_HUMAN);
-
-		if (nodes.size() > 1)
-			AIWarning("More than one node within 5cm from each other.");
-
-		bool validated = false;
-
-		TNodes::const_iterator it = nodes.begin();
-		TNodes::const_iterator end = nodes.end();
-		for (; it != end; ++it)
-		{
-			if (it->second == nodeIndex)
-			{
-				validated = true;
-				break;
-			}
-		}
-		if (!validated)
-		{
-			AIWarning("HashSpace probably corrupt - a node in a wrong cell!");
-			return false;
-		}
-
-		nodeIt->Increment();
-	}
-	AILogProgress(">>> HashSpace validation: %d waypts in the level", numWayptNodes);
-
-	for (unsigned i = 0, ni = m_hashSpace.GetBucketCount(); i < ni; ++i)
-	{
-		for (unsigned j = 0, nj = m_hashSpace.GetObjectCountInBucket(i); j < nj; ++j)
-		{
-			const SGraphNodeRecord& nodeRec = m_hashSpace.GetObjectInBucket(j, i);
-
-			if (!DoesNodeExist(nodeRec.nodeIndex))
-			{
-				Vec3 nodePos = nodeRec.GetPos(gAIEnv.pGraph->GetNodeManager());
-				AIWarning("HashSpace probably corrupt - contains a node that's not in AllNodesContainer!");
-				AIWarning("  pos = (%5.2f, %5.2f, %5.2f), index = %d", nodePos.x, nodePos.y, nodePos.z, nodeRec.nodeIndex);
-				return false;
-			}
-
-			int ii, jj, kk;
-			m_hashSpace.GetIJKFromPosition(nodeRec.GetPos(gAIEnv.pGraph->GetNodeManager()), ii, jj, kk);
-			unsigned bucket = m_hashSpace.GetHashBucketIndex(ii, jj, kk);
-			if (i != bucket)
-				AIWarning("HashSpace probably corrupt - a node incorrectly assigned to cell!");
-		}
-	}
-
-	return true;
-}
-
 //====================================================================
 // AllocGoalPipeId
 //====================================================================
@@ -6490,20 +5210,18 @@ int CAISystem::AllocGoalPipeId() const
 }
 
 //====================================================================
-// CreateSignalExtraData
+// AISignals
 //====================================================================
-IAISignalExtraData* CAISystem::CreateSignalExtraData() const
+
+AISignals::IAISignalExtraData* CAISystem::CreateSignalExtraData() const
 {
-	return new AISignalExtraData;
+	return new AISignals::AISignalExtraData;
 }
 
-//====================================================================
-// FreeSignalExtraData
-//====================================================================
-void CAISystem::FreeSignalExtraData(IAISignalExtraData* pData) const
+void CAISystem::FreeSignalExtraData(AISignals::IAISignalExtraData* pData) const
 {
 	if (pData)
-		delete (AISignalExtraData*) pData;
+		delete (AISignals::AISignalExtraData*) pData;
 }
 
 //===================================================================
@@ -6529,19 +5247,19 @@ INavigationSystem* CAISystem::GetNavigationSystem() const
 	return gAIEnv.pNavigationSystem;
 }
 
-ISelectionTreeManager* CAISystem::GetSelectionTreeManager() const
+Cry::AI::CollisionAvoidance::ISystem* CAISystem::GetCollisionAvoidanceSystem() const
 {
-	return gAIEnv.pSelectionTreeManager;
+    return gAIEnv.pCollisionAvoidanceSystem;
+}
+
+IAuditionMap* CAISystem::GetAuditionMap() 
+{ 
+	return gAIEnv.pAuditionMap; 
 }
 
 BehaviorTree::IBehaviorTreeManager* CAISystem::GetIBehaviorTreeManager() const
 {
 	return gAIEnv.pBehaviorTreeManager;
-}
-
-BehaviorTree::IGraftManager* CAISystem::GetIGraftManager() const
-{
-	return gAIEnv.pGraftManager;
 }
 
 ITargetTrackManager* CAISystem::GetTargetTrackManager() const
@@ -6562,6 +5280,11 @@ AIActionSequence::ISequenceManager* CAISystem::GetSequenceManager() const
 IClusterDetector* CAISystem::GetClusterDetector() const
 {
 	return gAIEnv.pClusterDetector;
+}
+
+AISignals::ISignalManager* CAISystem::GetSignalManager() const
+{
+	return gAIEnv.pSignalManager;
 }
 
 //===================================================================
@@ -6597,7 +5320,10 @@ string CAISystem::GetPathTypeNames()
 //===================================================================
 bool CAISystem::ParseTables(int firstTable, bool parseMovementAbility, IFunctionHandler* pH, AIObjectParams& aiParams, bool& updateAlways)
 {
-	return m_pScriptAI->ParseTables(firstTable, parseMovementAbility, pH, aiParams, updateAlways);
+	if (m_pScriptAI)
+		return m_pScriptAI->ParseTables(firstTable, parseMovementAbility, pH, aiParams, updateAlways);
+
+	return false;
 }
 
 bool CAISystem::CompareFloatsFPUBugWorkaround(float fLeft, float fRight)
@@ -6656,8 +5382,11 @@ IAIGroupProxyFactory* CAISystem::GetGroupProxyFactory() const
 
 IAIGroupProxy* CAISystem::GetAIGroupProxy(int groupID)
 {
-	const Group& group = gAIEnv.pGroupManager->GetGroup(groupID);
-	return group.GetProxy();
+	if (gAIEnv.pGroupManager)
+	{
+		return gAIEnv.pGroupManager->GetGroup(groupID).GetProxy();
+	}
+	return nullptr;
 }
 
 const ShapeMap& CAISystem::GetGenericShapes() const
@@ -6675,19 +5404,9 @@ const CAISystem::TDamageRegions& CAISystem::GetDamageRegions() const
 	return m_damageRegions;
 }
 
-CPerceptionManager* CAISystem::GetPerceptionManager()
-{
-	return gAIEnv.pPerceptionManager;
-}
-
 CAILightManager* CAISystem::GetLightManager()
 {
 	return &m_lightManager;
-}
-
-CAIDynHideObjectManager* CAISystem::GetDynHideObjectManager()
-{
-	return &m_dynHideObjectManager;
 }
 
 bool CAISystem::IsRecording(const IAIObject* pTarget, IAIRecordable::e_AIDbgEvent event) const
@@ -6723,11 +5442,6 @@ IAIRecorder* CAISystem::GetIAIRecorder()
 INavigation* CAISystem::GetINavigation()
 {
 	return m_pNavigation;
-}
-
-IAIPathFinder* CAISystem::GetIAIPathFinder()
-{
-	return NULL;
 }
 
 IMNMPathfinder* CAISystem::GetMNMPathfinder() const
@@ -6789,6 +5503,99 @@ IAIObjectManager* CAISystem::GetAIObjectManager()
 	return &m_AIObjectManager;
 }
 
+void CAISystem::GetNavigationSeeds(std::vector<std::pair<Vec3, NavigationAgentTypeID>>& seeds)
+{
+	// Filtering accessibility with actors
+	{
+		AutoAIObjectIter itActors(gAIEnv.pAIObjectManager->GetFirstAIObject(OBJFILTER_TYPE, AIOBJECT_ACTOR));
+
+		for (; itActors->GetObject(); itActors->Next())
+		{
+			const IAIObject* pObject = itActors->GetObject();
+			CRY_ASSERT(pObject->CastToCAIActor());
+
+			if (pObject->CastToCAIActor()->GetNavigationTypeID() != NavigationAgentTypeID(0))
+			{
+				seeds.push_back(std::make_pair(pObject->GetEntity()->GetPos(), pObject->CastToCAIActor()->GetNavigationTypeID()));
+			}
+		}
+	}
+
+	// Filtering accessibility with Navigation Seeds
+	{
+		AutoAIObjectIter itNavSeeds(gAIEnv.pAIObjectManager->GetFirstAIObject(OBJFILTER_TYPE, AIOBJECT_NAV_SEED));
+
+		for (; itNavSeeds->GetObject(); itNavSeeds->Next())
+		{
+			if (IEntity* pEntity = itNavSeeds->GetObject()->GetEntity())
+			{
+				seeds.push_back(std::make_pair(pEntity->GetPos(), NavigationAgentTypeID(0)));
+			}
+		}
+	}
+}
+
+bool CAISystem::GetObjectDebugParamsFromName(const char* szObjectName, SObjectDebugParams& outParams)
+{
+	IAIObject* pObject = m_AIObjectManager.GetAIObjectByName(szObjectName);
+	if (!pObject)
+	{
+		return false;
+	}
+
+	outParams.entityId = pObject->GetEntityID();
+	outParams.objectPos = pObject->GetPos();
+	if (IEntity* pEntity = pObject->GetEntity())
+	{
+		outParams.entityPos = pEntity->GetWorldPos();
+	}
+	else
+	{
+		outParams.entityPos = pObject->GetPos();
+	}
+	return true;
+}
+
+bool CAISystem::InitUpdate(const CTimeValue frameStartTime, const float frameDeltaTime)
+{
+	static CTimeValue lastFrameStartTime;
+	if (frameStartTime == lastFrameStartTime)
+		return false;
+
+	lastFrameStartTime = frameStartTime;
+
+	if (!m_bInitialized || !IsEnabled())
+		return false;
+
+	if (!gAIEnv.CVars.AiSystem)
+		return false;
+
+	m_frameStartTime = frameStartTime;
+	m_frameStartTimeSeconds = frameStartTime.GetSeconds();
+	m_frameDeltaTime = frameDeltaTime;
+
+	return true;
+}
+
+bool CAISystem::InitializeSmartObjectsIfNotInitialized()
+{
+	if (m_pSmartObjectManager && !m_pSmartObjectManager->IsInitialized())
+		return InitSmartObjects();
+	return false;
+}
+
+bool CAISystem::ShouldUpdateSubsystem(const IAISystem::ESubsystemUpdateFlag subsystemUpdateFlag, const bool isAutomaticUpdate) const
+{
+	const bool shouldUpdateAutomatic = isAutomaticUpdate && !m_overrideUpdateFlags.Check(subsystemUpdateFlag);
+	const bool shouldUpdateOverride = !isAutomaticUpdate && m_overrideUpdateFlags.Check(subsystemUpdateFlag);
+	const bool shouldUpdate = (shouldUpdateAutomatic || shouldUpdateOverride);
+
+	CRY_ASSERT_MESSAGE(isAutomaticUpdate || m_overrideUpdateFlags.Check(subsystemUpdateFlag),
+		"Tried to manually update IA subsystem %s but UpdateFlags were not overriden. Subsystem will not be updated.", Serialization::getEnumLabel(subsystemUpdateFlag));
+
+	return shouldUpdate;
+}
+
 void CAISystem::ResetAIActorSets(bool clearSets)
 {
 	AIAssert(!m_iteratingActorSet);
@@ -6831,175 +5638,9 @@ void CAISystem::DetachFromTerritoryAllAIObjectsOfType(const char* szTerritoryNam
 	}
 }
 
-void CAISystem::UpdateCollisionAvoidance(const AIActorVector& agents, float updateTime)
-{
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
-
-	gAIEnv.pCollisionAvoidanceSystem->Reset();
-
-	AIActorVector::const_iterator it = agents.begin();
-	AIActorVector::const_iterator end = agents.end();
-
-	float forcedSpeed = gAIEnv.CVars.DebugCollisionAvoidanceForceSpeed;
-	bool useForcedSpeed = fabs_tpl(forcedSpeed) > 0.0001f;
-
-	const float targetCutoff = gAIEnv.CVars.CollisionAvoidanceTargetCutoffRange;
-	const float pathEndCutoff = gAIEnv.CVars.CollisionAvoidancePathEndCutoffRange;
-	const float smartObjectCutoff = gAIEnv.CVars.CollisionAvoidanceSmartObjectCutoffRange;
-
-	const size_t MaxAvoidingAgents = 512;
-	CryFixedArray<CAIActor*, MaxAvoidingAgents> avoidingAgents;
-
-	for (; it != end; ++it)
-	{
-		CAIActor* actor = *it;
-		CPipeUser* pipeUser = actor->CastToCPipeUser();
-
-		IF_UNLIKELY (!IsParticipatingInCollisionAvoidance(actor))
-		{
-			continue;
-		}
-
-		uint16 aiType = actor->GetAIType();
-
-		bool isActor = (aiType == AIOBJECT_ALIENTICK) || (aiType == AIOBJECT_ACTOR) || (aiType == AIOBJECT_INFECTED);
-		bool isMoving = (fabs_tpl(actor->m_State.fDesiredSpeed) > 0.0001f);
-		bool cuttoff = (actor->m_State.fDistanceFromTarget < targetCutoff) ||
-		               (actor->m_State.fDistanceToPathEnd < pathEndCutoff) ||
-		               (pipeUser && pipeUser->GetPendingSmartObjectID() && (actor->m_State.fDistanceToPathEnd < smartObjectCutoff));
-		bool isObstacle = (aiType == AIOBJECT_PLAYER);
-
-		if (isActor && isMoving && !cuttoff && (avoidingAgents.size() < MaxAvoidingAgents))
-		{
-			float minSpeed;
-			float maxSpeed;
-			float normalSpeed;
-
-			actor->GetMovementSpeedRange(actor->m_State.fMovementUrgency, false, normalSpeed, minSpeed, maxSpeed);
-
-			CollisionAvoidanceSystem::Agent agent;
-			agent.radius = actor->m_Parameters.m_fPassRadius + gAIEnv.CVars.CollisionAvoidanceAgentExtraFat;
-			if (gAIEnv.CVars.CollisionAvoidanceEnableRadiusIncrement)
-				agent.radius += actor->m_currentCollisionAvoidanceRadiusIncrement;
-			agent.maxSpeed = min(actor->m_State.fDesiredSpeed, maxSpeed);
-			agent.maxAcceleration = min(agent.maxAcceleration, actor->m_movementAbility.maxAccel);
-			agent.currentLocation = actor->GetPhysicsPos();
-			agent.currentVelocity = Vec2(actor->GetVelocity());
-
-			agent.desiredVelocity = useForcedSpeed ? Vec2(actor->GetMoveDir() * forcedSpeed) :
-			                        Vec2(actor->m_State.vMoveDir * actor->m_State.fDesiredSpeed);
-			agent.currentLookDirection = Vec2(agent.desiredVelocity);
-
-			CollisionAvoidanceSystem::AgentID agentID = gAIEnv.pCollisionAvoidanceSystem->CreateAgent(actor->GetAIObjectID());
-			gAIEnv.pCollisionAvoidanceSystem->SetAgent(agentID, agent);
-
-			avoidingAgents.push_back(actor);
-		}
-		else if (isObstacle || (isActor && (!isMoving || cuttoff)))
-		{
-			CollisionAvoidanceSystem::Obstacle obstacle;
-			obstacle.currentLocation = actor->GetPhysicsPos();
-			obstacle.currentVelocity = Vec2(actor->GetVelocity());
-			obstacle.radius = actor->m_Parameters.m_fPassRadius + gAIEnv.CVars.CollisionAvoidanceAgentExtraFat;
-
-			CollisionAvoidanceSystem::ObstacleID obstacleID = gAIEnv.pCollisionAvoidanceSystem->CreateObstable();
-			gAIEnv.pCollisionAvoidanceSystem->SetObstacle(obstacleID, obstacle);
-		}
-	}
-
-	gAIEnv.pCollisionAvoidanceSystem->Update(updateTime);
-
-	if (gAIEnv.CVars.CollisionAvoidanceUpdateVelocities || gAIEnv.CVars.CollisionAvoidanceEnableRadiusIncrement)
-	{
-		size_t avoidingAgentCount = avoidingAgents.size();
-
-		for (size_t i = 0; i < avoidingAgentCount; ++i)
-		{
-			CAIActor* actor = avoidingAgents[i];
-
-			if (gAIEnv.CVars.CollisionAvoidanceUpdateVelocities)
-			{
-				actor->m_State.allowStrafing = false;
-				actor->ResetBodyTargetDir();
-
-				const Vec2 avoidanceVelocity = gAIEnv.pCollisionAvoidanceSystem->GetAvoidanceVelocity(i);
-
-				const Vec3 currentVelocity(actor->m_State.vMoveDir * actor->m_State.fDesiredSpeed);
-				const Vec3 avoidanceVelocity3D(avoidanceVelocity.x, avoidanceVelocity.y, currentVelocity.z);
-
-				if ((avoidanceVelocity - Vec2(currentVelocity)).GetLength2() >= 0.000001f)
-				{
-					float speedSq = avoidanceVelocity3D.len2();
-
-					if (actor->m_State.bodyOrientationMode != FullyTowardsAimOrLook)
-					{
-						actor->m_State.allowStrafing = true;
-						actor->SetBodyTargetDir(actor->m_State.vMoveDir);
-					}
-
-					if (speedSq > 0.000001f)
-					{
-						float speed = sqrt_tpl(speedSq);
-
-						actor->m_State.vMoveDir = avoidanceVelocity3D / speed;
-						actor->m_State.fDesiredSpeed = speed;
-					}
-					else
-					{
-						actor->m_State.vMoveDir.zero();
-						actor->m_State.fDesiredSpeed = 0.0f;
-					}
-
-					actor->m_State.vMoveTarget.zero();
-				}
-			}
-
-			if (gAIEnv.CVars.CollisionAvoidanceEnableRadiusIncrement)
-			{
-				UpdateCollisionAvoidanceRadiusIncrement(actor, updateTime);
-			}
-		}
-	}
-}
-
 void CAISystem::DummyFunctionNumberOne()
 {
 	cry_strcpy(gEnv->szDebugStatus, "dummyfunctionnumberone");
-}
-
-void CAISystem::UpdateCollisionAvoidanceRadiusIncrement(CAIActor* actor, float updateTime)
-{
-	if (actor->m_State.fDesiredSpeed > 0.5f)
-	{
-		actor->m_currentCollisionAvoidanceRadiusIncrement = min(
-		  actor->m_currentCollisionAvoidanceRadiusIncrement + (actor->m_movementAbility.collisionAvoidanceRadiusIncrement * gAIEnv.CVars.CollisionAvoidanceRadiusIncrementIncreaseRate * updateTime),
-		  actor->m_movementAbility.collisionAvoidanceRadiusIncrement
-		  );
-	}
-	else
-	{
-		actor->m_currentCollisionAvoidanceRadiusIncrement = max(
-		  actor->m_currentCollisionAvoidanceRadiusIncrement - (actor->m_movementAbility.collisionAvoidanceRadiusIncrement * gAIEnv.CVars.CollisionAvoidanceRadiusIncrementDecreaseRate * updateTime),
-		  0.0f
-		  );
-	}
-}
-
-// ===========================================================================
-//	Query if an actor should participate in collision avoidance.
-//
-//	In:		The actor (NULL will abort!)
-//
-//	Returns:	True if participating; otherwise false.
-//
-bool CAISystem::IsParticipatingInCollisionAvoidance(CAIActor* actor) const
-{
-	if (actor != NULL)
-	{
-		return actor->GetMovementAbility().collisionAvoidanceParticipation;
-	}
-
-	return false;
 }
 
 void CAISystem::CallReloadTPSQueriesScript()

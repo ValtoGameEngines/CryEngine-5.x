@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -16,6 +16,7 @@ History:
 #pragma once
 
 #include <IGameObject.h>
+#include <Cry3DEngine/I3DEngine.h>
 
 class CRain : public CGameObjectExtensionHelper<CRain, IGameObjectExtension>
 {
@@ -41,9 +42,9 @@ public:
 	virtual void PostUpdate(float frameTime ) {};
 	virtual void PostRemoteSpawn() {};
 	virtual void HandleEvent( const SGameObjectEvent &);
-	virtual void ProcessEvent(SEntityEvent &);
+	virtual void ProcessEvent(const SEntityEvent& );
+	virtual Cry::Entity::EventFlags GetEventMask() const;
 	virtual void SetChannelId(uint16 id) {}
-	virtual void SetAuthority(bool auth);
 	virtual void GetMemoryUsage(ICrySizer *pSizer) const { pSizer->Add(*this); }
 	
 	//~IGameObjectExtension

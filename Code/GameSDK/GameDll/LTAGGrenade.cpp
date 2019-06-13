@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -506,7 +506,6 @@ void CLTAGGrenade::OnCollision(const SGameObjectEvent &event)
 		return;
 
 	int trgId = 1;
-	int srcId = 0;
 	IPhysicalEntity *pTarget = pCollision->pEntity[trgId];
 	IEntity* pTargetEntity = pTarget ? gEnv->pEntitySystem->GetEntityFromPhysics(pTarget) : 0;
 	IActor* pHitActor =

@@ -1,11 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  Created:     02/10/2015 by Benjamin Block
-//  Description:
-// -------------------------------------------------------------------------
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -17,7 +10,7 @@ namespace gpu_pfx2
 
 struct CLocalEffector
 {
-	virtual ~CLocalEffector() {};
+	virtual ~CLocalEffector() {}
 	virtual void Update(const gpu_pfx2::SUpdateContext& context) = 0;
 	virtual void Initialize() = 0;
 };

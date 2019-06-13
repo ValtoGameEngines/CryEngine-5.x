@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -6,7 +6,7 @@
 #include <CrySerialization/yasli/Serializer.h>
 #include <CrySerialization/yasli/KeyValue.h>
 
-#if defined(__GNUC__)
+#if defined(CRY_COMPILER_GCC)
 // Reinforce GCC's linker to properly export missing symbols (yasli::Serialize etc.)
 // into CrySystem library:
 	#include <CrySerialization/yasli/ClassFactory.h>

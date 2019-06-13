@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -77,7 +77,6 @@ bool CGameRulesStandardScoring::NetSerialize( TSerialize ser, EEntityAspects asp
 {
 	if (aspect == STANDARD_SCORING_STATE_ASPECT)
 	{
-		int deathScoringModifierWas=m_deathScoringModifier;
 		ser.Value("deathScoreModifier", m_deathScoringModifier, 'ui10'); // max 1023
 	}
 

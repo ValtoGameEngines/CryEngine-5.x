@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 
@@ -16,6 +16,7 @@ History:
 
 #pragma once
 
+#include "GameCVars.h"
 #include "IActionMapManager.h"
 #include "IPlayerInput.h"
 #include "Player.h"

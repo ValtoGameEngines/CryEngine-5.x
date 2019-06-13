@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef physicalentity_h
 #define physicalentity_h
@@ -9,6 +9,37 @@
 struct SRayTraceRes;
 
 #include <CryNetwork/ISerialize.h>
+
+struct SMemSerializer : ISerialize {
+	SMemSerializer(int size0=256) { buf=new char[size=size0]; pos=0; reading=false; }
+	SMemSerializer(char *buf0, bool read=true) { buf=buf0; size=-1; pos=0; reading=read; }
+	virtual ~SMemSerializer() { if (size>0) delete[] buf; }
+	virtual void ReadStringValue(const char * name, SSerializeString &curValue, uint32 policy=0) {}
+	virtual void WriteStringValue(const char * name, SSerializeString& buffer, uint32 policy=0) {}
+	virtual void Update( ISerializeUpdateFunction * pUpdate ) {}
+	virtual void FlagPartialRead() {}
+	virtual void BeginGroup( const char * szName ) {}
+	virtual bool BeginOptionalGroup(const char* szName, bool condition) { Value(szName, condition); return condition; }
+	virtual void EndGroup() {}
+	virtual bool IsReading() const { return reading!=0; }
+	virtual bool ShouldCommitValues() const { return true; }
+	virtual ESerializationTarget GetSerializationTarget() const { return eST_SaveGame; }
+	virtual bool Ok() const { return true; }
+#define SERIALIZATION_TYPE(T) \
+	virtual void Value( const char * name, T& x, uint32 policy=0 ) { \
+		if (pos+sizeof(T)>(unsigned int)size) { ReallocateList(buf,size,size+256); size+=256; } \
+		T *op[2]; op[reading]=(T*)(buf+pos); op[reading^1]=&x; *op[0]=*op[1]; pos+=sizeof(T); \
+	}
+#include <CryNetwork/SerializationTypes.h>
+#undef SERIALIZATION_TYPE
+#define SERIALIZATION_TYPE(T) virtual void ValueWithDefault( const char * name, T& x, const T& defaultValue ) { Value(name,x); }
+#include <CryNetwork/SerializationTypes.h>
+#undef SERIALIZATION_TYPE
+	virtual void ValueWithDefault( const char * name, SSerializeString& x, const SSerializeString& defaultValue ) {}
+	int reading;
+	char* buf;
+	int pos,size;
+};
 
 enum phentity_flags_int { 
 	pef_use_geom_callbacks = 0x20000000,
@@ -190,6 +221,7 @@ public:
 	explicit CPhysicalEntity(CPhysicalWorld *pworld, IGeneralMemoryHeap* pHeap = NULL);
 	virtual ~CPhysicalEntity();
 	virtual pe_type GetType() const { return PE_STATIC; }
+	virtual bool IsPlaceholder() const { return false; }
 
 	virtual void Delete();
 
@@ -203,7 +235,7 @@ public:
 	virtual int AddGeometry(phys_geometry *pgeom, pe_geomparams* params,int id=-1,int bThreadSafe=1);
 	virtual void RemoveGeometry(int id,int bThreadSafe=1);
 	virtual float GetExtent(EGeomForm eForm) const;
-	virtual void GetRandomPos(PosNorm& ran, CRndGen& seed, EGeomForm eForm) const;
+	virtual void GetRandomPoints(Array<PosNorm> points, CRndGen& seed, EGeomForm eForm) const;
 	virtual IPhysicalWorld *GetWorld() const { return (IPhysicalWorld*)m_pWorld; }
   virtual CPhysicalEntity *GetEntity();
 	virtual CPhysicalEntity *GetEntityFast() { return this; }
@@ -212,7 +244,7 @@ public:
 	virtual float GetMaxTimeStep(float time_interval) { return time_interval; }
 	virtual float GetLastTimeStep(float time_interval) { return time_interval; }
 	virtual int Step(float time_interval) { return 1; }
-	virtual int DoStep(float time_interval, int iCaller=0) { return 1; }
+	virtual int DoStep(float time_interval, int iCaller=0) { return Step(time_interval); }
 	virtual void StepBack(float time_interval) {} 
 	virtual int GetContactCount(int nMaxPlaneContacts) { return 0; }
 	virtual int RegisterContacts(float time_interval,int nMaxPlaneContacts) { return 0; }
@@ -222,6 +254,7 @@ public:
 	virtual float GetMaxFriction() { return 100.0f; }
 	virtual bool IgnoreCollisionsWith(const CPhysicalEntity *pent, int bCheckConstraints=0) const { return false; }
 	virtual void GetSleepSpeedChange(int ipart, Vec3 &v,Vec3 &w) { v.zero(); w.zero(); }
+	virtual void OnHostSync(CPhysicalEntity *pHost) {}
 
 	virtual int AddCollider(CPhysicalEntity *pCollider);
 	virtual int AddColliderNoLock(CPhysicalEntity *pCollider) { return AddCollider(pCollider); }
@@ -247,21 +280,15 @@ public:
 
 	virtual class RigidBody *GetRigidBody(int ipart=-1,int bWillModify=0);
 	virtual class RigidBody *GetRigidBodyData(RigidBody *pbody, int ipart=-1) { return GetRigidBody(ipart); }
+	inline class RigidBody *GetRigidBodyTrans(RigidBody *pbody, int ipart, CPhysicalEntity *trg, int type=0, bool needIinv=false);
 	virtual float GetMass(int ipart) { return m_parts[ipart].mass; }
-	virtual void GetContactMatrix(const Vec3 &pt, int ipart, Matrix33 &K) {}
 	virtual void GetSpatialContactMatrix(const Vec3 &pt, int ipart, float Ibuf[][6]) {}
 	virtual float GetMassInv() { return 0; }
-	virtual int IsPointInside(Vec3 pt) const;
-	virtual void GetLocTransform(int ipart, Vec3 &offs, quaternionf &q, float &scale) {
-		if ((unsigned int)ipart<(unsigned int)m_nParts) {
-			q = m_qrot*m_parts[ipart].q;
-			offs = m_qrot*m_parts[ipart].pos + m_pos;
-			scale = m_parts[ipart].scale;
-		} else {
-			q.SetIdentity(); offs.zero(); scale=1.0f;
-		}
-	}
-	virtual void GetLocTransformLerped(int ipart, Vec3 &offs, quaternionf &q, float &scale, float timeBack) {	GetLocTransform(ipart,offs,q,scale); }
+	virtual int IsPointInside(Vec3 pt) const;																						
+	template<typename Rot> void GetPartTransform(int ipart, Vec3 &offs, Rot &R, float &scale, const CPhysicalPlaceholder *trg) const;
+	template<typename CTrg> Vec3* GetPartBBox(int ipart, Vec3* BBox, const CTrg *trg) const;
+	virtual void GetLocTransform(int ipart, Vec3 &offs, quaternionf &q, float &scale, const CPhysicalPlaceholder *trg) const;
+	virtual void GetLocTransformLerped(int ipart, Vec3 &offs, quaternionf &q, float &scale, float timeBack, const CPhysicalPlaceholder *trg) const { GetLocTransform(ipart,offs,q,scale,trg); }
 	virtual void DetachPartContacts(int ipart,int iop0, CPhysicalEntity *pent,int iop1, int bCheckIfEmpty=1) {}
 	int TouchesSphere(const Vec3 &center, float r);
 
@@ -354,14 +381,14 @@ public:
 
 	Vec3 m_pos;
 	quaternionf m_qrot;
-	coord_block *m_pNewCoords;
+	coord_block *m_pNewCoords, *m_pSyncCoords;
 
 	CPhysicalEntity **m_pColliders;
 	int m_nColliders,m_nCollidersAlloc;
+	int m_nSyncColliders;
 	mutable volatile int m_lockColliders;
 
 	CPhysicalEntity *m_pOuterEntity;
-	CGeometry *m_pBoundingGeometry;
 	int m_bProcessed_aux;
 
 	SCollisionClass m_collisionClass;
@@ -383,7 +410,11 @@ public:
 	int m_nGroundPlanes;
 
 	int (*m_pUsedParts)[16];
-	volatile unsigned int m_nUsedParts;
+	volatile uint64 m_nUsedParts;
+
+	CPhysicalPlaceholder *m_pLastPortal = nullptr;
+	CPhysicalPlaceholder *GetLastPortal() const { return m_pLastPortal; }
+	void SetLastPortal(CPhysicalPlaceholder *portal) { m_pLastPortal = portal; }
 
 	SStructureInfo *m_pStructure;
 	static SPartHelper *g_parts;

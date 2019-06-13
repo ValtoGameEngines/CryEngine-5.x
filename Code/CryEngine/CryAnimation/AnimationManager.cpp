@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "AnimationManager.h"
@@ -15,6 +15,7 @@
 #include "Model.h"
 #include <CryString/StringUtils.h>
 #include <CryString/CryPath.h>
+#include <CryRenderer/IRenderAuxGeom.h>
 
 int CAnimationManager::GetGlobalIDbyFilePath_CAF(const char* szAnimFileName) const
 {
@@ -143,7 +144,7 @@ bool CAnimationManager::LoadAnimationTCB(int nAnimId, DynArray<CControllerTCB>& 
 		return 0;
 	const CDefaultSkeleton* pDefaultSkeleton = (const CDefaultSkeleton*)pIDefaultSkeleton;
 
-	LOADING_TIME_PROFILE_SECTION(g_pISystem);
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY)(g_pISystem);
 
 	GlobalAnimationHeaderCAF& rGlobalAnim = m_arrGlobalCAF[nAnimId];
 	int32 nStartKey = pCGA->m_start;
@@ -873,18 +874,14 @@ bool AnimSearchHelper::AddAnimation(uint32 crc, uint32 gahIndex)
 void AnimSearchHelper::AddAnimation(const string& path, uint32 gahIndex)
 {
 	stack_string pathDir = PathUtil::GetPathWithoutFilename(path);
-	PathUtil::ToUnixPath(pathDir);
-	if (strcmp(pathDir, "animations/human/male/behavior/fear/") == 0)
-		int A = 0;
-	if (strcmp(pathDir, "animations\\human\\male\\behavior\\fear\\") == 0)
-		int A = 0;
+	stack_string const unixPath = PathUtil::ToUnixPath(pathDir);
 
-	uint32 crc = CCrc32::ComputeLowercase(pathDir);
+	uint32 crc = CCrc32::ComputeLowercase(unixPath);
 	if (AddAnimation(crc, gahIndex))
 	{
-		for (int32 lastSlashPos = pathDir.rfind('/'); lastSlashPos >= 0; lastSlashPos = pathDir.rfind('/', lastSlashPos - 1))
+		for (int32 lastSlashPos = unixPath.rfind('/'); lastSlashPos >= 0; lastSlashPos = unixPath.rfind('/', lastSlashPos - 1))
 		{
-			uint32 parentDirCRC = CCrc32::ComputeLowercase(pathDir, lastSlashPos + 1);
+			uint32 parentDirCRC = CCrc32::ComputeLowercase(unixPath, size_t(lastSlashPos + 1), 0);
 			TSubFolderCrCVector* pSubFolderVec = NULL;
 			TSubFoldersMap::iterator parentFolderIter = m_SubFoldersMap.find(parentDirCRC);
 			if (parentFolderIter == m_SubFoldersMap.end())
@@ -997,7 +994,6 @@ void CAnimationManager::DebugAnimUsage(uint32 printtxt)
 		{
 			m_arrGlobalHeaderDBA[b].m_nEmpty = 0;
 			const char* pName = m_arrGlobalHeaderDBA[b].m_strFilePathDBA;
-			uint32 nDBACRC32 = m_arrGlobalHeaderDBA[b].m_FilePathDBACRC32;
 			uint32 nUsedAssets = m_arrGlobalHeaderDBA[b].m_nUsedAnimations;
 			size_t nSizeOfDBA = m_arrGlobalHeaderDBA[b].SizeOf_DBA();
 			uint32 nLastUsedTimeSec = m_arrGlobalHeaderDBA[b].m_nLastUsedTimeDelta / 1000;
@@ -1068,6 +1064,11 @@ void CAnimationManager::DebugAnimUsage(uint32 printtxt)
 		g_YLine += 16.0f;
 	}
 
+	constexpr uint32 kDisplayCafUsageMask    = BIT(1);
+	constexpr uint32 kDumpCafUsageMask       = BIT(2);
+	constexpr uint32 kDisplayBSpaceUsageMask = BIT(3);
+	constexpr uint32 kDumpBSpaceUsageMask    = BIT(4);
+
 	uint32 nUsedCAFs = 0;
 	{
 		uint32 numCAF = m_arrGlobalCAF.size();
@@ -1092,13 +1093,13 @@ void CAnimationManager::DebugAnimUsage(uint32 printtxt)
 
 				uint32 nRef_at_Runtime = m_arrGlobalCAF[i].m_nRef_at_Runtime;
 
-				if (printtxt && Console::GetInst().ca_DebugAnimUsage == 2)
+				if (printtxt && Console::GetInst().ca_DebugAnimUsage & kDisplayCafUsageMask)
 				{
 					g_pAuxGeom->Draw2dLabel(1, g_YLine, 1.1f, fGreen, false, "CafInMemory: %7d ref: %5d FilePath: %s", nSizeOfCAF, nRef_at_Runtime, m_arrGlobalCAF[i].GetFilePath());
 					g_YLine += 11.0f;
 				}
 
-				if (printtxt && Console::GetInst().ca_DebugAnimUsage & 4)
+				if (printtxt && Console::GetInst().ca_DebugAnimUsage & kDumpCafUsageMask)
 				{
 					CryLogAlways("CafInMemory: %07u FilePath: %s", nSizeOfCAF, m_arrGlobalCAF[i].GetFilePath());
 				}
@@ -1106,10 +1107,10 @@ void CAnimationManager::DebugAnimUsage(uint32 printtxt)
 			nUsedCAFs += (m_arrGlobalCAF[i].m_nTouchedCounter != 0);
 		}
 
-		if (printtxt && Console::GetInst().ca_DebugAnimUsage & 4)
+		if (printtxt && Console::GetInst().ca_DebugAnimUsage & kDumpCafUsageMask)
 		{
 			CryLogAlways("nSizeOfLoadedKeys: %07u", nSizeOfLoadedKeys);
-			Console::GetInst().ca_DebugAnimUsage &= 3;
+			Console::GetInst().ca_DebugAnimUsage &= ~kDumpCafUsageMask;
 		}
 		if (printtxt)
 		{
@@ -1159,6 +1160,28 @@ void CAnimationManager::DebugAnimUsage(uint32 printtxt)
 		{
 			g_pAuxGeom->Draw2dLabel(1, g_YLine, 2.0f, fRed, false, "Blendspace: %04d    Loaded: %04d    Used: %04d  Memory: %05" PRISIZE_T "KBytes", nNumHeaders, nLoaded, nUsed, nSize / 1024);
 			g_YLine += 16.0f;
+
+			if (Console::GetInst().ca_DebugAnimUsage & kDisplayBSpaceUsageMask || Console::GetInst().ca_DebugAnimUsage & kDumpBSpaceUsageMask)
+			{
+				for (uint32 i = 0; i < nNumHeaders; i++)
+				{
+					if (m_arrGlobalLMG[i].m_nTouchedCounter != 0)
+					{
+						g_pAuxGeom->Draw2dLabel(1, g_YLine, 1.1f, fGreen, false, "FilePath: %s  ref: %5d  Memory: %05 KBytes", m_arrGlobalLMG[i].GetFilePath(), m_arrGlobalLMG[i].m_nTouchedCounter, m_arrGlobalLMG[i].SizeOfLMG() / 1024);
+						g_YLine += 11.0f;
+
+						if (Console::GetInst().ca_DebugAnimUsage & kDumpBSpaceUsageMask)
+						{
+							CryLogAlways("FilePath: %s  ref: %5d  Memory: %05 KBytes", m_arrGlobalLMG[i].GetFilePath(), m_arrGlobalLMG[i].m_nTouchedCounter, m_arrGlobalLMG[i].SizeOfLMG() / 1024);
+						}
+					}
+				}
+
+				if (Console::GetInst().ca_DebugAnimUsage & kDumpBSpaceUsageMask)
+				{
+					Console::GetInst().ca_DebugAnimUsage &= ~kDumpBSpaceUsageMask;
+				}
+			}
 		}
 		nAnimationManager += nSize;
 	}

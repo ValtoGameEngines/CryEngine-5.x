@@ -1,10 +1,6 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// -------------------------------------------------------------------------
-//  File name:   AnimKey.h
-//  Created:     22/4/2002 by Timur.
-//
-////////////////////////////////////////////////////////////////////////////
+//! \cond INTERNAL
 
 #pragma once
 
@@ -12,7 +8,6 @@
 #include <CrySystem/File/ICryPak.h> // <> required for Interfuscator
 #include <CrySystem/ILocalizationManager.h>
 #include <CryMath/Bezier.h>
-#include <CryAudio/IAudioInterfacesCommonData.h>
 #include <CryAudio/IAudioSystem.h>
 #include <CryMovie/AnimTime.h>
 
@@ -21,6 +16,7 @@
 #include <CrySerialization/Enum.h>
 #include <CrySerialization/Color.h>
 #include <CrySerialization/Math.h>
+#include <CrySerialization/CryStrings.h>
 #include <CrySerialization/Decorators/Resources.h>
 #include <CrySerialization/Decorators/ResourceFolderPath.h>
 #include <CrySerialization/Decorators/ResourceFilePath.h>
@@ -166,27 +162,27 @@ struct SCameraKey : public STrackKey
 {
 	SCameraKey() : m_blendTime(0.0f)
 	{
-		m_selection[0] = 0;
+		m_cameraDesc[0] = 0;
 	}
 
 	static const char* GetType()              { return "Camera"; }
-	const char*        GetDescription() const { return m_selection; }
+	const char*        GetDescription() const { return m_cameraDesc; }
 
 	void               Serialize(Serialization::IArchive& ar)
 	{
 		STrackKey::Serialize(ar);
 
-		string selection(m_selection);
-		ar(Serialization::SequenceCameraPicker(selection), "selection", "Selection");
+		string cameraDesc(m_cameraDesc);
+		ar(Serialization::SequenceCameraPicker(cameraDesc), "camera", "Camera");
 
 		if (ar.isInput())
-			cry_strcpy(m_selection, selection.c_str());
+			cry_strcpy(m_cameraDesc, cameraDesc.c_str());
 
 		ar(m_blendTime, "blendTime", "Blend Time");
 	}
 
 	float m_blendTime;
-	char  m_selection[128]; // Node name.
+	char  m_cameraDesc[128]; // Node name.
 };
 
 struct SFaceSequenceKey : public STrackDurationKey
@@ -282,8 +278,8 @@ struct SAudioTriggerKey : public STrackDurationKey
 
 		if (ar.isInput())
 		{
-			gEnv->pAudioSystem->GetAudioTriggerId(m_startTriggerName.c_str(), m_startTriggerId);
-			gEnv->pAudioSystem->GetAudioTriggerId(m_stopTriggerName.c_str(), m_stopTriggerId);
+			m_startTriggerId = CryAudio::StringToId(m_startTriggerName.c_str());
+			m_stopTriggerId = CryAudio::StringToId(m_stopTriggerName.c_str());
 		}
 	}
 
@@ -292,55 +288,6 @@ struct SAudioTriggerKey : public STrackDurationKey
 	string              m_keyDescription;
 	CryAudio::ControlId m_startTriggerId;
 	CryAudio::ControlId m_stopTriggerId;
-};
-
-/** SAudioFileKey used in audio file track.
- */
-struct SAudioFileKey : public STrackDurationKey
-{
-	SAudioFileKey()
-		: STrackDurationKey()
-		, m_bIsLocalized(false)
-		, m_bNoTriggerInScrubbing(false)
-	{}
-
-	static const char* GetType()              { return "AudioFile"; }
-	const char*        GetDescription() const { return m_audioFile; }
-
-	void               Serialize(Serialization::IArchive& ar)
-	{
-		STrackKey::Serialize(ar);
-
-		ar(Serialization::SoundFilename(m_audioFile), "file", "Audio File");
-		ar(m_bIsLocalized, "isLocalized", "Localized");
-		ar(m_bNoTriggerInScrubbing, "noTriggerInScrubbing", "No Trigger in Scrubbing");
-
-		if (!PathUtil::GetFileName(m_audioFile).empty())
-		{
-			int pathLength = m_audioFile.find(PathUtil::GetGameFolder());
-			const string tempFilePath = (pathLength == -1) ? PathUtil::GetGameFolder() + CRY_NATIVE_PATH_SEPSTR + m_audioFile : m_audioFile;
-
-			CryAudio::SFileData audioData;
-			gEnv->pAudioSystem->GetAudioFileData(tempFilePath.c_str(), audioData);
-			m_duration = audioData.duration;
-		}
-		else
-		{
-			if (m_bIsLocalized)
-			{
-				const char* szLanguage = gEnv->pSystem->GetLocalizationManager()->GetLanguage();
-				m_audioFile = PathUtil::GetGameFolder() + CRY_NATIVE_PATH_SEPSTR + PathUtil::GetLocalizationFolder() + CRY_NATIVE_PATH_SEPSTR + szLanguage + CRY_NATIVE_PATH_SEPSTR;
-			}
-			else
-			{
-				m_audioFile = PathUtil::GetGameFolder() + CRY_NATIVE_PATH_SEPSTR;
-			}
-		}
-	}
-
-	string m_audioFile;
-	bool   m_bIsLocalized;
-	bool   m_bNoTriggerInScrubbing;
 };
 
 /** SAudioSwitchKey used in CAudioSwitchTrack
@@ -361,12 +308,12 @@ struct SAudioSwitchKey : public STrackKey
 		STrackKey::Serialize(ar);
 
 		ar(Serialization::AudioSwitch(m_audioSwitchName), "switchName", "Switch Name");
-		ar(Serialization::AudioSwitchState(m_audioSwitchStateName), "switchState", "Switch State");
+		ar(Serialization::AudioState(m_audioSwitchStateName), "switchState", "Switch State");
 
 		if (ar.isInput())
 		{
-			gEnv->pAudioSystem->GetAudioSwitchId(m_audioSwitchName.c_str(), m_audioSwitchId);
-			gEnv->pAudioSystem->GetAudioSwitchStateId(m_audioSwitchId, m_audioSwitchStateName.c_str(), m_audioSwitchStateId);
+			m_audioSwitchId = CryAudio::StringToId(m_audioSwitchName.c_str());
+			m_audioSwitchStateId = CryAudio::StringToId(m_audioSwitchStateName.c_str());
 		}
 
 		m_keyDescription.Format("%s : %s", m_audioSwitchName.c_str(), m_audioSwitchStateName.c_str());
@@ -411,7 +358,7 @@ struct SDynamicResponseSignalKey : public STrackKey
 struct SCharacterKey : public STimeRangeKey
 {
 	SCharacterKey()
-		: m_animDuration(0.0f)
+		: m_defaultAnimDuration(0.0f)
 		, m_bBlendGap(false)
 		, m_bUnload(false)
 		, m_bInPlace(false)
@@ -434,20 +381,44 @@ struct SCharacterKey : public STimeRangeKey
 		ar(m_bBlendGap, "blendGap", "Blend Gap");
 		ar(m_bUnload, "unload", "Unload");
 		ar(m_bInPlace, "inPlace", "In Place");
+		ar(m_defaultAnimDuration, "defaultAnimDuration", "Default Animation Duration");
 	}
 
 	float GetMaxEndTime() const
 	{
-		if (m_endTime == 0.0f || (!m_bLoop && m_endTime > m_animDuration))
+		if (m_endTime == 0.0f || (!m_bLoop && m_endTime > GetAnimDuration()))
 		{
-			return m_animDuration;
+			return GetAnimDuration();
 		}
 
 		return m_endTime;
 	}
 
+	float GetCroppedAnimDuration() const
+	{
+		if ((m_startTime > 0.0f) && (m_endTime > 0.0f))
+		{
+			return (m_startTime < m_endTime) ? m_endTime - m_startTime : 0.0f;
+		}
+		else if (m_startTime > 0.0f)
+		{
+			return max(0.0f, m_defaultAnimDuration - m_startTime);
+		}
+		else if (m_endTime > 0.0f)
+		{
+			return min(m_defaultAnimDuration, m_endTime);
+		}
+
+		return m_defaultAnimDuration;
+	}
+
+	float GetAnimDuration() const
+	{
+		return m_defaultAnimDuration;
+	}
+
 	char  m_animation[64]; // Name of character animation needed for animation system.
-	float m_animDuration;  // Caches the duration of the referenced animation
+	float m_defaultAnimDuration;  // Caches the duration of the referenced animation
 	bool  m_bBlendGap;     // True if gap to next animation should be blended
 	bool  m_bUnload;       // Unload after sequence is finished
 	bool  m_bInPlace;      // Play animation in place (Do not move root).
@@ -684,6 +655,7 @@ struct SCaptureFormatInfo
 	{
 		eCaptureFormat_TGA,
 		eCaptureFormat_JPEG,
+		eCaptureFormat_PNG,
 		eCaptureFormat_Num
 	};
 
@@ -692,10 +664,11 @@ struct SCaptureFormatInfo
 		const char* captureFormatNames[eCaptureFormat_Num] =
 		{
 			"tga",
-			"jpg"
+			"jpg",
+			"png"
 		};
 		return captureFormatNames[captureFormat];
-	};
+	}
 
 	static ECaptureFileFormat GetCaptureFormatByExtension(const char* szFormatName)
 	{
@@ -709,7 +682,7 @@ struct SCaptureFormatInfo
 		}
 		CryLog("Can't find specified capture format: %s - reverting to %s", szFormatName, GetCaptureFormatExtension(eCaptureFormat_TGA));
 		return eCaptureFormat_TGA;
-	};
+	}
 
 	enum ECaptureBuffer
 	{
@@ -724,7 +697,7 @@ struct SCaptureFormatInfo
 			"Color"
 		};
 		return captureBufferNames[captureBuffer];
-	};
+	}
 
 	static ECaptureBuffer GetCaptureBufferByName(const char* szBufferName)
 	{
@@ -738,7 +711,7 @@ struct SCaptureFormatInfo
 		}
 		CryLog("Can't find specified capture buffer type: %s - reverting to %s", szBufferName, GetCaptureBufferName(eCaptureBuffer_Color));
 		return eCaptureBuffer_Color;
-	};
+	}
 };
 
 struct SCaptureKey : public STrackDurationKey
@@ -750,9 +723,6 @@ struct SCaptureKey : public STrackDurationKey
 		, m_bufferToCapture(SCaptureFormatInfo::eCaptureBuffer_Color)
 		, m_captureFormat(SCaptureFormatInfo::eCaptureFormat_TGA)
 	{
-		memset(m_folder, 0, sizeof(m_folder));
-		memset(m_prefix, 0, sizeof(m_prefix));
-
 		if (m_frameRate > 0)
 		{
 			m_timeStep = 1.0f / m_frameRate;
@@ -761,13 +731,13 @@ struct SCaptureKey : public STrackDurationKey
 		ICVar* pCaptureFolderCVar = gEnv->pConsole->GetCVar("capture_folder");
 		if (pCaptureFolderCVar && pCaptureFolderCVar->GetString())
 		{
-			cry_strcpy(m_folder, pCaptureFolderCVar->GetString());
+			m_folder = pCaptureFolderCVar->GetString();
 		}
 
 		ICVar* pCaptureFilePrefixCVar = gEnv->pConsole->GetCVar("capture_file_prefix");
 		if (pCaptureFilePrefixCVar && pCaptureFilePrefixCVar->GetString())
 		{
-			cry_strcpy(m_prefix, pCaptureFilePrefixCVar->GetString());
+			m_prefix = pCaptureFilePrefixCVar->GetString();
 		}
 
 		ICVar* pCaptureFileFormatCVar = gEnv->pConsole->GetCVar("capture_file_format");
@@ -782,11 +752,11 @@ struct SCaptureKey : public STrackDurationKey
 		, m_bOnce(other.m_bOnce)
 		, m_timeStep(other.m_timeStep)
 		, m_frameRate(other.m_frameRate)
+		, m_folder(other.m_folder)
+		, m_prefix(other.m_prefix)
 		, m_bufferToCapture(other.m_bufferToCapture)
 		, m_captureFormat(other.m_captureFormat)
 	{
-		cry_strcpy(m_folder, other.m_folder);
-		cry_strcpy(m_prefix, other.m_prefix);
 	}
 
 	int                GetDurationInFrames() const  { return m_duration.GetTicks() / (SAnimTime::numTicksPerSecond / (m_frameRate > 0 ? m_frameRate : 1)); }
@@ -804,28 +774,30 @@ struct SCaptureKey : public STrackDurationKey
 			m_timeStep = (1.0f / m_frameRate);
 		}
 
-		string tempFolder = m_folder;
-		size_t pathLength = tempFolder.find(PathUtil::GetGameFolder());
-		string captureFolder = (pathLength == string::npos) ? PathUtil::GetGameFolder() + CRY_NATIVE_PATH_SEPSTR + m_folder : m_folder;
-
+		const size_t pathLength = m_folder.find(PathUtil::GetGameFolder());
+		string captureFolder;
+		if (pathLength == CryPathString::npos)
+		{
+			captureFolder = PathUtil::GetGameFolder() + CRY_NATIVE_PATH_SEPSTR + m_folder.c_str();
+		}
+		else
+		{
+			captureFolder = m_folder.c_str();
+		}
 		ar(Serialization::ResourceFolderPath(captureFolder, ""), "folder", "Folder");
-		cry_strcpy(m_folder, captureFolder.c_str(), captureFolder.length());
+		m_folder = captureFolder;
 
 		ar(m_captureFormat, "format", "Format");
 		ar(m_bOnce, "once", "Once");
-
-		string prefix(m_prefix);
-		ar(prefix, "prefix", "Prefix");
-		cry_strcpy(m_prefix, prefix.c_str(), prefix.length());
-
+		::Serialize(ar, m_prefix, "prefix", "Prefix");
 		ar(m_bufferToCapture, "bufferToCapture", "Buffer to Capture");
 	}
 
 	bool                                   m_bOnce;
 	float                                  m_timeStep;
 	uint                                   m_frameRate;
-	char                                   m_folder[ICryPak::g_nMaxPath];
-	char                                   m_prefix[ICryPak::g_nMaxPath / 4];
+	CryPathString                          m_folder;
+	CryPathString                          m_prefix;
 	SCaptureFormatInfo::ECaptureBuffer     m_bufferToCapture;
 	SCaptureFormatInfo::ECaptureFileFormat m_captureFormat;
 };
@@ -837,23 +809,16 @@ struct SBoolKey : public STrackKey
 	{
 		STrackKey::Serialize(ar);
 	}
-
-	SBoolKey() {};
 };
 
 struct SCommentKey : public STrackDurationKey
 {
-	enum ETextAlign
+	enum ETextAlign : uint32
 	{
 		eTA_Left   = 0,
-		eTA_Center = BIT(1),
-		eTA_Right  = BIT(2)
+		eTA_Center = BIT32(1),
+		eTA_Right  = BIT32(2)
 	};
-
-	SCommentKey() : m_size(1.f), m_align(eTA_Left), m_color(Vec3(1.0f, 1.0f, 1.0f))
-	{
-		cry_strcpy(m_font, "default");
-	}
 
 	static const char* GetType()              { return "Comment"; }
 	const char*        GetDescription() const { return m_comment.c_str(); }
@@ -881,11 +846,11 @@ struct SCommentKey : public STrackDurationKey
 		ar(m_align, "align", "Align");
 	}
 
-	string     m_comment;
+	string     m_comment = {"default"};
 	char       m_font[64];
-	Vec3       m_color;
-	float      m_size;
-	ETextAlign m_align;
+	Vec3       m_color = {1.0f, 1.0f, 1.0f};
+	float      m_size = 1.f;
+	ETextAlign m_align = eTA_Left;
 };
 
 struct SScreenFaderKey : public STrackKey
@@ -905,16 +870,17 @@ struct SScreenFaderKey : public STrackKey
 		eFCT_Sin         = 4
 	};
 
-	SScreenFaderKey() : STrackKey(), m_fadeTime(2.f), m_bUseCurColor(true), m_fadeType(eFT_FadeOut),
-		m_fadeChangeType(eFCT_Linear), m_fadeColor(Vec4(0.0f, 0.0f, 0.0f, 1.0f))
+	SScreenFaderKey() : STrackKey(), m_fadeTime(2.f), m_fadeColor(Vec4(0.0f, 0.0f, 0.0f, 1.0f)),
+		m_bUseCurColor(true), m_fadeType(eFT_FadeOut),
+		m_fadeChangeType(eFCT_Linear)
 	{
 		m_texture[0] = 0;
 	}
 
 	SScreenFaderKey(const SScreenFaderKey& other)
-		: STrackKey(other), m_fadeTime(other.m_fadeTime), m_bUseCurColor(other.m_bUseCurColor),
-		m_fadeType(other.m_fadeType), m_fadeChangeType(other.m_fadeChangeType),
-		m_fadeColor(other.m_fadeColor)
+		: STrackKey(other), m_fadeTime(other.m_fadeTime), m_fadeColor(other.m_fadeColor),
+		  m_bUseCurColor(other.m_bUseCurColor),	m_fadeType(other.m_fadeType),
+		  m_fadeChangeType(other.m_fadeChangeType)
 	{
 		cry_strcpy(m_texture, other.m_texture);
 	}
@@ -1008,3 +974,5 @@ inline bool Serialize(Serialization::IArchive& ar, _smart_ptr<IAnimKeyWrapper>& 
 #define SERIALIZATION_ANIM_KEY(type)                     \
   typedef SAnimKeyWrapper<type> SAnimKeyWrapper ## type; \
   REGISTER_IN_INTRUSIVE_FACTORY(IAnimKeyWrapper, SAnimKeyWrapper ## type);
+
+//! \endcond

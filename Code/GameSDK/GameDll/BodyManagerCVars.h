@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -14,8 +14,10 @@ History:
 
 #pragma once
 
-#ifndef BODY_DAMAGE_MANAGER_CVARS_H
-#define BODY_DAMAGE_MANAGER_CVARS_H
+#include <CrySystem/IConsole.h>
+
+struct IActor;
+struct IConsoleCmdArgs;
 
 class CBodyManagerCVars
 {
@@ -56,5 +58,3 @@ private:
 
 	static ICVar* g_bodyDestruction_debugFilter;
 };
-
-#endif

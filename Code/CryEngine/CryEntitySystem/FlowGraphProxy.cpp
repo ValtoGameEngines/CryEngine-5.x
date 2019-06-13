@@ -1,15 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   FlowGraphProxy.h
-//  Version:     v1.00
-//  Created:     6/6/2005 by Timur.
-//  Compilers:   Visual Studio.NET 2003
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "FlowGraphProxy.h"
@@ -23,6 +12,7 @@ CRYREGISTER_CLASS(CEntityComponentFlowGraph);
 CEntityComponentFlowGraph::CEntityComponentFlowGraph()
 {
 	m_pFlowGraph = 0;
+	m_componentFlags.Add(EEntityComponentFlags::NoSave);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -55,18 +45,8 @@ IFlowGraph* CEntityComponentFlowGraph::GetFlowGraph()
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntityComponentFlowGraph::ProcessEvent(SEntityEvent& event)
+void CEntityComponentFlowGraph::ProcessEvent(const SEntityEvent& event)
 {
-	// Assumes only 1 current listener can be deleted as a result of the event.
-	Listeners::iterator next;
-	Listeners::iterator it = m_listeners.begin();
-	while (it != m_listeners.end())
-	{
-		next = it;
-		++next;
-		(*it)->OnEntityEvent(m_pEntity, event);
-		it = next;
-	}
 	// respond to entity activation/deactivation. enable/disable flowgraph
 	switch (event.event)
 	{
@@ -96,24 +76,9 @@ void CEntityComponentFlowGraph::ProcessEvent(SEntityEvent& event)
 }
 
 //////////////////////////////////////////////////////////////////////////
-uint64 CEntityComponentFlowGraph::GetEventMask() const
+Cry::Entity::EventFlags CEntityComponentFlowGraph::GetEventMask() const
 {
-	// All events except expensive ones, Update event is needed by FlowGraph
-	return
-		~(ENTITY_PERFORMANCE_EXPENSIVE_EVENTS_MASK) |
-		BIT64(ENTITY_EVENT_UPDATE);
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CEntityComponentFlowGraph::AddEventListener(IEntityEventListener* pListener)
-{
-	// Does not check uniquiness due to performance reasons.
-	m_listeners.push_back(pListener);
-}
-
-void CEntityComponentFlowGraph::RemoveEventListener(IEntityEventListener* pListener)
-{
-	stl::find_and_erase(m_listeners, pListener);
+	return ENTITY_EVENT_INIT | ENTITY_EVENT_DONE | ENTITY_EVENT_POST_SERIALIZE;
 }
 
 void CEntityComponentFlowGraph::LegacySerializeXML(XmlNodeRef& entityNode, XmlNodeRef& componentNode, bool bLoading)

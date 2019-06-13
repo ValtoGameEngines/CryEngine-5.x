@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "XInputDevice.h"
@@ -6,6 +6,7 @@
 #include <CryCore/Platform/platform.h>
 #include <CryThreading/IThreadManager.h>
 
+#pragma warning(push)
 #pragma warning(disable: 4244)
 
 #if defined(USE_DXINPUT)
@@ -79,7 +80,6 @@ public:
 	// Start accepting work on thread
 	virtual void ThreadEntry()
 	{
-		IInput* pInput = m_pInput;
 		XINPUT_CAPABILITIES caps;
 
 		while (!m_bQuit)
@@ -91,7 +91,7 @@ public:
 					g_bConnected[i] = r == ERROR_SUCCESS;
 				}
 			}
-			Sleep(1000);
+			CrySleep(1000);
 		}
 	}
 };
@@ -223,7 +223,7 @@ void FixDeadzone(Vec2& d)
 
 void CXInputDevice::Update(bool bFocus)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_INPUT);
+	CRY_PROFILE_FUNCTION(PROFILE_INPUT);
 
 	DEBUG_CONTROLLER_RENDER_BUTTON_ACTION;
 
@@ -495,6 +495,7 @@ void CXInputDevice::ClearAnalogKeyState(TInputSymbols& clearedSymbols)
 
 void CXInputDevice::UpdateConnectedState(bool isConnected)
 {
+
 	if (m_connected != isConnected)
 	{
 		SInputEvent event;
@@ -507,21 +508,19 @@ void CXInputDevice::UpdateConnectedState(bool isConnected)
 		if (isConnected)
 		{
 			// connect
-			event.keyId = eKI_XI_Connect;
+			event.keyId = eKI_SYS_ConnectDevice;
 			event.keyName = "connect";
 		}
 		else
 		{
 			// disconnect
-			event.keyId = eKI_XI_Disconnect;
+			event.keyId = eKI_SYS_DisconnectDevice;
 			event.keyName = "disconnect";
 		}
-		m_connected = isConnected;
-		GetIInput().PostInputEvent(event);
 
-		// Send generalized keyId connect/disconnect
-		// eKI_XI_Connect & eKI_XI_Disconnect should be deprecated because all devices can be connected/disconnected
-		event.keyId = (isConnected) ? eKI_SYS_ConnectDevice : eKI_SYS_DisconnectDevice;
+		m_connected = isConnected;
+
+		// Send connect/disconnect
 		GetIInput().PostInputEvent(event, true);
 	}
 }
@@ -652,3 +651,5 @@ void CXInputDevice::RestoreDefaultDeadZone()
 }
 
 #endif //defined(USE_DXINPUT)
+
+#pragma warning(pop)

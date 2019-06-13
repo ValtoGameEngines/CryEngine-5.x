@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // Cross platform socket behaviour.
 
@@ -18,7 +18,7 @@
 
 #pragma once
 
-#include <string.h>
+#include <cstring>
 
 #define LOCAL_FALLBACK_DOMAIN ".intern.crytek.de" // On connection error try to fallback to this domain
 

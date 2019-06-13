@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -74,7 +74,7 @@ void CInventory::PostReloadExtension(IGameObject* pGameObject, const SEntitySpaw
 //------------------------------------------------------------------------
 void CInventory::FullSerialize(TSerialize ser)
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "Inventory serialization");
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "Inventory serialization");
 
 	ser.BeginGroup("InventoryItems");
 
@@ -431,7 +431,6 @@ void CInventory::SerializeInventoryForLevelChange(TSerialize ser)
 	{
 		string name;
 		int amount = 0;
-		int users = 0;
 		int capacity = 0;
 		if (ser.IsWriting())
 		{
@@ -473,9 +472,9 @@ void CInventory::SerializeInventoryForLevelChange(TSerialize ser)
 }
 
 //------------------------------------------------------------------------
-void CInventory::ProcessEvent(SEntityEvent& event)
+void CInventory::ProcessEvent(const SEntityEvent& event)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	if (event.event == ENTITY_EVENT_RESET)
 	{
@@ -495,6 +494,12 @@ void CInventory::ProcessEvent(SEntityEvent& event)
 			}
 		}
 	}
+}
+
+//------------------------------------------------------------------------
+Cry::Entity::EventFlags CInventory::GetEventMask() const
+{
+	return ENTITY_EVENT_RESET;
 }
 
 //------------------------------------------------------------------------

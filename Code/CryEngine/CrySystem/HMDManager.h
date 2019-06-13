@@ -1,8 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <CrySystem/VR/IHMDManager.h>
+#include <CryCore/smartptr.h>
+#include <CryCore/StlUtils.h>
+
+struct ICVar;
 
 class CHmdManager : public IHmdManager
 {
@@ -10,7 +14,9 @@ public:
 	CHmdManager() : m_pHmdDevice(nullptr) {}
 	virtual ~CHmdManager();
 
-	virtual void RegisterDevice(const char* name, IHmdDevice& device) override;
+	virtual void RegisterDevice(const char* szDeviceName, IHmdDevice& device) override;
+
+	virtual void UnregisterDevice(const char* szDeviceName) override;
 
 	// basic functionality needed to setup and destroy an Hmd during system init / system shutdown
 	virtual void SetupAction(EHmdSetupAction cmd) override;
@@ -28,7 +34,7 @@ public:
 	virtual bool IsStereoSetupOk() const override;
 
 	// populates o_info with the asymmetric camera information returned by the current Hmd device
-	virtual bool GetAsymmetricCameraSetupInfo(int nEye, SAsymmetricCameraSetupInfo& outInfo) const override;
+	virtual HMDCameraSetup GetHMDCameraSetup(int nEye, float projRatio, float fnear) const override;
 
 	virtual void RecenterPose() override;
 

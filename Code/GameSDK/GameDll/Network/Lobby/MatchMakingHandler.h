@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -20,6 +20,7 @@ History:
 // Important Includes
 //For eLDI_Max
 #include "GameLobbyData.h"
+#include <CryLobby/ICryMatchMaking.h>
 
 
 #if GAMELOBBY_USE_COUNTRY_FILTERING

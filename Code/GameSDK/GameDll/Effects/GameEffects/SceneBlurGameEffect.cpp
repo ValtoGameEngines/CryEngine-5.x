@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // Manages effects for scene blur - The effect needs to be managed in 1 global place to stop
 // different game features fighting over setting the values.
@@ -8,6 +8,7 @@
 #include "SceneBlurGameEffect.h"
 
 #include "ItemParams.h"
+#include <Cry3DEngine/I3DEngine.h>
 
 REGISTER_EFFECT_DEBUG_DATA(CSceneBlurGameEffect::DebugOnInputEvent,CSceneBlurGameEffect::DebugDisplay,SceneBlur);
 REGISTER_DATA_CALLBACKS(CSceneBlurGameEffect::LoadStaticData,CSceneBlurGameEffect::ReleaseStaticData,CSceneBlurGameEffect::ReloadStaticData,SceneBlurData);

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -9,13 +9,21 @@
 class CScreenSpaceSSSStage : public CGraphicsPipelineStage
 {
 public:
-	void Init();
+	static const EGraphicsPipelineStage StageID = eStage_ScreenSpaceSSS;
+
+	CScreenSpaceSSSStage(CGraphicsPipeline& graphicsPipeline)
+		: CGraphicsPipelineStage(graphicsPipeline)
+		, m_passH(&graphicsPipeline)
+		, m_passV(&graphicsPipeline) {}
+
+	bool IsStageActive(EShaderRenderingFlags flags) const final
+	{
+		return CRendererCVars::CV_r_DeferredShadingSSS > 0;
+	}
+
 	void Execute(CTexture* pIrradianceTex);
 
 private:
 	CFullscreenPass m_passH;
 	CFullscreenPass m_passV;
-
-	int32           m_samplerPoint;
-	int32           m_samplerLinear;
 };

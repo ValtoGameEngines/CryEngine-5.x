@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -20,7 +20,7 @@
 #include "GameClientChannel.h"
 #include "GameServerChannel.h"
 #include "CryAction.h"
-#include <CrySystem/IConsole.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 #define FLAGS_FIELD           "__sendto"
 #define ID_FIELD              "__id"
@@ -459,7 +459,6 @@ void CScriptRMI::SetupEntity(EntityId eid, IEntity* pEntity, bool client, bool s
 	stack_string className = pClass->GetName();
 
 	IScriptTable* pEntityTable = pEntity->GetScriptTable();
-	IScriptSystem* pSS = pEntityTable->GetScriptSystem();
 
 	SmartScriptTable clientDispatchTable, serverDispatchTable, serverSynchedTable;
 	pEntityTable->GetValue(CLIENT_DISPATCH_FIELD, clientDispatchTable);
@@ -646,7 +645,7 @@ bool CScriptRMI::ValidateDispatchTable(const char* clazz, SmartScriptTable dispa
 				return false;
 			}
 
-			const char* funcData = iter.value.str;
+			const char* funcData = iter.value.GetString();
 			const char* colon = strchr(funcData, ':');
 			if (colon == NULL)
 			{
@@ -1003,7 +1002,6 @@ int CScriptRMI::ProxyFunction(IFunctionHandler* pH, void* pBuffer, int nSize)
 	if (gatherDebugInfo)
 		funcInfo = pMsg->DebugInfo();
 
-	INetContext* pNetContext = m_pThis->m_pParent->GetNetContext();
 	CCryAction* pFramework = m_pThis->m_pParent->GetFramework();
 
 	if (flags.n & eDF_ToServer)

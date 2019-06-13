@@ -1,6 +1,7 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
+#include <CryRenderer/IRenderAuxGeom.h>
 #include "SkeletonAnim.h"
 
 #include "CharacterManager.h"
@@ -10,7 +11,6 @@
 #include "Command_Buffer.h"
 #include "Command_Commands.h"
 #include "ParametricSampler.h"
-#include <CrySystem/CryUnitTest.h>
 #include <numeric>
 
 namespace
@@ -33,6 +33,7 @@ ILINE bool CreateCommands(const CPoseModifierQueue& queue, Command::CBuffer& buf
 
 	return true;
 }
+} // namespace
 
 uint32 MergeParametricExamples(const uint32 numExamples, const f32* const exampleBlendWeights, const int16* const exampleLocalAnimationIds, f32* mergedExampleWeightsOut, int* mergedExampleIndicesOut)
 {
@@ -73,57 +74,6 @@ uint32 MergeParametricExamples(const SParametricSamplerInternal& parametricSampl
 	const int16* const exampleLocalAnimationIds = parametricSampler.m_nAnimID;
 
 	return MergeParametricExamples(numExamples, exampleBlendWeights, exampleLocalAnimationIds, mergedExampleWeightsOut, mergedExampleIndicesOut);
-}
-} // namespace
-
-CRY_UNIT_TEST(Test_MergeParametricExamples_ContainsZeroWeights)
-{
-	const f32 exampleBlendWeights[] = { 0.f, 1.f, -1.f, 0.f, 1.f };
-	const int16 exampleLocalAnimationIds[] = { 22, 44, 44, 22, 44 };
-	const uint32 examplesCount = 5;
-
-	int mergedExampleIndices[5];
-	f32 mergedExampleWeights[5];
-	const uint32 mergedExampleCount = MergeParametricExamples(examplesCount, exampleBlendWeights, exampleLocalAnimationIds, mergedExampleWeights, mergedExampleIndices);
-	CRY_UNIT_TEST_CHECK_EQUAL(mergedExampleCount, 2);
-	CRY_UNIT_TEST_CHECK_EQUAL(mergedExampleIndices[0], 0);
-	CRY_UNIT_TEST_CHECK_EQUAL(mergedExampleIndices[1], 1);
-	CRY_UNIT_TEST_CHECK_CLOSE(mergedExampleWeights[0], 0.f, 0.01f);
-	CRY_UNIT_TEST_CHECK_CLOSE(mergedExampleWeights[1], 1.f, 0.01f);
-}
-
-CRY_UNIT_TEST(Test_MergeParametricExamples_NoZeroWeights)
-{
-	const f32 exampleBlendWeights[] = { -0.1f, 0.9f, -0.1f, 0.f, 0.3f };
-	const int16 exampleLocalAnimationIds[] = { 22, 44, 66, 22, 44 };
-	const uint32 examplesCount = 5;
-
-	int mergedExampleIndices[5];
-	f32 mergedExampleWeights[5];
-	const uint32 mergedExampleCount = MergeParametricExamples(examplesCount, exampleBlendWeights, exampleLocalAnimationIds, mergedExampleWeights, mergedExampleIndices);
-	CRY_UNIT_TEST_CHECK_EQUAL(mergedExampleCount, 3);
-	CRY_UNIT_TEST_CHECK_EQUAL(mergedExampleIndices[0], 0);
-	CRY_UNIT_TEST_CHECK_EQUAL(mergedExampleIndices[1], 1);
-	CRY_UNIT_TEST_CHECK_EQUAL(mergedExampleIndices[2], 2);
-	CRY_UNIT_TEST_CHECK_CLOSE(mergedExampleWeights[0], -0.1f, 0.01f);
-	CRY_UNIT_TEST_CHECK_CLOSE(mergedExampleWeights[1], 1.2f, 0.01f);
-	CRY_UNIT_TEST_CHECK_CLOSE(mergedExampleWeights[2], -0.1f, 0.01f);
-}
-
-CRY_UNIT_TEST(Test_MergeParametricExamples_WeightsAddToZero)
-{
-	const f32 exampleBlendWeights[] = { -1.f, 1.f, -1.f, 1.f, 1.f };
-	const int16 exampleLocalAnimationIds[] = { 22, 44, 44, 22, 44 };
-	const uint32 examplesCount = 5;
-
-	int mergedExampleIndices[5];
-	f32 mergedExampleWeights[5];
-	const uint32 mergedExampleCount = MergeParametricExamples(examplesCount, exampleBlendWeights, exampleLocalAnimationIds, mergedExampleWeights, mergedExampleIndices);
-	CRY_UNIT_TEST_CHECK_EQUAL(mergedExampleCount, 2);
-	CRY_UNIT_TEST_CHECK_EQUAL(mergedExampleIndices[0], 0);
-	CRY_UNIT_TEST_CHECK_EQUAL(mergedExampleIndices[1], 1);
-	CRY_UNIT_TEST_CHECK_CLOSE(mergedExampleWeights[0], 0.f, 0.01f);
-	CRY_UNIT_TEST_CHECK_CLOSE(mergedExampleWeights[1], 1.f, 0.01f);
 }
 
 namespace
@@ -421,7 +371,6 @@ void CSkeletonAnim::Commands_BasePlayback(const CAnimation& rAnim, Command::CBuf
 		ac->m_fWeight = rAnim.GetTransitionWeight();
 
 		f32 time_new0 = rAnim.GetCurrentSegmentNormalizedTime();
-		int32 segtotal = rCAF.m_Segments - 1;
 		int32 segcount = rAnim.m_currentSegmentIndex[0];
 		f32 segdur = rCAF.GetSegmentDuration(segcount);
 		f32 totdur = rCAF.GetTotalDuration();

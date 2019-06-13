@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "AIVehicle.h"
@@ -8,7 +8,6 @@
 #include <CrySystem/ISystem.h>
 
 #include <CrySystem/IConsole.h>
-#include "VertexList.h"
 #include <vector>
 #include <algorithm>
 #include <CryMath/Cry_Vector2.h>
@@ -41,10 +40,10 @@ CAIVehicle::~CAIVehicle(void)
 
 //
 //---------------------------------------------------------------------------------------------------------
-void CAIVehicle::UpdateDisabled(EObjectUpdate type)
+void CAIVehicle::UpdateDisabled(EUpdateType type)
 {
 	CAIActor::UpdateDisabled(type);
-	m_bDryUpdate = type == AIUPDATE_DRY;
+	m_bDryUpdate = type == EUpdateType::Dry;
 	AlertPuppets();
 	m_driverInsideCheck = -1;
 	m_playerInsideCheck = -1;
@@ -52,9 +51,9 @@ void CAIVehicle::UpdateDisabled(EObjectUpdate type)
 
 //
 //---------------------------------------------------------------------------------------------------------
-void CAIVehicle::Update(EObjectUpdate type)
+void CAIVehicle::Update(EUpdateType type)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 	CCCPOINT(CAIVehicle_Update);
 
 	m_driverInsideCheck = -1;
@@ -62,9 +61,7 @@ void CAIVehicle::Update(EObjectUpdate type)
 
 	const SAIBodyInfo& bodyInfo = QueryBodyInfo();
 
-	UpdateBehaviorSelectionTree();
-
-	m_bDryUpdate = type == AIUPDATE_DRY;
+	m_bDryUpdate = type == EUpdateType::Dry;
 
 	// make sure to update direction when entity is not moved
 	SetPos(bodyInfo.vEyePos);
@@ -80,7 +77,7 @@ void CAIVehicle::Update(EObjectUpdate type)
 
 	if (!m_bDryUpdate)
 	{
-		FRAME_PROFILER("AI system vehicle full update", gEnv->pSystem, PROFILE_AI);
+		CRY_PROFILE_SECTION(PROFILE_AI, "AI system vehicle full update");
 
 		CTimeValue fCurrentTime = GetAISystem()->GetFrameStartTime();
 		if (m_fLastUpdateTime.GetSeconds() > 0.0f)
@@ -296,7 +293,7 @@ bool CAIVehicle::CheckExplosion(const Vec3& vTargetPos, const Vec3& vFirePos, co
 // decides whether fire or not
 void CAIVehicle::FireCommand(void)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	// basic filters
 
@@ -389,11 +386,10 @@ void CAIVehicle::FireCommand(void)
 			Vec3 vNormalizedTargetDir = vTargetDir;
 
 			vNormalizedTargetDir.NormalizeSafe();
-			float distanceToTheTarget = vTargetDir.GetLength();
 			// If the target is not in front of him. can't fire.
 
 			vUnitTargetDir.NormalizeSafe();
-			//			gEnv->pAISystem->AddDebugLine( vFirePos, vFirePos + vUnitTargetDir * 20.0f , 255, 0, 0, 1.0f);
+			// gEnv->pAISystem->AddDebugLine( vFirePos, vFirePos + vUnitTargetDir * 20.0f , 255, 0, 0, 1.0f);
 
 			float fDifference = vUnitTargetDir.Dot(vFwdDir);
 			if (fDifference < cos_tpl(DEG2RAD(30.0f)))
@@ -512,7 +508,6 @@ void CAIVehicle::FireCommand(void)
 			Vec3 vCenterToFirePos = vFirePos - vMyPos;
 			vTargetDirFromCenter.z = vTargetDirFromFirePos.z = vCenterToFirePos.z = 0.0f;
 			float distanceFromCenter = vTargetDirFromCenter.GetLength();
-			float distanceFromFirePos = vTargetDirFromFirePos.GetLength();
 			float distanceFromCenterToFire = vCenterToFirePos.GetLength();
 			fDuration = 4.0f;
 			fBoxRange = 5.0f;
@@ -812,8 +807,7 @@ void CAIVehicle::Navigate(CAIObject* pTarget)
 	}
 
 	Vec3 vDir, vTargetPos;
-	float fTime = GetAISystem()->GetFrameDeltaTime();
-	//	int TargetType = AIOBJECT_NONE;
+	// int TargetType = AIOBJECT_NONE;
 
 	if (pTarget)
 	{
@@ -860,7 +854,7 @@ void CAIVehicle::Navigate(CAIObject* pTarget)
 
 void CAIVehicle::AlertPuppets(void)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (GetSubType() != CAIObject::STP_CAR)
 		return;
@@ -883,8 +877,6 @@ void CAIVehicle::AlertPuppets(void)
 
 	Vec3 vn(v);
 	vn.Normalize();
-
-	IEntity* pVehicleEntity = GetEntity();
 
 	// Find the vehicle rectangle to avoid
 	AABB localBounds;
@@ -955,7 +947,7 @@ void CAIVehicle::AlertPuppets(void)
 				{
 					CCCPOINT(CAIVehicle_AlertPuppets_SignalVehicle);
 					pPuppet->SetAvoidedVehicle(NILREF);
-					pPuppet->SetSignal(1, "OnEndVehicleDanger", GetEntity());
+					pPuppet->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnEndVehicleDanger_DEPRECATED(), GetEntityID()));
 				}
 			}
 
@@ -1022,10 +1014,11 @@ void CAIVehicle::AlertPuppets(void)
 
 			if (pPuppet->GetAvoidedVehicle() != this)
 			{
-				AISignalExtraData* pData = new AISignalExtraData;
+				AISignals::AISignalExtraData* pData = new AISignals::AISignalExtraData;
 				pData->point2 = avoidPos;
 				pData->point = vn;
-				pPuppet->SetSignal(1, "OnVehicleDanger", GetEntity(), pData);
+				pPuppet->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnVehicleDanger_DEPRECATED(), GetEntityID(), pData));
+
 			}
 			pPuppet->SetAvoidedVehicle(GetWeakRef(this));
 
@@ -1042,7 +1035,7 @@ void CAIVehicle::AlertPuppets(void)
 				if (pPuppet->GetVehicleAvoidingTime() > 3000)
 				{
 					pPuppet->SetAvoidedVehicle(NILREF);
-					pPuppet->SetSignal(1, "OnEndVehicleDanger", GetEntity());
+					pPuppet->SetSignal(GetAISystem()->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, GetAISystem()->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnEndVehicleDanger_DEPRECATED(), GetEntityID()));
 				}
 			}
 		}
@@ -1112,13 +1105,10 @@ bool CAIVehicle::GetEnemyTarget(int objectType, Vec3& hitPosition, float fDamage
 //------------------------------------------------------------------------------------------------------------------
 bool CAIVehicle::HandleVerticalMovement(const Vec3& targetPos)
 {
-
 	if (m_bPoweredUp)
 		return false;
 
-	Vec3 myPos(GetPos());
 	Vec3 diff(targetPos - GetPos());
-
 	Vec3 diff2d(diff);
 	diff2d.z = 0;
 	float ratio = diff2d.len2() > 0 ? fabs(diff.z) / diff2d.len() : fabs(diff.z);
@@ -1146,7 +1136,7 @@ bool CAIVehicle::HandleVerticalMovement(const Vec3& targetPos)
 //------------------------------------------------------------------------------------------------------------------
 bool CAIVehicle::IsDriverInside() const
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 	if (m_bEnabled)
 		return true;
 	if (m_driverInsideCheck == -1)
@@ -1158,7 +1148,7 @@ bool CAIVehicle::IsDriverInside() const
 //------------------------------------------------------------------------------------------------------------------
 bool CAIVehicle::IsPlayerInside()
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 	if (m_bEnabled)
 		return true;
 	if (m_playerInsideCheck == -1)

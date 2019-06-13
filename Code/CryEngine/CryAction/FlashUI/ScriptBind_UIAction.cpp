@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   ScriptBind_UIAction.cpp
@@ -329,7 +329,6 @@ int CScriptBind_UIAction::SetVariable(IFunctionHandler* pH, const char* elementN
 		const SUIParameterDesc* pVarDesc = pElement->GetVariableDesc(varName);
 		if (pVarDesc)
 		{
-			bool bRet = true;
 			TUIData value;
 			if (SUIToLuaConversationHelper::LuaArgToUIArg(pH, 4, value))
 			{

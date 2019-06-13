@@ -1,29 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// -------------------------------------------------------------------------
-//  File name:   Material.h
-//  Version:     v1.00
-//  Created:     3/9/2004 by Timur.
-//  Compilers:   Visual Studio.NET 2003
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
-
-#ifndef __Material_h__
-#define __Material_h__
 #pragma once
 
 #include <Cry3DEngine/IMaterial.h>
 
 #if CRY_PLATFORM_DESKTOP
-	#define TRACE_MATERIAL_LEAKS
 	#define SUPPORT_MATERIAL_EDITING
-#endif
-
-#ifndef _RELEASE
-	#define SUPPORT_MATERIAL_SKETCH
 #endif
 
 class CMaterialLayer : public IMaterialLayer
@@ -42,7 +24,7 @@ public:
 	virtual void AddRef()
 	{
 		m_nRefCount++;
-	};
+	}
 
 	virtual void Release()
 	{
@@ -111,31 +93,30 @@ public:
 	~CMatInfo();
 
 	void         ShutDown();
+	virtual bool IsValid() const;
 
 	virtual void AddRef();
-	;
 	virtual void Release();
 
-	virtual int  GetNumRefs() { return m_nRefCount; };
+	virtual int  GetNumRefs() { return m_nRefCount; }
 
 	//////////////////////////////////////////////////////////////////////////
 	// IMaterial implementation
 	//////////////////////////////////////////////////////////////////////////
-	int                       Size();
 
 	virtual IMaterialHelpers& GetMaterialHelpers();
 	virtual IMaterialManager* GetMaterialManager();
 
 	virtual void              SetName(const char* pName);
-	virtual const char*       GetName() const     { return m_sMaterialName; };
+	virtual const char*       GetName() const     { return m_sMaterialName; }
 
-	virtual void              SetFlags(int flags) { m_Flags = flags; };
-	virtual int               GetFlags() const    { return m_Flags; };
+	virtual void              SetFlags(int flags) { m_Flags = flags; }
+	virtual int               GetFlags() const    { return m_Flags; }
 
 	// Returns true if this is the default material.
-	virtual bool          IsDefault();
+	virtual bool          IsDefault() const;
 
-	virtual int           GetSurfaceTypeId() { return m_nSurfaceTypeId; };
+	virtual int           GetSurfaceTypeId() const { return m_nSurfaceTypeId; }
 
 	virtual void          SetSurfaceType(const char* sSurfaceTypeName);
 	virtual ISurfaceType* GetSurfaceType();
@@ -216,8 +197,6 @@ public:
 	uint32 GetModificationId() const { return m_nModificationId; }
 
 	//////////////////////////////////////////////////////////////////////////
-	void SetSketchMode(int mode);
-	void SetTexelDensityDebug(int mode);
 
 	// Check for specific rendering conditions (forward rendering/nearest cubemap requirement)
 	bool IsForwardRenderingRequired();
@@ -248,13 +227,6 @@ public:
 #endif
 
 	virtual CryCriticalSection& GetSubMaterialResizeLock();
-public:
-	//////////////////////////////////////////////////////////////////////////
-	// for debug purposes
-	//////////////////////////////////////////////////////////////////////////
-#ifdef TRACE_MATERIAL_LEAKS
-	string m_sLoadingCallstack;
-#endif
 
 private:
 
@@ -277,17 +249,13 @@ private:
 	//! @see EMatInfoFlags
 	int         m_Flags;
 
-	bool        m_bDeleted;
+	bool m_bDeleted;
+	bool m_bDeletePending;
 
 	SShaderItem m_shaderItem;
 
 	// Used to detect the cases when dependent permanent render objects have to be updated
 	uint32 m_nModificationId;
-
-#ifdef SUPPORT_MATERIAL_SKETCH
-	_smart_ptr<IShader> m_pPreSketchShader;
-	int                 m_nPreSketchTechnique;
-#endif
 
 	//! Array of Sub materials.
 	typedef DynArray<_smart_ptr<CMatInfo>> SubMtls;
@@ -298,7 +266,7 @@ private:
 	void*  m_pUserData;
 
 	string m_sMaterialLinkName;
-	// name of mat templalte material
+	// name of mat template material
 	string m_sMatTemplate;
 #endif
 
@@ -326,5 +294,3 @@ private:
 	_smart_ptr<IMaterial> m_pConsoleMtl;
 #endif
 };
-
-#endif // __Material_h__

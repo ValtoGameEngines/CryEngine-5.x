@@ -1,7 +1,9 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef _ZIP_DIR_LIST_HDR_
 #define _ZIP_DIR_LIST_HDR_
+
+#include <set>
 
 namespace ZipDir
 {

@@ -1,16 +1,17 @@
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
 #pragma once
 
 #ifdef INCLUDE_SCALEFORM_SDK
-	#pragma warning(push)
-	#pragma warning(disable : 6326)// Potential comparison of a constant with another constant
-	#pragma warning(disable : 6011)// Dereferencing NULL pointer
-	#include <CryCore/Platform/CryWindows.h>
-	#include <GRenderer.h> // includes <windows.h>
-	#pragma warning(pop)
+#pragma warning(push)
+#pragma warning(disable : 6326)// Potential comparison of a constant with another constant
+#pragma warning(disable : 6011)// Dereferencing NULL pointer
+#include <CryCore/Platform/CryWindows.h>
+#include <GRenderer.h> // includes <windows.h>
+#pragma warning(pop)
 
-	#include <vector>
-	#include <CrySystem/Scaleform/GMemorySTLAlloc.h>
-	#include <CryRenderer/IRenderer.h>
+#include <vector>
+#include <CrySystem/Scaleform/GMemorySTLAlloc.h>
 
 struct IScaleformRecording;
 struct IScaleformPlayback;
@@ -20,6 +21,8 @@ class CScaleformPlayback;
 
 struct GRendererCommandBuffer;
 #endif
+
+#include <CryRenderer/IRenderer.h>
 
 class CCachedData;
 
@@ -37,12 +40,10 @@ public:
 		, m_curWritePos(0)
 		, m_rawData(nullptr)
 		, m_rawLen(0)
-	{
-	}
+	{}
 
 	virtual ~GRendererCommandBufferReadOnly()
-	{
-	}
+	{}
 
 	size_t Size() const
 	{
@@ -268,6 +269,7 @@ public:
 public:
 	virtual IScaleformPlayback*    GetPlayback() const = 0;
 
+	virtual void                   SetClearFlags(uint32 clearFlags, ColorF clearColor = Clr_Transparent) = 0;
 	virtual void                   SetCompositingDepth(float depth) = 0;
 
 	virtual void                   SetStereoMode(bool stereo, bool isLeft) = 0;
@@ -315,7 +317,7 @@ struct IScaleformPlayback
 	{
 		Vertex_None      = 0,
 		Vertex_XY16i     = 1,
-		Vertex_XY32f     = 2,
+		Vertex_XY32f     = 2, // Unsupported
 		Vertex_XY16iC32  = 3,
 		Vertex_XY16iCF32 = 4,
 		Vertex_Glyph     = 5, // Custom value
@@ -431,7 +433,7 @@ struct IScaleformPlayback
 			struct
 			{
 				IScaleformPlayback::VertexFormat VertexFormat;
-				EVertexFormat                    eVertexFormat;
+				InputLayoutHandle::ValueType    eVertexFormat;
 			};
 
 			struct
@@ -493,7 +495,7 @@ public:
 
 	virtual void  SetPerspective3D(const Matrix44& projMatIn) = 0;
 	virtual void  SetView3D(const Matrix44& viewMatIn) = 0;
-	virtual void  SetWorld3D(const Matrix44* pWorldMatIn) = 0;
+	virtual void  SetWorld3D(const Matrix44f* pWorldMatIn) = 0;
 
 	virtual void  SetVertexData(const DeviceData* pVertices) = 0;
 	virtual void  SetIndexData(const DeviceData* pIndices) = 0;
@@ -528,6 +530,7 @@ public:
 
 	// IScaleformRenderer interface
 public:
+	virtual void                   SetClearFlags(uint32 clearFlags, ColorF clearColor = Clr_Transparent) = 0;
 	virtual void                   SetCompositingDepth(float depth) = 0;
 
 	virtual void                   SetStereoMode(bool stereo, bool isLeft) = 0;
@@ -538,7 +541,7 @@ public:
 	virtual void                   EnableMaskedRendering(bool enable) = 0;
 	virtual void                   ExtendCanvasToViewport(bool extend) = 0;
 
-	virtual void                   SetThreadIDs(uint32 mainThreadID, uint32 renderThreadID) = 0;
+	virtual void                   SetThreadIDs(threadID mainThreadID, threadID renderThreadID) = 0;
 	virtual bool                   IsMainThread() const = 0;
 	virtual bool                   IsRenderThread() const = 0;
 
@@ -594,12 +597,10 @@ protected:
 		: m_refCnt(1)
 		, m_lock(0)
 		, m_pData(pData)
-	{
-	}
+	{}
 
 	virtual ~CCachedData()
-	{
-	}
+	{}
 
 protected:
 	volatile int                          m_refCnt;

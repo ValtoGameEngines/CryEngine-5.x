@@ -1,20 +1,8 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-/*************************************************************************
-   -------------------------------------------------------------------------
-   $Id$
-   $DateTime$
-
-   -------------------------------------------------------------------------
-   History:
-   - 09:05:2005   14:32 : Created by Carsten Wenzel
-
-*************************************************************************/
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "SkyLightManager.h"
 #include "SkyLightNishita.h"
-#include <CryRenderer/RenderElements/CRESky.h>
 #include <CryThreading/IJobManager_JobDelegator.h>
 
 DECLARE_JOB("SkyUpdate", TSkyJob, CSkyLightManager::UpdateInternal);
@@ -22,12 +10,10 @@ static JobManager::SJobState g_JobState;
 
 CSkyLightManager::CSkyLightManager()
 	: m_pSkyLightNishita(CryAlignedNew<CSkyLightNishita>())
-	, m_pSkyDomeMesh(0)
 	, m_curSkyDomeCondition()
 	, m_updatingSkyDomeCondition()
 	, m_numSkyDomeColorsComputed(SSkyLightRenderParams::skyDomeTextureSize)
 	, m_curBackBuffer(0)
-	, m_lastFrameID(0)
 	, m_curSkyHemiColor()
 	, m_curHazeColor(0.0f, 0.0f, 0.0f)
 	, m_curHazeColorMieNoPremul(0.0f, 0.0f, 0.0f)
@@ -39,20 +25,15 @@ CSkyLightManager::CSkyLightManager()
 	, m_bFlushFullUpdate(false)
 	, m_renderParams()
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "SkyLightManager");
-
-	if (GetRenderer())
-	{
-		InitSkyDomeMesh();
-	}
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "SkyLightManager");
 
 	m_updateRequested[0] = m_updateRequested[1] = 0;
 
 	// init textures with default data
-	m_skyDomeTextureDataMie[0].resize(SSkyLightRenderParams::skyDomeTextureSize);
-	m_skyDomeTextureDataMie[1].resize(SSkyLightRenderParams::skyDomeTextureSize);
-	m_skyDomeTextureDataRayleigh[0].resize(SSkyLightRenderParams::skyDomeTextureSize);
-	m_skyDomeTextureDataRayleigh[1].resize(SSkyLightRenderParams::skyDomeTextureSize);
+	m_skyDomeTextureDataMie[0].resize(SSkyLightRenderParams::skyDomeTextureSize, CryHalf4{ .0f,.0f,.0f,.0f });
+	m_skyDomeTextureDataMie[1].resize(SSkyLightRenderParams::skyDomeTextureSize, CryHalf4{ .0f,.0f,.0f,.0f });
+	m_skyDomeTextureDataRayleigh[0].resize(SSkyLightRenderParams::skyDomeTextureSize, CryHalf4{ .0f,.0f,.0f,.0f });
+	m_skyDomeTextureDataRayleigh[1].resize(SSkyLightRenderParams::skyDomeTextureSize, CryHalf4{ .0f,.0f,.0f,.0f });
 
 	// init time stamps
 	m_skyDomeTextureTimeStamp[0] = gEnv->nMainFrameID;
@@ -78,7 +59,7 @@ inline static void Sync()
 
 void CSkyLightManager::PushUpdateParams()
 {
-	//pushes the update parameters, explicite call since engine requests asynchronously
+	//pushes the update parameters, explicit call since engine requests asynchronously
 	memcpy(&m_reqSkyDomeCondition[0], &m_reqSkyDomeCondition[1], sizeof(SSkyDomeCondition));
 	m_updateRequested[0] = m_updateRequested[1];
 	m_updateRequested[1] = 0;
@@ -92,6 +73,9 @@ void CSkyLightManager::SetSkyDomeCondition(const SSkyDomeCondition& skyDomeCondi
 
 void CSkyLightManager::FullUpdate()
 {
+	if (!GetRenderer())
+		return;
+
 	Sync();
 	PushUpdateParams();
 	TSkyJob job(GetRenderer()->GetFrameID(false), SSkyLightRenderParams::skyDomeTextureSize, (int)1);
@@ -108,9 +92,15 @@ void CSkyLightManager::IncrementalUpdate(f32 updateRatioPerFrame, const SRenderi
 
 	FUNCTION_PROFILER_3DENGINE;
 
+	if (!m_lastFrameID)
+	{
+		FullUpdate();
+		return;
+	}
+
 	// get current ID of "main" frame (no recursive rendering),
 	// incremental update should only be processed once per frame
-	if (m_lastFrameID != passInfo.GetMainFrameID())
+	if (m_lastFrameID.value() != passInfo.GetMainFrameID())
 	{
 		int32 numUpdate((int32) ((f32) SSkyLightRenderParams::skyDomeTextureSize * updateRatioPerFrame / 100.0f + 0.5f));
 		numUpdate = clamp_tpl(numUpdate, 1, SSkyLightRenderParams::skyDomeTextureSize);
@@ -269,9 +259,6 @@ const SSkyLightRenderParams* CSkyLightManager::GetRenderParams() const
 
 void CSkyLightManager::UpdateRenderParams()
 {
-	// sky dome mesh data
-	m_renderParams.m_pSkyDomeMesh = m_pSkyDomeMesh;
-
 	// sky dome texture access
 	m_renderParams.m_skyDomeTextureTimeStamp = m_skyDomeTextureTimeStamp[GetFrontBuffer()];
 	m_renderParams.m_pSkyDomeTextureDataMie = (const void*) &m_skyDomeTextureDataMie[GetFrontBuffer()][0];
@@ -311,85 +298,6 @@ bool CSkyLightManager::IsSkyDomeUpdateFinished() const
 	return(SSkyLightRenderParams::skyDomeTextureSize == m_numSkyDomeColorsComputed);
 }
 
-void CSkyLightManager::InitSkyDomeMesh()
-{
-	ReleaseSkyDomeMesh();
-
-	if (!GetRenderer())
-		return;
-
-#if CRY_PLATFORM_MOBILE
-	const uint32 c_numRings(10);
-	const uint32 c_numSections(10);
-#else
-	const uint32 c_numRings(20);
-	const uint32 c_numSections(20);
-#endif
-	const uint32 c_numSkyDomeVertices((c_numRings + 1) * (c_numSections + 1));
-	const uint32 c_numSkyDomeTriangles(2 * c_numRings * c_numSections);
-	const uint32 c_numSkyDomeIndices(c_numSkyDomeTriangles * 3);
-
-	std::vector<vtx_idx> skyDomeIndices;
-	std::vector<SVF_P3F_C4B_T2F> skyDomeVertices;
-
-	// setup buffers with source data
-	skyDomeVertices.reserve(c_numSkyDomeVertices);
-	skyDomeIndices.reserve(c_numSkyDomeIndices);
-
-	// calculate vertices
-	float sectionSlice(DEG2RAD(360.0f / (float) c_numSections));
-	float ringSlice(DEG2RAD(180.0f / (float) c_numRings));
-	for (uint32 a(0); a <= c_numRings; ++a)
-	{
-		float w(sinf(a * ringSlice));
-		float z(cosf(a * ringSlice));
-
-		for (uint32 i(0); i <= c_numSections; ++i)
-		{
-			SVF_P3F_C4B_T2F v;
-
-			float ii(i - a * 0.5f);   // Gives better tessellation, requires texture address mode to be "wrap"
-			                          // for u when rendering (see v.st[ 0 ] below). Otherwise set ii = i;
-			v.xyz = Vec3(cosf(ii * sectionSlice) * w, sinf(ii * sectionSlice) * w, z);
-			assert(fabs(v.xyz.GetLengthSquared() - 1.0) < 1e-2 /*1e-4*/);       // because of FP-16 precision
-			v.st = Vec2(ii / (float) c_numSections, 2.0f * (float) a / (float) c_numRings);
-			skyDomeVertices.push_back(v);
-		}
-	}
-
-	// build faces
-	for (uint32 a(0); a < c_numRings; ++a)
-	{
-		for (uint32 i(0); i < c_numSections; ++i)
-		{
-			skyDomeIndices.push_back((vtx_idx) (a * (c_numSections + 1) + i + 1));
-			skyDomeIndices.push_back((vtx_idx) (a * (c_numSections + 1) + i));
-			skyDomeIndices.push_back((vtx_idx) ((a + 1) * (c_numSections + 1) + i + 1));
-
-			skyDomeIndices.push_back((vtx_idx) ((a + 1) * (c_numSections + 1) + i));
-			skyDomeIndices.push_back((vtx_idx) ((a + 1) * (c_numSections + 1) + i + 1));
-			skyDomeIndices.push_back((vtx_idx) (a * (c_numSections + 1) + i));
-		}
-	}
-
-	// sanity checks
-	assert(skyDomeVertices.size() == c_numSkyDomeVertices);
-	assert(skyDomeIndices.size() == c_numSkyDomeIndices);
-
-	// create static buffers in renderer
-	m_pSkyDomeMesh = gEnv->pRenderer->CreateRenderMeshInitialized(&skyDomeVertices[0], c_numSkyDomeVertices, eVF_P3F_C4B_T2F,
-	                                                              &skyDomeIndices[0], c_numSkyDomeIndices, prtTriangleList, "SkyHDR", "SkyHDR");
-
-	m_lastFrameID = 0;
-	m_needRenderParamUpdate = true;
-}
-
-void CSkyLightManager::ReleaseSkyDomeMesh()
-{
-	m_renderParams.m_pSkyDomeMesh = NULL;
-	m_pSkyDomeMesh = NULL;
-}
-
 int CSkyLightManager::GetFrontBuffer() const
 {
 	assert(m_curBackBuffer >= 0 && m_curBackBuffer <= 1);
@@ -405,7 +313,7 @@ int CSkyLightManager::GetBackBuffer() const
 void CSkyLightManager::ToggleBuffer()
 {
 	assert(m_curBackBuffer >= 0 && m_curBackBuffer <= 1);
-	//better enforce cache flushing then making PPU wait til job has been finished
+	//better enforce cache flushing then making PPU wait till job has been finished
 	m_curBackBuffer = (m_curBackBuffer + 1) & 1;
 	m_needRenderParamUpdate = 1;
 }

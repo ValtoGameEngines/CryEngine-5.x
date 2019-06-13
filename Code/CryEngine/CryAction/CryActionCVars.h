@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -32,14 +32,7 @@ public:
 	int g_userNeverAutoSignsIn;
 #endif
 
-#ifdef AI_LOG_SIGNALS
-	int   aiLogSignals;
-	float aiMaxSignalDuration;
-#endif
 	int   aiFlowNodeAlertnessCheck;
-
-	// Disable HUD debug text
-	int cl_DisableHUDText;
 
 	int g_gameplayAnalyst;
 	int g_multiplayerEnableVehicles;
@@ -64,17 +57,17 @@ public:
 	int g_XMLCPBBlockQueueLimit;
 	int g_saveLoadExtendedLog;
 
-	int g_debugDialogBuffers;
-
 	int g_allowDisconnectIfUpdateFails;
 
 	int g_useSinglePosition;
 	int g_handleEvents;
-	int g_disableInputKeyFlowNodeInDevMode;
-
-	int g_disableSequencePlayback;
 
 	int g_enableMergedMeshRuntimeAreas;
+
+	int g_useProfileManager;
+	int g_legacyItemSystem;
+
+	int g_enableActionGame;
 
 	// AI stances
 	ICVar* ag_defaultAIStance;
@@ -98,7 +91,6 @@ private:
 
 	static void DumpEntitySerializationData(IConsoleCmdArgs* pArgs);
 	static void DumpClassRegistry(IConsoleCmdArgs* pArgs);
-	static void SWCommandHandler(IConsoleCmdArgs* pArgs);
 };
 
 #endif // __CRYACTIONCVARS_H__

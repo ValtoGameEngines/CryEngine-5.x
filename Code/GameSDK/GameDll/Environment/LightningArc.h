@@ -1,14 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef _LIGHTNING_ARC_H_
 #define _LIGHTNING_ARC_H_
 
 #pragma once
 
-
 #include "Effects/GameEffects/LightningGameEffect.h"
-
-
+#include <IGameObject.h>
 
 class CLightningArc : public CGameObjectExtensionHelper<CLightningArc, IGameObjectExtension>
 {
@@ -31,9 +29,9 @@ public:
 	virtual ISerializableInfoPtr GetSpawnInfo();
 	virtual void Update( SEntityUpdateContext& ctx, int updateSlot );
 	virtual void HandleEvent( const SGameObjectEvent& event );
-	virtual void ProcessEvent( SEntityEvent& event );	
+	virtual void ProcessEvent( const SEntityEvent& event );	
+	virtual Cry::Entity::EventFlags GetEventMask() const;
 	virtual void SetChannelId(uint16 id);
-	virtual void SetAuthority( bool auth );
 	virtual const void * GetRMIBase() const;
 	virtual void PostUpdate( float frameTime );
 	virtual void PostRemoteSpawn();

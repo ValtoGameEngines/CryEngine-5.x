@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __LEVELSYSTEM_H__
 #define __LEVELSYSTEM_H__
@@ -17,10 +17,13 @@
 	#define Log_LevelRotation(...)
 #endif
 
+class CLevelLoadTimeslicer;
+
 class CLevelInfo :
 	public ILevelInfo
 {
 	friend class CLevelSystem;
+	friend class CLevelLoadTimeslicer;
 public:
 	CLevelInfo() : m_heightmapSize(0), m_bMetaDataRead(false), m_isModLevel(false), m_scanTag(ILevelSystem::TAG_UNKNOWN), m_levelTag(ILevelSystem::TAG_UNKNOWN)
 	{
@@ -30,31 +33,32 @@ public:
 	virtual ~CLevelInfo() {};
 
 	// ILevelInfo
-	virtual const char*                      GetName() const                 { return m_levelName.c_str(); };
-	virtual const bool                       IsOfType(const char* sType) const;
-	virtual const char*                      GetPath() const                 { return m_levelPath.c_str(); };
-	virtual const char*                      GetPaks() const                 { return m_levelPaks.c_str(); };
-	virtual bool                             GetIsModLevel() const           { return m_isModLevel; }
-	virtual const uint32                     GetScanTag() const              { return m_scanTag; }
-	virtual const uint32                     GetLevelTag() const             { return m_levelTag; }
-	virtual const char*                      GetDisplayName() const;
-	virtual const char*                      GetPreviewImagePath() const     { return m_previewImagePath.c_str(); }
-	virtual const char*                      GetBackgroundImagePath() const  { return m_backgroundImagePath.c_str(); }
-	virtual const char*                      GetMinimapImagePath() const     { return m_minimapImagePath.c_str(); }
-	virtual int                              GetHeightmapSize() const        { return m_heightmapSize; };
-	virtual const bool                       MetadataLoaded() const          { return m_bMetaDataRead; }
+	virtual const char*                      GetName() const override                 { return m_levelName.c_str(); };
+	virtual const bool                       IsOfType(const char* sType) const override;
+	virtual const char*                      GetPath() const override                 { return m_levelPath.c_str(); };
+	virtual const char*                      GetPaks() const override                 { return m_levelPaks.c_str(); };
+	virtual bool                             GetIsModLevel() const override           { return m_isModLevel; }
+	virtual const uint32                     GetScanTag() const override              { return m_scanTag; }
+	virtual const uint32                     GetLevelTag() const override             { return m_levelTag; }
+	virtual const char*                      GetDisplayName() const override;
+	virtual const char*                      GetPreviewImagePath() const override     { return m_previewImagePath.c_str(); }
+	virtual const char*                      GetBackgroundImagePath() const override  { return m_backgroundImagePath.c_str(); }
+	virtual const char*                      GetMinimapImagePath() const override     { return m_minimapImagePath.c_str(); }
+	virtual int                              GetHeightmapSize() const override        { return m_heightmapSize; };
+	virtual const bool                       MetadataLoaded() const override          { return m_bMetaDataRead; }
 
-	virtual int                              GetGameTypeCount() const        { return m_gameTypes.size(); };
-	virtual const ILevelInfo::TGameTypeInfo* GetGameType(int gameType) const { return &m_gameTypes[gameType]; };
-	virtual bool                             SupportsGameType(const char* gameTypeName) const;
-	virtual const ILevelInfo::TGameTypeInfo* GetDefaultGameType() const;
-	virtual bool                             HasGameRules() const        { return !m_gamerules.empty(); }
+	virtual int                              GetGameTypeCount() const override        { return m_gameTypes.size(); };
+	virtual const ILevelInfo::TGameTypeInfo* GetGameType(int gameType) const override { return &m_gameTypes[gameType]; };
+	virtual bool                             SupportsGameType(const char* gameTypeName) const override;
+	virtual const ILevelInfo::TGameTypeInfo* GetDefaultGameType() const override;
+	virtual bool                             HasGameRules() const override            { return !m_gamerules.empty(); }
 
-	virtual const ILevelInfo::SMinimapInfo&  GetMinimapInfo() const      { return m_minimapInfo; }
+	virtual const ILevelInfo::SMinimapInfo&  GetMinimapInfo() const override          { return m_minimapInfo; }
 
-	virtual const char*                      GetDefaultGameRules() const { return m_gamerules.empty() ? NULL : m_gamerules[0].c_str(); }
-	virtual ILevelInfo::TStringVec           GetGameRules() const        { return m_gamerules; }
-	virtual bool                             GetAttribute(const char* name, TFlowInputData& val) const;
+	virtual const char*                      GetDefaultGameRules() const override     { return m_gamerules.empty() ? nullptr : m_gamerules[0].c_str(); }
+	virtual size_t                           GetGameRulesCount() const override       { return m_gamerules.size(); }
+	virtual size_t                           GetGameRules(const char** pszGameRules, size_t numGameRules) const override;
+	virtual bool                             GetAttribute(const char* name, TFlowInputData& val) const override;
 	// ~ILevelInfo
 
 	void GetMemoryUsage(ICrySizer*) const;
@@ -76,8 +80,9 @@ private:
 
 	string                                 m_levelPakFullPath;
 	string                                 m_levelMMPakFullPath;
+	string                                 m_levelSvoPakFullPath;
 
-	TStringVec                             m_gamerules;
+	std::vector<string>                    m_gamerules;
 	int                                    m_heightmapSize;
 	uint32                                 m_scanTag;
 	uint32                                 m_levelTag;
@@ -196,8 +201,9 @@ class CLevelSystem :
 	public ILevelSystem,
 	public ISystem::ILoadingProgressListener
 {
+	friend class CLevelLoadTimeslicer;
 public:
-	CLevelSystem(ISystem* pSystem, const char* levelsFolder);
+	CLevelSystem(ISystem* pSystem);
 	virtual ~CLevelSystem();
 
 	void Release() { delete this; };
@@ -215,6 +221,8 @@ public:
 
 	virtual ILevelInfo*       GetCurrentLevel() const { return m_pCurrentLevelInfo; }
 	virtual ILevelInfo*       LoadLevel(const char* levelName);
+	virtual bool              StartLoadLevel(const char* szLevelName);
+	virtual ELevelLoadStatus  UpdateLoadLevelStatus();
 	virtual void              UnLoadLevel();
 	virtual ILevelInfo*       SetEditorLoadedLevel(const char* levelName, bool bReadLevelInfoMetaData = false);
 	virtual void              PrepareNextLevel(const char* levelName);
@@ -250,10 +258,7 @@ private:
 	void OnLoadingProgress(ILevelInfo* pLevel, int progressAmount);
 	void OnUnloadComplete(ILevelInfo* pLevel);
 
-	// lowercase string and replace backslashes with forward slashes
-	// TODO: move this to a more general place in CryEngine
-	string& UnifyName(string& name);
-	void    ScanFolder(const char* subfolder, bool modFolder, const uint32 tag);
+	void    ScanFolder(const string& rootFolder, bool modFolder, const uint32 tag);
 	void    LogLoadingTime();
 	bool    LoadLevelInfo(CLevelInfo& levelInfo);
 
@@ -261,6 +266,7 @@ private:
 	// directly cast to the interface
 	CLevelInfo* GetLevelInfoInternal(int level);
 	CLevelInfo* GetLevelInfoInternal(const char* levelName);
+	CLevelInfo* GetLevelInfoByPathInternal(const char* szLevelPath);
 
 	typedef std::vector<CLevelRotation> TExtendedLevelRotations;
 
@@ -290,6 +296,8 @@ private:
 	std::vector<ILevelSystemListener*> m_listeners;
 
 	DynArray<string>                   m_levelTypeList;
+
+	std::unique_ptr<CLevelLoadTimeslicer> m_pLevelLoadTimeslicer;
 };
 
 #endif //__LEVELSYSTEM_H__

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -17,6 +17,7 @@ History:
 #include "Player.h"
 #include "PlayerStateEvents.h"
 #include "Game.h"
+#include "GameCVars.h"
 #include "Projectile.h"
 #include "WeaponSystem.h"
 #include "GameRules.h"
@@ -27,9 +28,9 @@ History:
 #include "GameCodeCoverage/GameCodeCoverageTracker.h"
 #include "PlayerAnimation.h"
 
-
 #include "UI/HUD/HUDEventDispatcher.h"
 #include "UI/HUD/HUDUtils.h"
+#include <IGameplayRecorder.h>
 
 #define MAX_TRAJECTORY_TIME 5.0f
 
@@ -886,7 +887,6 @@ void CThrow::RenderTrajectory(const Vec3* trajectory, unsigned int sampleCount, 
 
 	const float dashLength = g_pGameCVars->i_grenade_trajectory_dashes;
 	const float gapLength = g_pGameCVars->i_grenade_trajectory_gaps;
-	const float partLength = dashLength+gapLength;
 
 	float dash = 0.0f;
 	float gap = 0.0f;

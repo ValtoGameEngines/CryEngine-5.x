@@ -1,15 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   IIndexedMesh.h
-//  Version:     v1.00
-//  Created:     17/9/2004 by Vladimir.
-//  Compilers:   Visual Studio.NET 2003
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -21,6 +10,7 @@
 #include <CryRenderer/VertexFormats.h>
 #include <CryMath/Cry_Geo.h>
 
+//! \cond INTERNAL
 //! 2D Texture coordinates used by CMesh.
 struct SMeshTexCoord
 {
@@ -1362,7 +1352,6 @@ public:
 
 		const int oldVertexCount = GetVertexCount();
 		const int oldFaceCount = GetFaceCount();
-		const int nOldCoorCount = GetTexCoordCount();
 
 		if (GetTexCoordCount() != 0 && GetTexCoordCount() != oldVertexCount)
 		{
@@ -1755,8 +1744,6 @@ public:
 
 		for (size_t i = 0, count = m_subsets.size(); i < count; ++i)
 		{
-			const SMeshSubset& subset = m_subsets[i];
-
 			float posArea;
 			float texArea;
 			const char* errorText = "";
@@ -1959,6 +1946,7 @@ private:
 		}
 	}
 };
+//! \endcond
 
 // Description:
 //! Editable mesh interface.

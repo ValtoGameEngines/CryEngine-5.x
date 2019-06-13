@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    ---------------------------------------------------------------------
@@ -27,7 +27,6 @@
 #include <CryMath/Cry_Math.h>
 #include "TacticalPointQueryEnum.h"
 #include "PipeUser.h"
-#include "HideSpot.h"
 
 #include "../Cover/CoverSystem.h"
 #include "PostureManager.h"
@@ -127,10 +126,6 @@ public:
 			m_entityId = that.m_entityId;
 			break;
 
-		case eTPT_HideSpot:
-			m_Hidespot = that.m_Hidespot;
-			break;
-
 		case eTPT_AIObject:
 			m_refObject = that.m_refObject;
 			break;
@@ -154,15 +149,6 @@ public:
 		{
 		case eTPT_None:
 			return false;
-		case eTPT_HideSpot:
-			{
-				if (m_Hidespot.pAnchorObject && (m_Hidespot.pAnchorObject != that.m_Hidespot.pAnchorObject))
-					return false;
-				else if (m_Hidespot.info.type != that.m_Hidespot.info.type)
-					return false;
-				else
-					return ((m_Hidespot.info.pos - that.m_Hidespot.info.pos).len2() < 0.5f * 0.5f);
-			}
 		case eTPT_Point:
 			return ((vPos - that.vPos).len2() < 0.5f * 0.5f);
 		case eTPT_EntityPos:
@@ -180,15 +166,6 @@ public:
 	bool operator!=(const CTacticalPoint& that) const
 	{
 		return !operator==(that);
-	}
-
-	// cppcheck-suppress uninitMemberVar
-	explicit CTacticalPoint(const SHideSpot& hidespot)
-		: eTPType(eTPT_HideSpot)
-		, m_Hidespot(hidespot)
-		, m_entityId(0)
-		, vPos(hidespot.info.pos)
-	{
 	}
 
 	// cppcheck-suppress uninitMemberVar
@@ -226,7 +203,6 @@ public:
 		case eTPT_None:
 		case eTPT_Point:
 		case eTPT_EntityPos:
-		case eTPT_HideSpot:
 		case eTPT_AIObject:
 		case eTPT_CoverID:
 			break;
@@ -240,11 +216,8 @@ public:
 	virtual Vec3                               GetPos() const          { return vPos; }
 	virtual void                               SetPos(Vec3 pos)        { vPos = pos; }
 	virtual ITacticalPoint::ETacticalPointType GetType() const         { return eTPType; }
-	virtual const SHideSpot*                   GetHidespot() const     { return (eTPType == eTPT_HideSpot ? &m_Hidespot : NULL); }
 	virtual tAIObjectID                        GetAIObjectId() const   { return (eTPType == eTPT_AIObject ? m_refObject.GetObjectID() : INVALID_AIOBJECTID); }
 	virtual bool                               IsValid() const         { return eTPType != eTPT_None; }
-
-	const SHideSpotInfo*                       GetHidespotInfo() const { return (eTPType == eTPT_HideSpot ? &(m_Hidespot.info) : NULL); }
 
 	inline CoverID                             GetCoverID() const
 	{
@@ -261,7 +234,6 @@ private:
 	// Type specifying the relevant union member if any
 	ETacticalPointType  eTPType;
 
-	SHideSpot           m_Hidespot;
 	EntityId            m_entityId;
 	CWeakRef<CAIObject> m_refObject;
 
@@ -275,7 +247,6 @@ typedef std::vector<CTacticalPoint> TTacticalPoints;
 class CTacticalPointGenerateResult : public ITacticalPointGenerateResult
 {
 public:
-	virtual bool AddHideSpot(const SHideSpot& hidespot);
 	virtual bool AddPoint(const Vec3& point);
 	virtual bool AddEntity(IEntity* pEntity);
 	virtual bool AddEntityPoint(IEntity* pEntity, const Vec3& point);
@@ -302,47 +273,52 @@ public:
 	static void RegisterCVars();
 
 public:
-	// ---------- ITacticalPointSystem methods ----------
-	// Separate this out completely into an adaptor?
 
 	void Reset();
 
+	// ---------- ITacticalPointSystem methods ----------
+	// Separate this out completely into an adaptor?
+
+	// Timesliced update within the main AI thread
+	// Ideally performs just housekeeping and manages the asynchronous subtasks
+	virtual void Update(const float fBudgetSeconds) override;
+
 	// Get a new query ID, to allow us to build a new query
-	TPSQueryID  CreateQueryID(const char* psName);
+	virtual TPSQueryID  CreateQueryID(const char* psName) override;
 	// Destroy a query ID and release all resources associated with it
-	bool        DestroyQueryID(TPSQueryID queryID);
+	virtual bool        DestroyQueryID(TPSQueryID queryID) override;
 	// Get the Name of a query by ID
-	const char* GetQueryName(TPSQueryID queryID);
+	virtual const char* GetQueryName(TPSQueryID queryID) override;
 	// Get the query ID of a query by name
-	TPSQueryID  GetQueryID(const char* psName);
+	virtual TPSQueryID  GetQueryID(const char* psName) override;
 	// Returns a pointer to indexed option of a given query
-	const char* GetOptionLabel(TPSQueryID queryID, int option);
+	virtual const char* GetOptionLabel(TPSQueryID queryID, int option) override;
 
 	// Build up a query
 	// The "option" parameter allows you to build up fallback options
-	bool AddToParameters(TPSQueryID queryID, const char* sSpec, float fValue, int option = 0);
-	bool AddToParameters(TPSQueryID queryID, const char* sSpec, bool bValue, int option = 0);
-	bool AddToParameters(TPSQueryID queryID, const char* sSpec, const char* sValue, int option = 0);
-	bool AddToGeneration(TPSQueryID queryID, const char* sSpec, float fValue, int option = 0);
-	bool AddToGeneration(TPSQueryID queryID, const char* sSpec, const char* sValue, int option = 0);
-	bool AddToConditions(TPSQueryID queryID, const char* sSpec, float fValue, int option = 0);
-	bool AddToConditions(TPSQueryID queryID, const char* sSpec, bool bValue, int option = 0);
-	bool AddToWeights(TPSQueryID queryID, const char* sSpec, float fValue, int option = 0);
-
-	// Test a given point if it fulfills conditions of a given query.
-	int TestConditions(TPSQueryID queryID, const QueryContext& context, Vec3& point, bool& bValid) const;
+	virtual bool AddToParameters(TPSQueryID queryID, const char* sSpec, float fValue, int option = 0) override;
+	virtual bool AddToParameters(TPSQueryID queryID, const char* sSpec, bool bValue, int option = 0) override;
+	virtual bool AddToParameters(TPSQueryID queryID, const char* sSpec, const char* sValue, int option = 0) override;
+	virtual bool AddToGeneration(TPSQueryID queryID, const char* sSpec, float fValue, int option = 0) override;
+	virtual bool AddToGeneration(TPSQueryID queryID, const char* sSpec, const char* sValue, int option = 0) override;
+	virtual bool AddToConditions(TPSQueryID queryID, const char* sSpec, float fValue, int option = 0) override;
+	virtual bool AddToConditions(TPSQueryID queryID, const char* sSpec, bool bValue, int option = 0) override;
+	virtual bool AddToWeights(TPSQueryID queryID, const char* sSpec, float fValue, int option = 0) override;
 
 	// Start a new asynchronous query. Returns the id "ticket" for this query instance.
 	// Types needed to avoid confusion?
-	TPSQueryTicket AsyncQuery(TPSQueryID queryID, const QueryContext& m_context, int flags, int nPoints, ITacticalPointResultsReceiver* pReciever);
+	virtual TPSQueryTicket AsyncQuery(TPSQueryID queryID, const QueryContext& m_context, int flags, int nPoints, ITacticalPointResultsReceiver* pReciever) override;
 
-	void           UnlockResults(TPSQueryTicket queryTicket);
-	bool           HasLockedResults(TPSQueryTicket queryTicket) const;
+	virtual void           UnlockResults(TPSQueryTicket queryTicket) override;
+	virtual bool           HasLockedResults(TPSQueryTicket queryTicket) const override;
 
 	// Cancel an asynchronous query.
-	bool CancelAsyncQuery(TPSQueryTicket ticket);
+	virtual bool CancelAsyncQuery(TPSQueryTicket ticket) override;
 
 	// ---------- ~ End of ITacticalPointSystem methods ~ ----------
+
+	// Test a given point if it fulfills conditions of a given query.
+	int TestConditions(TPSQueryID queryID, const QueryContext& context, Vec3& point, bool& bValid) const;
 
 	// Make a synchronous query for one point
 	// Returns: query option used, or -1 if there was an error or no points found
@@ -357,22 +333,18 @@ public:
 	// Destroy all stored queries, usually on AI reload
 	void DestroyAllQueries();
 
-	// Timesliced update within the main AI thread
-	// Ideally performs just housekeeping and manages the asynchronous subtasks
-	void Update(float fMaxTime);
-
 	void Serialize(TSerialize ser);
 
 	void DebugDraw() const;
 
 	// Extend the language by adding new keywords
-	virtual bool ExtendQueryLanguage(const char* szName, ETacticalPointQueryType eType, ETacticalPointQueryCost eCost);
+	virtual bool ExtendQueryLanguage(const char* szName, ETacticalPointQueryType eType, ETacticalPointQueryCost eCost) override;
 
 	// Language extenders
-	virtual bool       AddLanguageExtender(ITacticalPointLanguageExtender* pExtender);
-	virtual bool       RemoveLanguageExtender(ITacticalPointLanguageExtender* pExtender);
-	virtual IAIObject* CreateExtenderDummyObject(const char* szDummyName);
-	virtual void       ReleaseExtenderDummyObject(tAIObjectID id);
+	virtual bool       AddLanguageExtender(ITacticalPointLanguageExtender* pExtender) override;
+	virtual bool       RemoveLanguageExtender(ITacticalPointLanguageExtender* pExtender) override;
+	virtual IAIObject* CreateExtenderDummyObject(const char* szDummyName) override;
+	virtual void       ReleaseExtenderDummyObject(tAIObjectID id) override;
 
 private:
 	struct SQueryInstance

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "TextureHelpers.h"
@@ -26,23 +26,23 @@ static struct
 s_TexSlotSemantics[] =
 {
 	// NOTE: must be in order with filled holes to allow direct lookup
-	{ EFTT_DIFFUSE,          4, &CTexture::s_ptexNoTexture, &CTexture::s_ptexWhite,    "_diff",   "TM_Diffuse",         "$TEX_Diffuse"         },
-	{ EFTT_NORMALS,          2, &CTexture::s_ptexFlatBump,  &CTexture::s_ptexFlatBump, "_ddn",    "TM_Normals",         "$TEX_Normals"         },
-	{ EFTT_SPECULAR,         1, &CTexture::s_ptexWhite,     &CTexture::s_ptexWhite,    "_spec",   "TM_Specular",        "$TEX_Specular"        },
-	{ EFTT_ENV,              0, &CTexture::s_ptexWhite,     &CTexture::s_ptexWhite,    "_cm",     "TM_Env",             "$TEX_EnvCM"           },
-	{ EFTT_DETAIL_OVERLAY,   3, &CTexture::s_ptexGray,      &CTexture::s_ptexWhite,    "_detail", "TM_Detail",          "$TEX_Detail"          },
-	{ EFTT_SMOOTHNESS,       2, &CTexture::s_ptexWhite,     &CTexture::s_ptexWhite,    "_ddna",   "TM_Smoothness",      "$TEX_Smoothness"      },
-	{ EFTT_HEIGHT,           2, &CTexture::s_ptexWhite,     &CTexture::s_ptexWhite,    "_displ",  "TM_Height",          "$TEX_Height"          },
-	{ EFTT_DECAL_OVERLAY,    3, &CTexture::s_ptexGray,      &CTexture::s_ptexWhite,    "",        "TM_DecalOverlay",    "$TEX_DecalOverlay"    },
-	{ EFTT_SUBSURFACE,       3, &CTexture::s_ptexWhite,     &CTexture::s_ptexWhite,    "_sss",    "TM_SubSurface",      "$TEX_SubSurface"      },
-	{ EFTT_CUSTOM,           4, &CTexture::s_ptexWhite,     &CTexture::s_ptexWhite,    "",        "TM_Custom",          "$TEX_Custom"          },
-	{ EFTT_CUSTOM_SECONDARY, 2, &CTexture::s_ptexFlatBump,  &CTexture::s_ptexFlatBump, "",        "TM_CustomSecondary", "$TEX_CustomSecondary" },
-	{ EFTT_OPACITY,          4, &CTexture::s_ptexWhite,     &CTexture::s_ptexWhite,    "",        "TM_Opacity",         "$TEX_Opacity"         },
-	{ EFTT_TRANSLUCENCY,     2, &CTexture::s_ptexWhite,     &CTexture::s_ptexWhite,    "_trans",  "TM_Translucency",    "$TEX_Translucency"    },
-	{ EFTT_EMITTANCE,        1, &CTexture::s_ptexWhite,     &CTexture::s_ptexWhite,    "_em",     "TM_Emittance",       "$TEX_Emittance"       },
+	{ EFTT_DIFFUSE,          4, &CRendererResources::s_ptexNoTexture, &CRendererResources::s_ptexWhite,    "_diff",   "TM_Diffuse",         "$TEX_Diffuse"         },
+	{ EFTT_NORMALS,          2, &CRendererResources::s_ptexFlatBump,  &CRendererResources::s_ptexFlatBump, "_ddn",    "TM_Normals",         "$TEX_Normals"         },
+	{ EFTT_SPECULAR,         1, &CRendererResources::s_ptexWhite,     &CRendererResources::s_ptexWhite,    "_spec",   "TM_Specular",        "$TEX_Specular"        },
+	{ EFTT_ENV,              0, &CRendererResources::s_ptexWhite,     &CRendererResources::s_ptexWhite,    "_cm",     "TM_Env",             "$TEX_EnvCM"           },
+	{ EFTT_DETAIL_OVERLAY,   3, &CRendererResources::s_ptexGray,      &CRendererResources::s_ptexWhite,    "_detail", "TM_Detail",          "$TEX_Detail"          },
+	{ EFTT_SMOOTHNESS,       2, &CRendererResources::s_ptexWhite,     &CRendererResources::s_ptexWhite,    "_ddna",   "TM_Smoothness",      "$TEX_Smoothness"      },
+	{ EFTT_HEIGHT,           2, &CRendererResources::s_ptexWhite,     &CRendererResources::s_ptexWhite,    "_displ",  "TM_Height",          "$TEX_Height"          },
+	{ EFTT_DECAL_OVERLAY,    3, &CRendererResources::s_ptexGray,      &CRendererResources::s_ptexWhite,    "",        "TM_DecalOverlay",    "$TEX_DecalOverlay"    },
+	{ EFTT_SUBSURFACE,       3, &CRendererResources::s_ptexWhite,     &CRendererResources::s_ptexWhite,    "_sss",    "TM_SubSurface",      "$TEX_SubSurface"      },
+	{ EFTT_CUSTOM,           4, &CRendererResources::s_ptexWhite,     &CRendererResources::s_ptexWhite,    "",        "TM_Custom",          "$TEX_Custom"          },
+	{ EFTT_CUSTOM_SECONDARY, 2, &CRendererResources::s_ptexFlatBump,  &CRendererResources::s_ptexFlatBump, "",        "TM_CustomSecondary", "$TEX_CustomSecondary" },
+	{ EFTT_OPACITY,          4, &CRendererResources::s_ptexWhite,     &CRendererResources::s_ptexWhite,    "",        "TM_Opacity",         "$TEX_Opacity"         },
+	{ EFTT_TRANSLUCENCY,     2, &CRendererResources::s_ptexWhite,     &CRendererResources::s_ptexWhite,    "_trans",  "TM_Translucency",    "$TEX_Translucency"    },
+	{ EFTT_EMITTANCE,        1, &CRendererResources::s_ptexWhite,     &CRendererResources::s_ptexWhite,    "_em",     "TM_Emittance",       "$TEX_Emittance"       },
 
 	// This is the terminator for the name-search
-	{ EFTT_UNKNOWN,          0, &CTexture::s_pTexNULL,      &CTexture::s_pTexNULL,     "",        nullptr,              nullptr                },
+	{ EFTT_UNKNOWN,          0, &CRendererResources::s_pTexNULL,      &CRendererResources::s_pTexNULL,     "",        nullptr,              nullptr                },
 };
 
 #if 0
@@ -118,6 +118,47 @@ CTexture* LookupTexNeutral(EEfResTextures texSlot)
 {
 	assert((texSlot >= 0) && (texSlot < EFTT_MAX));
 	return *s_TexSlotSemantics[texSlot].neutral;
+}
+
+bool IsSlotAvailable(EEfResTextures texSlot)
+{
+#if !RENDERER_ENABLE_FULL_PIPELINE
+	return
+		texSlot == EFTT_DIFFUSE        ||
+		texSlot == EFTT_NORMALS        ||
+		texSlot == EFTT_SPECULAR       ||
+		texSlot == EFTT_SMOOTHNESS     ||
+		texSlot == EFTT_HEIGHT         ||
+		texSlot == EFTT_EMITTANCE      ||
+		texSlot == EFTT_DETAIL_OVERLAY ||
+		texSlot == EFTT_DECAL_OVERLAY;
+#else
+	return true;
+#endif
+}
+
+EShaderStage GetShaderStagesForTexSlot(EEfResTextures texSlot)
+{
+	return EShaderStage_AllWithoutCompute;
+	static const EShaderStage shaderStagesByTexSlot[EFTT_MAX] =
+	{
+		EShaderStage_Pixel,                                                                 // EFTT_DIFFUSE
+		EShaderStage_Pixel,                                                                 // EFTT_NORMALS
+		EShaderStage_Pixel,                                                                 // EFTT_SPECULAR
+		EShaderStage_Pixel,                                                                 // EFTT_ENV
+		EShaderStage_Pixel,                                                                 // EFTT_DETAIL_OVERLAY
+		EShaderStage_Pixel,                                                                 // EFTT_SMOOTHNESS
+		EShaderStage_Vertex | EShaderStage_Hull | EShaderStage_Domain | EShaderStage_Pixel, // EFTT_HEIGHT
+		EShaderStage_Pixel,                                                                 // EFTT_DECAL_OVERLAY
+		EShaderStage_Pixel,                                                                 // EFTT_SUBSURFACE
+		EShaderStage_Pixel,                                                                 // EFTT_CUSTOM
+		EShaderStage_Pixel,                                                                 // EFTT_CUSTOM_SECONDARY
+		EShaderStage_Pixel,                                                                 // EFTT_OPACITY
+		EShaderStage_Pixel,                                                                 // EFTT_TRANSLUCENCY
+		EShaderStage_Pixel,                                                                 // EFTT_EMITTANCE
+	};
+
+	return shaderStagesByTexSlot[texSlot];
 }
 
 }

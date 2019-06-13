@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "Voxelizer.h"
@@ -161,95 +161,87 @@ void Voxelizer::RasterizeTriangle(const Vec3 v0World, const Vec3 v1World, const 
 		Evaluate2DEdge(ne2_yz, de2_yz, yzcw, Vec2(e2.y, e2.z), Vec2(v2.y, v2.z), Vec2(dp.y, dp.z));
 	}
 
+	for (int y = minVoxelIndex.y; y <= maxVoxelIndex.y; ++y)
 	{
-		for (int y = minVoxelIndex.y; y <= maxVoxelIndex.y; ++y)
-		{
-			const float minY = spaceMin.y + y * voxelSize.y;
+		const float minY = spaceMin.y + y * voxelSize.y;
 
-			if ((minY + dp.y < minTriangleBoundingBox.y) || (minY > maxTriangleBoundingBox.y))
+		if ((minY + dp.y < minTriangleBoundingBox.y) || (minY > maxTriangleBoundingBox.y))
+			continue;
+
+		for (int x = minVoxelIndex.x; x <= maxVoxelIndex.x; ++x)
+		{
+			const float minX = spaceMin.x + x * voxelSize.x;
+
+			if ((minX + dp.x < minTriangleBoundingBox.x) || (minX > maxTriangleBoundingBox.x))
 				continue;
 
-			for (int x = minVoxelIndex.x; x <= maxVoxelIndex.x; ++x)
+			if (ne0_xy.Dot(Vec2(minX, minY)) + de0_xy < 0.0f)
+				continue;
+			if (ne1_xy.Dot(Vec2(minX, minY)) + de1_xy < 0.0f)
+				continue;
+			if (ne2_xy.Dot(Vec2(minX, minY)) + de2_xy < 0.0f)
+				continue;
+
+			if (zPlanar)
 			{
-				const float minX = spaceMin.x + x * voxelSize.x;
+				m_spanGrid.AddVoxel(x, y, minVoxelIndex.z, backface);
+				continue;
+			}
 
-				if ((minX + dp.x < minTriangleBoundingBox.x) || (minX > maxTriangleBoundingBox.x))
+			bool wasPreviousVoxelBelowTheTriangle = true;
+
+			for (int z = minVoxelIndex.z; z <= maxVoxelIndex.z; ++z)
+			{
+				const float minZ = spaceMin.z + z * voxelSize.z;
+
+				if ((minZ + dp.z < minTriangleBoundingBox.z) || (minZ > maxTriangleBoundingBox.z))
 					continue;
 
-				if (ne0_xy.Dot(Vec2(minX, minY)) + de0_xy < 0.0f)
-					continue;
-				if (ne1_xy.Dot(Vec2(minX, minY)) + de1_xy < 0.0f)
-					continue;
-				if (ne2_xy.Dot(Vec2(minX, minY)) + de2_xy < 0.0f)
-					continue;
+				// This projection value is amplified by the n length (it is not normalized)
+				const float currentVoxelProjectedOnTriangleNormal = n.Dot(Vec3(minX, minY, minZ));
 
-				if (zPlanar)
+				// Here we check if the current voxel is containing the triangle
+				// in-between his height limits.
+				const float firstDistance = (currentVoxelProjectedOnTriangleNormal + firstVericalLimitForTriangleRasterization);
+				const float secondDistance = (currentVoxelProjectedOnTriangleNormal + secondVerticalLimitForTriangleRasterization);
+				const bool isVoxelAboveOrBelowTheTriangle = firstDistance * secondDistance > 0.0f;
+
+				// We start the voxelization process from the bottom of a tile to the top.
+				// This allows us to consider the first voxel always below the triangle we are considering.
+				// For small voxels and triangles with tiny slopes, due to numerical errors,
+				// we could end up skipping the voxel that correctly rasterizes a particular point.
+				// So if we pass directly from a situation in which we were below the triangle
+				// and we are now above it, then we don't skip the voxel and we continue to check
+				// if the other requirements are fulfilled.
+				if (isVoxelAboveOrBelowTheTriangle)
 				{
-					m_spanGrid.AddVoxel(x, y, minVoxelIndex.z, backface);
+					if (!wasPreviousVoxelBelowTheTriangle)
+						break;
 
+					// It is guaranteed that firstDistance and secondDistance have the same sign here, so only firstDistance needs to be checked
+					const bool isTheCurrentVoxelAboveTheTriangle = xycw ? firstDistance < 0.0f : firstDistance > 0.0f;
+					if (!isTheCurrentVoxelAboveTheTriangle)
+						continue;
+				}
+				wasPreviousVoxelBelowTheTriangle = false;
+
+				if (ne0_xz.Dot(Vec2(minX, minZ)) + de0_xz < 0.0f)
 					continue;
-				}
+				if (ne1_xz.Dot(Vec2(minX, minZ)) + de1_xz < 0.0f)
+					continue;
+				// cppcheck-suppress uninitvar
+				if (ne2_xz.Dot(Vec2(minX, minZ)) + de2_xz < 0.0f)
+					continue;
 
-				bool wasPreviousVoxelBelowTheTriangle = true;
+				if (ne0_yz.Dot(Vec2(minY, minZ)) + de0_yz < 0.0f)
+					continue;
+				if (ne1_yz.Dot(Vec2(minY, minZ)) + de1_yz < 0.0f)
+					continue;
+				// cppcheck-suppress uninitvar
+				if (ne2_yz.Dot(Vec2(minY, minZ)) + de2_yz < 0.0f)
+					continue;
 
-				for (int z = minVoxelIndex.z; z <= maxVoxelIndex.z; ++z)
-				{
-					const float minZ = spaceMin.z + z * voxelSize.z;
-
-					if ((minZ + dp.z < minTriangleBoundingBox.z) || (minZ > maxTriangleBoundingBox.z))
-						continue;
-
-					// This projection value is amplified by the n length (it is not normalized)
-					float currentVoxelProjectedOnTriangleNormal = n.Dot(Vec3(minX, minY, minZ));
-
-					// Here we check if the current voxel is containing the triangle
-					// in-between his height limits.
-					const float firstDistance = (currentVoxelProjectedOnTriangleNormal + firstVericalLimitForTriangleRasterization);
-					const float secondDistance = (currentVoxelProjectedOnTriangleNormal + secondVerticalLimitForTriangleRasterization);
-					const bool isVoxelAboveOrBelowTheTriangle = firstDistance * secondDistance > 0.0f;
-					if (isVoxelAboveOrBelowTheTriangle)
-					{
-						// We start the voxelization process from the bottom of a tile to the top.
-						// This allows us to consider the first voxel always below the triangle we are considering.
-						// For small voxels and triangles with tiny slopes, due to numerical errors,
-						// we could end up skipping the voxel that correctly rasterizes a particular point.
-						// So if we pass directly from a situation in which we were below the triangle
-						// and we are now above it, then we don't skip the voxel and we continue to check
-						// if the other requirements are fulfilled.
-						if (wasPreviousVoxelBelowTheTriangle)
-						{
-							const bool isTheCurrentVoxelAboveTheTriangle = firstDistance > 0.0f && secondDistance > 0.0f;
-							if (isTheCurrentVoxelAboveTheTriangle)
-							{
-								wasPreviousVoxelBelowTheTriangle = false;
-							}
-						}
-						else
-						{
-							continue;
-						}
-					}
-
-					wasPreviousVoxelBelowTheTriangle = false;
-
-					if (ne0_xz.Dot(Vec2(minX, minZ)) + de0_xz < 0.0f)
-						continue;
-					if (ne1_xz.Dot(Vec2(minX, minZ)) + de1_xz < 0.0f)
-						continue;
-					// cppcheck-suppress uninitvar
-					if (ne2_xz.Dot(Vec2(minX, minZ)) + de2_xz < 0.0f)
-						continue;
-
-					if (ne0_yz.Dot(Vec2(minY, minZ)) + de0_yz < 0.0f)
-						continue;
-					if (ne1_yz.Dot(Vec2(minY, minZ)) + de1_yz < 0.0f)
-						continue;
-					// cppcheck-suppress uninitvar
-					if (ne2_yz.Dot(Vec2(minY, minZ)) + de2_yz < 0.0f)
-						continue;
-
-					m_spanGrid.AddVoxel(x, y, z, backface);
-				}
+				m_spanGrid.AddVoxel(x, y, z, backface);
 			}
 		}
 	}
@@ -324,6 +316,9 @@ size_t WorldVoxelizer::ProcessGeometry(uint32 hashValueSeed /* = 0 */, uint32 ha
 	Matrix34 worldTM;
 	sp.pMtx3x4 = &worldTM;
 
+	//references to geoms need to be incremented because physical entity can potentially drop it's geometry anytime when this method is executed in different thread
+	sp.flags = status_addref_geoms;
+
 	HashComputer hash(hashValueSeed);
 	hash.Add((uint32)entityCount);
 
@@ -352,15 +347,12 @@ size_t WorldVoxelizer::ProcessGeometry(uint32 hashValueSeed /* = 0 */, uint32 ha
 			{
 				if (sp.pGeomProxy->GetType() == GEOM_HEIGHTFIELD)
 				{
-					const AABB aabb = ComputeTerrainAABB(sp.pGeomProxy);
+					AABB aabb;
+					uint32 terrainHash = ComputeTerrainHashAndAABB(sp.pGeomProxy, aabb);
 					if (terrainAABBCount < MaxTerrainAABBCount)
 						terrainAABB[terrainAABBCount++] = aabb;
-
-					if (aabb.GetSize().len2() > 0.0f)
-					{
-						hash.Add(aabb.min);
-						hash.Add(aabb.max);
-					}
+					
+					hash.Add(terrainHash);
 				}
 				else
 				{
@@ -373,6 +365,9 @@ size_t WorldVoxelizer::ProcessGeometry(uint32 hashValueSeed /* = 0 */, uint32 ha
 
 			++sp.ipart;
 			MARK_UNUSED sp.partid;
+
+			if (sp.pGeomProxy) sp.pGeomProxy->Release();
+			if (sp.pGeom) sp.pGeom->Release();
 		}
 		MARK_UNUSED sp.ipart;
 	}
@@ -411,6 +406,8 @@ size_t WorldVoxelizer::ProcessGeometry(uint32 hashValueSeed /* = 0 */, uint32 ha
 								++sp.ipart;
 								MARK_UNUSED sp.partid;
 
+								if (sp.pGeomProxy) sp.pGeomProxy->Release();
+								if (sp.pGeom) sp.pGeom->Release();
 								continue;
 							}
 						}
@@ -421,6 +418,9 @@ size_t WorldVoxelizer::ProcessGeometry(uint32 hashValueSeed /* = 0 */, uint32 ha
 
 				++sp.ipart;
 				MARK_UNUSED sp.partid;
+
+				if (sp.pGeomProxy) sp.pGeomProxy->Release();
+				if (sp.pGeom) sp.pGeom->Release();
 			}
 			MARK_UNUSED sp.ipart;
 		}
@@ -633,8 +633,8 @@ void WorldVoxelizer::VoxelizeGeometry(const strided_pointer<Vec3>& vertices, con
 		for (size_t i = 0; i < triCount; ++i)
 		{
 			RasterizeTriangle(worldTM.TransformPoint(vertices[indices[i * 3 + 0]]),
-			                  worldTM.TransformPoint(vertices[indices[i * 3 + 1]]),
-			                  worldTM.TransformPoint(vertices[indices[i * 3 + 2]]));
+				worldTM.TransformPoint(vertices[indices[i * 3 + 1]]),
+				worldTM.TransformPoint(vertices[indices[i * 3 + 2]]));
 		}
 	}
 }
@@ -671,22 +671,27 @@ void WorldVoxelizer::VoxelizeGeometry(const Vec3* vertices, const uint32* indice
 	}
 }
 
-AABB WorldVoxelizer::ComputeTerrainAABB(IGeometry* geometry)
+uint32 WorldVoxelizer::ComputeTerrainHashAndAABB(IGeometry* geometry, AABB& aabb)
 {
+	aabb.Reset();
+	
 	primitives::heightfield* phf = (primitives::heightfield*)geometry->GetData();
-	if (!phf) return AABB::RESET;
+	if (!phf) return 0;
+
+	HashComputer hash;
 
 	const int minX = max(0, (int)((m_volumeAABB.min.x - phf->origin.x) * phf->stepr.x));
 	const int minY = max(0, (int)((m_volumeAABB.min.y - phf->origin.y) * phf->stepr.y));
-	const int maxX = min((int)((m_volumeAABB.max.x - phf->origin.x) * phf->stepr.x), (phf->size.x - 1));
-	const int maxY = min((int)((m_volumeAABB.max.y - phf->origin.y) * phf->stepr.y), (phf->size.y - 1));
+	const int maxX = min((int)((m_volumeAABB.max.x - phf->origin.x) * phf->stepr.x), phf->size.x);
+	const int maxY = min((int)((m_volumeAABB.max.y - phf->origin.y) * phf->stepr.y), phf->size.y);
 
 	const Vec3 origin = phf->origin;
 
 	const float xStep = (float)phf->step.x;
 	const float yStep = (float)phf->step.y;
 
-	AABB terrainAABB(AABB::RESET);
+	float zMin = FLT_MAX;
+	float zMax = -FLT_MAX;
 
 	if (phf->fpGetSurfTypeCallback && phf->fpGetHeightCallback)
 	{
@@ -696,39 +701,29 @@ AABB WorldVoxelizer::ComputeTerrainAABB(IGeometry* geometry)
 			{
 				if (phf->fpGetSurfTypeCallback(x, y) != phf->typehole)
 				{
-					const Vec3 v0 = origin + Vec3(x * xStep, y * yStep, phf->getheight(x, y) * phf->heightscale);
-					const Vec3 v1 = origin + Vec3(x * xStep, (y + 1) * yStep, phf->getheight(x, y + 1) * phf->heightscale);
-					const Vec3 v2 = origin + Vec3((x + 1) * xStep, y * yStep, phf->getheight(x + 1, y) * phf->heightscale);
-					const Vec3 v3 = origin + Vec3((x + 1) * xStep, (y + 1) * yStep, phf->getheight(x + 1, y + 1) * phf->heightscale);
-
-					terrainAABB.Add(v0);
-					terrainAABB.Add(v1);
-					terrainAABB.Add(v2);
-					terrainAABB.Add(v3);
+					const float height = phf->getheight(x, y);
+					zMin = min(zMin, height);
+					zMax = max(zMax, height);
+					hash.Add(height);
 				}
 			}
 		}
 	}
 	else if (phf->fpGetSurfTypeCallback)
 	{
-		float* height = (float*)phf->fpGetHeightCallback;
+		float* heightData = (float*)phf->fpGetHeightCallback;
 
-		assert(height);
-		PREFAST_ASSUME(height);
+		assert(heightData);
+		PREFAST_ASSUME(heightData);
 
 		for (int y = minY; y <= maxY; ++y)
 		{
 			for (int x = minX; x <= maxX; ++x)
 			{
-				const Vec3 v0 = origin + Vec3(x * xStep, y * yStep, height[Vec2i(x, y) * phf->stride] * phf->heightscale);
-				const Vec3 v1 = origin + Vec3(x * xStep, (y + 1) * yStep, height[Vec2i(x, y + 1) * phf->stride] * phf->heightscale);
-				const Vec3 v2 = origin + Vec3((x + 1) * xStep, y * yStep, height[Vec2i(x + 1, y) * phf->stride] * phf->heightscale);
-				const Vec3 v3 = origin + Vec3((x + 1) * xStep, (y + 1) * yStep, height[Vec2i(x + 1, y + 1) * phf->stride] * phf->heightscale);
-
-				terrainAABB.Add(v0);
-				terrainAABB.Add(v1);
-				terrainAABB.Add(v2);
-				terrainAABB.Add(v3);
+				const float height = heightData[Vec2i(x, y) * phf->stride];
+				zMin = min(zMin, height);
+				zMax = max(zMax, height);
+				hash.Add(height);
 			}
 		}
 	}
@@ -738,23 +733,26 @@ AABB WorldVoxelizer::ComputeTerrainAABB(IGeometry* geometry)
 		{
 			for (int x = minX; x <= maxX; ++x)
 			{
-				const Vec3 v0 = origin + Vec3(x * xStep, y * yStep, phf->getheight(x, y) * phf->heightscale);
-				const Vec3 v1 = origin + Vec3(x * xStep, (y + 1) * yStep, phf->getheight(x, y + 1) * phf->heightscale);
-				const Vec3 v2 = origin + Vec3((x + 1) * xStep, y * yStep, phf->getheight(x + 1, y) * phf->heightscale);
-				const Vec3 v3 = origin + Vec3((x + 1) * xStep, (y + 1) * yStep, phf->getheight(x + 1, y + 1) * phf->heightscale);
-
-				terrainAABB.Add(v0);
-				terrainAABB.Add(v1);
-				terrainAABB.Add(v2);
-				terrainAABB.Add(v3);
+				float height = phf->getheight(x, y);
+				zMin = min(zMin, height);
+				zMax = max(zMax, height);
+				hash.Add(height);
 			}
 		}
 	}
 
-	if (Overlap::AABB_AABB(m_volumeAABB, terrainAABB))
-		return terrainAABB;
+	const Vec3 aabbMin = origin + Vec3(minX * xStep, minY * yStep, zMin * phf->heightscale);
+	const Vec3 aabbMax = origin + Vec3(maxX * xStep, maxY * yStep, zMax * phf->heightscale);
+	
+	AABB terrainAABB(aabbMin, aabbMax);
 
-	return AABB::RESET;
+	if (Overlap::AABB_AABB(m_volumeAABB, terrainAABB))
+	{
+		aabb = terrainAABB;
+		hash.Complete();
+		return hash.GetValue();
+	}
+	return 0;
 }
 
 #pragma warning (push)
@@ -774,9 +772,11 @@ size_t WorldVoxelizer::VoxelizeTerrain(IGeometry* geometry, const Matrix34& worl
 	const float yStep = (float)phf->step.y;
 
 	size_t faceCount = 0;
+	size_t totalFaceCount = 0;
 
-	const size_t MaxVertexCount = 1024 * 4;
-	Vec3 vertices[MaxVertexCount];
+	const size_t maxFacesCount = 1024;
+	const size_t maxVertexCount = maxFacesCount * 4;
+	Vec3 vertices[maxVertexCount];
 
 	if (phf->fpGetSurfTypeCallback && phf->fpGetHeightCallback)
 	{
@@ -791,12 +791,23 @@ size_t WorldVoxelizer::VoxelizeTerrain(IGeometry* geometry, const Matrix34& worl
 					const Vec3 v2 = origin + Vec3((x + 1) * xStep, y * yStep, phf->getheight(x + 1, y) * phf->heightscale);
 					const Vec3 v3 = origin + Vec3((x + 1) * xStep, (y + 1) * yStep, phf->getheight(x + 1, y + 1) * phf->heightscale);
 
-					assert(faceCount < MaxVertexCount);
+					CRY_ASSERT(faceCount < maxFacesCount);
 
 					vertices[(faceCount << 2) + 0] = v0;
 					vertices[(faceCount << 2) + 1] = v1;
 					vertices[(faceCount << 2) + 2] = v2;
-					vertices[(faceCount++ << 2) + 3] = v3;
+					vertices[(faceCount << 2) + 3] = v3;
+
+					if (++faceCount >= maxFacesCount)
+					{
+						for (size_t i = 0; i < faceCount; ++i)
+						{
+							RasterizeTriangle(vertices[(i << 2) + 0], vertices[(i << 2) + 2], vertices[(i << 2) + 1]);
+							RasterizeTriangle(vertices[(i << 2) + 1], vertices[(i << 2) + 2], vertices[(i << 2) + 3]);
+						}
+						totalFaceCount += faceCount;
+						faceCount = 0;
+					}
 				}
 			}
 		}
@@ -805,7 +816,7 @@ size_t WorldVoxelizer::VoxelizeTerrain(IGeometry* geometry, const Matrix34& worl
 	{
 		float* height = (float*)phf->fpGetHeightCallback;
 
-		assert(height);
+		CRY_ASSERT(height);
 		PREFAST_ASSUME(height);
 
 		for (int y = minY; y <= maxY; ++y)
@@ -817,12 +828,23 @@ size_t WorldVoxelizer::VoxelizeTerrain(IGeometry* geometry, const Matrix34& worl
 				const Vec3 v2 = origin + Vec3((x + 1) * xStep, y * yStep, height[Vec2i(x + 1, y) * phf->stride] * phf->heightscale);
 				const Vec3 v3 = origin + Vec3((x + 1) * xStep, (y + 1) * yStep, height[Vec2i(x + 1, y + 1) * phf->stride] * phf->heightscale);
 
-				assert(faceCount < MaxVertexCount);
+				CRY_ASSERT(faceCount < maxFacesCount);
 
 				vertices[(faceCount << 2) + 0] = v0;
 				vertices[(faceCount << 2) + 1] = v1;
 				vertices[(faceCount << 2) + 2] = v2;
-				vertices[(faceCount++ << 2) + 3] = v3;
+				vertices[(faceCount << 2) + 3] = v3;
+
+				if (++faceCount >= maxFacesCount)
+				{
+					for (size_t i = 0; i < faceCount; ++i)
+					{
+						RasterizeTriangle(vertices[(i << 2) + 0], vertices[(i << 2) + 2], vertices[(i << 2) + 1]);
+						RasterizeTriangle(vertices[(i << 2) + 1], vertices[(i << 2) + 2], vertices[(i << 2) + 3]);
+					}
+					totalFaceCount += faceCount;
+					faceCount = 0;
+				}
 			}
 		}
 	}
@@ -837,12 +859,23 @@ size_t WorldVoxelizer::VoxelizeTerrain(IGeometry* geometry, const Matrix34& worl
 				const Vec3 v2 = origin + Vec3((x + 1) * xStep, y * yStep, phf->getheight(x + 1, y) * phf->heightscale);
 				const Vec3 v3 = origin + Vec3((x + 1) * xStep, (y + 1) * yStep, phf->getheight(x + 1, y + 1) * phf->heightscale);
 
-				assert(faceCount < MaxVertexCount);
+				assert(faceCount < maxFacesCount);
 
 				vertices[(faceCount << 2) + 0] = v0;
 				vertices[(faceCount << 2) + 1] = v1;
 				vertices[(faceCount << 2) + 2] = v2;
-				vertices[(faceCount++ << 2) + 3] = v3;
+				vertices[(faceCount << 2) + 3] = v3;
+
+				if (++faceCount >= maxFacesCount)
+				{
+					for (size_t i = 0; i < faceCount; ++i)
+					{
+						RasterizeTriangle(vertices[(i << 2) + 0], vertices[(i << 2) + 2], vertices[(i << 2) + 1]);
+						RasterizeTriangle(vertices[(i << 2) + 1], vertices[(i << 2) + 2], vertices[(i << 2) + 3]);
+					}
+					totalFaceCount += faceCount;
+					faceCount = 0;
+				}
 			}
 		}
 	}
@@ -852,8 +885,9 @@ size_t WorldVoxelizer::VoxelizeTerrain(IGeometry* geometry, const Matrix34& worl
 		RasterizeTriangle(vertices[(i << 2) + 0], vertices[(i << 2) + 2], vertices[(i << 2) + 1]);
 		RasterizeTriangle(vertices[(i << 2) + 1], vertices[(i << 2) + 2], vertices[(i << 2) + 3]);
 	}
+	totalFaceCount += faceCount;
 
-	return faceCount << 1;
+	return totalFaceCount << 1;
 }
 #pragma warning (pop)
 

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -24,6 +24,7 @@
 
 		#include <CryThreading/IThreadManager.h>
 		#include <CryThreading/IThreadConfigManager.h>
+		#include <CrySystem/ConsoleRegistration.h>
 
 static float s_sys_flash_video_buffertime = 2.0f;
 static float s_sys_flash_video_buffertime_loading = 2.0f;
@@ -86,7 +87,7 @@ public:
 		static bool s_registered = false;
 		if (!s_registered)
 		{
-			gEnv->pSystem->GetISystemEventDispatcher()->RegisterListener(&ms_inst);
+			gEnv->pSystem->GetISystemEventDispatcher()->RegisterListener(&ms_inst, "CryGFxVideoPlayer_SystemEventListener");
 			s_registered = true;
 		}
 	}
@@ -253,7 +254,7 @@ class CryGFxVideoPlayer : public GFxVideoPlayer
 	virtual void Decode()
 	{
 		#if defined ENABLE_FLASH_INFO
-		MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Other, 0, "Video Decode %s", m_videoFilePath.ToCStr());
+		MEMSTAT_CONTEXT_FMT(EMemStatContextType::Other, "Video Decode %s", m_videoFilePath.ToCStr());
 		#endif
 		m_pPlayer->Decode();
 	}

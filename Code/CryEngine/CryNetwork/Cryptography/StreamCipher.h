@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /****************************************************
    A simple stream cipher based on RC4
@@ -18,6 +18,8 @@ public:
 	void Decrypt(const uint8* input, int inputLen, uint8* output)       { ProcessBuffer(input, inputLen, output, true); }
 	void EncryptStream(const uint8* input, int inputLen, uint8* output) { ProcessBuffer(input, inputLen, output, false); }
 	void DecryptStream(const uint8* input, int inputLen, uint8* output) { ProcessBuffer(input, inputLen, output, false); }
+
+	static int GetBlockSize() { return 1; }
 
 private:
 	uint8 GetNext();

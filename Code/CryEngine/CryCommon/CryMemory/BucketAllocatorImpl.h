@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef BUCKETALLOCATORIMPL_H
 #define BUCKETALLOCATORIMPL_H
@@ -15,7 +15,7 @@
 	#define PROFILE_BUCKET_CLEANUP 0
 
 //#define BUCKET_ALLOCATOR_MAP_DOWN
-	#if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_DURANGO || (CRY_PLATFORM_LINUX && CRY_PLATFORM_32BIT) || CRY_PLATFORM_ANDROID
+	#if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_DURANGO || CRY_PLATFORM_ANDROID
 		#define BUCKET_ALLOCATOR_4K
 	#endif
 
@@ -224,7 +224,7 @@ bool BucketAllocator<TraitsT >::Refill(uint8 bucket)
 	#ifdef BUCKET_ALLOCATOR_PACK_SMALL_SIZES
 	UINT_PTR alignmentMask = 0;
 	#else
-	UINT_PTR alignmentMask = MEMORY_ALLOCATION_ALIGNMENT - 1;
+	UINT_PTR alignmentMask = CRY_MEMORY_ALLOCATION_ALIGNMENT - 1;
 	#endif
 
 	if ((SmallBlockLength % itemSize) == 0)
@@ -298,11 +298,10 @@ bool BucketAllocator<TraitsT >::Refill(uint8 bucket)
 
 	size_t smallBlockIdx = (baseAddress - blockBase) / SmallBlockLength;
 	size_t smallBlockEnd = ((endAddress - itemSize - blockBase) + SmallBlockOffsetMask) / SmallBlockLength;
-	size_t numSmallBlocks = smallBlockEnd - smallBlockIdx;
 
 	BucketAssert(useForward || !(endAddress & SmallBlockOffsetMask));
 	BucketAssert(!useForward || !(baseAddress & 7));
-	BucketAssert(numSmallBlocks > 0);
+	BucketAssert((smallBlockEnd - smallBlockIdx) > 0);
 	BucketAssert(smallBlockIdx < SmallBlocksPerPage);
 	BucketAssert(smallBlockEnd <= SmallBlocksPerPage);
 	BucketAssert(baseAddress >= fbh->start);
@@ -456,7 +455,11 @@ void BucketAllocator<TraitsT >::CleanupInternal(bool sortFreeLists)
 	if (pageCapacity == 0)
 		return;
 
-	CleanupAllocator alloc;
+	const size_t cleanupReserveCapacity = 
+		(sizeof(SmallBlockCleanupInfo*) * pageCapacity) + 
+		(sizeof(SmallBlockCleanupInfo) * SmallBlocksPerPage * pageCapacity);
+
+	CleanupAllocator alloc(cleanupReserveCapacity);
 	if (!alloc.IsValid())
 		return;
 
@@ -518,6 +521,10 @@ void BucketAllocator<TraitsT >::CleanupInternal(bool sortFreeLists)
 					sbInfos = (SmallBlockCleanupInfo*) alloc.Calloc(SmallBlocksPerPage, sizeof(SmallBlockCleanupInfo));
 					if (!sbInfos)
 					{
+#ifdef BUCKET_ALLOCATOR_TRAP_CLEANUP_OOM
+						// If this fires, CleanupAllocator is misconfigured and doesn't have enough space for cleanup info
+						__debugbreak();
+#endif
 						FreeCleanupInfo(alloc, pageInfos, pageCapacity);
 						return;
 					}
@@ -550,6 +557,10 @@ void BucketAllocator<TraitsT >::CleanupInternal(bool sortFreeLists)
 			cleanupInfos = (SmallBlockCleanupInfo*) alloc.Calloc(SmallBlocksPerPage, sizeof(SmallBlockCleanupInfo));
 			if (!cleanupInfos)
 			{
+#ifdef BUCKET_ALLOCATOR_TRAP_CLEANUP_OOM
+				// If this fires, CleanupAllocator is misconfigured and doesn't have enough space for cleanup info
+				__debugbreak();
+#endif
 				FreeCleanupInfo(alloc, pageInfos, pageCapacity);
 				return;
 			}
@@ -575,7 +586,6 @@ void BucketAllocator<TraitsT >::CleanupInternal(bool sortFreeLists)
 	for (int segId = 0; segId < numSegments; ++segId)
 	{
 		SegmentHot& segh = m_segmentsHot[segId];
-		SegmentCold& segc = m_segmentsCold[segId];
 
 		size_t basePageId = segId * NumPages;
 
@@ -1084,9 +1094,10 @@ inline void BucketAllocatorDetail::SystemAllocator::UnMap(UINT_PTR addr)
 		#pragma warning( pop )
 }
 
-inline BucketAllocatorDetail::SystemAllocator::CleanupAllocator::CleanupAllocator()
+inline BucketAllocatorDetail::SystemAllocator::CleanupAllocator::CleanupAllocator(size_t reserveCapacity)
+	: m_reserveCapacity(reserveCapacity)
 {
-	m_base = VirtualAlloc(NULL, ReserveCapacity, MEM_RESERVE, PAGE_READWRITE);
+	m_base = VirtualAlloc(NULL, reserveCapacity, MEM_RESERVE, PAGE_READWRITE);
 	m_end = m_base;
 }
 
@@ -1108,7 +1119,7 @@ inline void* BucketAllocatorDetail::SystemAllocator::CleanupAllocator::Calloc(si
 
 	UINT_PTR base = reinterpret_cast<UINT_PTR>(m_base);
 	UINT_PTR end = reinterpret_cast<UINT_PTR>(m_end);
-	if (end + size <= (base + ReserveCapacity))
+	if (end + size <= (base + m_reserveCapacity))
 	{
 		UINT_PTR endAligned = (end + 4095) & ~4095;
 		UINT_PTR sizeNeeded = ((end + size - endAligned) + 4095) & ~4095;
@@ -1159,9 +1170,10 @@ inline void BucketAllocatorDetail::SystemAllocator::UnMap(UINT_PTR addr)
 	VirtualAllocator::UnmapPage((void*)addr, BUCKET_ALLOCATOR_PAGE_SIZE);
 }
 
-inline BucketAllocatorDetail::SystemAllocator::CleanupAllocator::CleanupAllocator()
+inline BucketAllocatorDetail::SystemAllocator::CleanupAllocator::CleanupAllocator(size_t reserveCapacity)
+	: m_reserveCapacity(reserveCapacity)
 {
-	m_base = VirtualAllocator::AllocateVirtualAddressSpace(ReserveCapacity);
+	m_base = VirtualAllocator::AllocateVirtualAddressSpace(reserveCapacity);
 	if (!m_base)
 		__debugbreak();
 	m_end = m_base;
@@ -1179,7 +1191,7 @@ inline void* BucketAllocatorDetail::SystemAllocator::CleanupAllocator::Calloc(si
 
 	UINT_PTR base = reinterpret_cast<UINT_PTR>(m_base);
 	UINT_PTR end = reinterpret_cast<UINT_PTR>(m_end);
-	if (end + size <= (base + ReserveCapacity))
+	if (end + size <= (base + m_reserveCapacity))
 	{
 		UINT_PTR endAligned = (end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 		UINT_PTR sizeNeeded = ((end + size - endAligned) + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1);
@@ -1297,9 +1309,10 @@ inline void BucketAllocatorDetail::SystemAllocator::UnMap(UINT_PTR addr)
 	assert(ret == 0);
 }
 
-inline BucketAllocatorDetail::SystemAllocator::CleanupAllocator::CleanupAllocator()
+inline BucketAllocatorDetail::SystemAllocator::CleanupAllocator::CleanupAllocator(size_t reserveCapacity)
+	: m_reserveCapacity(reserveCapacity)
 {
-	m_base = reinterpret_cast<void*>(mmap(NULL, ReserveCapacity, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0));
+	m_base = reinterpret_cast<void*>(mmap(NULL, reserveCapacity, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0));
 	assert(m_base != MAP_FAILED);
 	m_end = m_base;
 }
@@ -1308,7 +1321,7 @@ inline BucketAllocatorDetail::SystemAllocator::CleanupAllocator::~CleanupAllocat
 {
 	if (m_base != NULL)
 	{
-		int ret = munmap(m_base, ReserveCapacity);  // TODO: -1?
+		int ret = munmap(m_base, m_reserveCapacity);  // TODO: -1?
 		(void) ret;
 		assert(ret == 0);
 	}
@@ -1326,7 +1339,7 @@ inline void* BucketAllocatorDetail::SystemAllocator::CleanupAllocator::Calloc(si
 
 	UINT_PTR base = reinterpret_cast<UINT_PTR>(m_base);
 	UINT_PTR end = reinterpret_cast<UINT_PTR>(m_end);
-	if (end + size <= (base + ReserveCapacity))
+	if (end + size <= (base + m_reserveCapacity))
 	{
 		UINT_PTR endAligned = (end + 4095) & ~4095;
 		UINT_PTR sizeNeeded = ((end + size - endAligned) + 4095) & ~4095;

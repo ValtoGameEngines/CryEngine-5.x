@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 //
 //-------------------------------------------------------------------------
@@ -415,7 +415,7 @@ bool CAIAnimationComponent::InitMannequin( IActionController& actionController, 
 	const bool supportsMannequinAiming = ( supportsMannequinAimPoseAction && supportsMannequinAimingAction );
 	if ( supportsMannequinAiming )
 	{
-		m_pProceduralContextAim = static_cast< CProceduralContextAim* >( actionController.FindOrCreateProceduralContext( PROCEDURAL_CONTEXT_AIM_NAME ) );
+		m_pProceduralContextAim = static_cast< CProceduralContextAim* >( actionController.FindOrCreateProceduralContext(CProceduralContextAim::GetCID()) );
 
 		actionController.Queue( *new CAnimActionAIAimPose() );
 		actionController.Queue( *new CAnimActionAIAiming() );
@@ -428,7 +428,7 @@ bool CAIAnimationComponent::InitMannequin( IActionController& actionController, 
 	const bool supportsMannequinLooking = ( supportsMannequinLookPoseAction && supportsMannequinLookingAction );
 	if ( supportsMannequinLooking )
 	{
-		m_pProceduralContextLook = static_cast< CProceduralContextLook* >( actionController.FindOrCreateProceduralContext( PROCEDURAL_CONTEXT_LOOK_NAME ) );
+		m_pProceduralContextLook = static_cast< CProceduralContextLook* >( actionController.FindOrCreateProceduralContext(CProceduralContextLook::GetCID()) );
 
 		actionController.Queue( *new CAnimActionAILookPose() );
 		actionController.Queue( *new CAnimActionAILooking() );
@@ -477,9 +477,10 @@ void CAIAnimationComponent::UpdateAnimationStateRequests( CPlayer& player, const
 	case eCoverLocationRequest_Set:
 		{
 			CRY_ASSERT( coverRequest.coverLocation.IsValid() );
-
+#if defined(USE_CRY_ASSERT)
 			const float TOO_FAR_AWAY = 50;
 			CRY_ASSERT( coverRequest.coverLocation.t.GetSquaredDistance2D( player.GetEntity()->GetPos() ) < sqr( TOO_FAR_AWAY ) );
+#endif
 
 			m_animationState.SetCoverLocation( coverRequest.coverLocation );
 		}
@@ -559,7 +560,6 @@ void CAIAnimationComponent::UpdateStanceAndCover( CPlayer& player, IActionContro
 
 	// Cover Action and Cover Body Direction
 	const EStance currentVisualStance = m_animationState.GetStance();
-	const EStance currentLogicalStance = player.GetStance();
 	const bool isInCoverStance = ( currentVisualStance == STANCE_HIGH_COVER || currentVisualStance == STANCE_LOW_COVER );
 	if ( isInCoverStance )
 	{

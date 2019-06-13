@@ -1,11 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // Various support classes for having the player's animation enslaved to other entities.
 
-#if !defined(PlayerEnslavement_h)
-#define PlayerEnslavement_h
+#pragma once
 
-class IActionController;
+struct IActionController;
 
 
 // Button-mashing sequence whereby the player escapes from the tractor-beams
@@ -78,6 +77,3 @@ private:
 	// of [0.0f .. 1.0f]. -1.0f if no target fight progress was reported yet.
 	float m_targetProgress;
 };
-
-
-#endif // !defined(PlayerEnslavement_h)

@@ -1,6 +1,7 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
+#include <CryRenderer/IRenderAuxGeom.h>
 #include "EyeMovementFaceAnim.h"
 
 #include "FacialInstance.h"
@@ -8,10 +9,6 @@
 #include "../CharacterInstance.h"
 #include "FaceEffector.h"
 #include "FaceEffectorLibrary.h"
-
-#if defined(__GNUC__)
-	#include <float.h> // FLT_MIN
-#endif
 
 const CFaceIdentifierHandle* CEyeMovementFaceAnim::RetrieveEffectorIdentifiers() const
 {
@@ -198,7 +195,6 @@ void CEyeMovementFaceAnim::InitialiseBoneIDs()
 	CAttachmentManager* pMasterAttachmentManager = (CAttachmentManager*)m_pInstance->GetMasterCharacter()->GetIAttachmentManager();
 	if (pMasterAttachmentManager)
 	{
-		CCharInstance* pMasterCharacterInstance = pMasterAttachmentManager->m_pSkelInstance;
 		CDefaultSkeleton& rDefaultSkeleton = *pMasterAttachmentManager->m_pSkelInstance->m_pDefaultSkeleton;
 		for (EyeID eye = EyeID(0); eye < EyeCOUNT; eye = EyeID(eye + 1))
 			m_eyeBoneIDs[eye] = rDefaultSkeleton.GetJointIDByName(szEyeBoneNames[eye]);
@@ -258,7 +254,6 @@ void CEyeMovementFaceAnim::DisplayDebugInfoForEye(const QuatTS& rAnimLocationNex
 	CCharInstance* pMasterCharacterInstance = pMasterAttachmentManager->m_pSkelInstance;
 	CSkeletonPose* pSkeletonPose = &pMasterCharacterInstance->m_SkeletonPose;
 
-	QuatT eyeBoneTransform = (pSkeletonPose ? pSkeletonPose->GetAbsJointByID(m_eyeBoneIDs[eye]) : QuatT(IDENTITY));
 	Vec3 pos = rAnimLocationNext.t;
 	float color[4] = { 1, 1, 1, 1 };
 	pos += (pSkeletonPose ? pSkeletonPose->GetAbsJointByID(m_eyeBoneIDs[eye]).t : Vec3(ZERO));

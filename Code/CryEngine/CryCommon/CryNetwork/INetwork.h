@@ -1,17 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-/*************************************************************************
-   -------------------------------------------------------------------------
-   $Id$
-   $DateTime$
-   Description:  Message definition to id management
-   -------------------------------------------------------------------------
-   History:
-   - 07/25/2001   : Alberto Demichelis, Created
-   - 07/20/2002   : Martin Mittring, Cleaned up
-   - 09/08/2004   : Craig Tiller, Refactored
-   - 17/09/2004   : Craig Tiller, Introduced contexts
-*************************************************************************/
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -21,20 +8,18 @@
 	#define CRYNETWORK_API DLL_IMPORT
 #endif
 
-#include <CryNetwork/ISerialize.h> // <> required for Interfuscator
-#include <CrySystem/TimeValue.h>
-#include <CrySystem/ITimer.h>           // <> required for Interfuscator
-#include <CryLobby/CommonICryLobby.h>       // <> required for Interfuscator
-#include <CryLobby/CommonICryMatchMaking.h> // <> required for Interfuscator
-#include <CryNetwork/INetworkService.h>
+#if !defined(NET_ASSERT_LOGGING) && !defined(NET_ASSERT)
+	#define NET_ASSERT assert
+#endif
 
-#include <CryEntitySystem/IEntity.h>
+#include <CryCore/Platform/platform.h>
+#include <CryNetwork/ISerialize.h>
+#include <CrySystem/TimeValue.h>
+#include <CryLobby/CommonICryMatchMaking.h>
+#include <CryNetwork/INetworkService.h>
 
 #define SERVER_DEFAULT_PORT        64087
 #define SERVER_DEFAULT_PORT_STRING "64087"
-
-#define UNSAFE_NUM_ASPECTS         32         // 8,16 or 32
-#define NUM_ASPECTS                (UNSAFE_NUM_ASPECTS)
 
 #define NEW_BANDWIDTH_MANAGEMENT   1
 #if NEW_BANDWIDTH_MANAGEMENT
@@ -113,39 +98,6 @@ class CNetSerialize;
 
 typedef _smart_ptr<IRMIMessageBody> IRMIMessageBodyPtr;
 typedef uint32                      TPacketSize;
-
-//! This enum describes different reliability mechanisms for packet delivery.
-//! Do not change ordering here without updating ServerContextView, ClientContextView.
-//! \note This is pretty much deprecated; new code should use the message queue facilities
-//! to order messages, and be declared either ReliableUnordered or UnreliableUnordered.
-enum ENetReliabilityType
-{
-	eNRT_ReliableOrdered,
-	eNRT_ReliableUnordered,
-	eNRT_UnreliableOrdered,
-	eNRT_UnreliableUnordered,
-
-	// Must be last.
-	eNRT_NumReliabilityTypes
-};
-
-//! Implementation of CContextView relies on the first two values being as they are.
-enum ERMIAttachmentType
-{
-	eRAT_PreAttach  = 0,
-	eRAT_PostAttach = 1,
-	eRAT_NoAttach,
-
-	//! Urgent RMIs will be sent at the next sync with game.
-	//! \note Use with caution as this will increase bandwidth.
-	eRAT_Urgent,
-
-	//! If an RMI doesn't care about the object update, then use independent RMIs as they can be sent in the urgent RMI flush.
-	eRAT_Independent,
-
-	// Must be last.
-	eRAT_NumAttachmentTypes
-};
 
 enum EContextViewState
 {
@@ -261,25 +213,15 @@ ILINE EMessageSendResult WorstMessageSendResult(EMessageSendResult r1, EMessageS
 		return r1;
 }
 
-#define _CRYNETWORK_CONCAT(x, y) x ## y
-#define CRYNETWORK_CONCAT(x, y)  _CRYNETWORK_CONCAT(x, y)
-#define ASPECT_TYPE CRYNETWORK_CONCAT(uint, UNSAFE_NUM_ASPECTS)
-
-#if NUM_ASPECTS > 32
-	#error Aspects > 32 Not supported at this time
-#endif
-
+#include "INetEntity.h"
 typedef uint8       ChannelMaskType;
-typedef ASPECT_TYPE NetworkAspectType;
-typedef uint8       NetworkAspectID;
-
-#define NET_ASPECT_ALL (NetworkAspectType(0xFFFFFFFF))
 
 typedef uint32 TNetChannelID;
-static const char* LOCAL_CONNECTION_STRING = "<local>";
-static const char* NULL_CONNECTION_STRING = "<null>";
+#define LOCAL_CONNECTION_STRING "<local>"
+#define NULL_CONNECTION_STRING  "<null>"
 static const size_t MaxProfilesPerAspect = 8;
 
+//! \cond INTERNAL
 //! Represents a message that has been added to the message queue.
 //! These cannot be shared between channels.
 struct SSendableHandle
@@ -383,9 +325,7 @@ struct INetBreakageSimplePlayback : public CMultiThreadRefCount
 	// </interfuscator:shuffle>
 };
 typedef _smart_ptr<INetBreakageSimplePlayback> INetBreakageSimplePlaybackPtr;
-
-struct ISerializableInfo : public CMultiThreadRefCount, public ISerializable {};
-typedef _smart_ptr<ISerializableInfo> ISerializableInfoPtr;
+//! \endcond
 
 struct INetSendableSink
 {
@@ -707,7 +647,7 @@ struct SBandwidthStatsSubset
 struct SBandwidthStats
 {
 	SBandwidthStats()
-		: m_total(), m_prev(), m_1secAvg(), m_10secAvg()
+		: m_total(), m_prev(), m_1secAvg(), m_10secAvg(), m_numChannels()
 	{
 	}
 
@@ -798,6 +738,11 @@ enum EListenerPriorityType
 	ELPT_PostEngine = 0x00020000,
 };
 
+struct INetworkEngineModule : public Cry::IDefaultModule
+{
+	CRYINTERFACE_DECLARE_GUID(INetworkEngineModule, "e6083617-4219-4054-93fa-3b2ada514755"_cry_guid);
+};
+
 //! Main access point for creating Network objects.
 struct INetwork
 {
@@ -808,9 +753,9 @@ struct INetwork
 		NETWORK_MT_PRIORITY_HIGH,
 	};
 
-	enum ENetContextCreationFlags
+	enum ENetContextCreationFlags : uint32
 	{
-		eNCCF_Multiplayer = BIT(0)
+		eNCCF_Multiplayer = BIT32(0)
 	};
 
 	// <interfuscator:shuffle>
@@ -934,6 +879,7 @@ struct INetwork
 	// </interfuscator:shuffle>
 };
 
+//! \cond INTERNAL
 //! This interface is implemented by CryNetwork, and is used by INetMessageSink::DefineProtocol to find all of the message sinks that should be attached to a channel.
 struct IProtocolBuilder
 {
@@ -1007,6 +953,7 @@ struct IVoiceContext
 	// </interfuscator:shuffle>
 };
 #endif
+//! \endcond
 
 //! An INetContext manages the list of objects synchronized over the network.
 //! \note Only to be implemented in CryNetwork.
@@ -1105,11 +1052,16 @@ struct INetContext
 	//! \param id The id of a *bound* object to change authority for.
 	//! \param pControlling	Channel who will now control the object (or NULL if we wish to take control).
 	//! \note Only those aspects marked as eAF_Delegatable are passed on.
+	//! \par Example
+	//! \include CryEntitySystem/Examples/AspectDelegation.cpp
 	virtual void DelegateAuthority(EntityId id, INetChannel* pControlling) = 0;
 
 	//! Changes the game context.
 	//! \note Destroy all objects, and cause all channels to load a new level, and reinitialize state.
 	virtual bool ChangeContext() = 0;
+
+	//! Context establishment has started
+	virtual void StartedEstablishingContext(int establishToken) = 0;
 
 	//! The level has finished loading
 	//! Example: The slow part of context establishment is complete.
@@ -1179,6 +1131,7 @@ struct INetContext
 #endif
 };
 
+//! \cond INTERNAL
 struct INetSender
 {
 	INetSender(TSerialize sr, uint32 nCurrentSeq, uint32 nBasisSeq, uint32 timeFraction32, bool isServer) : ser(sr)
@@ -1292,9 +1245,8 @@ typedef _smart_ptr<CPriorityPulseState> CPriorityPulseStatePtr;
 
 struct SMessagePositionInfo
 {
-	SMessagePositionInfo() : havePosition(false), haveDrawDistance(false) {}
-	bool         haveDrawDistance;
-	bool         havePosition;
+	bool         haveDrawDistance = false;
+	bool         havePosition = false;
 	float        drawDistance;
 	Vec3         position;
 	SNetObjectID obj;
@@ -1322,7 +1274,7 @@ public:
 struct INetSendable : public INetBaseSendable
 {
 public:
-	INetSendable(uint32 flags, ENetReliabilityType reliability) : m_flags(flags), m_group(0), m_priorityDelta(0.0f), m_reliability(reliability) {}
+	INetSendable(uint32 flags, ENetReliabilityType reliability) : m_reliability(reliability), m_group(0), m_flags(flags), m_priorityDelta(0.0f) {}
 
 	// <interfuscator:shuffle>
 	virtual const char* GetDescription() = 0;
@@ -1382,6 +1334,7 @@ enum ESynchObjectResult
 	eSOR_Failed,
 	eSOR_Skip,
 };
+//! \endcond
 
 //! Interface for a channel to call in order to create/destroy objects, and when changing context, to properly configure that context.
 struct IGameContext
@@ -1405,25 +1358,14 @@ struct IGameContext
 	//! \note nAspect will have exactly one bit set describing which aspect to synch.
 	virtual ESynchObjectResult SynchObject(EntityId id, NetworkAspectType nAspect, uint8 nCurrentProfile, TSerialize ser, bool verboseLogging) = 0;
 
-	//! Changes the current profile of an object.
-	//! \note Game code should ensure that things work out correctly.
-	//! Example: Change physicalization.
-	virtual bool SetAspectProfile(EntityId id, NetworkAspectType nAspect, uint8 nProfile) = 0;
-
 	//! An entity has been unbound (we may wish to destroy it).
 	virtual void UnboundObject(EntityId id) = 0;
-
-	//! An entity has been bound (we may wish to do something with that info).
-	virtual void BoundObject(EntityId id, NetworkAspectType nAspects) = 0;
 
 	//! Handles a remote method invocation.
 	virtual INetAtSyncItem* HandleRMI(bool bClient, EntityId objID, uint8 funcID, TSerialize ser, INetChannel* pChannel) = 0;
 
 	//! Passes current demo playback mapped entity ID of the original demo recording server (local) player.
 	virtual void PassDemoPlaybackMappedOriginalServerPlayer(EntityId id) = 0;
-
-	//! Fetches the default (spawned) profile for an aspect.
-	virtual uint8      GetDefaultProfileForAspect(EntityId id, NetworkAspectType aspectID) = 0;
 
 	virtual CTimeValue GetPhysicsTime() = 0;
 	virtual void       BeginUpdateObjects(CTimeValue physTime, INetChannel* pChannel) = 0;
@@ -1471,6 +1413,16 @@ struct IGameNub
 	//! \note The GameNub should be prepared to be destroyed shortly after this call is finished
 	virtual void FailedActiveConnect(EDisconnectionCause cause, const char* description) = 0;
 	// </interfuscator:shuffle>
+};
+
+struct IGameServerNub : public IGameNub
+{
+	virtual void AddSendableToRemoteClients(INetSendablePtr pMsg, int numAfterHandle, const SSendableHandle* afterHandle, SSendableHandle* handle) = 0;
+};
+
+struct IGameClientNub : public IGameNub
+{
+	virtual INetChannel* GetNetChannel() = 0;
 };
 
 struct IGameChannel : public INetMessageSink
@@ -1524,22 +1476,24 @@ struct INetNub
 	// </interfuscator:shuffle>
 };
 
-// Listener that allows for listening to client connection and disconnect events
+//! Listener that allows for listening to client connection and disconnect events
+//! \par Example
+//! \include CryNetwork/Examples/NetworkedClientListener.cpp
 struct INetworkedClientListener
 {
-	// Sent to the local client on disconnect
+	//! Sent to the local client on disconnect
 	virtual void OnLocalClientDisconnected(EDisconnectionCause cause, const char* description) = 0;
 
-	// Sent to the server when a new client has started connecting
-	// Return false to disallow the connection
+	//! Sent to the server when a new client has started connecting
+	//! Return false to disallow the connection
 	virtual bool OnClientConnectionReceived(int channelId, bool bIsReset) = 0;
-	// Sent to the server when a new client has finished connecting and is ready for gameplay
-	// Return false to disallow the connection and kick the player
+	//! Sent to the server when a new client has finished connecting and is ready for gameplay
+	//! Return false to disallow the connection and kick the player
 	virtual bool OnClientReadyForGameplay(int channelId, bool bIsReset) = 0;
-	// Sent to the server when a client is disconnected
+	//! Sent to the server when a client is disconnected
 	virtual void OnClientDisconnected(int channelId, EDisconnectionCause cause, const char* description, bool bKeepClient) = 0;
-	// Sent to the server when a client is timing out (no packets for X seconds)
-	// Return true to allow disconnection, otherwise false to keep client.
+	//! Sent to the server when a client is timing out (no packets for X seconds)
+	//! Return true to allow disconnection, otherwise false to keep client.
 	virtual bool OnClientTimingOut(int channelId, EDisconnectionCause cause, const char* description) = 0;
 };
 
@@ -1607,15 +1561,15 @@ enum ERMIBenchmarkLogPoint
 struct SRMIBenchmarkParams
 {
 	SRMIBenchmarkParams()
-		: message(eRMIBM_InvalidMessage),
-		entity(RMI_BENCHMARK_INVALID_ENTITY),
-		seq(RMI_BENCHMARK_INVALID_SEQ)
+		: entity(RMI_BENCHMARK_INVALID_ENTITY),
+		  message(eRMIBM_InvalidMessage),
+		  seq(RMI_BENCHMARK_INVALID_SEQ)
 	{
 	}
 
 	SRMIBenchmarkParams(ERMIBenchmarkMessage msg, EntityId ent, uint8 seq, bool two)
-		: message(msg),
-		entity(ent),
+		: entity(ent),
+		message(msg),
 		seq(seq),
 		twoRoundTrips(two)
 	{
@@ -1637,6 +1591,8 @@ struct SRMIBenchmarkParams
 
 #endif
 
+//! Main interface for a connection to another engine instance
+//! i.e. The server has one net channel per client, each client has a single net channel for the server.
 struct INetChannel : public INetMessageSink
 {
 	//! \note See CNetCVars - net_defaultChannel<xxx> for defaults.
@@ -1805,6 +1761,8 @@ struct INetChannel : public INetMessageSink
 	virtual bool IsMigratingChannel() const = 0;
 	// </interfuscator:shuffle>
 
+	virtual bool GetRemoteNetAddress(uint32& uip, uint16& port, bool firstLocal = true) = 0;
+
 #ifndef OLD_VOICE_SYSTEM_DEPRECATED
 	virtual CTimeValue TimeSinceVoiceTransmission() = 0;
 	virtual CTimeValue TimeSinceVoiceReceipt(EntityId id) = 0;
@@ -1857,6 +1815,7 @@ struct IGameSecurity
 	// </interfuscator:shuffle>
 };
 
+//! \cond INTERNAL
 //! This interface defines what goes into a CTP message.
 class INetMessage : public INetSendable
 {
@@ -1939,7 +1898,6 @@ struct IRMIMessageBody
 	  IRMIListener* pListener_,
 	  int userId_,
 	  EntityId dependentId_) :
-		m_cnt(0),
 		reliability(reliability_),
 		attachment(attachment_),
 		objId(objId_),
@@ -1947,7 +1905,8 @@ struct IRMIMessageBody
 		funcId(funcId_),
 		pMessageDef(0),
 		userId(userId_),
-		pListener(pListener_)
+		pListener(pListener_),
+		m_cnt(0)
 	{
 	}
 	IRMIMessageBody(
@@ -1958,7 +1917,6 @@ struct IRMIMessageBody
 	  IRMIListener* pListener_,
 	  int userId_,
 	  EntityId dependentId_) :
-		m_cnt(0),
 		reliability(reliability_),
 		attachment(attachment_),
 		objId(objId_),
@@ -1966,7 +1924,8 @@ struct IRMIMessageBody
 		funcId(0),
 		pMessageDef(pMessageDef_),
 		userId(userId_),
-		pListener(pListener_)
+		pListener(pListener_),
+		m_cnt(0)
 	{
 	}
 	// <interfuscator:shuffle>
@@ -2091,6 +2050,7 @@ struct ILanQueryListener : public INetQueryListener
 	virtual void                GetMemoryStatistics(ICrySizer* pSizer) = 0;
 	// </interfuscator:shuffle>
 };
+//! \endcond
 
 struct SContextEstablishState
 {
@@ -2148,12 +2108,11 @@ template<class T, int N>
 class CCyclicStatsBuffer
 {
 public:
-	CCyclicStatsBuffer() : m_count(0), m_total(T())
+	CCyclicStatsBuffer()
+		: m_count(0)
+		, m_index(N - 1)
+		, m_total(T())
 	{
-		for (size_t index = 0; index < N; ++index)
-		{
-			m_values[index] = T();
-		}
 	}
 
 	void Clear()
@@ -2162,6 +2121,7 @@ public:
 		m_index = N - 1;
 	}
 
+	//! Adds a new sample value to the back of the queue and removes value from the front
 	void AddSample(T x)
 	{
 		m_index = (m_index + 1) % N;
@@ -2198,28 +2158,35 @@ public:
 		return static_cast<float>(m_total) / static_cast<float>(m_count);
 	}
 
+	//! Returns oldest sample value, front of the queue
 	T GetFirst() const
 	{
 		NET_ASSERT(!Empty());
-		return m_values[m_index];
+		return m_values[IndexFirst() % N];
 	}
 
+	//! Returns newest sample value, back of the queue
 	T GetLast() const
 	{
 		NET_ASSERT(!Empty());
-		return m_values[(m_index - 1) % N];
+		return m_values[IndexLast()];
 	}
 
+	//! Get sample by index.
+	//! 0 is the first sample (\see GetFirst()), N-1 is last sample (\see GetLast())
 	T operator[](size_t index) const
 	{
 		NET_ASSERT(!Empty());
-		return m_values[(m_index + index) % N];
+		return m_values[(IndexFirst() + index) % N];
 	}
 
 private:
+	const size_t IndexFirst() const { return m_index + 1; }
+	const size_t IndexLast() const { return m_index; }
+
 	size_t m_count;
-	size_t m_index;
-	T      m_values[N];
+	size_t m_index;           //!< Index of the latest sample at the back of the queue
+	T      m_values[N]{};
 	T      m_total;
 };
 #else
@@ -2248,7 +2215,7 @@ public:
 
 	size_t Size() const
 	{
-		return MIN(m_count, N);
+		return std::min(m_count, N);
 	}
 
 	size_t Capacity() const

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "Rain.h"
@@ -35,7 +35,7 @@ void CRain::PreloadTextures()
 {
 	uint32 nDefaultFlags = FT_DONT_STREAM;
 
-	XmlNodeRef root = GetISystem()->LoadXmlFromFile("EngineAssets/raintextures.xml");
+	XmlNodeRef root = GetISystem()->LoadXmlFromFile("%ENGINE%/EngineAssets/raintextures.xml");
 	if (root)
 	{
 		for (int i = 0; i < root->getChildCount(); i++)
@@ -119,7 +119,7 @@ void CRain::Update(SEntityUpdateContext& ctx, int updateSlot)
 	const IActor* pClient = g_pGame->GetIGameFramework()->GetClientActor();
 	if (pClient && Reset())
 	{
-		const Vec3 vCamPos = gEnv->pRenderer->GetCamera().GetPosition();
+		const Vec3 vCamPos = GetISystem()->GetViewCamera().GetPosition();
 		Vec3 vR = (GetEntity()->GetWorldPos() - vCamPos) / max(m_params.fRadius, 1e-3f);
 		float fAttenAmount = max(0.f, 1.0f - vR.dot(vR));
 		fAttenAmount *= m_params.fAmount;
@@ -153,8 +153,13 @@ void CRain::HandleEvent(const SGameObjectEvent& event)
 {
 }
 
+Cry::Entity::EventFlags CRain::GetEventMask() const
+{
+	return ENTITY_EVENT_RESET | ENTITY_EVENT_HIDE | ENTITY_EVENT_DONE;
+}
+
 //------------------------------------------------------------------------
-void CRain::ProcessEvent(SEntityEvent& event)
+void CRain::ProcessEvent(const SEntityEvent& event)
 {
 	switch (event.event)
 	{
@@ -173,11 +178,6 @@ void CRain::ProcessEvent(SEntityEvent& event)
 		}
 		break;
 	}
-}
-
-//------------------------------------------------------------------------
-void CRain::SetAuthority(bool auth)
-{
 }
 
 //------------------------------------------------------------------------
@@ -272,8 +272,6 @@ public:
 
 	virtual void ProcessEvent(EFlowEvent event, SActivationInfo* pActInfo)
 	{
-		EFlowEvent eventType = event;
-
 		switch (event)
 		{
 		case eFE_Activate:

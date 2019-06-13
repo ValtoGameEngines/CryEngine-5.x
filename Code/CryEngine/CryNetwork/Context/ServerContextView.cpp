@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -16,6 +16,7 @@
 #include <CrySystem/ITimer.h>
 #include "VoiceContext.h"
 #include <CryNetwork/INetworkService.h>
+#include <CryEntitySystem/IEntitySystem.h>
 #include "Protocol/NullSendable.h"
 
 #include "CET_Server.h"
@@ -24,6 +25,7 @@
 
 #include "BreakagePlayback.h"
 #include "PerformBreakage.h"
+
 
 class CServerContextView::CBindObjectMessage : public CUpdateMessage
 {
@@ -128,8 +130,10 @@ private:
 					}
 					else if (obj.main->spawnType == eST_Static)
 					{
-						EntityId nUserID = obj.main->userID;
-						pSender->ser.Value("userID", nUserID);
+#ifndef PURE_CLIENT
+						IEntitySystem::StaticEntityNetworkIdentifier id = gEnv->pEntitySystem->GetStaticEntityNetworkId(obj.main->userID);
+						pSender->ser.Value("userID", id);
+#endif
 					}
 					NetworkAspectType nAspectsEnabled = obj.xtra->nAspectsEnabled;
 					NetworkAspectType delegatableMask = obj.xtra->delegatableMask;
@@ -470,40 +474,35 @@ private:
 CServerContextView::CServerContextView(CNetChannel* pChannel, CNetContext* pContext)
 {
 	SetMMM(pChannel->GetChannelMMM());
-	SContextViewConfiguration config = {
-		CClientContextView::FlushMsgs,
-		CClientContextView::ChangeState,
-		CClientContextView::ForceNextState,
-		CClientContextView::FinishState,
-		CClientContextView::BeginUpdateObject,
-		CClientContextView::EndUpdateObject,
-		CClientContextView::ReconfigureObject,
-		CClientContextView::SetAuthority,
+
+	SContextViewConfiguration cfg = { 0 };
+	cfg.pFlushMsgsMsg		= CClientContextView::FlushMsgs;
+	cfg.pChangeStateMsg		= CClientContextView::ChangeState;
+	cfg.pForceStateMsg		= CClientContextView::ForceNextState;
+	cfg.pFinishStateMsg		= CClientContextView::FinishState;
+	cfg.pUpdateMsg			= CClientContextView::BeginUpdateObject;
+	cfg.pEndUpdateMsg		= CClientContextView::EndUpdateObject;
+	cfg.pReconfigureMsg		= CClientContextView::ReconfigureObject;
+	cfg.pSetAuthorityMsg	= CClientContextView::SetAuthority;
 #ifndef OLD_VOICE_SYSTEM_DEPRECATED
-		CClientContextView::VoiceData,
-#else
-		NULL,
+	cfg.pVoiceDataMsg		= CClientContextView::VoiceData;
 #endif
-		CClientContextView::RemoveStaticObject,
-		CClientContextView::UpdatePhysicsTime,
-		IF_SERVER_FILE_SYNC(CClientContextView::BeginSyncFiles,NULL),
-		IF_SERVER_FILE_SYNC(CClientContextView::BeginSyncFile, NULL),
-		IF_SERVER_FILE_SYNC(CClientContextView::AddFileData,   NULL),
-		IF_SERVER_FILE_SYNC(CClientContextView::EndSyncFile,   NULL),
-		IF_SERVER_FILE_SYNC(CClientContextView::AllFilesSynced,NULL),
-		static_array<CClientContextView::msgPartialAspect, NumAspects>::value,
-		static_array<CClientContextView::msgSetAspectProfile, NumAspects>::value,
-		static_array<CClientContextView::msgUpdateAspect, NumAspects>::value,
-		// rmi messages
-		{
-			CClientContextView::RMI_ReliableOrdered,
-			CClientContextView::RMI_ReliableUnordered,
-			CClientContextView::RMI_UnreliableOrdered,
-			NULL,
-			// must be last
-			CClientContextView::RMI_Attachment,
-		}
-	};
+	cfg.pRemoveStaticEntity	= CClientContextView::RemoveStaticObject;
+	cfg.pUpdatePhysicsTime	= CClientContextView::UpdatePhysicsTime;
+	cfg.pBeginSyncFiles		= IF_SERVER_FILE_SYNC(CClientContextView::BeginSyncFiles, NULL);
+	cfg.pBeginSyncFile		= IF_SERVER_FILE_SYNC(CClientContextView::BeginSyncFile, NULL);
+	cfg.pAddFileData		= IF_SERVER_FILE_SYNC(CClientContextView::AddFileData, NULL);
+	cfg.pEndSyncFile		= IF_SERVER_FILE_SYNC(CClientContextView::EndSyncFile, NULL);
+	cfg.pAllFilesSynced		= IF_SERVER_FILE_SYNC(CClientContextView::AllFilesSynced, NULL);
+	cfg.pPartialUpdate			= static_array<CClientContextView::msgPartialAspect, NumAspects>::value;
+	cfg.pSetAspectProfileMsgs	= static_array<CClientContextView::msgSetAspectProfile, NumAspects>::value;
+	cfg.pUpdateAspectMsgs		= static_array<CClientContextView::msgUpdateAspect, NumAspects>::value;
+	cfg.pRMIMsgs[eNRT_ReliableOrdered]			= CClientContextView::RMI_ReliableOrdered;
+	cfg.pRMIMsgs[eNRT_ReliableUnordered]		= CClientContextView::RMI_ReliableUnordered;
+	cfg.pRMIMsgs[eNRT_UnreliableOrdered]		= CClientContextView::RMI_UnreliableOrdered;
+	cfg.pRMIMsgs[eNRT_UnreliableUnordered]		= NULL;
+	cfg.pRMIMsgs[eNRT_UnreliableUnordered + 1]	= CClientContextView::RMI_Attachment;
+
 
 	MMM_REGION(m_pMMM);
 
@@ -521,7 +520,7 @@ CServerContextView::CServerContextView(CNetChannel* pChannel, CNetContext* pCont
 	m_clientHasPunkBuster = false;
 #endif
 
-	Init(pChannel, pContext, &config);
+	Init(pChannel, pContext, &cfg);
 }
 
 CServerContextView::~CServerContextView()
@@ -693,6 +692,9 @@ void CServerContextView::OnObjectEvent(CNetContextState* pState, SNetObjectEvent
 			if (m_lockLocalMapLoaded.IsLocking() && ContextState()->IsContextEstablished())
 				m_lockLocalMapLoaded = CChangeStateLock();
 			break;
+		case eNOE_StartedEstablishingContext:
+			StartedEstablishingContext();
+			break;
 		}
 	}
 
@@ -745,6 +747,13 @@ bool CServerContextView::EnterState(EContextViewState state)
 		//ClearAllState();
 		InitSessionIDs();
 		SendAuthChecks();
+
+		// NOTE: This state lock prevents context view establisher registration until context state is properly started.
+		// Establisher is registered in CContextView::GC_GetEstablishmentOrder() which is scheduled in state eCVS_Begin.
+		// Without the lock, there is a chance of triggering "Supersceded" error in CNetContextState::GC_Lazy_TickEstablishers.
+		if (!ContextState()->IsStartedEstablishingContext() && !ContextState()->IsDead())
+			m_lockContextStateInitialized = CChangeStateLock(this, GetWaitStateName(eCVS_Initial));
+
 		FinishLocalState();
 		break;
 	case eCVS_Begin:
@@ -949,11 +958,17 @@ NET_IMPLEMENT_SIMPLE_IMMEDIATE_MESSAGE(CServerContextView, InitPunkBuster, eNRT_
 
 void CServerContextView::ChangeContext()
 {
+	m_lockContextStateInitialized = CChangeStateLock();
 	if (IsPastOrInState(eCVS_Begin))
 		PushForcedState(eCVS_Initial, true);
 	if (IsInState(eCVS_InGame))
 		FinishLocalState();
 	CContextView::ChangeContext();
+}
+
+void CServerContextView::StartedEstablishingContext()
+{
+	m_lockContextStateInitialized = CChangeStateLock();
 }
 
 void CServerContextView::EstablishedContext()
@@ -995,10 +1010,10 @@ void CServerContextView::UnbindObject(SNetObjectID nID)
 		SContextViewObject& cvo = m_objects[nID.id];
 		if (cvo.predictionHandle && cvo.spawnState == eSS_Unspawned)
 		{
-			SRemoveStaticObject rso;
-			rso.id = cvo.predictionHandle;
+			SRemovePredictedObject rpo;
+			rpo.id = cvo.predictionHandle;
 			m_pPendingUnbinds->insert(std::make_pair(nID, lk));
-			CClientContextView::SendUnbindPredictedObjectWith(rso, Parent());
+			CClientContextView::SendUnbindPredictedObjectWith(rpo, Parent());
 		}
 		else
 		{
@@ -1244,12 +1259,13 @@ void CServerContextView::OnWitnessDeclared()
 
 void CServerContextView::RemoveStaticEntity(EntityId id)
 {
+#ifndef PURE_CLIENT
 	class CRemoveStaticObjectMessage : public INetMessage, private SRemoveStaticObject
 	{
 	public:
-		CRemoveStaticObjectMessage(const SNetMessageDef* pDef, EntityId id) : INetMessage(pDef)
+		CRemoveStaticObjectMessage(const SNetMessageDef* pDef, IEntitySystem::StaticEntityNetworkIdentifier id) : INetMessage(pDef)
 		{
-			this->id = id;
+			this->staticId = id;
 		}
 
 		EMessageSendResult WritePayload(TSerialize ser, uint32, uint32)
@@ -1273,5 +1289,10 @@ void CServerContextView::RemoveStaticEntity(EntityId id)
 		if (IsObjectBound(objId))
 			return;
 
-	Parent()->NetAddSendable(new CRemoveStaticObjectMessage(CClientContextView::RemoveStaticObject, id), 0, NULL, NULL);
+	const IEntitySystem::StaticEntityNetworkIdentifier staticId = gEnv->pEntitySystem->GetStaticEntityNetworkId(id);
+	Parent()->NetAddSendable(new CRemoveStaticObjectMessage(CClientContextView::RemoveStaticObject, staticId), 0, NULL, NULL);
+#else
+	// Calling RemoveStaticEntity on PURE_CLIENT is not supported. If happens - check settings for eNOE_RemoveStaticEntity.
+	NET_ASSERT(false);
+#endif
 }

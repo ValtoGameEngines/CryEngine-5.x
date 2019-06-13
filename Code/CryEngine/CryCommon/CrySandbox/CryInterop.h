@@ -1,4 +1,6 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+ 
+//! \cond INTERNAL
 
 #pragma once
 
@@ -9,6 +11,7 @@
 //! Register yoursef with the editor GetIEditor()->RegisterUriListener().
 struct IUriEventListener
 {
+	virtual ~IUriEventListener() {}
 	virtual void OnUriReceived(const char* szUri) = 0;
 };
 
@@ -109,3 +112,5 @@ private:
 	TQueries m_queries;
 	string   m_uri;
 };
+
+//! \endcond

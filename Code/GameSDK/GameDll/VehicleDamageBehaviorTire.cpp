@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "VehicleDamageBehaviorTire.h"
@@ -8,6 +8,7 @@
 #include "GameRules.h"
 #include "IAnimatedCharacter.h"
 #include "IActorSystem.h"
+#include <CryMath/Random.h>
 
 #define AI_IMMOBILIZED_TIME 4
 

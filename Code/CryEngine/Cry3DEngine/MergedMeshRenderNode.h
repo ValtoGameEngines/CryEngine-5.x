@@ -1,7 +1,6 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-#ifndef _PROCEDURALVEGETATION_RENDERNODE_
-#define _PROCEDURALVEGETATION_RENDERNODE_
+#pragma once
 
 // Global define to enable and disable some debugging features (defined &
 // described below) to help finding issues in merged meshes at runtime.
@@ -34,7 +33,7 @@
 // The number of wind force samples along each principle axis.
 #define MMRM_WIND_DIM 4
 
-// The dimensions of the density grid on each patch (16x16x16 means one sample every metre)
+// The dimensions of the density grid on each patch (16x16x16 means one sample every meter)
 #define MMRM_DENSITY_DIM 16
 
 // Enable code that checks for boundaries when accessing and writing back the
@@ -57,7 +56,7 @@
 #define MMRM_SPINE_SLERP_BENDING 1
 
 // Enforce bending - ensure that the height of the current spine vertex
-// relative to the line segment defined by it's immediate neighbour vertices
+// relative to the line segment defined by it's immediate neighbor vertices
 // matches the initial height recorded in it's rest-pose
 #define MMRM_SPINE_HEIGHT_BENDING 0
 
@@ -140,8 +139,6 @@
 	#define mmrm_assert(x) (void)0
 #endif
 
-////////////////////////////////////////////////////////////////////////////////
-// Forward declarations
 struct SMMRMGroupHeader;
 struct SMMRM;
 struct SSampleDensity;
@@ -185,7 +182,7 @@ struct SMergedMeshInstanceCompressed;
 //
 //  - The cgf is preprocessed at runtime, this can be moved to level export time
 //
-class CMergedMeshRenderNode
+class CMergedMeshRenderNode final
 	: public IRenderNode
 	  , public IStreamCallback
 	  , public Cry3DEngineBase
@@ -289,7 +286,7 @@ class CMergedMeshRenderNode
 	// The render state
 	enum RenderMode
 	{
-		DYNAMIC = 0, // dynamic - prebaked & optionally simualted unique meshes
+		DYNAMIC = 0, // dynamic - prebaked & optionally simulated unique meshes
 		INSTANCED,   // instanced - preprocessed
 		NOT_VISIBLE, // simply not visible
 	};
@@ -346,10 +343,6 @@ class CMergedMeshRenderNode
 
 	// Only walid if we are currently streaming in data
 	IReadStream_AutoPtr m_pReadStream;
-
-#ifdef SEG_WORLD
-	uint16 m_nStaticTypeSlot;
-#endif
 
 	// Are spines active and present in memory?
 	bool m_SpinesActive : 1;
@@ -481,8 +474,8 @@ public:
 
 	bool StreamedIn() const { return m_State == STREAMED_IN; }
 
-	// Update streamable components
-	bool UpdateStreamableComponents(float fImportance, float fEntDistance, bool bFullUpdate);
+	// Update streamable components (IRenderNode)
+	void UpdateStreamingPriority(const SUpdateStreamingPriorityContext& streamingContext) override;
 
 	Vec3 GetSamplePos(size_t, size_t) const;
 	AABB GetSampleAABB(size_t, size_t) const;
@@ -501,45 +494,37 @@ public:
 	//////////////////////////////////////////////////////////////////////
 	// Inherited from IStreamCallback
 	//////////////////////////////////////////////////////////////////////
-	void StreamAsyncOnComplete(IReadStream* pStream, unsigned nError);
-	void StreamOnComplete(IReadStream* pStream, unsigned nError);
+	void StreamAsyncOnComplete(IReadStream* pStream, unsigned nError) override;
+	void StreamOnComplete(IReadStream* pStream, unsigned nError) override;
 
 	//////////////////////////////////////////////////////////////////////
 	// Inherited from IRenderNode
 	//////////////////////////////////////////////////////////////////////
-	const char*             GetName() const             { return "Runtime MergedMesh";  }
-	const char*             GetEntityClassName() const  { return "Runtime MergedMesh"; };
-	Vec3                    GetPos(bool bWorldOnly = true) const;
-	const AABB              GetBBox() const             { return m_visibleAABB; };
-	void                    SetBBox(const AABB& WSBBox) {};
-	void                    FillBBox(AABB& aabb);
-	void                    OffsetPosition(const Vec3& delta);
-	void                    Render(const struct SRendParams& EntDrawParams, const SRenderingPassInfo& passInfo);
+	const char*             GetName() const             override { return "Runtime MergedMesh";  }
+	const char*             GetEntityClassName() const  override { return "Runtime MergedMesh"; }
+	Vec3                    GetPos(bool bWorldOnly = true) const override;
+	const AABB              GetBBox() const             override { return m_visibleAABB; }
+	void                    SetBBox(const AABB& WSBBox) override {}
+	void                    FillBBox(AABB& aabb) const  override { aabb = GetBBox(); }
+	void                    OffsetPosition(const Vec3& delta) override;
+	void                    Render(const struct SRendParams& EntDrawParams, const SRenderingPassInfo& passInfo) override;
 
-	struct IPhysicalEntity* GetPhysics() const                 { return NULL; };
-	void                    SetPhysics(IPhysicalEntity* pPhys) {};
-	void                    SetMaterial(IMaterial* pMat)       {}
-	IMaterial*              GetMaterial(Vec3* pHitPos = NULL) const;
-	IMaterial*              GetMaterialOverride()              { return NULL; }
-	EERType                 GetRenderNodeType();
-	float                   GetMaxViewDist();
-	void                    GetMemoryUsage(ICrySizer* pSizer) const {}
+	struct IPhysicalEntity* GetPhysics() const                 override { return NULL; }
+	void                    SetPhysics(IPhysicalEntity* pPhys) override {}
+	void                    SetMaterial(IMaterial* pMat)       override {}
+	IMaterial*              GetMaterial(Vec3* pHitPos = NULL) const override;
+	IMaterial*              GetMaterialOverride() const override { return NULL; }
+	EERType                 GetRenderNodeType() const override { return eERType_MergedMesh; }
+	float                   GetMaxViewDist() const override;
+	void                    GetMemoryUsage(ICrySizer* pSizer) const override {}
 
 	ILINE StatInstGroup&    GetStatObjGroup(const int index) const
 	{
-#ifdef SEG_WORLD
-		return GetObjManager()->m_lstStaticTypes[m_nStaticTypeSlot][index];
-#else
-		return GetObjManager()->m_lstStaticTypes[0][index];
-#endif
+		return GetObjManager()->m_lstStaticTypes[index];
 	}
 	ILINE CStatObj* GetStatObj(const int index) const
 	{
-#ifdef SEG_WORLD
-		return GetObjManager()->m_lstStaticTypes[m_nStaticTypeSlot][index].GetStatObj();
-#else
-		return GetObjManager()->m_lstStaticTypes[0][index].GetStatObj();
-#endif
+		return GetObjManager()->m_lstStaticTypes[index].GetStatObj();
 	}
 };
 
@@ -570,22 +555,22 @@ public:
 	//////////////////////////////////////////////////////////////////////
 	// Inherited from IRenderNode
 	//////////////////////////////////////////////////////////////////////
-	const char*             GetName() const                                                                     { return "Runtime MergedMesh Proxy Instance";  }
-	const char*             GetEntityClassName() const                                                          { return "Runtime MergedMesh Proxy Instance"; };
-	Vec3                    GetPos(bool bWorldOnly = true) const                                                { return m_host->GetSamplePos(m_headerIndex, m_sampleIndex); };
-	const AABB              GetBBox() const                                                                     { return m_host->GetSampleAABB(m_headerIndex, m_sampleIndex); };
-	void                    SetBBox(const AABB& WSBBox)                                                         { __debugbreak(); };
-	void                    OffsetPosition(const Vec3& delta)                                                   {}
-	void                    Render(const struct SRendParams& EntDrawParams, const SRenderingPassInfo& passInfo) { __debugbreak(); }
+	const char*             GetName() const                                                                     override { return "Runtime MergedMesh Proxy Instance";  }
+	const char*             GetEntityClassName() const                                                          override { return "Runtime MergedMesh Proxy Instance"; }
+	Vec3                    GetPos(bool bWorldOnly = true) const                                                override { return m_host->GetSamplePos(m_headerIndex, m_sampleIndex); }
+	const AABB              GetBBox() const                                                                     override { return m_host->GetSampleAABB(m_headerIndex, m_sampleIndex); }
+	void                    SetBBox(const AABB& WSBBox)                                                         override { __debugbreak(); }
+	void                    OffsetPosition(const Vec3& delta)                                                   override {}
+	void                    Render(const struct SRendParams& EntDrawParams, const SRenderingPassInfo& passInfo) override { __debugbreak(); }
 
-	struct IPhysicalEntity* GetPhysics() const                                                                  { __debugbreak(); return NULL; };
-	void                    SetPhysics(IPhysicalEntity* pPhys)                                                  { __debugbreak(); };
-	void                    SetMaterial(IMaterial* pMat)                                                        { __debugbreak(); }
-	IMaterial*              GetMaterial(Vec3* pHitPos = NULL) const                                             { __debugbreak(); return NULL; }
-	IMaterial*              GetMaterialOverride()                                                               { __debugbreak(); return NULL; }
-	EERType                 GetRenderNodeType()                                                                 { __debugbreak(); return eERType_MergedMesh; }
-	float                   GetMaxViewDist()                                                                    { __debugbreak(); return FLT_MAX; }
-	void                    GetMemoryUsage(ICrySizer* pSizer) const                                             { __debugbreak(); }
+	struct IPhysicalEntity* GetPhysics() const                                                                  override { __debugbreak(); return NULL; }
+	void                    SetPhysics(IPhysicalEntity* pPhys)                                                  override { __debugbreak(); }
+	void                    SetMaterial(IMaterial* pMat)                                                        override { __debugbreak(); }
+	IMaterial*              GetMaterial(Vec3* pHitPos = NULL) const                                             override { __debugbreak(); return NULL; }
+	IMaterial*              GetMaterialOverride()             const                                             override { __debugbreak(); return NULL; }
+	EERType                 GetRenderNodeType()               const                                             override { __debugbreak(); return eERType_MergedMesh; }
+	float                   GetMaxViewDist()                  const                                             override { __debugbreak(); return FLT_MAX; }
+	void                    GetMemoryUsage(ICrySizer* pSizer) const                                             override { __debugbreak(); }
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -636,7 +621,6 @@ class CMergedMeshesManager
 	NodeArrayT       m_ActiveNodes;
 	NodeArrayT       m_StreamedOutNodes;
 	NodeArrayT       m_VisibleNodes;
-	NodeArrayT       m_SegNodes;
 	NodeArrayT       m_PostRenderNodes;
 	ProjectileArrayT m_Projectiles;
 	InstanceSectors  m_InstanceSectors;
@@ -665,6 +649,9 @@ class CMergedMeshesManager
 #if MMRM_CLUSTER_VISUALIZATION
 	DynArray<SMeshAreaCluster> m_clusters;
 #endif // MMRM_CLUSTER_VISUALIZATION
+
+	uint64 m_lodRatioCallbackIndex = -1;
+	uint64 m_viewDistRatioCallbackIndex = -1;
 
 	CMergedMeshRenderNode* FindNode(const Vec3& pos);
 
@@ -727,11 +714,4 @@ public:
 	size_t ActiveNodes() const                { return m_nActiveNodes; }
 	size_t StreamedOutNodes() const           { return m_nStreamedOutNodes; }
 	bool   PoolOverFlow() const               { return m_PoolOverFlow; }
-
-	void   PrepareSegmentData(const AABB& aabb);
-	int    GetSegmentNodeCount() { return m_SegNodes.size(); }
-	int    GetCompiledDataSize(uint32 index);
-	bool   GetCompiledData(uint32 index, byte* pData, int nSize, string* pName, std::vector<struct IStatInstGroup*>** ppStatInstGroupTable, const Vec3& segmentOffset);
 };
-
-#endif

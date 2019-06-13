@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    -------------------------------------------------------------------------
@@ -18,8 +18,6 @@
 #include <CryRenderer/IRenderer.h>
 #include <CryMath/Cry_Vector3.h>
 #include "AIDebugDrawHelpers.h"
-
-static float g_drawOffset = 0.1f;
 
 //====================================================================
 // DebugDrawCircleOutline

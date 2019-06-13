@@ -1,5 +1,4 @@
-// CRYENGINE Source Code File
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 
 // WaterOceanBottom: used as closing cap for missing terrain until horizon
@@ -9,23 +8,16 @@
 
 float Script : STANDARDSGLOBAL
 <
-  string Script =
-           "NoPreview;"           
-					 "ForceDrawLast;"
-           "ShaderDrawType = General;"                      
-           "ShaderType = General;"
+	string Script =
+		"NoPreview;"           
+		"ForceDrawLast;"
+		"SupportsDeferredShading;"
+		"SupportsFullDeferredShading;"
+		"ShaderDrawType = General;"                      
+		"ShaderType = General;"
 >;
 
 /// Un-Tweakables //////////////////////
-float4x4 mWorldT : PI_TransObjMatrix < vsregister = c4; >;
-float4x4 mCamera : PB_CameraMatrix_I;
-
-float4 g_fWaterLevel : PB_WaterLevel;
-
-float4x4 mReflProj : PI_TexMatrix
-<
-  string 'Sampler' (envMapSamplerRefl)
->;
 
 struct a2vWater
 {
@@ -137,7 +129,11 @@ pixout_gbuffer OceanBottomZpassPS( v2fWaterBottomZpass IN )
 	pixout_gbuffer OUT = (pixout_gbuffer)0;
 	
 	MaterialAttribsCommon attribs = MaterialAttribsDefault();
+#if %_RT_SAMPLE0
+	EncodeMicroGBuffer( attribs, OUT.GBufferA, IN.Position.xy );
+#else
 	EncodeGBuffer( attribs, OUT.GBufferA, OUT.GBufferB, OUT.GBufferC );
+#endif
 
   return OUT;
 }

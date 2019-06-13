@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -629,7 +629,7 @@ void CGameRulesObjective_CTF::OnAction(const ActionId &action, int activationMod
 }
 
 //-------------------------------------------------------------------------
-void CGameRulesObjective_CTF::OnEntityEvent( IEntity *pEntity, SEntityEvent &event )
+void CGameRulesObjective_CTF::OnEntityEvent( IEntity *pEntity, const SEntityEvent& event )
 {
 	EntityId entityId = pEntity->GetId();
 
@@ -954,8 +954,6 @@ void CGameRulesObjective_CTF::Server_ResetAll()
 						spawnParams.pClass = pFlagClass;
 						spawnParams.sName = flagName.c_str();
 						spawnParams.vPosition = pEntity->GetWorldPos();
-						Ang3 rotation = pEntity->GetWorldAngles();
-						spawnParams.nFlags = ENTITY_FLAG_NEVER_NETWORK_STATIC;
 
 						IEntity *pFlagEntity = gEnv->pEntitySystem->SpawnEntity(spawnParams, true);
 						FATAL_ASSERT(pFlagEntity);
@@ -979,7 +977,7 @@ void CGameRulesObjective_CTF::Server_ResetAll()
 								SEntitySpawnParams weaponSpawnParams;
 								weaponSpawnParams.pClass = m_pFallbackWeaponClass;
 								weaponSpawnParams.sName = weaponName.c_str();
-								weaponSpawnParams.nFlags = ENTITY_FLAG_NO_PROXIMITY | ENTITY_FLAG_NEVER_NETWORK_STATIC;
+								weaponSpawnParams.nFlags = ENTITY_FLAG_NO_PROXIMITY;
 								IEntity *pWeapon = gEnv->pEntitySystem->SpawnEntity(weaponSpawnParams, true);
 								FATAL_ASSERT(pWeapon);
 								if (pWeapon)

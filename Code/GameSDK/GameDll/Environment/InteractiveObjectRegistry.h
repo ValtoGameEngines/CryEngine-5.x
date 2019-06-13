@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -14,9 +14,6 @@ History:
 
 #pragma once
 
-#ifndef __INTERACTIVEOBJECT_REGISTRY_H__
-#define __INTERACTIVEOBJECT_REGISTRY_H__
-
 #include "../Utility/CryHash.h"
 #include "ItemString.h"
 
@@ -24,8 +21,8 @@ History:
 #include "InteractiveObjectEnums.h"
 #include "ICryMannequinProceduralClipFactory.h"
 
-class IActionController;
-class IAnimationDatabase;
+struct IActionController;
+struct IAnimationDatabase;
 struct SControllerDef;
 
 class CInteractiveObjectRegistry
@@ -88,5 +85,3 @@ private:
 	const IAnimationDatabase *m_pDatabaseObject;
 	const SControllerDef *m_pControllerDef;
 };
-
-#endif

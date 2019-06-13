@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // ------------------------------------------------------------------------
 //  File name:   GeomCacheManager.cpp
@@ -42,14 +42,13 @@ CGeomCacheManager::CGeomCacheManager()
 	, m_numReadStreamAborts(0)
 	, m_numFailedAllocs(0)
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_GeomCache, 0, "Geometry cache streaming pool");
+	MEMSTAT_CONTEXT(EMemStatContextType::GeomCache, "Geometry cache streaming pool");
 
 	ChangeBufferSize(GetCVars()->e_GeomCacheBufferSize);
 
-	ICVar* pGeomCacheBufferSizeCVar = gEnv->pConsole->GetCVar("e_GeomCacheBufferSize");
-	if (pGeomCacheBufferSizeCVar)
+	if (ICVar* pGeomCacheBufferSizeCVar = gEnv->pConsole->GetCVar("e_GeomCacheBufferSize"))
 	{
-		pGeomCacheBufferSizeCVar->SetOnChangeCallback(&CGeomCacheManager::OnChangeBufferSize);
+		pGeomCacheBufferSizeCVar->AddOnChange(OnChangeBufferSize);
 	}
 }
 
@@ -101,8 +100,8 @@ CGeomCache* CGeomCacheManager::FindGeomCacheByFilename(const char* filename)
 
 CGeomCache* CGeomCacheManager::LoadGeomCache(const char* szFileName)
 {
-	LOADING_TIME_PROFILE_SECTION;
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "Geometry Caches");
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "Geometry Caches");
 
 	// Normalize file name
 	char sFilename[_MAX_PATH];
@@ -310,7 +309,7 @@ void CGeomCacheManager::StreamingUpdate()
 
 		if (streamInfo.m_fillRenderNodeJobState.IsRunning())
 		{
-			FRAME_PROFILER("CGeomCacheManager::StreamingUpdate_WaitForLastFillJob", GetSystem(), PROFILE_3DENGINE);
+			CRY_PROFILE_SECTION(PROFILE_3DENGINE, "CGeomCacheManager::StreamingUpdate_WaitForLastFillJob");
 			gEnv->pJobManager->WaitForJob(streamInfo.m_fillRenderNodeJobState);
 		}
 
@@ -412,7 +411,6 @@ void CGeomCacheManager::LaunchStreamingJobs(const uint numStreams, const CTimeVa
 			continue;
 		}
 
-		const bool bIsStreaming = pRenderNode->IsStreaming();
 		const float playbackFrameTime = pStreamInfo->m_wantedPlaybackTime;
 		const float displayedFrameTime = pStreamInfo->m_displayedFrameTime;
 
@@ -465,7 +463,7 @@ void CGeomCacheManager::RetireRemovedStreams()
 	for (TGeomCacheMap::iterator iter = m_nameToGeomCacheMap.begin(); iter != m_nameToGeomCacheMap.end(); ++iter)
 	{
 		CGeomCache* pGeomCache = iter->second;
-		if (pGeomCache->GetNumStreams() == 0)
+		if (pGeomCache->GetNumStreams() == 0 && !pGeomCache->m_pStaticDataReadStream)
 		{
 			pGeomCache->UnloadData();
 		}
@@ -477,7 +475,6 @@ void CGeomCacheManager::ValidateStream(SGeomCacheStreamInfo& streamInfo)
 	FUNCTION_PROFILER_3DENGINE;
 
 	const CGeomCacheRenderNode* pRenderNode = streamInfo.m_pRenderNode;
-	const bool bIsStreaming = pRenderNode->IsStreaming();
 	const float wantedPlaybackTime = streamInfo.m_wantedPlaybackTime;
 	const float displayedFrameTime = streamInfo.m_displayedFrameTime;
 
@@ -543,13 +540,13 @@ void CGeomCacheManager::AbortStream(SGeomCacheStreamInfo& streamInfo)
 	streamInfo.m_bAbort = true;
 
 	{
-		FRAME_PROFILER("CGeomCacheManager::AbortStream_LockFillRenderNode", GetSystem(), PROFILE_3DENGINE);
+		CRY_PROFILE_SECTION(PROFILE_3DENGINE, "CGeomCacheManager::AbortStream_LockFillRenderNode");
 		streamInfo.m_abortCS.Lock();
 	}
 
 	if (streamInfo.m_pNewestReadRequestHandle)
 	{
-		FRAME_PROFILER("CGeomCacheManager::AbortStream_AbortReads", GetSystem(), PROFILE_3DENGINE);
+		CRY_PROFILE_SECTION(PROFILE_3DENGINE, "CGeomCacheManager::AbortStream_AbortReads");
 
 		assert(streamInfo.m_pOldestReadRequestHandle != NULL);
 
@@ -575,7 +572,7 @@ void CGeomCacheManager::AbortStream(SGeomCacheStreamInfo& streamInfo)
 
 	if (streamInfo.m_pOldestDecompressHandle)
 	{
-		FRAME_PROFILER("CGeomCacheManager::AbortStream_AbortDecompress", GetSystem(), PROFILE_3DENGINE);
+		CRY_PROFILE_SECTION(PROFILE_3DENGINE, "CGeomCacheManager::AbortStream_AbortDecompress");
 
 		assert(streamInfo.m_pOldestDecompressHandle != NULL);
 
@@ -846,12 +843,8 @@ void CGeomCacheManager::LaunchDecompressJobs(SGeomCacheStreamInfo* pStreamInfo, 
 
 	assert(gEnv->mMainThreadId == CryGetCurrentThreadId());
 
-	const CGeomCacheRenderNode* pRenderNode = pStreamInfo->m_pRenderNode;
 	const CGeomCache* pGeomCache = pStreamInfo->m_pGeomCache;
-	const GeomCacheFile::EBlockCompressionFormat blockCompressionFormat = pGeomCache->GetBlockCompressionFormat();
 	const float currentCacheStreamingTime = pStreamInfo->m_pRenderNode->GetStreamingTime();
-	const uint wantedFloorFrame = pGeomCache->GetFloorFrameIndex(currentCacheStreamingTime);
-	const uint numStreamFrames = pStreamInfo->m_numFrames;
 	const uint frameDataSize = pStreamInfo->m_frameData.size();
 
 	// Need to check if there are still jobs running for the same render node on the stream abort list
@@ -1000,7 +993,6 @@ void CGeomCacheManager::DecompressFrame_JobEntry(SGeomCacheStreamInfo* pStreamIn
 {
 	FUNCTION_PROFILER_3DENGINE;
 
-	const CGeomCacheRenderNode* pRenderNode = pStreamInfo->m_pRenderNode;
 	const CGeomCache* pGeomCache = pStreamInfo->m_pGeomCache;
 	const uint frameIndex = pDecompressHandle->m_startFrame + blockIndex;
 
@@ -1318,13 +1310,10 @@ template<class TBufferHandleType> TBufferHandleType* CGeomCacheManager::NewBuffe
 
 	size_t pointerSize = (sizeof(SGeomCacheBufferHandle*) + 15) & ~15;
 
-	#if !defined(DEDICATED_SERVER)
+#if !defined(DEDICATED_SERVER)
 	// Try to allocate requested size in the buffer, otherwise return NULL
-	{
-		FRAME_PROFILER("CGeomCacheManager::NewBufferHandle_Malloc", GetSystem(), PROFILE_3DENGINE);
-		pBlock = reinterpret_cast<char*>(m_pPool->Memalign(16, pointerSize + size, "geom cache block"));
-	}
-	#endif
+	pBlock = reinterpret_cast<char*>(m_pPool->Memalign(16, pointerSize + size, "geom cache block"));
+#endif
 
 	if (!pBlock)
 	{
@@ -1368,7 +1357,6 @@ void CGeomCacheManager::RetireHandles(SGeomCacheStreamInfo& streamInfo)
 {
 	FUNCTION_PROFILER_3DENGINE;
 
-	CGeomCacheRenderNode* pRenderNode = streamInfo.m_pRenderNode;
 	const CGeomCache* pGeomCache = streamInfo.m_pGeomCache;
 	const float currentCacheStreamingTime = streamInfo.m_pRenderNode->GetStreamingTime();
 	const uint wantedFloorFrame = pGeomCache->GetFloorFrameIndex(currentCacheStreamingTime);
@@ -1514,13 +1502,9 @@ template<class TBufferHandleType> void CGeomCacheManager::RetireBufferHandle(TBu
 	{
 		CryFatalError("Trying to retire handle with jobs still running");
 	}
-
-	{
-		FRAME_PROFILER("CGeomCacheManager::RetireBufferHandle_Free", GetSystem(), PROFILE_3DENGINE);
-		size_t pointerSize = (sizeof(SGeomCacheBufferHandle*) + 15) & ~15;
-		m_pPool->Free(pHandle->m_pBuffer - pointerSize);
-	}
-
+	
+	size_t pointerSize = (sizeof(SGeomCacheBufferHandle*) + 15) & ~15;
+	m_pPool->Free(pHandle->m_pBuffer - pointerSize);
 	delete pHandle;
 }
 
@@ -1673,8 +1657,8 @@ void CGeomCacheManager::DrawDebugInfo()
 	flags.SetAlphaBlendMode(e_AlphaNone);
 	pRenderAuxGeom->SetRenderFlags(flags);
 
-	const float screenHeight = (float)gEnv->pRenderer->GetHeight();
-	const float screenWidth = (float)gEnv->pRenderer->GetWidth();
+	const float screenWidth  = float(pRenderAuxGeom->GetCamera().GetViewSurfaceX());
+	const float screenHeight = float(pRenderAuxGeom->GetCamera().GetViewSurfaceZ());
 
 	const float topOffset = screenHeight * 0.01f;
 	const float sideOffset = screenWidth * 0.01f;
@@ -1689,7 +1673,6 @@ void CGeomCacheManager::DrawDebugInfo()
 	const float streamInfoBoxSize = 10.0f;
 
 	uint numActiveStreams = 0;
-	uint numFramesMissed = 0;
 
 	const uint kNumColors = 8;
 	ColorF colors[kNumColors] = { Col_Red, Col_Green, Col_Yellow, Col_Blue, Col_Aquamarine, Col_Thistle, Col_Tan, Col_Salmon };
@@ -1702,7 +1685,6 @@ void CGeomCacheManager::DrawDebugInfo()
 		CGeomCacheRenderNode* pRenderNode = streamInfo.m_pRenderNode;
 		CGeomCache* pGeomCache = streamInfo.m_pGeomCache;
 		const char* pName = streamInfo.m_pRenderNode->GetName();
-		const char* pFilter = GetCVars()->e_GeomCacheDebugFilter->GetString();
 
 		const bool bDisplay = ((GetCVars()->e_GeomCacheDebug != 2) || (pRenderNode->IsStreaming() || streamInfo.m_pOldestDecompressHandle || streamInfo.m_pNewestReadRequestHandle))
 		                      && strstr(pName, GetCVars()->e_GeomCacheDebugFilter->GetString()) != NULL;

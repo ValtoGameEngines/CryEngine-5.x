@@ -1,9 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "GameMechanismManager.h"
 #include "GameMechanismBase.h"
 #include "Utility/CryWatch.h"
+#include <CrySystem/ConsoleRegistration.h>
 
 CGameMechanismManager * CGameMechanismManager::s_instance = NULL;
 

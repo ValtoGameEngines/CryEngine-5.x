@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "DistanceCloudRenderNode.h"
@@ -53,6 +53,9 @@ void CDistanceCloudRenderNode::SetProperties(const SDistanceCloudProperties& pro
 
 void CDistanceCloudRenderNode::SetMatrix(const Matrix34& mat)
 {
+	if (m_pos == mat.GetTranslation())
+		return;
+
 	Get3DEngine()->UnRegisterEntityAsJob(this);
 
 	m_pos = mat.GetTranslation();
@@ -72,15 +75,11 @@ const char* CDistanceCloudRenderNode::GetName() const
 	return "DistanceCloud";
 }
 
-static inline uint16 HalfFlip(uint16 h)
-{
-	uint16 mask = -int16(h >> 15) | 0x8000;
-	return h ^ mask;
-}
-
 void CDistanceCloudRenderNode::Render(const SRendParams& rParam, const SRenderingPassInfo& passInfo)
 {
 	FUNCTION_PROFILER_3DENGINE;
+
+	DBG_LOCK_TO_THREAD(this);
 
 	IMaterial* pMaterial(GetMaterial());
 
@@ -92,7 +91,7 @@ void CDistanceCloudRenderNode::Render(const SRendParams& rParam, const SRenderin
 	if (cam.GetViewdir().z < 0)
 		zDist = -zDist;
 
-	CRenderObject* pRenderObject(gEnv->pRenderer->EF_GetObject_Temp(passInfo.ThreadID()));
+	CRenderObject* pRenderObject(passInfo.GetIRenderView()->AllocateTemporaryRenderObject());
 	if (!pRenderObject)
 		return;
 	pRenderObject->m_nSort = HalfFlip(CryConvertFloatToHalf(zDist));
@@ -141,8 +140,7 @@ void CDistanceCloudRenderNode::Render(const SRendParams& rParam, const SRenderin
 	pIndices[4] = 2;
 	pIndices[5] = 3;
 
-	int afterWater(GetObjManager()->IsAfterWater(m_pos, passInfo.GetCamera().GetPosition(), passInfo, Get3DEngine()->GetWaterLevel()) ? 1 : 0);
-	SRenderPolygonDescription poly(pRenderObject, pMaterial->GetShaderItem(), 4, pVerts, pTangents, pIndices, 6, EFSLIST_DECAL, afterWater);
+	SRenderPolygonDescription poly(pRenderObject, pMaterial->GetShaderItem(), 4, pVerts, pTangents, pIndices, 6, EFSLIST_SKY, false);
 	passInfo.GetIRenderView()->AddPolygon(poly, passInfo);
 }
 
@@ -177,17 +175,7 @@ void CDistanceCloudRenderNode::OffsetPosition(const Vec3& delta)
 	m_WSBBox.Move(delta);
 }
 
-void CDistanceCloudRenderNode::FillBBox(AABB& aabb)
-{
-	aabb = CDistanceCloudRenderNode::GetBBox();
-}
-
-EERType CDistanceCloudRenderNode::GetRenderNodeType()
-{
-	return eERType_DistanceCloud;
-}
-
-float CDistanceCloudRenderNode::GetMaxViewDist()
+float CDistanceCloudRenderNode::GetMaxViewDist() const
 {
 	if (GetMinSpecFromRenderNodeFlags(m_dwRndFlags) == CONFIG_DETAIL_SPEC)
 		return max(GetCVars()->e_ViewDistMin, CDistanceCloudRenderNode::GetBBox().GetRadius() * GetCVars()->e_ViewDistRatioDetail * GetViewDistRatioNormilized());

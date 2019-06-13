@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "DynamicCoverManager.h"
@@ -6,7 +6,7 @@
 
 const bool DynamicCoverDeferred = false;
 
-void DynamicCoverManager::OnEntityEvent(IEntity* entity, SEntityEvent& event)
+void DynamicCoverManager::OnEntityEvent(IEntity* entity, const SEntityEvent& event)
 {
 	assert(m_entityCover.find(entity->GetId()) != m_entityCover.end());
 	assert((event.event == ENTITY_EVENT_XFORM) || (event.event == ENTITY_EVENT_DONE));
@@ -21,6 +21,7 @@ void DynamicCoverManager::OnEntityEvent(IEntity* entity, SEntityEvent& event)
 
 DynamicCoverManager::DynamicCoverManager()
 	: m_segmentsGrid(20.0f, 20.0f, 20.0f, segment_position(m_segments))
+	, m_frameDeltaTime(0.0f)
 {
 }
 
@@ -98,7 +99,7 @@ void DynamicCoverManager::AddEntity(EntityId entityID)
 	gEnv->pEntitySystem->AddEntityEventListener(entityID, ENTITY_EVENT_XFORM, this);
 	gEnv->pEntitySystem->AddEntityEventListener(entityID, ENTITY_EVENT_DONE, this);
 
-	m_entityCover.insert(EntityCover::value_type(entityID, EntityCoverState(gEnv->pTimer->GetFrameStartTime())));
+	m_entityCover.insert(EntityCover::value_type(entityID, EntityCoverState(m_frameStartTime)));
 }
 
 void DynamicCoverManager::RemoveEntity(EntityId entityID)
@@ -156,16 +157,18 @@ void DynamicCoverManager::ClearValidationSegments()
 	m_validationQueue.clear();
 }
 
-void DynamicCoverManager::Update(float updateTime)
+void DynamicCoverManager::Update(const CTimeValue frameStartTime, const float frameDeltaTime)
 {
 	PREFAST_SUPPRESS_WARNING(6239);
+
+	m_frameStartTime = frameStartTime;
+	m_frameDeltaTime = frameDeltaTime;
+
 	if (!DynamicCoverDeferred && !m_validationQueue.empty())
 		ValidateOne();
 
 	EntityCover::iterator it = m_entityCover.begin();
 	EntityCover::iterator end = m_entityCover.end();
-
-	CTimeValue now = gEnv->pTimer->GetFrameStartTime();
 
 	for (; it != end; ++it)
 	{
@@ -173,7 +176,7 @@ void DynamicCoverManager::Update(float updateTime)
 
 		if (state.state == EntityCoverState::Moving)
 		{
-			if ((now - state.lastMovement).GetMilliSecondsAsInt64() >= 150)
+			if ((m_frameStartTime - state.lastMovement).GetMilliSecondsAsInt64() >= 150)
 			{
 				state.state = EntityCoverState::Sampling;
 
@@ -182,13 +185,13 @@ void DynamicCoverManager::Update(float updateTime)
 		}
 	}
 
-	m_entityCoverSampler.Update();
+	m_entityCoverSampler.Update(m_frameStartTime, m_frameDeltaTime);
 }
 
 void DynamicCoverManager::EntityCoverSampled(EntityId entityID, EntityCoverSampler::ESide side,
                                              const ICoverSystem::SurfaceInfo& surfaceInfo)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	EntityCover::iterator it = m_entityCover.find(entityID);
 	assert(it != m_entityCover.end());
@@ -251,7 +254,7 @@ void DynamicCoverManager::MoveEvent(EntityId entityID, const Matrix34& worldTM)
 			m_entityCoverSampler.Cancel(entityID);
 
 			state.state = EntityCoverState::Moving;
-			state.lastMovement = gEnv->pTimer->GetFrameStartTime();
+			state.lastMovement = m_frameStartTime;
 			state.lastWorldTM = worldTM;
 
 			RemoveEntityCoverSurfaces(state);
@@ -279,7 +282,7 @@ void DynamicCoverManager::QueueValidation(int index)
 
 void DynamicCoverManager::ValidateOne()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	QueuedValidation& queuedValidation = m_validationQueue.front();
 	assert(queuedValidation.waitingCount == 0);

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   SmokeManager.cpp
@@ -20,6 +20,8 @@
 #include <IVehicleSystem.h>
 
 #include "Effects/GameEffects/SceneBlurGameEffect.h"
+
+#include <IPerceptionManager.h>
 
 #ifndef _RELEASE
 #include "GameCVars.h"
@@ -438,7 +440,7 @@ void CSmokeManager::CreateNewSmokeInstance(EntityId grenadeId, EntityId grenadeO
 	{
 		CreateSmokeObstructionObject(newSmokeInstance);
 
-		if (gEnv->pAISystem)
+		if (IPerceptionManager::GetInstance())
 		{
 			// Associate event with vehicle if the shooter is in a vehicle (tank cannon shot, etc)
 			EntityId ownerId = grenadeId;
@@ -450,7 +452,7 @@ void CSmokeManager::CreateNewSmokeInstance(EntityId grenadeId, EntityId grenadeO
 			}
 
 			SAIStimulus stim(AISTIM_GRENADE, AIGRENADE_SMOKE, ownerId, grenadeId, newSmokeInstance.vPositon, ZERO, kMaxSmokeRadius*1.5f);
-			gEnv->pAISystem->RegisterStimulus(stim);
+			IPerceptionManager::GetInstance()->RegisterStimulus(stim);
 		}
 	}
 }

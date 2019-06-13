@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   CGFLoader.cpp
@@ -22,6 +22,7 @@
 #include <CryCore/CryCustomTypes.h>
 
 #include <Cry3DEngine/IStatObj.h>
+#include <CryPhysics/physinterface.h>
 
 // #define DEBUG_DUMP_RBATCHES
 #define VERTEX_SCALE 0.01f
@@ -97,14 +98,14 @@ CLoaderCGF::~CLoaderCGF()
 }
 
 //////////////////////////////////////////////////////////////////////////
-CContentCGF* CLoaderCGF::LoadCGF(const char* filename, IChunkFile& chunkFile, ILoaderCGFListener* pListener, unsigned long nLoadingFlags)
+CContentCGF* CLoaderCGF::LoadCGF(const char* filename, IChunkFile& chunkFile, ILoaderCGFListener* pListener, uint32 loadingFlags)
 {
 	CContentCGF* const pContentCGF = new CContentCGF(filename);
 	if (!pContentCGF)
 	{
 		return NULL;
 	}
-	if (!LoadCGF(pContentCGF, filename, chunkFile, pListener, nLoadingFlags))
+	if (!LoadCGF(pContentCGF, filename, chunkFile, pListener, loadingFlags))
 	{
 		delete pContentCGF;
 		return NULL;
@@ -113,7 +114,7 @@ CContentCGF* CLoaderCGF::LoadCGF(const char* filename, IChunkFile& chunkFile, IL
 }
 
 //////////////////////////////////////////////////////////////////////////
-bool CLoaderCGF::LoadCGF(CContentCGF* pContentCGF, const char* filename, IChunkFile& chunkFile, ILoaderCGFListener* pListener, unsigned long nLoadingFlags)
+bool CLoaderCGF::LoadCGF(CContentCGF* pContentCGF, const char* filename, IChunkFile& chunkFile, ILoaderCGFListener* pListener, uint32 loadingFlags)
 {
 	FUNCTION_PROFILER_3DENGINE;
 
@@ -132,10 +133,10 @@ bool CLoaderCGF::LoadCGF(CContentCGF* pContentCGF, const char* filename, IChunkF
 		SYNCHRONOUS_LOADING_TICK();
 	}
 
-	return LoadCGF_Int(pContentCGF, filename, chunkFile, pListener, nLoadingFlags);
+	return LoadCGF_Int(pContentCGF, filename, chunkFile, pListener, loadingFlags);
 }
 
-bool CLoaderCGF::LoadCGFFromMem(CContentCGF* pContentCGF, const void* pData, size_t nDataLen, IChunkFile& chunkFile, ILoaderCGFListener* pListener, unsigned long nLoadingFlags)
+bool CLoaderCGF::LoadCGFFromMem(CContentCGF* pContentCGF, const void* pData, size_t nDataLen, IChunkFile& chunkFile, ILoaderCGFListener* pListener, uint32 loadingFlags)
 {
 	FUNCTION_PROFILER_3DENGINE;
 
@@ -154,10 +155,10 @@ bool CLoaderCGF::LoadCGFFromMem(CContentCGF* pContentCGF, const void* pData, siz
 		SYNCHRONOUS_LOADING_TICK();
 	}
 
-	return LoadCGF_Int(pContentCGF, pContentCGF->GetFilename(), chunkFile, pListener, nLoadingFlags);
+	return LoadCGF_Int(pContentCGF, pContentCGF->GetFilename(), chunkFile, pListener, loadingFlags);
 }
 
-bool CLoaderCGF::LoadCGF_Int(CContentCGF* pContentCGF, const char* filename, IChunkFile& chunkFile, ILoaderCGFListener* pListener, unsigned long nLoadingFlags)
+bool CLoaderCGF::LoadCGF_Int(CContentCGF* pContentCGF, const char* filename, IChunkFile& chunkFile, ILoaderCGFListener* pListener, uint32 loadingFlags)
 {
 	m_pListener = pListener;
 	m_bUseReadOnlyMesh = chunkFile.IsReadOnly();
@@ -186,7 +187,7 @@ bool CLoaderCGF::LoadCGF_Int(CContentCGF* pContentCGF, const char* filename, ICh
 		  !stricmp(pExt, "skel");
 	}
 
-	const bool bJustGeometry = (nLoadingFlags& IStatObj::ELoadingFlagsJustGeometry) != 0;
+	const bool bJustGeometry = (loadingFlags& IStatObj::ELoadingFlagsJustGeometry) != 0;
 
 	if (!LoadChunks(bJustGeometry))
 	{
@@ -875,15 +876,6 @@ static bool CompactBoneVertices(
 		outArrIndices[verts[i].faceIndex * 3 + verts[i].cornerIndex] = outVertexCount - 1;
 	}
 
-	// Making sure that the code above has no bugs
-	for (int i = 0; i < outArrIndices.size(); ++i)
-	{
-		if (outArrIndices[i] < 0)
-		{
-			return false;
-		}
-	}
-
 	return true;
 }
 
@@ -1474,8 +1466,7 @@ bool SplitIntoRBatches(
 				if (vmax < i1) vmax = i1;
 				if (vmax < i2) vmax = i2;
 			}
-			uint32 a = pMesh->m_subsets[m].nFirstVertId;
-			uint32 b = pMesh->m_subsets[m].nNumVerts;
+
 			if (pMesh->m_subsets[m].nFirstVertId != vmin ||
 			    pMesh->m_subsets[m].nNumVerts != vmax - vmin + 1)
 			{
@@ -2162,7 +2153,9 @@ bool CLoaderCGF::ProcessSkinning()
 		//init internal morph-targets
 		MorphTargets* pMorphtarget = pSkinningInfo->m_arrMorphTargets[it];
 		uint32 numMorphVerts = pMorphtarget->m_arrIntMorph.size();
+#if !defined(_RELEASE)
 		uint32 intVertexCount = pSkinningInfo->m_arrIntVertices.size();
+#endif
 		for (uint32 i = 0; i < numMorphVerts; i++)
 		{
 			uint32 idx = pMorphtarget->m_arrIntMorph[i].nVertexId;
@@ -2683,7 +2676,7 @@ bool CLoaderCGF::LoadGeomChunk(CNodeCGF* pNode, IChunkFile::ChunkDesc* pChunkDes
 
 				int32* pNumLinks;
 				StepData(pNumLinks, pMeshChunkData, 1, bSwapEndianness);
-				if (pNumLinks <= 0)
+				if (!pNumLinks)
 				{
 					m_LastError.Format("%s: Number of links for vertex is invalid: %i", __FUNCTION__, pNumLinks);
 					return false;
@@ -3073,7 +3066,6 @@ bool CLoaderCGF::LoadBoneMappingStreamChunk(CMesh& mesh, const MESH_CHUNK_DESC_0
 		const SMeshBoneMapping_uint8* const pSrcBoneMapping = (const SMeshBoneMapping_uint8*)pStreamData;
 
 		const int vertexCount = mesh.GetVertexCount();
-		const int indexCount = mesh.GetIndexCount();
 
 		for (int subset = 0; subset < mesh.m_subsets.size(); ++subset)
 		{
@@ -3807,18 +3799,18 @@ bool CLoaderCGF::LoadVClothChunk(IChunkFile::ChunkDesc* pChunkDesc)
 		pVClothInfo->m_trianglePairs.assign(pTrianglePairs, pTrianglePairs + pChunk->bendTrianglePairCount);
 	}
 
-	// Read lraNotAttachedOrderedIdx.
+	// Read nndcNotAttachedOrderedIdx.
 	{
 		pCursor += sizeof(SVClothBendTrianglePair) * pChunk->bendTrianglePairCount;
-		SVClothLraNotAttachedOrderedIdx* const pLraNotAttachedOrderedIdx = (SVClothLraNotAttachedOrderedIdx*)pCursor;
-		SwapEndian(pLraNotAttachedOrderedIdx, pChunk->lraNotAttachedOrderedIdxCount, bSwapEndian);
+		SVClothNndcNotAttachedOrderedIdx* const pNndcNotAttachedOrderedIdx = (SVClothNndcNotAttachedOrderedIdx*)pCursor;
+		SwapEndian(pNndcNotAttachedOrderedIdx, pChunk->nndcNotAttachedOrderedIdxCount, bSwapEndian);
 
-		pVClothInfo->m_lraNotAttachedOrderedIdx.assign(pLraNotAttachedOrderedIdx, pLraNotAttachedOrderedIdx + pChunk->lraNotAttachedOrderedIdxCount);
+		pVClothInfo->m_nndcNotAttachedOrderedIdx.assign(pNndcNotAttachedOrderedIdx, pNndcNotAttachedOrderedIdx + pChunk->nndcNotAttachedOrderedIdxCount);
 	}
 
 	// Read links.
 	{
-		pCursor += sizeof(SVClothLraNotAttachedOrderedIdx) * pChunk->lraNotAttachedOrderedIdxCount;
+		pCursor += sizeof(SVClothNndcNotAttachedOrderedIdx) * pChunk->nndcNotAttachedOrderedIdxCount;
 
 		for (int lid = 0; lid < eVClothLink_COUNT; ++lid)
 		{

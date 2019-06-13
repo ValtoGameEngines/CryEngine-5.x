@@ -1,4 +1,4 @@
-# Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+# Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 	
 
 def build(bld):
@@ -6,6 +6,6 @@ def build(bld):
 		target     = 'Cry3DEngine',
 		vs_filter  = 'CryEngine',		
 		file_list  = 'cry3dengine.waf_files',
-		use_module = ['lz4'],
+		use_module = ['lz4', 'mikkelsen'],
 		pch        = 'StdAfx.cpp',		
 	)	

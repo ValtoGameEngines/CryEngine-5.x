@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "CryLobby.h"
@@ -6,6 +6,7 @@
 #include "CryMatchMaking.h"
 #include "LAN/CryLANLobby.h"
 #include "CryDedicatedServerArbitrator.h"
+#include <CrySystem/ConsoleRegistration.h>
 
 #if USE_STEAM
 	#define STEAM_GAME_DEFAULT_PORT (64100)

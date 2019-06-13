@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -23,6 +23,7 @@ History:
 #include "IVehicleSystem.h"
 #include "Network/NetActionSync.h"
 #include <CryAISystem/IAgent.h>
+#include <Cry3DEngine/ISurfaceType.h>
 #include <CryGame/GameUtils.h>
 #include <CryGame/IGameTokens.h>
 #include "Player.h"
@@ -1082,7 +1083,7 @@ void CVehicleMovementArcadeWheeled::OnEvent(EVehicleMovementEvent event, const S
 			{
 				if (IEntity* otherEntity = (IEntity*)otherPhys->GetForeignData(PHYS_FOREIGN_ID_ENTITY))
 				{
-					if (IVehicle* pVehicle = gEnv->pGameFramework->GetIVehicleSystem()->GetVehicle(otherEntity->GetId()))
+					if (gEnv->pGameFramework->GetIVehicleSystem()->GetVehicle(otherEntity->GetId()) != nullptr)
 					{
 						m_collisionNorm = n * pCollision->normImpulse;
 					}
@@ -1355,8 +1356,7 @@ void CVehicleMovementArcadeWheeled::DebugDrawMovement(const float deltaTime)
 	IPhysicalEntity* pPhysics = GetPhysics();
 	IRenderer* pRenderer = gEnv->pRenderer;
 	static float color[4] = {1,1,1,1};
-	float green[4] = {0,1,0,1};
-	float red[4] = {1,0,0,1};
+	//float green[4] = {0,1,0,1};
 	static ColorB colRed(255,0,0,255);
 	static ColorB colBlue(0,0,255,255);
 	static ColorB colWhite(255,255,255,255);
@@ -1391,15 +1391,12 @@ void CVehicleMovementArcadeWheeled::DebugDrawMovement(const float deltaTime)
 	
 	SVehiclePhysicsStatus* physStatus = &m_physStatus[k_mainThread];
 
-	const int width = pRenderer->GetWidth();
-	const int height = pRenderer->GetHeight();
-
+	const int width  = pRenderer->GetOverlayWidth();
+	const int height = pRenderer->GetOverlayHeight();
 
 	Matrix33 bodyRot( physStatus->q );
 	Matrix34 bodyPose( bodyRot, physStatus->centerOfMass );
-	const Vec3 xAxis = bodyPose.GetColumn0();
 	const Vec3 yAxis = bodyPose.GetColumn1();
-	const Vec3 zAxis = bodyPose.GetColumn2();
 	const Vec3 chassisPos = bodyPose.GetColumn3();
 
 	float speedMs = physStatus->v.dot(yAxis);
@@ -1520,7 +1517,6 @@ void CVehicleMovementArcadeWheeled::DebugDrawMovement(const float deltaTime)
 				pAuxGeom->DrawSphere(ws.ptContact, 0.05f, colRed);
 				pAuxGeom->DrawLine(nrmLineStart, colBlue, nrmLineEnd, colBlue);
 
-				float slip = ws.velSlip.len();        
 				if (ws.bSlip>0)
 				{ 
 					pAuxGeom->DrawLine(wp.pos, colRed, wp.pos+ws.velSlip, colRed);
@@ -1580,7 +1576,7 @@ void CVehicleMovementArcadeWheeled::DebugDrawMovement(const float deltaTime)
 	//========================
 	// Draw Gears and RPM dial
 	//========================
-	pRenderer->Set2DMode(true, width, height);
+	pAuxGeom->SetOrthographicProjection(true, 0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f);
 	{
 		float radius = 40.f;
 		Vec3 centre (0.2f*(float)width, 0.8f*(float)height, 0.f);
@@ -1690,7 +1686,7 @@ void CVehicleMovementArcadeWheeled::DebugDrawMovement(const float deltaTime)
 		IRenderAuxText::Draw2dLabel(x-20.f, y+20.f, 1.3f, color, false, "FMOD Skid Value");
 	}
 
-	pRenderer->Set2DMode(false, width, height);
+	pAuxGeom->SetOrthographicProjection(false);
 	pAuxGeom->SetRenderFlags(oldFlags);
 }
 
@@ -1790,9 +1786,8 @@ void CVehicleMovementArcadeWheeled::GetCurrentWheelStatus(IPhysicalEntity* pPhys
 //------------------------------------------------------------------------
 void CVehicleMovementArcadeWheeled::Update(const float deltaTime)
 {
-	FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
-	IEntity* pEntity = m_pVehicle->GetEntity();
 	IPhysicalEntity* pPhysics = GetPhysics();
 	if(!pPhysics)
 	{
@@ -1978,7 +1973,7 @@ int CVehicleMovementArcadeWheeled::GetStatus(SVehicleMovementStatus* status)
 //------------------------------------------------------------------------
 void CVehicleMovementArcadeWheeled::UpdateSounds(const float deltaTime)
 {
-	FUNCTION_PROFILER( gEnv->pSystem, PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 	
 	if (m_isProbablyDistant)
 		return;
@@ -2054,7 +2049,7 @@ void CVehicleMovementArcadeWheeled::UpdateSounds(const float deltaTime)
 
 		if (m_surfaceSoundStats.slipRatio > 0.08f)
 		{ 
-			float slipTimerPrev = m_surfaceSoundStats.slipTimer;
+			//float slipTimerPrev = m_surfaceSoundStats.slipTimer;
 			m_surfaceSoundStats.slipTimer += deltaTime;
 			REINST("needs verification!");
 			/*const static float slipSoundMinTime = 0.12f;
@@ -2088,7 +2083,7 @@ void CVehicleMovementArcadeWheeled::UpdateSounds(const float deltaTime)
 //------------------------------------------------------------------------
 void CVehicleMovementArcadeWheeled::UpdateSuspension(const float deltaTime)
 {
-	FUNCTION_PROFILER( gEnv->pSystem, PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	float dt = max( deltaTime, 0.005f);
 
@@ -2137,8 +2132,6 @@ void CVehicleMovementArcadeWheeled::UpdateSuspension(const float deltaTime)
 	for (int i=0; i<numWheels; ++i)
 	{ 
 		pe_params_wheel wheelParams;
-		bool bUpdate = bSuspUpdate;
-		IVehicleWheel* pWheel = m_wheels[i].wheelPart->GetIWheel();
 
 		const pe_status_wheel &ws = m_wheelStatus[i];
 
@@ -2146,7 +2139,7 @@ void CVehicleMovementArcadeWheeled::UpdateSuspension(const float deltaTime)
 
 		if (bSuspUpdate)
 		{
-			wheelParams.iWheel = i;      
+			wheelParams.iWheel = i;
 			wheelParams.kDamping = m_suspDamping;
 			pPhysics->SetParams(&wheelParams, THREAD_SAFE);
 		}
@@ -2159,7 +2152,7 @@ void CVehicleMovementArcadeWheeled::UpdateSuspension(const float deltaTime)
 			m_compressionMax = max(m_compressionMax, m_wheels[i].compression);
 		}
 		m_wheels[i].suspLen = ws.suspLen;
-	}  
+	}
 
 	m_wheelContacts = numRot;
 }
@@ -2226,7 +2219,7 @@ void CVehicleMovementArcadeWheeled::UpdateBrakes(const float deltaTime)
 //------------------------------------------------------------------------
 void CVehicleMovementArcadeWheeled::UpdateSuspensionSound(const float deltaTime)
 {
-	FUNCTION_PROFILER( gEnv->pSystem, PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	ReadLock lock(m_wheelStatusLock);
 
@@ -2293,7 +2286,7 @@ void CVehicleMovementArcadeWheeled::UpdateSuspensionSound(const float deltaTime)
 // NOTE: This function must be thread-safe. Before adding stuff contact MarcoC.
 void CVehicleMovementArcadeWheeled::ProcessAI(const float deltaTime)
 {
-	FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	float dt = max( deltaTime,0.005f);
 	SVehiclePhysicsStatus* physStatus = &m_physStatus[k_physicsThread];
@@ -2406,7 +2399,7 @@ void CVehicleMovementArcadeWheeled::ProcessAI(const float deltaTime)
 // NOTE: This function must be thread-safe. Before adding stuff contact MarcoC.
 void CVehicleMovementArcadeWheeled::ProcessMovement(const float deltaTime)
 {
-	FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	m_netActionSync.UpdateObject(this);
 
@@ -2796,7 +2789,6 @@ void CVehicleMovementArcadeWheeled::InternalPhysicsTick(float dt)
 
 	Vec3 contacts[maxWheels];
 	float suspensionExtension = 0.f;
-	float suspensionVelocity = 0.f;
 	bool tankHasWheelContact = (zAxis.z>0.1f && fabsf(xAxis.z)<0.8f);
 
 	for (int i=0; i<numWheels; ++i)
@@ -3189,9 +3181,6 @@ void CVehicleMovementArcadeWheeled::InternalPhysicsTick(float dt)
 		float erpChange = (1.f - solverERP)/(float)(numIterations-1);
 
 		// Keep track of lateral friction impulses
-		Vec3 appliedImpulse[2]		= { Vec3Constants<float>::fVec3_Zero, Vec3Constants<float>::fVec3_Zero };
-		Vec3 appliedAngImpulse[2] = { Vec3Constants<float>::fVec3_Zero, Vec3Constants<float>::fVec3_Zero };
-
 
 		if (contact > 0.f)
 		{
@@ -3354,7 +3343,6 @@ void CVehicleMovementArcadeWheeled::DebugCheat(float dt)
 	const Vec3 xAxis = bodyRot.GetColumn0();
 	const Vec3 yAxis = bodyRot.GetColumn1();
 	const Vec3 zAxis = bodyRot.GetColumn2();
-	const Vec3 pos = m_physStatus[k_physicsThread].centerOfMass;
 
 	if (g_pGameCVars->v_debugMovementMoveVertically!=0.f || g_pGameCVars->v_debugMovementX!=0.f || g_pGameCVars->v_debugMovementY!=0.f || g_pGameCVars->v_debugMovementZ!=0.f)
 	{
@@ -3424,8 +3412,6 @@ void CVehicleMovementArcadeWheeled::UpdateWaterLevels()
 
 		if(GetPhysics()->GetStatus(&wheelStatus))
 		{
-			I3DEngine	*p3DEngine = gEnv->p3DEngine;
-
 			m_wheels[m_iWaterLevelUpdate].waterLevel = gEnv->p3DEngine->GetWaterLevel(&wheelStatus.ptContact);
 		}
 		else
@@ -3606,7 +3592,7 @@ void CVehicleMovementArcadeWheeled::Boost(bool enable)
 //------------------------------------------------------------------------
 bool CVehicleMovementArcadeWheeled::RequestMovement(CMovementRequest& movementRequest)
 {
-	FUNCTION_PROFILER( gEnv->pSystem, PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	m_movementAction.isAI = true;
 	if (!m_isEnginePowered)
@@ -3689,7 +3675,7 @@ void CVehicleMovementArcadeWheeled::EnableMovementProcessing(bool enable)
 //------------------------------------------------------------------------
 void CVehicleMovementArcadeWheeled::Serialize(TSerialize ser, EEntityAspects aspects) 
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "Vehicle movement arcade wheeled serialization");
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "Vehicle movement arcade wheeled serialization");
 	
 	if(ser.GetSerializationTarget() != eST_Network && ser.IsReading() && m_pVehicle && m_pVehicle->GetEntity())
 	{
@@ -3787,7 +3773,7 @@ void CVehicleMovementArcadeWheeled::SetVehicleNetState(const SVehicleNetState& s
 //------------------------------------------------------------------------
 void CVehicleMovementArcadeWheeled::UpdateSurfaceEffects(const float deltaTime)
 { 
-	FUNCTION_PROFILER( GetISystem(), PROFILE_GAME );
+	CRY_PROFILE_FUNCTION( PROFILE_GAME );
 
 	if (0 == g_pGameCVars->v_pa_surface)
 	{
@@ -3799,11 +3785,9 @@ void CVehicleMovementArcadeWheeled::UpdateSurfaceEffects(const float deltaTime)
 	if (status.speed < 0.01f)
 		return;
 
-	float distSq = m_pVehicle->GetEntity()->GetWorldPos().GetSquaredDistance(gEnv->pRenderer->GetCamera().GetPosition());
+	float distSq = m_pVehicle->GetEntity()->GetWorldPos().GetSquaredDistance(GetISystem()->GetViewCamera().GetPosition());
 	if (distSq > sqr(300.f) || (distSq > sqr(50.f) && !m_isProbablyVisible ))
 		return;
-
-	IPhysicalEntity* pPhysics = GetPhysics();
 
 	// don't render particles for drivers in 1st person (E3 request)
 	bool hideForFP = false;
@@ -3972,18 +3956,16 @@ void CVehicleMovementArcadeWheeled::UpdateSurfaceEffects(const float deltaTime)
 
 			if (pSurfaceType)
 			{
-				CryAudio::SwitchStateId nSurfaceStateID = CryAudio::InvalidSwitchStateId;
 				string surfaceTypeName = pSurfaceType->GetName();
 
 				if (surfaceTypeName.find("mat_") != std::string::npos)
 				{
-					gEnv->pAudioSystem->GetAudioSwitchStateId(m_audioControlIDs[eSID_VehicleSurface], surfaceTypeName.substr(4), nSurfaceStateID);
+					CryAudio::SwitchStateId const surfaceStateId = CryAudio::StringToId(surfaceTypeName.substr(4).c_str());
+					auto pIEntityAudioComponent = GetAudioProxy();
 
-					if (nSurfaceStateID != CryAudio::InvalidSwitchStateId)
+					if (pIEntityAudioComponent != nullptr)
 					{
-						auto pIEntityAudioComponent = GetAudioProxy();
-						if (pIEntityAudioComponent)
-							pIEntityAudioComponent->SetSwitchState(m_audioControlIDs[eSID_VehicleSurface], nSurfaceStateID);
+						pIEntityAudioComponent->SetSwitchState(m_audioControlIDs[eSID_VehicleSurface], surfaceStateId);
 					}
 				}
 			}

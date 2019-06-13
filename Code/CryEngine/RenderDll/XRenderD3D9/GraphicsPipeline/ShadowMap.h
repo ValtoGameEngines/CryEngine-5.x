@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -8,19 +8,22 @@
 #include "Common/FullscreenPass.h"
 #include "Common/RenderView.h"
 #include "Common/UtilityPasses.h"
+#include "SceneGBuffer.h"
 #include <array>
 
 class CShadowMapStage : public CGraphicsPipelineStage
 {
+	using EFrustumType = ShadowMapFrustum::eFrustumType;
+
 	enum EPerPassTexture
 	{
-		EPerPassTexture_TerrainElevMap = 26,
-		EPerPassTexture_WindGrid = 27,
-		EPerPassTexture_TerrainBaseMap = 29,
-		EPerPassTexture_DissolveNoise  = 31
+		EPerPassTexture_PerlinNoiseMap = CSceneGBufferStage::ePerPassTexture_PerlinNoiseMap,
+		EPerPassTexture_WindGrid       = CSceneGBufferStage::ePerPassTexture_WindGrid,
+		EPerPassTexture_TerrainElevMap = CSceneGBufferStage::ePerPassTexture_TerrainElevMap,
+		EPerPassTexture_TerrainBaseMap = CSceneGBufferStage::ePerPassTexture_TerrainBaseMap,
 	};
 
-	enum EPass
+	enum EPass : uint8
 	{
 		ePass_DirectionalLight       = 0,
 		ePass_DirectionalLightCached = 1,
@@ -32,15 +35,44 @@ class CShadowMapStage : public CGraphicsPipelineStage
 		ePass_First = ePass_DirectionalLight
 	};
 
+	static_assert(ePass_Count <= MAX_PIPELINE_SCENE_STAGE_PASSES,
+		"The pipeline-state array is unable to carry as much pass-permutation as defined here!");
+
 public:
-	virtual void Init() override;
-	virtual void Prepare(CRenderView* pRenderView) override;
+	static const EGraphicsPipelineStage StageID = eStage_ShadowMap;
 
-	void         Execute();
+	CShadowMapStage(CGraphicsPipeline& graphicsPipeline);
 
-	bool         CreatePipelineStates(DevicePipelineStatesArray* pStateArray, const SGraphicsPipelineStateDescription& stateDesc, CGraphicsPipelineStateLocalCache* pStateCache);
+	bool  IsStageActive(EShaderRenderingFlags flags) const final { return IsStageActive(); }
+
+	void  Init()   final;
+	void  Update() final;
+
+	void Execute();
+
+	bool CreatePipelineStates(DevicePipelineStatesArray* pStateArray, const SGraphicsPipelineStateDescription& stateDesc, CGraphicsPipelineStateLocalCache* pStateCache);
+	bool CanRenderCachedShadows(const CCompiledRenderObject *obj) const;
+
+	void OnCVarsChanged(const CCVarUpdateRecorder& cvarUpdater) final;
+	void SetRenderView(CRenderView* pRenderView) final;
+	void OnEntityDeleted(IRenderNode* pRenderNode);
+
+	size_t GetAllocatedMemory();
 
 private:
+	struct SShadowConfig
+	{
+		int nTexFormat;
+		int nPoolSize;
+		int nCacheFormat;
+		int nCacheLODs;
+		int nCacheCascades;
+
+		StaticArray<int, MAX_GSM_LODS_NUM> nCacheResolutions;
+	};
+
+	void ReAllocateResources(const SShadowConfig shadowConfig);
+
 	typedef char ProfileLabel[32];
 
 	class CShadowMapPass : public CSceneRenderPass
@@ -56,21 +88,26 @@ private:
 
 	public:
 		CShadowMapPass(CShadowMapStage* pStage);
+		CShadowMapPass(CShadowMapPass&& other);
 
-		void                    PrepareResources(CRenderView* pMainView);
-		void                    PreRender();
+		bool                         PrepareResources(const CRenderView* pMainView);
+		void                         PreRender();
 
-		CDeviceResourceSetPtr   GetResources() { return m_pPerPassResources; }
-		SShadowFrustumToRender* GetFrustum()   { return m_pFrustumToRender; }
+		CDeviceResourceSetPtr        GetResources()       { return m_pPerPassResourceSet; }
+		SShadowFrustumToRender*      GetFrustum()         { return m_pFrustumToRender; }
+		const CDeviceRenderPassDesc& GetPassDesc()  const { return m_renderPassDesc; }
 
+		_smart_ptr<CTexture>     m_pDepthTarget;
 		SShadowFrustumToRender*  m_pFrustumToRender;
+		EFrustumType             m_eFrustumType;
+		IRenderNode*             m_pLightOwner;
 		int                      m_nShadowFrustumSide;
+		EPass                    m_eShadowPassID;
 		bool                     m_bRequiresRender;
 
-		SDepthTexture            m_currentDepthTarget;
-		std::array<CTexture*, 2> m_currentColorTarget;
 		CConstantBufferPtr       m_pPerPassConstantBuffer;
 		CConstantBufferPtr       m_pPerViewConstantBuffer;
+		CDeviceResourceSetDesc   m_perPassResources;
 		Matrix44A                m_ViewProjMatrix;
 		Matrix44A                m_ViewProjMatrixOrig;
 		Vec4                     m_FrustumInfo;
@@ -86,9 +123,7 @@ private:
 		typedef std::vector<CShadowMapPass> PassList;
 
 	public:
-		CShadowMapPassGroup() : m_PassCount(0){}
-
-		void                     Init(CShadowMapStage* pStage, int nSize);
+		void                     Init(CShadowMapStage* pStage, int nSize, CTexture* pDepthTarget, CTexture* pColorTarget0, CTexture* pColorTarget1);
 		void                     Reset()               { m_PassCount = 0; }
 		void                     Clear()               { m_Passes.clear(); }
 
@@ -101,31 +136,46 @@ private:
 		int                      GetCapacity() const   { return m_Passes.size(); }
 		CShadowMapPass&          operator[](int index) { return m_Passes[index]; }
 
-		CShadowMapPass&          AddPass()             { CRY_ASSERT(m_PassCount < m_Passes.size()); return m_Passes[m_PassCount++]; }
+		CShadowMapPass&          AddPass();
 		void                     UndoAddPass()         { CRY_ASSERT(m_PassCount > 0); --m_PassCount; }
 
 	private:
-		PassList m_Passes;
-		int      m_PassCount;
+		PassList         m_Passes;
+		int              m_PassCount = 0;
+		CShadowMapStage* m_pStage    = nullptr;
+
 	};
 
 private:
-	typedef std::array<CShadowMapPassGroup, CRenderView::eShadowFrustumRenderType_Count> PassGroupList;
+	typedef std::array<CShadowMapPassGroup, CShadowMapStage::ePass_Count> PassGroupList;
 
 	bool CreatePipelineState(const SGraphicsPipelineStateDescription& description, EPass passID, CDeviceGraphicsPSOPtr& outPSO);
 
-	void PrepareShadowPool(CRenderView* pMainView);
-	void PrepareShadowPasses(SShadowFrustumToRender& frustumToRender, CRenderView::eShadowFrustumRenderType frustumRenderType, CRenderView* pMainView);
+	void PrepareShadowPasses(SShadowFrustumToRender& frustumToRender, CRenderView::eShadowFrustumRenderType frustumRenderType);
 
 	void PreparePassIDForFrustum(const SShadowFrustumToRender& frustumToRender, CRenderView::eShadowFrustumRenderType frustumRenderType, EPass& passID, ProfileLabel& profileLabel) const;
 	void PrepareShadowPassForFrustum(const SShadowFrustumToRender& frustumToRender, int nSide, CShadowMapPass& targetPass) const;
 	bool PrepareOutputsForPass(const SShadowFrustumToRender& frustumToRender, int nSide, CShadowMapPass& targetPass) const;
-	void PrepareOutputsForFrustumWithCaching(const ShadowMapFrustum& frustum, CTexture*& pDepthTarget, const CShadowMapPass*& pClearDepthMapProvider, CShadowMapPass::eClearMode& clearMode) const;
+	_smart_ptr<CTexture> PrepareOutputsForFrustumWithCaching(const char* pName, const ShadowMapFrustum& frustum, const CShadowMapPass*& pClearDepthMapProvider, CShadowMapPass::eClearMode& clearMode) const;
 
 	void UpdateShadowFrustumFromPass(const CShadowMapPass& sourcePass, ShadowMapFrustum& targetFrustum) const;
 	void CopyShadowMap(const CShadowMapPass& sourcePass, CShadowMapPass& targetPass);
 	void ClearShadowMaps(PassGroupList& shadowMapPasses);
 
+	ETEX_Format GetShadowTexFormat(const SShadowConfig& shadowConfig, EPass passID) const;
+
+	bool IsStageActive() const
+	{
+		bool isSecondaryViewport = (m_graphicsPipeline.GetPipelineDescription().shaderFlags & SHDF_SECONDARY_VIEWPORT) != 0;
+		return !isSecondaryViewport && !RenderView()->IsRecursive() && RenderView()->GetCurrentEye() != CCamera::eEye_Right;
+	}
+
+	_smart_ptr<CTexture>     m_ShadowMapCache[MAX_GSM_LODS_NUM];
+
+	_smart_ptr<CTexture>     m_pRsmColorTex;
+	_smart_ptr<CTexture>     m_pRsmNormalTex;
+	_smart_ptr<CTexture>     m_pRsmPoolColorTex;
+	_smart_ptr<CTexture>     m_pRsmPoolNormalTex;
 
 	PassGroupList            m_ShadowMapPasses;
 	CFullscreenPass          m_CopyShadowMapPass;
@@ -133,5 +183,10 @@ private:
 	CClearRegionPass         m_ClearShadowPoolColorPass;
 	CClearRegionPass         m_ClearShadowPoolNormalsPass;
 	CDeviceResourceLayoutPtr m_pResourceLayout;
-	CDeviceResourceSetPtr    m_pPerPassResourceSetTemplate;
+	CDeviceResourceSetDesc   m_perPassResources;
+
+	int                      m_shadowsLocalLightsLinearizeDepth;
+
+public:
+	_smart_ptr<CTexture> m_pTexRT_ShadowPool;
 };

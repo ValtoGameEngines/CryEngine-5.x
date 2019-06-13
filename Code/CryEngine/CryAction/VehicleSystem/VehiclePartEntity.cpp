@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -21,7 +21,6 @@
 #include <CryAnimation/ICryAnimation.h>
 #include <IActorSystem.h>
 #include <CryNetwork/ISerialize.h>
-#include <CryAISystem/IAgent.h>
 
 #include "CryAction.h"
 #include "Vehicle.h"
@@ -122,7 +121,7 @@ void CVehiclePartEntity::Reset()
 			{
 				entitySpawnParams.vPosition = Vec3(0.0f, 0.0f, 0.0f);
 				entitySpawnParams.sName = m_entityName.c_str();
-				entitySpawnParams.nFlags |= (m_pVehicle->GetEntity()->GetFlags() & (ENTITY_FLAG_CLIENT_ONLY | ENTITY_FLAG_SERVER_ONLY)) | ENTITY_FLAG_NEVER_NETWORK_STATIC;
+				entitySpawnParams.nFlags |= m_pVehicle->GetEntity()->GetFlags() & (ENTITY_FLAG_CLIENT_ONLY | ENTITY_FLAG_SERVER_ONLY);
 
 				//if the entity will be created by the server, don't create it on the clients
 				//we will receive an entity spawn from the server and join it on later
@@ -133,7 +132,7 @@ void CVehiclePartEntity::Reset()
 						m_entityId = pEntity->GetId();
 
 						//Create an entity link so the entity can find the Vehicle if it needs to
-						m_pLink = pEntity->AddEntityLink("VehiclePartLink", m_pVehicle->GetEntityId());
+						m_pLink = pEntity->AddEntityLink("VehiclePartLink", m_pVehicle->GetEntityId(),m_pVehicle->GetEntity()->GetGuid());
 
 						m_pVehicle->SetObjectUpdate(this, IVehicle::eVOU_AlwaysUpdate);
 
@@ -165,7 +164,7 @@ void CVehiclePartEntity::Reset()
 			if (!m_entityAttached)
 			{
 				//Create an entity link so the entity can find the Vehicle if it needs to
-				m_pLink = pEntity->AddEntityLink("VehiclePartLink", m_pVehicle->GetEntityId());
+				m_pLink = pEntity->AddEntityLink("VehiclePartLink", m_pVehicle->GetEntityId(),m_pVehicle->GetEntity()->GetGuid());
 
 				m_pVehicle->SetObjectUpdate(this, IVehicle::eVOU_AlwaysUpdate);
 
@@ -282,7 +281,7 @@ void CVehiclePartEntity::OnVehicleEvent(EVehicleEvent event, const SVehicleEvent
 					{
 						m_entityId = params.entityId;
 						//Create an entity link so the entity can find the Vehicle if it needs to
-						m_pLink = pEntity->AddEntityLink("VehiclePartLink", m_pVehicle->GetEntityId());
+						m_pLink = pEntity->AddEntityLink("VehiclePartLink", m_pVehicle->GetEntityId(),m_pVehicle->GetEntity()->GetGuid());
 
 						m_pVehicle->SetObjectUpdate(this, IVehicle::eVOU_AlwaysUpdate);
 

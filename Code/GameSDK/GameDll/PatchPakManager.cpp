@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -17,6 +17,7 @@
 #include "Utility/CryWatch.h"
 #include "Network/Lobby/GameLobbyData.h"
 #include <CrySystem/ZLib/IZLibCompressor.h>
+#include <CrySystem/ConsoleRegistration.h>
 #include "UI/UIManager.h"
 #include "UI/WarningsManager.h"
 
@@ -109,8 +110,12 @@ CPatchPakManager::~CPatchPakManager()
 			if (patchPakData.m_state == SPatchPakData::es_PakLoadedFromCache)
 			{
 				IPlatformOS* pPlatformOS = GetISystem()->GetPlatformOS();
+#if defined(USE_CRY_ASSERT)
 				IPlatformOS::ECDP_Close closeResult = pPlatformOS->CloseCachePak(patchPakData.m_url.c_str());
 				CRY_ASSERT(closeResult == IPlatformOS::eCDPC_Success);
+#else
+				pPlatformOS->CloseCachePak(patchPakData.m_url.c_str());
+#endif
 				patchPakData.m_state = SPatchPakData::es_Cached;
 			}
 			else if (patchPakData.m_state == SPatchPakData::es_PakLoaded)
@@ -120,9 +125,12 @@ CPatchPakManager::~CPatchPakManager()
 				GeneratePakFileNameFromURLName(nameStr, patchPakData.m_url.c_str());
 
 				uint32 nFlags = ICryPak::FLAGS_NEVER_IN_PAK | ICryPak::FLAGS_PATH_REAL | ICryArchive::FLAGS_OVERRIDE_PAK;
-
+#if defined(USE_CRY_ASSERT)
 				bool bSuccess = gEnv->pCryPak->ClosePack(nameStr.c_str(), nFlags);
 				CRY_ASSERT_MESSAGE(bSuccess, "we failed to close our patch pak, pack file. Not good!");
+#else
+				gEnv->pCryPak->ClosePack(nameStr.c_str(), nFlags);
+#endif
 
 				CRY_ASSERT(patchPakData.m_pPatchPakMemBlock.get());
 
@@ -171,7 +179,10 @@ CPatchPakManager::~CPatchPakManager()
 		ic->UnregisterVariable(m_patchPakDebug->GetName());
 	}
 
-	GetISystem()->GetPlatformOS()->RemoveListener(this);
+	if (IPlatformOS* pPlatformOS = GetISystem()->GetPlatformOS())
+	{
+		pPlatformOS->RemoveListener(this);
+	}
 }
 
 void CPatchPakManager::Update(float frameTime)
@@ -673,9 +684,13 @@ void CPatchPakManager::UnloadPatchPakFiles()
 		if (patchPakData.m_state == SPatchPakData::es_PakLoadedFromCache)
 		{
 			IPlatformOS* pPlatformOS = GetISystem()->GetPlatformOS();
+#if defined(USE_CRY_ASSERT) && !defined(EXCLUDE_NORMAL_LOG)
 			IPlatformOS::ECDP_Close closeResult = pPlatformOS->CloseCachePak(patchPakData.m_url.c_str());
 			CryLog("CPatchPakManager::UnloadPatchPakFiles() closing cache pak %s with result=%d", patchPakData.m_url.c_str(), closeResult);
 			CRY_ASSERT(closeResult == IPlatformOS::eCDPC_Success);
+#else
+			pPlatformOS->CloseCachePak(patchPakData.m_url.c_str());
+#endif
 			patchPakData.m_state = SPatchPakData::es_Cached;
 		}
 		else if (patchPakData.m_state == SPatchPakData::es_PakLoaded)
@@ -685,9 +700,12 @@ void CPatchPakManager::UnloadPatchPakFiles()
 			GeneratePakFileNameFromURLName(nameStr, patchPakData.m_url.c_str());
 
 			uint32 nFlags = ICryPak::FLAGS_NEVER_IN_PAK | ICryPak::FLAGS_PATH_REAL | ICryArchive::FLAGS_OVERRIDE_PAK;
-
+#if defined(USE_CRY_ASSERT)
 			bool bSuccess = gEnv->pCryPak->ClosePack(nameStr.c_str(), nFlags);
 			CRY_ASSERT_MESSAGE(bSuccess, "we failed to close our patch pak, pack file. Not good!");
+#else
+			gEnv->pCryPak->ClosePack(nameStr.c_str(), nFlags);
+#endif
 
 			// should deconstruct here as refcount == 1
 			CRY_ASSERT(patchPakData.m_pPatchPakMemBlock.get());
@@ -809,7 +827,6 @@ void CPatchPakManager::ProcessPatchPaksFromPermissionsXML(
 					const char* pPakBindRoot = xmlChild->getAttr("pakBindRoot");
 					const char* pMD5FileName = xmlChild->getAttr("md5FileName");
 					const char* pMD5Str = xmlChild->getAttr("md5");
-					const char* pCRC32 = xmlChild->getAttr("crc32");
 					const char* pSize = xmlChild->getAttr("size");
 					const char* pCacheToDisk = xmlChild->getAttr("cacheToDisk");
 					const char* pType = xmlChild->getAttr("type");
@@ -821,7 +838,6 @@ void CPatchPakManager::ProcessPatchPaksFromPermissionsXML(
 					{
 						PREFAST_SUPPRESS_WARNING(6387)
 						int downloadSize = atoi(pSize);
-						int maxSize = downloadSize + k_maxHttpHeaderSize;
 						bool bMD5FileName = false;
 						if (pMD5FileName && pMD5FileName[0] != 0)
 						{
@@ -914,8 +930,12 @@ void CPatchPakManager::StartNewDownload(const char* inServerName, const int inPo
 		{
 			uint32 element;
 			PREFAST_SUPPRESS_WARNING(6387)
+#if defined(USE_CRY_ASSERT)
 			int numMatches = sscanf(pMD5Iter, "%02x", &element); // sscanf with %x param writes an int regardless of the size of the input definition
 			CRY_ASSERT_MESSAGE(numMatches == 1, "failed to parse our file's MD5 from permissions");
+#else
+			sscanf(pMD5Iter, "%02x", &element); // sscanf with %x param writes an int regardless of the size of the input definition
+#endif
 			newPatchPakData.m_pMD5[j] = static_cast<unsigned char>(element);
 			pMD5Iter += 2;
 		}
@@ -1024,8 +1044,12 @@ bool CPatchPakManager::CheckForNewDownload(const char* inServerName, const int i
 	{
 		uint32 element;
 		PREFAST_SUPPRESS_WARNING(6387)
+#if defined(USE_CRY_ASSERT)
 		int numMatches = sscanf(pMD5Iter, "%02x", &element); // sscanf with %x param writes an int regardless of the size of the input definition
 		CRY_ASSERT_MESSAGE(numMatches == 1, "failed to parse our file's MD5 from permissions");
+#else
+		sscanf(pMD5Iter, "%02x", &element); // sscanf with %x param writes an int regardless of the size of the input definition
+#endif
 		pMD5[j] = static_cast<unsigned char>(element);
 		pMD5Iter += 2;
 	}

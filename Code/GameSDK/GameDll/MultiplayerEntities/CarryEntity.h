@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
  -------------------------------------------------------------------------
@@ -15,6 +15,7 @@
 #ifndef __CARRYENTITY_H__
 #define __CARRYENTITY_H__
 
+#include <CryEntitySystem/IEntitySystem.h>
 #include "NetworkedPhysicsEntity.h"
 
 typedef CNetworkedPhysicsEntity TParent;
@@ -31,6 +32,7 @@ public:
 	virtual bool Init(IGameObject *pGameObject);
 	virtual void GetMemoryUsage(ICrySizer *pSizer) const;
 	virtual void PostInit(IGameObject *pGameObject);
+	virtual Cry::Entity::EventFlags GetEventMask() const { return Cry::Entity::EventFlags(); }
 	// ~IGameObjectExtension
 
 	void SetSpawnedWeaponId(EntityId weaponId);

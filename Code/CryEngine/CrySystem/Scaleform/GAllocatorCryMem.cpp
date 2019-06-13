@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -8,6 +8,8 @@
 	#include "SharedStates.h"
 	#include "SharedResources.h"
 	#include "System.h"
+	#include <CryMemory/IMemory.h>
+	#include <CrySystem/ConsoleRegistration.h>
 
 	#define TRACK_ALLOCATIONS
 
@@ -49,7 +51,7 @@ void* GSysAllocCryMem::Alloc(UPInt size, UPInt align)
 	void* ptr = allocateInHeap ? m_pHeap->Map(size) : CryGetIMemoryManager()->AllocPages(size);
 
 	#ifndef GHEAP_TRACE_ALL
-	MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CryMalloc);
+	MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CryMalloc);
 	MEMREPLAY_SCOPE_ALLOC(ptr, size, granularity);
 	#endif
 
@@ -97,7 +99,7 @@ bool GSysAllocCryMem::Free(void* ptr, UPInt size, UPInt align)
 	#endif
 
 	#ifndef GHEAP_TRACE_ALL
-	MEMREPLAY_SCOPE(EMemReplayAllocClass::C_UserPointer, EMemReplayUserPointerClass::C_CryMalloc);
+	MEMREPLAY_SCOPE(EMemReplayAllocClass::UserPointer, EMemReplayUserPointerClass::CryMalloc);
 	MEMREPLAY_SCOPE_FREE(ptr);
 	#endif
 
@@ -119,9 +121,9 @@ void GSysAllocCryMem::GetMemoryUsage(ICrySizer* pSizer) const
 	pSizer->AddObject(this, sizeof(*this) + m_stats.Allocated);
 }
 
-GSysAllocBase* GSysAllocCryMem::GetSysAllocImpl()
+GSysAllocBase* GSysAllocCryMem::GetSysAllocImpl() const
 {
-	return this;
+	return (GSysAllocBase*)this;
 }
 
 GFxMemoryArenaWrapper& GSysAllocCryMem::GetMemoryArenas()
@@ -201,7 +203,7 @@ void GSysAllocStaticCryMem::GetMemoryUsage(ICrySizer* pSizer) const
 	pSizer->AddObject(m_pMem, m_size);
 }
 
-GSysAllocBase* GSysAllocStaticCryMem::GetSysAllocImpl()
+GSysAllocBase* GSysAllocStaticCryMem::GetSysAllocImpl() const
 {
 	assert(m_pStaticAlloc);
 	return m_pStaticAlloc;

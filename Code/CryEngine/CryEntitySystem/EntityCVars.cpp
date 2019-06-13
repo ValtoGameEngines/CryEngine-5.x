@@ -1,85 +1,58 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   EntityCVars.h
-//  Version:     v1.00
-//  Created:     18/5/2004 by Timur.
-//  Compilers:   Visual Studio.NET 2003
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "EntityCVars.h"
+#include "Entity.h"
 #include "EntitySystem.h"
 #include "AreaManager.h"
 #include <CryAnimation/ICryAnimation.h>
 #include <CryEntitySystem/IEntityComponent.h>
+#include <CryAISystem/IAISystem.h>
+#include <CryAnimation/IAttachment.h>
+#include <CrySystem/ConsoleRegistration.h>
 
-ICVar* CVar::pDebug = NULL;
-ICVar* CVar::pCharacterIK = NULL;
-ICVar* CVar::pProfileEntities = NULL;
-//ICVar* CVar::pUpdateInvisibleCharacter = NULL;
-//ICVar* CVar::pUpdateBonePositions = NULL;
-ICVar* CVar::pUpdateScript = NULL;
-ICVar* CVar::pUpdateTimer = NULL;
-ICVar* CVar::pUpdateCamera = NULL;
-ICVar* CVar::pUpdatePhysics = NULL;
-ICVar* CVar::pUpdateAI = NULL;
-ICVar* CVar::pUpdateEntities = NULL;
-ICVar* CVar::pUpdateCollision = NULL;
-ICVar* CVar::pUpdateCollisionScript = NULL;
-ICVar* CVar::pUpdateContainer = NULL;
-ICVar* CVar::pUpdateCoocooEgg = NULL;
-ICVar* CVar::pPiercingCamera = NULL;
-ICVar* CVar::pVisCheckForUpdate = NULL;
-ICVar* CVar::pEntityBBoxes = NULL;
-ICVar* CVar::pEntityHelpers = NULL;
-ICVar* CVar::pMinImpulseVel = NULL;
-ICVar* CVar::pImpulseScale = NULL;
-ICVar* CVar::pMaxImpulseAdjMass = NULL;
-ICVar* CVar::pDebrisLifetimeScale = NULL;
-ICVar* CVar::pSplashThreshold = NULL;
-ICVar* CVar::pSplashTimeout = NULL;
-ICVar* CVar::pHitCharacters = NULL;
-ICVar* CVar::pHitDeadBodies = NULL;
-ICVar* CVar::pCharZOffsetSpeed = NULL;
-ICVar* CVar::pEnableFullScriptSave = NULL;
-ICVar* CVar::pLogCollisions = NULL;
-ICVar* CVar::pNotSeenTimeout = NULL;
-ICVar* CVar::pDebugNotSeenTimeout = NULL;
-ICVar* CVar::pDrawAreas = NULL;
-ICVar* CVar::pDrawAreaGrid = NULL;
-ICVar* CVar::pDrawAreaDebug = NULL;
-ICVar* CVar::pDrawAudioProxyZRay = NULL;
+ICVar* CVar::pUpdateScript = nullptr;
+ICVar* CVar::pUpdateEntities = nullptr;
+ICVar* CVar::pEntityBBoxes = nullptr;
+ICVar* CVar::pMinImpulseVel = nullptr;
+ICVar* CVar::pImpulseScale = nullptr;
+ICVar* CVar::pMaxImpulseAdjMass = nullptr;
+ICVar* CVar::pDebrisLifetimeScale = nullptr;
+ICVar* CVar::pHitCharacters = nullptr;
+ICVar* CVar::pHitDeadBodies = nullptr;
+ICVar* CVar::pEnableFullScriptSave = nullptr;
+ICVar* CVar::pLogCollisions = nullptr;
+ICVar* CVar::pDrawAreas = nullptr;
+ICVar* CVar::pDrawAreaGrid = nullptr;
+ICVar* CVar::pDrawAreaGridCells = nullptr;
+ICVar* CVar::pDrawAreaDebug = nullptr;
+ICVar* CVar::pLogAreaDebug = nullptr;
+ICVar* CVar::pUpdateAreas = nullptr;
+ICVar* CVar::pFlowgraphComponents = nullptr;
 
-ICVar* CVar::pMotionBlur = NULL;
-ICVar* CVar::pSysSpecLight = NULL;
+ICVar* CVar::pSysSpecLight = nullptr;
 
-Matrix34 CVar::audioListenerOffset = Matrix34(ZERO);
+CVar::EEntityDebugDrawType CVar::es_EntityDebugDraw = CVar::EEntityDebugDrawType::Off;
 
-int CVar::es_DebugTimers = 0;
 int CVar::es_DebugFindEntity = 0;
 int CVar::es_UsePhysVisibilityChecks = 1;
 float CVar::es_MaxPhysDist;
 float CVar::es_MaxPhysDistInvisible;
 float CVar::es_MaxPhysDistCloth;
 float CVar::es_FarPhysTimeout;
-int CVar::es_DebugEvents = 0;
-int CVar::es_SortUpdatesByClass = 0;
 int CVar::es_debugEntityLifetime = 0;
-int CVar::es_DisableTriggers = 0;
-int CVar::es_DrawProximityTriggers = 0;
 int CVar::es_DebugEntityUsage = 0;
 const char* CVar::es_DebugEntityUsageFilter = "";
+int CVar::es_DebugEntityUsageSortMode = 0;
 int CVar::es_LayerSaveLoadSerialization = 0;
 int CVar::es_LayerDebugInfo = 0;
 int CVar::es_SaveLoadUseLUANoSaveFlag = 1;
 float CVar::es_EntityUpdatePosDelta = 0.0f;
 int CVar::es_debugDrawEntityIDs = 0;
 int CVar::es_MaxJointFx = 8;
+int CVar::es_UseProximityTriggerSystem = 1;
+
+int CVar::es_profileComponentUpdates = 0;
 
 // for editor only
 static void OnSysSpecLightChange(ICVar* pVar)
@@ -87,7 +60,7 @@ static void OnSysSpecLightChange(ICVar* pVar)
 	IEntityItPtr it = GetIEntitySystem()->GetEntityIterator();
 	it->MoveFirst();
 
-	while (IEntity* pEntity = it->Next())
+	while (CEntity* pEntity = static_cast<CEntity*>(it->Next()))
 	{
 		IScriptTable* pScriptTable = pEntity->GetScriptTable();
 		if (pScriptTable && pScriptTable->HaveValue("OnSysSpecLightChanged"))
@@ -109,7 +82,7 @@ int SEntityWithCharacterInstanceAutoComplete::GetCount() const
 	auto itEntity = GetIEntitySystem()->GetEntityIterator();
 	while (!itEntity->IsEnd())
 	{
-		if (IEntity* pEnt = itEntity->Next())
+		if (CEntity* pEnt = static_cast<CEntity*>(itEntity->Next()))
 		{
 			const uint32 numSlots = pEnt->GetSlotCount();
 			for (uint32 i = 0; i < numSlots; i++)
@@ -133,7 +106,7 @@ const char* SEntityWithCharacterInstanceAutoComplete::GetValue(int index) const
 	uint32 count = 0;
 	while (!itEntity->IsEnd())
 	{
-		if (IEntity* pEnt = itEntity->Next())
+		if (CEntity* pEnt = static_cast<CEntity*>(itEntity->Next()))
 		{
 			const uint32 numSlots = pEnt->GetSlotCount();
 			for (uint32 i = 0; i < numSlots; i++)
@@ -157,7 +130,7 @@ const char* SEntityWithCharacterInstanceAutoComplete::GetValue(int index) const
 static SEntityWithCharacterInstanceAutoComplete s_entityWithCharacterInstanceAutoComplete;
 
 //////////////////////////////////////////////////////////////////////////
-void CVar::Init(struct IConsole* pConsole)
+void CVar::Init()
 {
 	assert(gEnv->pConsole);
 	PREFAST_ASSUME(gEnv->pConsole);
@@ -165,67 +138,29 @@ void CVar::Init(struct IConsole* pConsole)
 	REGISTER_COMMAND("es_dump_entities", (ConsoleCommandFunc)DumpEntities, 0, "Dumps current entities and their states!");
 	REGISTER_COMMAND("es_dump_entity_classes_in_use", (ConsoleCommandFunc)DumpEntityClassesInUse, 0, "Dumps all used entity classes");
 	REGISTER_COMMAND("es_compile_area_grid", (ConsoleCommandFunc)CompileAreaGrid, 0, "Trigger a recompile of the area grid");
-	REGISTER_COMMAND("es_AudioListenerOffset", (ConsoleCommandFunc)SetAudioListenerOffsets, 0,
-	                 "Sets by how much the audio listener offsets its position and rotation in regards to its entity.\n"
-	                 "Usage: es_AudioListenerOffset PosX PosY PosZ RotX RotY RotZ\n");
 
-	REGISTER_CVAR(es_SortUpdatesByClass, 0, 0, "Sort entity updates by class (possible optimization)");
-	pDebug = REGISTER_INT("es_debug", 0, VF_CHEAT,
-	                      "Enable entity debugging info\n"
-	                      "Usage: es_debug [0/1]\n"
-	                      "Default is 0 (on).");
-	pCharacterIK = REGISTER_INT("p_CharacterIK", 1, VF_CHEAT,
-	                            "Toggles character IK.\n"
-	                            "Usage: p_characterik [0/1]\n"
-	                            "Default is 1 (on). Set to 0 to disable inverse kinematics.");
-	pEntityBBoxes = REGISTER_INT("es_bboxes", 0, VF_CHEAT,
+	REGISTER_CVAR2("es_DebugDraw", &es_EntityDebugDraw, es_EntityDebugDraw, VF_CHEAT,
+	                             "Provides different debug display options of the entity system\n"
+	                             "0 - Off\n"
+	                             "1 - Draw entities bbox with name\n"
+	                             "2 - Draw entities bbox with world position and physical state\n"
+	                             "3 - Draw entities bbox with entity id\n"
+	                             "4 - Draw hierarchies between entities. Red = parent -> blue = child\n"
+	                             "5 - Draw entity links\n"
+	                             "6 - Draw entities with components. Red = component receives updates every frame, Yellow = component receives pre physics update\n");
+
+	pEntityBBoxes = REGISTER_INT_CB("es_bboxes", 0, VF_CHEAT,
+	                             "[Deprecated: Use es_DebugDraw 1 instead]\n"
 	                             "Toggles entity bounding boxes.\n"
 	                             "Usage: es_bboxes [0/1]\n"
-	                             "Default is 0 (off). Set to 1 to display bounding boxes.");
-	pEntityHelpers = REGISTER_INT("es_helpers", 0, VF_CHEAT,
-	                              "Toggles helpers.\n"
-	                              "Usage: es_helpers [0/1]\n"
-	                              "Default is 0 (off). Set to 1 to display entity helpers.");
-	pProfileEntities = REGISTER_INT("es_profileentities", 0, VF_CHEAT,
-	                                "Usage: es_profileentities 1,2,3\n"
-	                                "Default is 0 (off).");
-	/*	pUpdateInvisibleCharacter = REGISTER_INT("es_UpdateInvisibleCharacter",0,VF_CHEAT,
-	    "Usage: \n"
-	    "Default is 0 (off).");
-	   pUpdateBonePositions = REGISTER_INT("es_UpdateBonePositions",1,VF_CHEAT,
-	    "Usage: \n"
-	    "Default is 1 (on).");
-	 */pUpdateScript = REGISTER_INT("es_UpdateScript", 1, VF_CHEAT,
+	                             "Default is 0 (off). Set to 1 to display bounding boxes.", MapEntityBBoxesCVar);
+	pUpdateScript = REGISTER_INT("es_UpdateScript", 1, VF_CHEAT,
 	                             "Usage: es_UpdateScript [0/1]\n"
 	                             "Default is 1 (on).");
-	pUpdatePhysics = REGISTER_INT("es_UpdatePhysics", 1, VF_CHEAT,
-	                              "Toggles updating of entity physics.\n"
-	                              "Usage: es_UpdatePhysics [0/1]\n"
-	                              "Default is 1 (on). Set to 0 to prevent entity physics from updating.");
-	pUpdateAI = REGISTER_INT("es_UpdateAI", 1, VF_CHEAT,
-	                         "Toggles updating of AI entities.\n"
-	                         "Usage: es_UpdateAI [0/1]\n"
-	                         "Default is 1 (on). Set to 0 to prevent AI entities from updating.");
 	pUpdateEntities = REGISTER_INT("es_UpdateEntities", 1, VF_CHEAT,
 	                               "Toggles entity updating.\n"
 	                               "Usage: es_UpdateEntities [0/1]\n"
 	                               "Default is 1 (on). Set to 0 to prevent all entities from updating.");
-	pUpdateCollision = REGISTER_INT("es_UpdateCollision", 1, VF_CHEAT,
-	                                "Toggles updating of entity collisions.\n"
-	                                "Usage: es_UpdateCollision [0/1]\n"
-	                                "Default is 1 (on). Set to 0 to disable entity collision updating.");
-	pUpdateContainer = REGISTER_INT("es_UpdateContainer", 1, VF_CHEAT,
-	                                "Usage: es_UpdateContainer [0/1]\n"
-	                                "Default is 1 (on).");
-	pUpdateTimer = REGISTER_INT("es_UpdateTimer", 1, VF_CHEAT,
-	                            "Usage: es_UpdateTimer [0/1]\n"
-	                            "Default is 1 (on).");
-	pUpdateCollisionScript = REGISTER_INT("es_UpdateCollisionScript", 1, VF_CHEAT,
-	                                      "Usage: es_UpdateCollisionScript [0/1]\n"
-	                                      "Default is 1 (on).");
-	pVisCheckForUpdate = REGISTER_INT("es_VisCheckForUpdate", 1, VF_CHEAT,
-	                                  "Usage: es_VisCheckForUpdate [0/1]\n"
-	                                  "Default is 1 (on).");
 	pMinImpulseVel = REGISTER_FLOAT("es_MinImpulseVel", 0.0f, VF_CHEAT,
 	                                "Usage: es_MinImpulseVel 0.0");
 	pImpulseScale = REGISTER_FLOAT("es_ImpulseScale", 0.0f, VF_CHEAT,
@@ -234,48 +169,23 @@ void CVar::Init(struct IConsole* pConsole)
 	                                    "Usage: es_MaxImpulseAdjMass 2000.0");
 	pDebrisLifetimeScale = REGISTER_FLOAT("es_DebrisLifetimeScale", 1.0f, 0,
 	                                      "Usage: es_DebrisLifetimeScale 1.0");
-	pSplashThreshold = REGISTER_FLOAT("es_SplashThreshold", 1.0f, VF_CHEAT,
-	                                  "minimum instantaneous water resistance that is detected as a splash"
-	                                  "Usage: es_SplashThreshold 200.0");
-	pSplashTimeout = REGISTER_FLOAT("es_SplashTimeout", 3.0f, VF_CHEAT,
-	                                "minimum time interval between consecutive splashes"
-	                                "Usage: es_SplashTimeout 3.0");
 	pHitCharacters = REGISTER_INT("es_HitCharacters", 1, 0,
 	                              "specifies whether alive characters are affected by bullet hits (0 or 1)");
 	pHitDeadBodies = REGISTER_INT("es_HitDeadBodies", 1, 0,
 	                              "specifies whether dead bodies are affected by bullet hits (0 or 1)");
-	pCharZOffsetSpeed = REGISTER_FLOAT("es_CharZOffsetSpeed", 2.0f, VF_DUMPTODISK,
-	                                   "sets the character Z-offset change speed (in m/s), used for IK");
-
-	pNotSeenTimeout = REGISTER_INT("es_not_seen_timeout", 30, VF_DUMPTODISK,
-	                               "number of seconds after which to cleanup temporary render buffers in entity");
-	pDebugNotSeenTimeout = REGISTER_INT("es_debug_not_seen_timeout", 0, VF_DUMPTODISK,
-	                                    "if true, log messages when entities undergo not seen timeout");
 
 	pEnableFullScriptSave = REGISTER_INT("es_enable_full_script_save", 0,
 	                                     VF_DUMPTODISK, "Enable (experimental) full script save functionality");
 
 	pLogCollisions = REGISTER_INT("es_log_collisions", 0, 0, "Enables collision events logging");
-	REGISTER_CVAR(es_DebugTimers, 0, VF_CHEAT,
-	              "This is for profiling and debugging (for game coders and level designer)\n"
-	              "By enabling this you get a lot of console printouts that show all entities that receive OnTimer\n"
-	              "events - it's good to minimize the call count. Certain entities might require this feature and\n"
-	              "using less active entities can often be defined by the level designer.\n"
-	              "Usage: es_DebugTimers 0/1");
 	REGISTER_CVAR(es_DebugFindEntity, 0, VF_CHEAT, "");
-	REGISTER_CVAR(es_DebugEvents, 0, VF_CHEAT, "Enables logging of entity events");
-	REGISTER_CVAR(es_DisableTriggers, 0, 0, "Disable enter/leave events for proximity and area triggers");
-	REGISTER_CVAR(es_DrawProximityTriggers, 0, 0,
-	              "Shows Proximity Triggers.\n"
-	              "Usage: es_DrawProximityTriggers [0-255].  The parameter sets the transparency (alpha) level.\n"
-	              "Value 1 will be changed to 70.\n"
-	              "Default is 0 (off)\n");
 
 	REGISTER_CVAR(es_DebugEntityUsage, 0, 0,
 	              "Draws information to the screen to show how entities are being used, per class, including total, active and hidden counts and memory usage"
 	              "\nUsage: es_DebugEntityUsage update_rate"
 	              "\nupdate_rate - Time in ms to refresh memory usage calculation or 0 to disable");
 	REGISTER_CVAR(es_DebugEntityUsageFilter, "", 0, "Filter entity usage debugging to classes which have this string in their name");
+	REGISTER_CVAR(es_DebugEntityUsageSortMode, 0, 0, "Determines how es_DebugEntityUsage sorts the visual output\n0 = unsorted\n1 = sort by number of active instances\n2 = sort by memory usage");
 
 	REGISTER_CVAR(es_LayerSaveLoadSerialization, 0, VF_CHEAT,
 	              "Switches layer entity serialization: \n"
@@ -286,14 +196,21 @@ void CVar::Init(struct IConsole* pConsole)
 	              "Render debug info on active layers: \n"
 	              "0 - inactive \n"
 	              "1 - active brush layers \n"
-	              "2 - all layer info \n"
-	              "3 - all layer and all layer pak info");
+	              "2 - all layers \n"
+	              "3 - all layers and memory info \n"
+	              "4 - all layers without folders\n"
+	              "5 - layer activation info");
 	REGISTER_CVAR(es_SaveLoadUseLUANoSaveFlag, 0, VF_CHEAT, "Save&Load optimization : use lua flag to not serialize entities, for example rigid bodies.");
 
 	pDrawAreas = REGISTER_INT("es_DrawAreas", 0, VF_CHEAT, "Enables drawing of Areas");
 	pDrawAreaGrid = REGISTER_INT("es_DrawAreaGrid", 0, VF_CHEAT, "Enables drawing of Area Grid");
+	pDrawAreaGridCells = REGISTER_INT("es_DrawAreaGridCells", 0, VF_CHEAT, "Enables drawing of Area Grid Cells' number and coordinates. Requires \"es_DrawAreaGrid\" to be enabled!");
 	pDrawAreaDebug = REGISTER_INT("es_DrawAreaDebug", 0, VF_CHEAT, "Enables debug drawing of Areas, set 2 for log details");
-	pDrawAudioProxyZRay = REGISTER_INT("es_DrawAudioProxyZRay", 0, VF_CHEAT, "Enables drawing of Z ray on check for Z visibility");
+	pLogAreaDebug = REGISTER_INT("es_LogAreaDebug", 0, VF_CHEAT, "Enables debug drawing of Areas, set 2 for log details");
+	pUpdateAreas = REGISTER_INT("es_UpdateAreas", 1, VF_CHEAT,
+		"Toggles area updating.\n"
+		"Usage: es_UpdateAreas [0/1]\n"
+		"Default is 1 (on). Set to 0 to prevent all areas from updating.");
 
 	REGISTER_CVAR(es_UsePhysVisibilityChecks, 1, 0,
 	              "Activates physics quality degradation and forceful sleeping for invisible and faraway entities");
@@ -306,10 +223,11 @@ void CVar::Init(struct IConsole* pConsole)
 	REGISTER_CVAR(es_FarPhysTimeout, 4.0f, 0,
 	              "Timeout for faraway physics forceful deactivation");
 
-	pMotionBlur = gEnv->pConsole->GetCVar("r_MotionBlur");
 	pSysSpecLight = gEnv->pConsole->GetCVar("sys_spec_light");
 	if (pSysSpecLight && gEnv->IsEditor())
-		pSysSpecLight->SetOnChangeCallback(OnSysSpecLightChange);
+	{
+		pSysSpecLight->AddOnChange(OnSysSpecLightChange);
+	}
 
 	REGISTER_CVAR(es_debugEntityLifetime, 0, 0,
 	              "Debug entities creation and deletion time");
@@ -317,16 +235,69 @@ void CVar::Init(struct IConsole* pConsole)
 	REGISTER_COMMAND("es_debugAnim", (ConsoleCommandFunc)EnableDebugAnimText, 0, "Debug entity animation (toggle on off)");
 	gEnv->pConsole->RegisterAutoComplete("es_debugAnim", &s_entityWithCharacterInstanceAutoComplete);
 
+	REGISTER_COMMAND("es_togglelayer", &ConsoleCommandToggleLayer, VF_DEV_ONLY, "Toggles a layer (on/off)\n Usage: es_togglelayer LAYER_NAME\nPlease bear in mind that layer names are case-sensitive");
+
 	REGISTER_CVAR(es_EntityUpdatePosDelta, 0.1f, 0,
 	              "Indicates the position delta by which an entity must move before the AreaManager updates position relevant data.\n"
 	              "Default: 0.1 (10 cm)");
 
-	REGISTER_CVAR(es_debugDrawEntityIDs, 0, VF_CHEAT,
+	REGISTER_CVAR_CB(es_debugDrawEntityIDs, 0, VF_CHEAT,
+	              "[Deprecated: Use es_DebugDraw 3 instead]\n"
 	              "Displays the EntityId of all entities.\n"
-	              "Default is 0 (off), any other number enables it.\n"
-	              "Note: es_debug must be set to 1 also (or else the EntityId won't be displayed)");
+	              "Default is 0 (off), any other number enables it.\n", MapDrawEntityIDCVar);
 
 	REGISTER_CVAR(es_MaxJointFx, 8, 0, "Sets the maximum number of joint break fx per frame");
+
+	REGISTER_CVAR(es_profileComponentUpdates, 0, 0, 
+	              "Enables profiling of components that are updated per frame.\n"
+	              "Default: 0 (off)\n"
+	              "1 - Simple profiling, shows cost of all components per frame\n"
+	              "2 - Component type cost breakdown, shows cost of each component type per frame");
+
+	pFlowgraphComponents = REGISTER_INT("es_EnableFlowgraphComponents", 0, VF_CHEAT,
+	              "Toggles flowgraph components. Requires restart of the engine.\n"
+	              "Usage: es_UpdateEntities [0/1]\n"
+	              "Default is 0 (off). Set to 1 to enable flowgraph components.");
+
+	REGISTER_CVAR(es_UseProximityTriggerSystem, 1, 
+		VF_CHEAT | VF_REQUIRE_LEVEL_RELOAD, 
+		"Whether to register entities in the partition grid used for the proximity trigger system.\n"
+	    "0 - Entities will not be registered in the partition grid and can not be found by proximity queries."
+	    "1 - Entities can be registered in the partition grid and could then be found by proximity queries.");
+
+	// Call mapping in case the cvar was already set
+	MapEntityBBoxesCVar(pEntityBBoxes);
+	MapDrawEntityIDCVar(gEnv->pConsole->GetCVar("es_debugDrawEntityIDs"));
+}
+
+void CVar::MapEntityBBoxesCVar(ICVar* pBBoxCVar)
+{
+	if (ICVar* pIVar = gEnv->pConsole->GetCVar("es_DebugDraw"))
+	{
+		if (pBBoxCVar->GetIVal() != 0)
+		{
+			pIVar->Set(1);
+		}
+		else
+		{
+			pIVar->Set(0);
+		}
+	}
+}
+
+void CVar::MapDrawEntityIDCVar(ICVar* pIDCVar)
+{
+	if (ICVar* pIVar = gEnv->pConsole->GetCVar("es_DebugDraw"))
+	{
+		if (pIDCVar->GetIVal() != 0)
+		{
+			pIVar->Set(3);
+		}	
+		else
+		{
+			pIVar->Set(0);
+		}
+	}
 }
 
 void CVar::DumpEntities(IConsoleCmdArgs* args)
@@ -340,7 +311,7 @@ void CVar::DumpEntityClassesInUse(IConsoleCmdArgs* args)
 	it->MoveFirst();
 
 	std::map<string, int> classes;
-	while (IEntity* pEntity = it->Next())
+	while (CEntity* pEntity = static_cast<CEntity*>(it->Next()))
 	{
 		classes[pEntity->GetClass()->GetName()]++;
 	}
@@ -358,7 +329,7 @@ void CVar::CompileAreaGrid(IConsoleCmdArgs*)
 		pAreaManager->SetAreasDirty();
 }
 
-void CVar::SetDebugAnimText(IEntity* pEntity, const bool bEnable)
+void CVar::SetDebugAnimText(CEntity* pEntity, const bool bEnable)
 {
 	CEntitySystem* pEntitySystem = GetIEntitySystem();
 
@@ -387,7 +358,7 @@ void CVar::SetDebugAnimText(IEntity* pEntity, const bool bEnable)
 						}
 						if (pObject->GetAttachmentType() == IAttachmentObject::eAttachment_Entity)
 						{
-							IEntity* pAttachmentEntity = pEntitySystem->GetEntity(static_cast<CEntityAttachment*>(pObject)->GetEntityId());
+							CEntity* pAttachmentEntity = pEntitySystem->GetEntityFromID(static_cast<CEntityAttachment*>(pObject)->GetEntityId());
 							if (pAttachmentEntity)
 							{
 								SetDebugAnimText(pAttachmentEntity, bEnable);
@@ -412,61 +383,28 @@ void CVar::EnableDebugAnimText(IConsoleCmdArgs* args)
 		}
 
 		CEntitySystem* pEntitySystem = GetIEntitySystem();
-		IEntity* pEntity = pEntitySystem->FindEntityByName(szFilterName);
+		CEntity* pEntity = static_cast<CEntity*>(pEntitySystem->FindEntityByName(szFilterName));
 
 		SetDebugAnimText(pEntity, bEnable);
 	}
 }
 
-//////////////////////////////////////////////////////////////////////////
-void CVar::SetAudioListenerOffsets(IConsoleCmdArgs* pArgs)
+void CVar::ConsoleCommandToggleLayer(IConsoleCmdArgs* pArgs)
 {
-	char const* const szPositionOffsetX = pArgs->GetArg(1);
-	char const* const szPositionOffsetY = pArgs->GetArg(2);
-	char const* const szPositionOffsetZ = pArgs->GetArg(3);
-	char const* const szRotationOffsetX = pArgs->GetArg(4);
-	char const* const szRotationOffsetY = pArgs->GetArg(5);
-	char const* const szRotationOffsetZ = pArgs->GetArg(6);
-
-	float fPositionOffsetX = 0.0f;
-	float fPositionOffsetY = 0.0f;
-	float fPositionOffsetZ = 0.0f;
-	float fRotationOffsetX = 0.0f;
-	float fRotationOffsetY = 0.0f;
-	float fRotationOffsetZ = 0.0f;
-
-	if (szPositionOffsetX != NULL)
+	// Note: based on Flow Node Engine:LayerSwitch
+	if (pArgs && pArgs->GetArgCount() > 1 && g_pIEntitySystem)
 	{
-		fPositionOffsetX = static_cast<float>(atof(szPositionOffsetX));
-	}
+		const char* szLayerName = pArgs->GetArg(1);
+		const bool bSerialize = false;
+		const bool bShouldBeEnabled = !g_pIEntitySystem->IsLayerEnabled(szLayerName, false);
 
-	if (szPositionOffsetY != NULL)
-	{
-		fPositionOffsetY = static_cast<float>(atof(szPositionOffsetY));
-	}
+		CryLogAlways("[Info][Layers] Toggling EntitySystemLayer %s to: %s", szLayerName, bShouldBeEnabled ? "Enabled" : "Disabled");
+		g_pIEntitySystem->EnableLayer(szLayerName, bShouldBeEnabled, bSerialize);
 
-	if (szPositionOffsetZ != NULL)
-	{
-		fPositionOffsetZ = static_cast<float>(atof(szPositionOffsetZ));
+		if (bShouldBeEnabled && gEnv->pAISystem)
+		{
+			CryLogAlways("[Info][Layers] Toggling AISystemLayer %s to: %s", szLayerName, bShouldBeEnabled ? "Enabled" : "Disabled");
+			gEnv->pAISystem->LayerEnabled(szLayerName, bShouldBeEnabled, bSerialize);
+		}
 	}
-
-	if (szRotationOffsetX != NULL)
-	{
-		fRotationOffsetX = static_cast<float>(atof(szRotationOffsetX));
-	}
-
-	if (szRotationOffsetY != NULL)
-	{
-		fRotationOffsetY = static_cast<float>(atof(szRotationOffsetY));
-	}
-
-	if (szRotationOffsetZ != NULL)
-	{
-		fRotationOffsetZ = static_cast<float>(atof(szRotationOffsetZ));
-	}
-
-	audioListenerOffset.Set(
-	  Vec3(ZERO),
-	  Quat::CreateRotationXYZ(Ang3(fRotationOffsetX, fRotationOffsetY, fRotationOffsetZ)),
-	  Vec3(fPositionOffsetX, fPositionOffsetY, fPositionOffsetZ));
 }

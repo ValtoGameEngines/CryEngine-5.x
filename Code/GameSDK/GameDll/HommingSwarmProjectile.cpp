@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "Actor.h"
@@ -53,7 +53,7 @@ CHommingSwarmProjectile::~CHommingSwarmProjectile()
 
 void CHommingSwarmProjectile::Update(SEntityUpdateContext &ctx, int updateSlot)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 
 	BaseClass::Update(ctx, updateSlot);
 
@@ -184,7 +184,8 @@ void CHommingSwarmProjectile::HandleEvent(const SGameObjectEvent &event)
 			IEntity* pTarget = pCollision->iForeignData[1]==PHYS_FOREIGN_ID_ENTITY ? (IEntity*)pCollision->pForeignData[1] : 0;
 			CProjectile::SExplodeDesc explodeDesc(true);
 			explodeDesc.impact = false;
-			explodeDesc.normal = -pCollision->n,pCollision->vloc[0];
+			explodeDesc.normal = -pCollision->n;
+			explodeDesc.vel = pCollision->vloc[0];
 			explodeDesc.targetId = pTarget ? pTarget->GetId() : 0;
 			Explode(explodeDesc);
 		}
@@ -241,7 +242,6 @@ Vec3 CHommingSwarmProjectile::Wander(const SVehicleStatus& vehicle, float deltaT
 
 	const float dist = params.wanderDistance;
 	const float radius = params.wanderSphereRadius;
-	const float randomness = params.wanderRand;
 	const float frequency = params.wanderFrequency;
 	const float dampingTime = params.wanderDampingTime;
 	const float damping = SATURATE(m_totalLifetime/dampingTime);
@@ -249,7 +249,6 @@ Vec3 CHommingSwarmProjectile::Wander(const SVehicleStatus& vehicle, float deltaT
 
 	const float wanderDist = LERP(0.0f, dist, damping);
 	const float wanderRadius = LERP(60.0f, radius, damping);
-	const float wanderRand = LERP(1.0f, randomness, damping);
 
 	m_wanderTimer += deltaTime;
 	Vec3 result(ZERO);

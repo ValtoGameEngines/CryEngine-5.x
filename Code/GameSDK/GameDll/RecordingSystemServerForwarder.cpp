@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "RecordingSystem.h"
@@ -151,7 +151,6 @@ CActor::KillCamFPData* CServerKillCamForwarder::FindPacket(BufferType::iterator 
 void CServerKillCamForwarder::GetFirstPacket(BufferType::iterator &first, IActor *pActor, int packetId)
 {
 	// Find first packet for sender actor/packet id taking care to ignore packet ID overflow
-	int numPackets=0, foundPackets=0;
 	bool bSetFirst=false;
 	BufferType::iterator it;
 	int middlePacketId=(packetId+(CActor::KillCamFPData::UNIQPACKETIDS/2))%CActor::KillCamFPData::UNIQPACKETIDS;

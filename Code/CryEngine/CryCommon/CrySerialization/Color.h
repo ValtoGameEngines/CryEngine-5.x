@@ -1,9 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <CrySerialization/IArchive.h>
 #include <CrySerialization/Decorators/Range.h>
+#include <CryMath/Cry_Math.h>
+
+template<class T> struct Color_tpl;
 
 template<typename T>
 inline bool Serialize(Serialization::IArchive& ar, Color_tpl<T>& c, const char* name, const char* label);
@@ -26,11 +29,17 @@ struct Vec3AsColor
 inline bool Serialize(Serialization::IArchive& ar, Vec3AsColor& c, const char* name, const char* label)
 {
 	if (ar.isEdit())
+	{
 		return ar(Serialization::SStruct(c), name, label);
-	else
+	}
+	else if (ar.caps(Serialization::IArchive::XML_VERSION_1))
 	{
 		typedef float (* Array)[3];
 		return ar(*((Array) & c.v.x), name, label);
+	}
+	else
+	{
+		return ar(Serialization::SStruct(c), name, label);
 	}
 }
 }

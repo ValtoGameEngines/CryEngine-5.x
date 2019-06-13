@@ -1,28 +1,17 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// -------------------------------------------------------------------------
-//  File name:   terrain_water.h
-//  Version:     v1.00
-//  Created:     28/5/2001 by Vladimir Kajalin
-//  Compilers:   Visual Studio.NET
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
-
-#ifndef _TERRAIN_WATER_H_
-#define _TERRAIN_WATER_H_
+#pragma once
+#include <CryRenderer/RenderElements/CREWaterVolume.h>
 
 #define CYCLE_BUFFERS_NUM 4
 
-class COcean : public IRenderNode, public Cry3DEngineBase
+class COcean final : public IRenderNode, public Cry3DEngineBase
 {
 public:
 	COcean(IMaterial* pMat);
 	~COcean();
 
-	void          Create();
+	void          Create(const SRenderingPassInfo& passInfo);
 	void          Update(const SRenderingPassInfo& passInfo);
 	void          Render(const SRenderingPassInfo& passInfo);
 
@@ -36,22 +25,22 @@ public:
 	int32         GetMemoryUsage();
 
 	// fake IRenderNode implementation
-	virtual EERType          GetRenderNodeType();
-	virtual const char*      GetEntityClassName(void) const                                 { return "Ocean"; }
-	virtual const char*      GetName(void) const                                            { return "Ocean"; }
-	virtual Vec3             GetPos(bool) const;
-	virtual void             Render(const SRendParams&, const SRenderingPassInfo& passInfo) {}
-	virtual IPhysicalEntity* GetPhysics(void) const                                         { return 0; }
-	virtual void             SetPhysics(IPhysicalEntity*)                                   {}
-	virtual void             SetMaterial(IMaterial* pMat)                                   { m_pMaterial = pMat; }
-	virtual IMaterial*       GetMaterial(Vec3* pHitPos = NULL) const;
-	virtual IMaterial*       GetMaterialOverride()                                          { return m_pMaterial; }
-	virtual float            GetMaxViewDist()                                               { return 1000000.f; }
-	virtual void             GetMemoryUsage(ICrySizer* pSizer) const                        {}
-	virtual const AABB       GetBBox() const                                                { return AABB(Vec3(-1000000.f, -1000000.f, -1000000.f), Vec3(1000000.f, 1000000.f, 1000000.f)); }
-	virtual void             SetBBox(const AABB& WSBBox)                                    {}
-	virtual void             FillBBox(AABB& aabb);
-	virtual void             OffsetPosition(const Vec3& delta);
+	virtual EERType          GetRenderNodeType() const                                      override { return eERType_WaterVolume; }
+	virtual const char*      GetEntityClassName(void) const                                 override { return "Ocean"; }
+	virtual const char*      GetName(void) const                                            override { return "Ocean"; }
+	virtual Vec3             GetPos(bool) const override;
+	virtual void             Render(const SRendParams&, const SRenderingPassInfo& passInfo) override {}
+	virtual IPhysicalEntity* GetPhysics(void) const                                         override { return 0; }
+	virtual void             SetPhysics(IPhysicalEntity*)                                   override {}
+	virtual void             SetMaterial(IMaterial* pMat)                                   override { m_pMaterial = pMat; }
+	virtual IMaterial*       GetMaterial(Vec3* pHitPos = NULL) const override;
+	virtual IMaterial*       GetMaterialOverride() const                                    override { return m_pMaterial; }
+	virtual float            GetMaxViewDist() const                                         override { return 1000000.f; }
+	virtual void             GetMemoryUsage(ICrySizer* pSizer) const                        override {}
+	virtual const AABB       GetBBox() const                                                override { return AABB(Vec3(-1000000.f, -1000000.f, -1000000.f), Vec3(1000000.f, 1000000.f, 1000000.f)); }
+	virtual void             SetBBox(const AABB& WSBBox)                                    override {}
+	virtual void             FillBBox(AABB& aabb) const                                     override { aabb = GetBBox(); }
+	virtual void             OffsetPosition(const Vec3& delta) override;
 
 private:
 
@@ -63,12 +52,9 @@ private:
 	// Ocean data
 	IMaterial*                m_pMaterial;
 
-	PodArray<SVF_P3F_C4B_T2F> m_pMeshVerts;
-	PodArray<vtx_idx>         m_pMeshIndices;
-
 	int32                     m_nPrevGridDim;
-	int32                     m_nVertsCount;
-	int32                     m_nIndicesCount;
+	uint32                    m_nVertsCount;
+	uint32                    m_nIndicesCount;
 
 	int32                     m_nTessellationType;
 	int32                     m_nTessellationTiles;
@@ -110,5 +96,3 @@ private:
 	static CREWaterOcean*        m_pOceanRE;
 
 };
-
-#endif

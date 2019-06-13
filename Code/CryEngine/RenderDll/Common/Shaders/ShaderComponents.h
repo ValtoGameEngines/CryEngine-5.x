@@ -1,15 +1,6 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-/*=============================================================================
-   ShaderComponents.h : FX Shaders semantic components declarations.
-
-   Revision history:
-* Created by Honich Andrey
-
-   =============================================================================*/
-
-#ifndef __SHADERCOMPONENTS_H__
-#define __SHADERCOMPONENTS_H__
+#pragma once
 
 #include "../Defs.h"
 
@@ -51,64 +42,17 @@ enum ECGParam
 {
 	ECGP_Unknown,
 
-	ECGP_Matr_SI_Obj,
-	ECGP_SI_AmbientOpacity,
-	ECGP_SI_ObjectAmbColComp,
-	ECGP_PI_AlphaTest,
-	ECGP_SI_BendInfo,
-	ECGP_Matr_PI_Obj_T,
-	ECGP_PI_MotionBlurData,
-	ECGP_PI_CloakParams,
-	ECGP_Matr_PI_ViewProj,
-	ECGP_Matr_PI_Composite,
 	ECGP_Matr_PI_ObjOrigComposite,
-	ECGP_PI_OSCameraPos,
-	ECGP_PI_Ambient,
-	ECGP_PI_VisionParams,
 	ECGP_PB_VisionMtlParams,
 	ECGP_PI_EffectLayerParams,
-	ECGP_PI_MaterialLayersParams,
-	ECGP_PI_AvgFogVolumeContrib,
 	ECGP_PI_NumInstructions,
-	ECGP_PI_ObjColor,
-	ECGP_PI_Wind,
-	ECGP_PI_TextureTileSize,
-	ECGP_PI_ParticleParams,
-	ECGP_PI_ParticleLightParams,
-	ECGP_PI_ParticleSoftParams,
-	ECGP_PI_ParticleAlphaTest,
+
 	ECGP_PI_WrinklesMask0,
 	ECGP_PI_WrinklesMask1,
 	ECGP_PI_WrinklesMask2,
-	ECGP_PB_AmbientOpacity,
 
 	ECGP_PB_Scalar,
 	ECGP_PM_Tweakable,
-	ECGP_Matr_PB_ViewProjMatrixPrev,
-	ECGP_Matr_PB_ViewProjMatrix_IT,
-	ECGP_Matr_PB_ViewProjMatrix_I,
-	ECGP_Matr_PB_ProjMatrix,
-	ECGP_Matr_PB_UnProjMatrix,
-
-	ECGP_Matr_PB_View,
-	ECGP_Matr_PB_View_I,
-	ECGP_Matr_PB_View_T,
-	ECGP_Matr_PB_View_IT,
-
-	ECGP_Matr_PB_Camera,
-	ECGP_Matr_PB_Camera_I,
-	ECGP_Matr_PB_Camera_T,
-	ECGP_Matr_PB_Camera_IT,
-
-	ECGP_Matr_PB_Temp4_0,
-	ECGP_Matr_PB_Temp4_1,
-	ECGP_Matr_PB_Temp4_2,
-	ECGP_Matr_PB_Temp4_3,
-	ECGP_Matr_PB_TerrainBase,
-	ECGP_Matr_PB_TerrainLayerGen,
-	ECGP_Matr_PI_TexMatrix,
-	ECGP_Matr_PB_TCMMatrix,
-	ECGP_Matr_PI_TCGMatrix,
 
 	ECGP_PM_MatChannelSB,
 	ECGP_PM_MatDiffuseColor,
@@ -119,19 +63,12 @@ enum ECGParam
 	ECGP_PM_MatDetailTilingAndAlphaRef,
 	ECGP_PM_MatSilPomDetailParams,
 
-	ECGP_PB_RotGridScreenOff,
-	ECGP_PB_BlendTerrainColInfo,
-	ECGP_PB_GlowParams,
 	ECGP_PB_HDRParams,
 	ECGP_PB_StereoParams,
-	ECGP_PB_FurParams,
-	ECGP_PB_ResourcesOpacity,
-	ECGP_PB_RandomParams,
+
 	ECGP_PB_IrregKernel,
 	ECGP_PB_RegularKernel,
-	ECGP_PB_TFactor,
-	ECGP_PB_AlphaTest,
-	ECGP_PB_TempData,
+
 	ECGP_PB_VolumetricFogParams,
 	ECGP_PB_VolumetricFogRampParams,
 	ECGP_PB_VolumetricFogSunDir,
@@ -150,29 +87,18 @@ enum ECGParam
 	ECGP_PB_VolumetricFogDistanceParams,
 	ECGP_PB_VolumetricFogGlobalEnvProbe0,
 	ECGP_PB_VolumetricFogGlobalEnvProbe1,
-	ECGP_PB_CameraFront,
-	ECGP_PB_CameraRight,
-	ECGP_PB_CameraUp,
-	ECGP_PB_RTRect,
-	ECGP_PB_LightningPos,
-	ECGP_PB_LightningColSize,
+
 	ECGP_PB_FromRE,
-	ECGP_PB_GlobalShaderFlag,
-	ECGP_PB_RuntimeShaderFlag,
-	ECGP_PB_ObjVal,
+
 	ECGP_PB_WaterLevel,
-	ECGP_PB_HDRDynamicMultiplier,
 	ECGP_PB_CausticsParams,
 	ECGP_PB_CausticsSmoothSunDirection,
-	ECGP_PB_SunDirection,
-	ECGP_PB_SunColor,
+
 	ECGP_PB_Time,
 	ECGP_PB_FrameTime,
 	ECGP_PB_CameraPos,
 	ECGP_PB_ScreenSize,
-	ECGP_PB_HPosScale,
 	ECGP_PB_NearFarDist,
-	ECGP_PB_PullVerticesInfo,
 
 	ECGP_PB_CloudShadingColorSun,
 	ECGP_PB_CloudShadingColorSky,
@@ -182,20 +108,7 @@ enum ECGParam
 
 	ECGP_PB_ClipVolumeParams,
 
-	ECGP_PB_ResInfoDiffuse,
-	ECGP_PB_ResInfoGloss,
-	ECGP_PB_ResInfoDetail,
-	ECGP_PB_ResInfoOpacity,
-	ECGP_PB_ResInfoCustom,
-	ECGP_PB_ResInfoCustom2nd,
-	ECGP_PB_ResInfoBump,
-	ECGP_PB_FromObjSB,
-	ECGP_PB_TexelDensityParam,
-	ECGP_PB_TexelDensityColor,
-	ECGP_PB_TexelsPerMeterInfo,
-
 	ECGP_PB_WaterRipplesLookupParams,
-	ECGP_PB_SkinningExtraWeights,
 
 #if defined(FEATURE_SVO_GI)
 	ECGP_PB_SvoViewProj0,
@@ -233,17 +146,11 @@ enum ECGParam
 	ECGP_COUNT,
 };
 
-// Per frame - harcoded - commonly used data
-struct SCGParamsPF
+// Constants for RenderView to be set in shaders
+struct SRenderViewShaderConstants
 {
 public:
 	int      nFrameID;
-
-	Matrix44 pProjMatrix;      //ECGP_Matr_PB_ProjMatrix
-	Matrix44 pUnProjMatrix;    //ECGP_Matr_PB_UnProjMatrix
-	Matrix44 pMatrixComposite; //ECGP_Matr_PI_Composite
-
-	Matrix44 pViewProjZeroMatrix; //ECGP_Matr_PF_ViewProjZeroMatrix
 
 	Vec3     vWaterLevel;           // ECGP_PB_WaterLevel *
 	float    fHDRDynamicMultiplier; // ECGP_PB_HDRDynamicMultiplier *
@@ -257,18 +164,7 @@ public:
 	Vec4     pVolumetricFogRampParams; // ECGP_PB_VolumetricFogRampParams *
 	Vec4     pVolumetricFogSunDir;     // ECGP_PB_VolumetricFogSunDir *
 
-	Vec3     pCameraFront; // ECGP_PB_CameraFront
-	Vec3     pCameraRight; // ECGP_PB_CameraRight
-	Vec3     pCameraUp;    // ECGP_PB_CameraUp
 	Vec3     pCameraPos;   //ECGP_PF_CameraPos
-
-	Vec4     pScreenSize;  //ECGP_PF_ScreenSize
-	Vec4     pNearFarDist; //ECGP_PF_NearFarDist
-
-	Vec3     pDecalZFightingRemedy; //ECGP_PB_DecalZFightingRemedy
-
-	Vec4     pLightningColSize; // ECGP_PB_LightningColSize
-	Vec3     pLightningPos;     //ECGP_PB_LightningPos
 
 	Vec3     pCausticsParams; //ECGP_PB_CausticsParams *
 	Vec3     pSunColor;       //ECGP_PF_SunColor *
@@ -281,15 +177,12 @@ public:
 
 	Vec4     pCloudShadowParams;     //ECGP_PB_CloudShadowParams *
 	Vec4     pCloudShadowAnimParams; //ECGP_PB_CloudShadowAnimParams *
+	Vec4     pScreenspaceShadowsParams;
 
 	Vec4     post3DRendererAmbient;
 
 	Vec3     vCausticsCurrSunDir;
 	int      nCausticsFrameID;
-
-	float    e_vegetation_alpha_blend_near;
-
-	bool     bPE_NVActive;
 
 	Vec3     pVolCloudTilingSize;
 	Vec3     pVolCloudTilingOffset;
@@ -350,6 +243,22 @@ struct SCGBind
 		return sizeof(SCGBind);
 	}
 	void GetMemoryUsage(ICrySizer* pSizer) const {}
+};
+
+struct SVertexInputStream
+{
+	char  semanticName[14];
+	uint8 semanticIndex;
+	uint8 attributeLocation;
+
+	SVertexInputStream(const char* streamSemanticName, uint8 streamSemanticIndex, uint8 streamAttributeLocation)
+	{
+		CRY_ASSERT(strlen(streamSemanticName) < CRY_ARRAY_COUNT(semanticName) - 1);
+
+		strncpy(semanticName, streamSemanticName, CRY_ARRAY_COUNT(semanticName) - 1);
+		semanticIndex = streamSemanticIndex;
+		attributeLocation = streamAttributeLocation;
+	}
 };
 
 struct SParamData
@@ -490,11 +399,11 @@ enum ECGSampler
 
 struct SCGSampler : SCGBind
 {
-	int        m_nStateHandle;
+	SamplerStateHandle m_nStateHandle;
 	ECGSampler m_eCGSamplerType;
 	SCGSampler()
 	{
-		m_nStateHandle = -1;
+		m_nStateHandle = EDefaultSamplerStates::Unspecified;
 		m_eCGSamplerType = ECGS_Unknown;
 	}
 	~SCGSampler()
@@ -594,11 +503,7 @@ enum ECGTexture : uint8
 	ECGT_SceneNormals,
 	ECGT_SceneDiffuse,
 	ECGT_SceneSpecular,
-	ECGT_SceneDiffuseAcc,
-	ECGT_SceneSpecularAcc,
 	ECGT_SceneNormalsMS,
-	ECGT_SceneDiffuseAccMS,
-	ECGT_SceneSpecularAccMS,
 
 	ECGT_VolumetricClipVolumeStencil,
 	ECGT_VolumetricFog,
@@ -608,7 +513,6 @@ enum ECGTexture : uint8
 	ECGT_VolumetricFogShadow1,
 
 	ECGT_WaterOceanMap,
-	ECGT_WaterRipplesDDN,
 	ECGT_WaterVolumeDDN,
 	ECGT_WaterVolumeCaustics,
 	ECGT_WaterVolumeRefl,
@@ -669,8 +573,6 @@ struct SCGTexture : SCGBind
 		return true;
 	}
 
-	CTexture* GetTexture() const;
-
 	int       Size()
 	{
 		int nSize = sizeof(SCGTexture);
@@ -681,5 +583,3 @@ struct SCGTexture : SCGBind
 	{
 	}
 };
-
-#endif

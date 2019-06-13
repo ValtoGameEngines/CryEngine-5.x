@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -24,6 +24,9 @@
 #include "INetworkPrivate.h"
 #include "Protocol/FrameTypes.h"
 #include <CryMemory/BucketAllocatorImpl.h>
+
+#include <CryMath/Random.h>
+#include <CryCore/Platform/platform_impl.inl>
 
 const int LOBBY_KEEP_ALIVE_INTERVAL = (CryLobbySendInterval + 100);
 const int LOBBY_FORCE_DISCONNECT_TIMER = 99999999;
@@ -58,7 +61,37 @@ ICryLobby* CCryLobby::m_pLobby = NULL;
 	#define SECURE_NET_LOG NetLog
 #endif
 
+CRYREGISTER_SINGLETON_CLASS(CCryLobby)
+
 CCryLobby::CCryLobby()
+{
+	gEnv->pLobby = this;
+}
+
+CCryLobby::~CCryLobby()
+{
+	int a;
+
+#if NETWORK_HOST_MIGRATION
+	RemoveHostMigrationEventListener(this);
+#endif
+
+	for (a = 0; a < eCLS_NumServices; a++)
+	{
+		InternalSocketDie(ECryLobbyService(a));
+	}
+
+#if ENCRYPT_LOBBY_PACKETS
+	if (gEnv->pNetwork)
+	{
+		gEnv->pNetwork->EndCipher(m_cipher);
+	}
+#endif
+
+	m_pLobby = NULL;
+}
+
+bool CCryLobby::Initialize(SSystemGlobalEnvironment& env, const SSystemInitParams& initParams)
 {
 	if (m_pLobby)
 	{
@@ -119,29 +152,8 @@ CCryLobby::CCryLobby()
 		m_cipher = gEnv->pNetwork->BeginCipher((const uint8*)g_lobbyEncryptionKey, 32);
 	}
 #endif
-}
 
-CCryLobby::~CCryLobby()
-{
-	int a;
-
-#if NETWORK_HOST_MIGRATION
-	RemoveHostMigrationEventListener(this);
-#endif
-
-	for (a = 0; a < eCLS_NumServices; a++)
-	{
-		InternalSocketDie(ECryLobbyService(a));
-	}
-
-#if ENCRYPT_LOBBY_PACKETS
-	if (gEnv->pNetwork)
-	{
-		gEnv->pNetwork->EndCipher(m_cipher);
-	}
-#endif
-
-	m_pLobby = NULL;
+	return true;
 }
 
 ECryLobbyService CCryLobby::SetLobbyService(ECryLobbyService service)
@@ -502,14 +514,13 @@ void CCryLobby::Tick(bool flush)
 
 	#if !defined(_RELEASE) || defined(RELEASE_LOGGING)
 					CCrySharedLobbyPacket packetInfo;
-					SCryLobbyPacketHeader* pPacketHeader = packetInfo.GetLobbyPacketHeader();
 
 					packetInfo.SetReadBuffer((const uint8*)MemGetPtr(data.data), data.dataSize);
 
 					packetInfo.ReadPacketHeader();
 
 					SECURE_NET_LOG("[lobby] Send reliable connection " PRFORMAT_LCINFO " from " PRFORMAT_UID " counter %d size %d",
-					               PRARG_LCINFO(CryLobbyConnectionID(i), pConnection->addr), PRARG_UID(pPacketHeader->fromUID), data.counter, data.dataSize);
+					               PRARG_LCINFO(CryLobbyConnectionID(i), pConnection->addr), PRARG_UID(packetInfo.GetLobbyPacketHeader()->fromUID), data.counter, data.dataSize);
 
 					LogPacketsInBuffer((uint8*)MemGetPtr(data.data), data.dataSize);
 	#endif  // #if !defined(_RELEASE) || defined(RELEASE_LOGGING)
@@ -720,7 +731,8 @@ void CCryLobby::InternalSocketCreate(ECryLobbyService service)
 		}
 		else
 		{
-			NetLog("[Lobby] Socket could not be created, check firewall or try a different port. Connecting to network games may fail if not fixed.");
+			CryWarning(VALIDATOR_MODULE_ONLINE, VALIDATOR_ERROR,
+				"[Lobby] Socket could not be created, check firewall or try a different port. Connecting to network games may fail if not fixed.");
 		}
 	}
 }
@@ -1243,8 +1255,9 @@ void CCryLobby::ConnectionRemoveRef(CryLobbyConnectionID c)
 
 							while (GetNextPacketFromBuffer(pData, data.dataSize, dataPos, &packet))
 							{
+#if !defined(EXCLUDE_NORMAL_LOG)
 								uint32 encodedPacketType = pDataHeader->lobbyPacketType;
-
+#endif
 								DecodePacketDataHeader(&packet);
 
 								if (KeepPacketAfterDisconnect(pDataHeader->lobbyPacketType))
@@ -1818,7 +1831,9 @@ void CCryLobby::ProcessPacket(const TNetAddress& addr, CryLobbyConnectionID conn
 
 				if (counterIn == qdata.counter)
 				{
+#if !defined(NO_NETWORK_SECURITY_LOGS)
 					const uint8 qDataCounter = qdata.counter;
+#endif
 					// Other end has received the packet we are trying to send
 					OnSendComplete(addr);
 					SECURE_NET_LOG("[lobby] Got ack on connection " PRFORMAT_LCINFO " counterIn=%u, qDataCounter=%u", PRARG_LCINFO(connectionID, pConnection->addr), counterIn, qDataCounter);
@@ -2053,7 +2068,9 @@ void CCryLobby::ProcessCachedPacketBuffer(void)
 
 						if (pPacketHeader->counterIn == qdata.counter)
 						{
+#if !defined(NO_NETWORK_SECURITY_LOGS)
 							const uint8 qDataCounter = qdata.counter;
+#endif
 							// Other end has received the packet we are trying to send
 							OnSendComplete(addr);
 							SECURE_NET_LOG("[lobby] Got ack(first) on connection " PRFORMAT_LCINFO " counterIn=%u, qDataCounter=%u", PRARG_LCINFO(connectionID, pConnection->addr), pPacketHeader->counterIn, qDataCounter);
@@ -2092,7 +2109,9 @@ void CCryLobby::ProcessCachedPacketBuffer(void)
 
 				while (GetNextPacketFromBuffer(pDecodedData, length, dataPos, &packet))
 				{
+#if !defined(EXCLUDE_NORMAL_LOG)
 					uint32 encodedPacketType = pDataHeader->lobbyPacketType;
+#endif
 					DecodePacketDataHeader(&packet);
 
 					if (KeepPacketAfterDisconnect(pDataHeader->lobbyPacketType))
@@ -2131,7 +2150,9 @@ void CCryLobby::ProcessCachedPacketBuffer(void)
 
 				while (GetNextPacketFromBuffer(pDecodedData, length, dataPos, &packet))
 				{
+#if !defined(EXCLUDE_NORMAL_LOG)
 					uint32 encodedPacketType = pDataHeader->lobbyPacketType;
+#endif
 					DecodePacketDataHeader(&packet);
 					NetLog("    Process packet %d (%d) size %d", pDataHeader->lobbyPacketType, encodedPacketType, pDataHeader->dataSize);
 					ProcessPacket(addr, connectionID, &packet);

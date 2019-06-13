@@ -1,7 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
+//! \cond INTERNAL
 
 #pragma once
 
+#include "BehaviorTreeDefines.h"
 #include "Node.h"
 
 namespace BehaviorTree
@@ -18,12 +21,12 @@ public:
 		m_child = child;
 	}
 
-	virtual LoadResult LoadFromXml(const XmlNodeRef& xml, const LoadContext& context) override
+	virtual LoadResult LoadFromXml(const XmlNodeRef& xml, const struct LoadContext& context, const bool isLoadingFromEditor) override
 	{
-		IF_UNLIKELY (BaseClass::LoadFromXml(xml, context) == LoadFailure)
+		IF_UNLIKELY (BaseClass::LoadFromXml(xml, context, isLoadingFromEditor) == LoadFailure)
 			return LoadFailure;
 
-		return LoadChildFromXml(xml, context);
+		return LoadChildFromXml(xml, context, isLoadingFromEditor);
 	}
 
 	virtual void HandleEvent(const EventContext& context, const Event& event) override
@@ -36,7 +39,7 @@ public:
 	}
 
 #ifdef USING_BEHAVIOR_TREE_SERIALIZATION
-	void Serialize(Serialization::IArchive& archive)
+	void Serialize(Serialization::IArchive& archive) override
 	{
 		archive(m_child, "child", "+<>" NODE_COMBOBOX_FIXED_WIDTH ">");
 		if (!m_child)
@@ -59,9 +62,9 @@ public:
 
 protected:
 
-	LoadResult LoadChildFromXml(const XmlNodeRef& xml, const LoadContext& context)
+	LoadResult LoadChildFromXml(const XmlNodeRef& xml, const LoadContext& context, const bool isLoadingFromEditor)
 	{
-		IF_UNLIKELY (BaseClass::LoadFromXml(xml, context) == LoadFailure)
+		IF_UNLIKELY (BaseClass::LoadFromXml(xml, context, isLoadingFromEditor) == LoadFailure)
 			return LoadFailure;
 
 		if (xml->getChildCount() != 1)
@@ -70,7 +73,7 @@ protected:
 			return LoadFailure;
 		}
 
-		INodePtr node = context.nodeFactory.CreateNodeFromXml(xml->getChild(0), context);
+		INodePtr node = context.nodeFactory.CreateNodeFromXml(xml->getChild(0), context, isLoadingFromEditor);
 		if (node)
 		{
 			SetChild(node);
@@ -99,3 +102,5 @@ protected:
 	INodePtr m_child;
 };
 }
+
+//! \endcond

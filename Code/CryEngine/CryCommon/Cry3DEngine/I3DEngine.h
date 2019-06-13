@@ -1,15 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   i3dengine.h
-//  Version:     v1.00
-//  Created:     28/5/2001 by Vladimir Kajalin
-//  Compilers:   Visual Studio.NET
-//  Description: 3dengine interface
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -17,37 +6,34 @@
 #define MMRM_MAX_SURFACE_TYPES 16
 
 // Do not add any headers here!
-#include "CryEngineDecalInfo.h"
 #include <Cry3DEngine/IStatObj.h>
-#include <CryRenderer/IRenderer.h>
 #include <CrySystem/IProcess.h>
 #include <Cry3DEngine/IMaterial.h>
-#include <Cry3DEngine/ISurfaceType.h>
 #include <Cry3DEngine/IRenderNode.h>
 #include <CryCore/Containers/CryArray.h>
-#include <CryMemory/IMemory.h>
+#include <CryRenderer/RenderObject.h>
 //Do not add any headers here!
 
-struct ISystem;
-struct ICharacterInstance;
-struct CVars;
-struct pe_params_particle;
-struct IMaterial;
-struct RenderLMData;
-struct AnimTexInfo;
-struct ISplineInterpolator;
 class CContentCGF;
-struct SpawnParams;
-class ICrySizer;
-struct IRenderNode;
-struct SRenderNodeTempData;
-struct IParticleManager;
-class IOpticsManager;
-struct IDeferredPhysicsEventManager;
-struct IBSPTree3D;
-struct ITimeOfDay;
-struct IRenderView;
 class CRenderView;
+class ICrySizer;
+
+struct bop_meshupdate;
+struct CryEngineDecalInfo;
+struct IBreezeGenerator;
+struct IBSPTree3D;
+struct ICharacterInstance;
+struct IColorGradingCtrl;
+struct IDeferredPhysicsEventManager;
+struct IGeometry;
+struct IOpticsManager;
+struct IParticleManager;
+struct IRenderView;
+struct IShadowCaster;
+struct ISurfaceType;
+struct ITimeOfDay;
+
+enum EERType;
 
 namespace ChunkFile
 {
@@ -145,6 +131,8 @@ enum E3DEngineParameter
 
 	E3DPARAM_SKY_SKYBOX_ANGLE,
 	E3DPARAM_SKY_SKYBOX_STRETCHING,
+	E3DPARAM_SKY_SKYBOX_EMITTANCE,
+	E3DPARAM_SKY_SKYBOX_FILTER,
 
 	EPARAM_SUN_SHAFTS_VISIBILITY,
 
@@ -176,6 +164,7 @@ enum EShadowMode
 	ESM_HIGHQUALITY
 };
 
+//! \cond INTERNAL
 //! This structure is filled and passed by the caller to the DebugDraw functions of the stat object or entity.
 struct SGeometryDebugDrawInfo
 {
@@ -188,8 +177,9 @@ struct SGeometryDebugDrawInfo
 	uint32 bNoLines     : 1;
 	uint32 bDrawInFront : 1;   //!< Draw debug draw geometry on top of real geometry.
 
-	SGeometryDebugDrawInfo() : color(255, 0, 255, 255), lineColor(255, 255, 0, 255), bNoLines(0), bNoCull(0) { tm.SetIdentity(); }
+	SGeometryDebugDrawInfo() : color(255, 0, 255, 255), lineColor(255, 255, 0, 255), bNoCull(0), bNoLines(0) { tm.SetIdentity(); }
 };
+//! \endcond
 
 struct SFrameLodInfo
 {
@@ -251,6 +241,7 @@ struct SMeshLodInfo
 	}
 };
 
+//! \cond INTERNAL
 //! Physics material enumerator, allows for 3dengine to get material id from game code.
 struct IPhysMaterialEnumerator
 {
@@ -262,6 +253,7 @@ struct IPhysMaterialEnumerator
 	virtual const char* GetMaterialNameByIndex(int index) = 0;
 	// </interfuscator:shuffle>
 };
+//! \endcond
 
 //! Physics foreign data flags.
 enum EPhysForeignFlags
@@ -283,6 +275,7 @@ enum EOceanRenderFlags
 	OCR_OCEANVOLUME_VISIBLE = 1 << 1,
 };
 
+//! \cond INTERNAL
 //! Structure to pass vegetation group properties.
 struct IStatInstGroup
 {
@@ -307,6 +300,8 @@ struct IStatInstGroup
 		nCastShadowMinSpec = 0;
 		bDynamicDistanceShadows = false;
 		bGIMode = true;
+		offlineProcedural = false;
+		bInstancing = true;
 		fSpriteDistRatio = 1.f;
 		fShadowDistRatio = 1.f;
 		fMaxViewDistRatio = 1.f;
@@ -332,6 +327,7 @@ struct IStatInstGroup
 		bUseTerrainColor = false;
 		fAlignToTerrainCoefficient = 0.f;
 		bAutoMerged = false;
+		bIgnoreTerrainLayerBlend = true;
 		minConfigSpec = (ESystemConfigSpec)0;
 		nTexturesAreStreamedIn = 0;
 		nPlayerHideable = ePlayerHideable_None;
@@ -347,6 +343,8 @@ struct IStatInstGroup
 	uint8                nCastShadowMinSpec;
 	bool                 bDynamicDistanceShadows;
 	bool                 bGIMode;
+	bool                 offlineProcedural;
+	bool                 bInstancing;
 	float                fSpriteDistRatio;
 	float                fLodDistRatio;
 	float                fShadowDistRatio;
@@ -359,6 +357,7 @@ struct IStatInstGroup
 	bool                 bUseTerrainColor;
 	bool                 bAllowIndoor;
 	bool                 bAutoMerged;
+	bool                 bIgnoreTerrainLayerBlend;
 	float                fDensity;
 	float                fElevationMax;
 	float                fElevationMin;
@@ -389,8 +388,9 @@ struct IStatInstGroup
 	uint8 nTexturesAreStreamedIn;
 
 	//! Flags similar to entity render flags.
-	int m_dwRndFlags;
+	uint64 m_dwRndFlags;
 };
+//! \endcond
 
 //! Interface to water volumes.
 //! Water volumes should usually be created by I3DEngine::CreateWaterVolume.
@@ -419,23 +419,23 @@ struct IWaterVolume
 struct IClipVolume
 {
 	enum { MaxBlendPlaneCount = 2 };
-	enum EClipVolumeFlags
+	enum EClipVolumeFlags : uint32
 	{
-		eClipVolumeConnectedToOutdoor = BIT(0),
-		eClipVolumeIgnoreGI           = BIT(1),
-		eClipVolumeAffectedBySun      = BIT(2),
-		eClipVolumeBlend              = BIT(3),
-		eClipVolumeIsVisArea          = BIT(4),
-		eClipVolumeIgnoreOutdoorAO    = BIT(5),
+		eClipVolumeConnectedToOutdoor = BIT32(0),
+		eClipVolumeIgnoreGI           = BIT32(1),
+		eClipVolumeAffectedBySun      = BIT32(2),
+		eClipVolumeBlend              = BIT32(3),
+		eClipVolumeIsVisArea          = BIT32(4),
+		eClipVolumeIgnoreOutdoorAO    = BIT32(5)
 	};
 
-	virtual ~IClipVolume() {};
-	virtual void  GetClipVolumeMesh(_smart_ptr<IRenderMesh>& renderMesh, Matrix34& worldTM) const = 0;
-	virtual AABB  GetClipVolumeBBox() const = 0;
-	virtual bool  IsPointInsideClipVolume(const Vec3& point) const = 0;
+	virtual ~IClipVolume() {}
+	virtual void        GetClipVolumeMesh(_smart_ptr<IRenderMesh>& renderMesh, Matrix34& worldTM) const = 0;
+	virtual const AABB& GetClipVolumeBBox() const = 0;
+	virtual bool        IsPointInsideClipVolume(const Vec3& point) const = 0;
 
-	virtual uint8 GetStencilRef() const = 0;
-	virtual uint  GetClipVolumeFlags() const = 0;
+	virtual uint8       GetStencilRef() const = 0;
+	virtual uint        GetClipVolumeFlags() const = 0;
 };
 
 //! Provides information about the different VisArea volumes.
@@ -455,7 +455,7 @@ struct IVisArea : public IClipVolume
 	//! \param nMaxConnNum          - The maximum of IVisArea to write in pAreas
 	//! \param bSkipDisabledPortals - Ignore portals which are disabled
 	//! \return An integer which hold the amount of VisArea found to be connected.
-	virtual int GetVisAreaConnections(IVisArea** pAreas, int nMaxConnNum, bool bSkipDisabledPortals = false) = 0;
+	virtual int GetVisAreaConnections(IVisArea** pAreas, int nMaxConnNum, bool bSkipDisabledPortals = false) const = 0;
 
 	//! Determines if it's connected to an outdoor area.
 	//! \return True if the VisArea is connected to an outdoor area.
@@ -498,13 +498,13 @@ struct IVisArea : public IClipVolume
 	//! \return true if the VisArea if it's affected by outdoor lighting, else false will be returned.
 	virtual bool IsAffectedByOutLights() const = 0;
 
-	//! Determines if the spere can be affect the VisArea.
+	//! Determines if the sphere can be affect the VisArea.
 	//! \return Returns true if the VisArea can be affected by the sphere, else false will be returned.
-	virtual bool IsSphereInsideVisArea(const Vec3& vPos, const f32 fRadius) = 0;
+	virtual bool IsSphereInsideVisArea(const Vec3& vPos, const f32 fRadius) const = 0;
 
 	//! Clips geometry inside or outside a vis area.
 	//! \return true if geom was clipped.
-	virtual bool ClipToVisArea(bool bInside, Sphere& sphere, Vec3 const& vNormal) = 0;
+	virtual bool ClipToVisArea(bool bInside, Sphere& sphere, Vec3 const& vNormal) const = 0;
 
 	//! Gives back the axis aligned bounding box of VisArea.
 	//! \return the pointer of an AABB.
@@ -520,7 +520,7 @@ struct IVisArea : public IClipVolume
 	virtual bool IsPointInsideVisArea(const Vec3& vPos) const = 0;
 
 	//! \return vis area final ambient color (ambient color depends on factors, like if connected to outdoor, is affected by skycolor - etc)
-	virtual const Vec3 GetFinalAmbientColor() = 0;
+	virtual const Vec3 GetFinalAmbientColor() const = 0;
 
 	virtual void       GetShapePoints(const Vec3*& pPoints, size_t& nPoints) = 0;
 	virtual float      GetHeight() = 0;
@@ -534,12 +534,6 @@ struct IVisArea : public IClipVolume
 //! Float m_SortId		: offset by +WATER_LEVEL_SORTID_OFFSET if the camera object line is crossing the water surface,
 //!                     : otherwise offset by -WATER_LEVEL_SORTID_OFFSET.
 #define WATER_LEVEL_SORTID_OFFSET 10000000
-
-#ifdef SEG_WORLD
-	#define DEFAULT_SID -1
-#else
-	#define DEFAULT_SID 0
-#endif
 
 //! Indirect lighting quadtree definition.
 namespace NQT
@@ -586,7 +580,7 @@ enum EVoxelEditOperation
 #define COMPILED_HEIGHT_MAP_FILE_NAME      "terrain\\terrain.dat"
 #define COMPILED_VISAREA_MAP_FILE_NAME     "terrain\\indoor.dat"
 #define COMPILED_TERRAIN_TEXTURE_FILE_NAME "terrain\\cover.ctc"
-#define COMPILED_VOX_MAP_FILE_NAME         "terrain\\voxmap.dat"
+#define COMPILED_SVO_FOLDER_NAME           "terrain\\svo\\"
 #define COMPILED_MERGED_MESHES_BASE_NAME   "terrain\\merged_meshes_sectors\\"
 #define COMPILED_MERGED_MESHES_LIST        "mmrm_used_meshes.lst"
 #define LEVEL_INFO_FILE_NAME               "levelinfo.xml"
@@ -597,18 +591,18 @@ enum EVoxelEditOperation
 
 struct STerrainInfo
 {
-	int   nHeightMapSize_InUnits;
-	int   nUnitSize_InMeters;
-	int   nSectorSize_InMeters;
+	int   heightMapSize_InUnits;
+	float unitSize_InMeters;
+	int   sectorSize_InMeters;
 
-	int   nSectorsTableSize_InSectors;
-	float fHeightmapZRatio;
-	float fOceanWaterLevel;
+	int   sectorsTableSize_InSectors;
+	float heightmapZRatio;
+	float oceanWaterLevel;
 
 	AUTO_STRUCT_INFO;
 };
 
-#define TERRAIN_CHUNK_VERSION                                28
+#define TERRAIN_CHUNK_VERSION                                29
 #define VISAREAMANAGER_CHUNK_VERSION                         6
 
 #define SERIALIZATION_FLAG_BIG_ENDIAN                        1
@@ -653,16 +647,15 @@ struct SOcTreeNodeChunk
 	AUTO_STRUCT_INFO;
 };
 
-struct IGetLayerIdAtCallback
+struct IEditorHeightmap
 {
 	// <interfuscator:shuffle>
-	virtual ~IGetLayerIdAtCallback(){}
-	virtual uint32 GetLayerIdAtPosition(const int x, const int y) const = 0;
-	virtual uint32 GetSurfaceTypeIdAtPosition(const int x, const int y) const = 0;
+	virtual ~IEditorHeightmap(){}
+	virtual uint32 GetDominatingLayerIdAtPosition(const int x, const int y) const = 0;
+	virtual uint32 GetDominatingSurfaceTypeIdAtPosition(const int x, const int y) const = 0;
 	virtual bool   GetHoleAtPosition(const int x, const int y) const = 0;
-	virtual ColorB GetColorAtPosition(const float x, const float y, bool bBilinear) = 0;
+	virtual ColorB GetColorAtPosition(const float x, const float y, ColorB* colors = nullptr, const int colorsNum = 0, const float xStep = 0) = 0;
 	virtual float  GetElevationAtPosition(const float x, const float y) = 0;
-	virtual float  GetRGBMultiplier() = 0;
 	// </interfuscator:shuffle>
 };
 
@@ -688,6 +681,72 @@ struct SHotUpdateInfo
 	AUTO_STRUCT_INFO;
 };
 
+//! \cond INTERNAL
+//! This structure is used by the editor for storing and editing of terrain surface types
+struct SSurfaceTypeItem
+{
+	//! Maximum number surface types stored in one heightmap uint item
+	enum { kMaxSurfaceTypesNum = 3 };
+
+	//! Default constructor
+	SSurfaceTypeItem()
+	{
+	}
+
+	//! Construct from single surface type
+	SSurfaceTypeItem(uint32 surfType)
+	{
+		*this = surfType;
+	}
+
+	//! Return surface type with highest weight
+	uint32 GetDominatingSurfaceType() const
+	{
+		return ty[0];
+	}
+
+	//! Mark as hole
+	void SetHole(bool enabled)
+	{
+		hole = enabled ? 255 : 0;
+	}
+
+	//! Return true if terrain has hole here
+	bool GetHole() const
+	{
+		return hole == 255;
+	}
+
+	//! Check if specified surface type is used
+	bool HasType(uint32 type) const
+	{
+		return (ty[0] == type) || (ty[1] == type) || (ty[2] == type);
+	}
+
+	//! Assign single specified surface type (clean previous state)
+	const SSurfaceTypeItem& operator=(uint32 nSurfType)
+	{
+		ZeroStruct(*this);
+		we[0] = 255;
+		ty[0] = nSurfType;
+		return *this;
+	}
+
+	//! Surface type id's
+	uint8 ty[3] = { 0 };
+
+	//! Is it hole
+	uint8 hole = 0;
+
+	//! Surface type weights
+	uint8 we[3] = { 0 };
+
+	//! Not used for now
+	uint8 dummy = 0;
+};
+//! \endcond
+
+//! Interface to terrain engine
 struct ITerrain
 {
 	struct SExportInfo
@@ -705,31 +764,19 @@ struct ITerrain
 	// <interfuscator:shuffle>
 	virtual ~ITerrain(){}
 	//! Loads data into terrain engine from memory block.
-	virtual bool SetCompiledData(byte* pData, int nDataSize, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable, bool bHotUpdate = false, SHotUpdateInfo* pExportInfo = NULL, int nSID = 0, Vec3 vSegmentOrigin = Vec3(0, 0, 0)) = 0;
-
-	//! Executes one step of streaming the compiled data in pData.
-	//! \return false when the streaming is complete, true if there is still work to do.
-	//! You should call this until it returns true.
-	virtual bool StreamCompiledData(byte* pData, int nDataSize, int nSID, const Vec3& vSegmentOrigin) = 0;
-	virtual void CancelStreamCompiledData(int nSID) = 0;
+	virtual bool SetCompiledData(byte* pData, int nDataSize, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable, bool bHotUpdate = false, SHotUpdateInfo* pExportInfo = NULL) = 0;
 
 	//! Saves data from terrain engine into memory block.
-	virtual bool GetCompiledData(byte* pData, int nDataSize, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable, std::vector<struct IStatInstGroup*>** ppStatInstGroupTable, EEndian eEndian, SHotUpdateInfo* pExportInfo = NULL, int nSID = 0, const Vec3& segmentOffset = Vec3(0, 0, 0)) = 0;
+	virtual bool GetCompiledData(byte* pData, int nDataSize, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable, std::vector<struct IStatInstGroup*>** ppStatInstGroupTable, EEndian eEndian, SHotUpdateInfo* pExportInfo = NULL) = 0;
 
 	//! \return terrain data memory block size.
-	virtual int GetCompiledDataSize(SHotUpdateInfo* pExportInfo = NULL, int nSID = 0) = 0;
-
-	//! Virtual bool LoadTables(byte * & f, int & nDataSize, std::vector<struct IStatObj*> *& pStatObjTable, std::vector<IMaterial*> *& pMatTable, bool bHotUpdate, bool bSW, EEndian eEndian) = 0;
-	virtual int  GetTablesSize(SHotUpdateInfo* pExportInfo, int nSID) = 0;
-	virtual void SaveTables(byte*& pData, int& nDataSize, std::vector<struct IStatObj*>*& pStatObjTable, std::vector<IMaterial*>*& pMatTable, std::vector<struct IStatInstGroup*>*& pStatInstGroupTable, EEndian eEndian, SHotUpdateInfo* pExportInfo, int nSID) = 0;
-	virtual void GetTables(std::vector<struct IStatObj*>*& pStatObjTable, std::vector<IMaterial*>*& pMatTable, std::vector<struct IStatInstGroup*>*& pStatInstGroupTable, int nSID) = 0;
-	virtual void ReleaseTables(std::vector<struct IStatObj*>*& pStatObjTable, std::vector<IMaterial*>*& pMatTable, std::vector<struct IStatInstGroup*>*& pStatInstGroupTable) = 0;
+	virtual int GetCompiledDataSize(SHotUpdateInfo* pExportInfo = NULL) = 0;
 
 	//! Create and place a new vegetation object on the terrain.
-	virtual IRenderNode* AddVegetationInstance(int nStaticGroupID, const Vec3& vPos, const float fScale, uint8 ucBright, uint8 angle, uint8 angleX = 0, uint8 angleY = 0, int nSID = DEFAULT_SID) = 0;
+	virtual IRenderNode* AddVegetationInstance(int nStaticGroupID, const Vec3& vPos, const float fScale, uint8 ucBright, uint8 angle, uint8 angleX = 0, uint8 angleY = 0) = 0;
 
 	//! Set ocean level.
-	virtual void SetOceanWaterLevel(float fOceanWaterLevel) = 0;
+	virtual void SetOceanWaterLevel(float oceanWaterLevel) = 0;
 
 	//! Call this before any calls to CloneRegion to mark all the render nodes in the
 	//! source region(s) with the flag ERF_CLONE_SOURCE.  This ensures that the clone
@@ -748,19 +795,19 @@ struct ITerrain
 	virtual void ClearCloneSources() = 0;
 
 	//! \return whole terrain lightmap texture id.
-	virtual int GetTerrainLightmapTexId(Vec4& vTexGenInfo, int nSID = 0) = 0;
+	virtual int GetTerrainLightmapTexId(Vec4& vTexGenInfo) = 0;
 
 	//! Return terrain texture atlas texture id's.
-	virtual void GetAtlasTexId(int& nTex0, int& nTex1, int& nTex2, int nSID = 0) = 0;
+	virtual void GetAtlasTexId(int& nTex0, int& nTex1, int& nTex2) = 0;
 
 	//! \return object and material table for Exporting.
-	virtual void GetStatObjAndMatTables(DynArray<IStatObj*>* pStatObjTable, DynArray<IMaterial*>* pMatTable, DynArray<IStatInstGroup*>* pStatInstGroupTable, uint32 nObjTypeMask, int nSID) = 0;
+	virtual void GetStatObjAndMatTables(DynArray<IStatObj*>* pStatObjTable, DynArray<IMaterial*>* pMatTable, DynArray<IStatInstGroup*>* pStatInstGroupTable, uint32 nObjTypeMask) = 0;
 
 	//! Updates part of height map.
 	//! x1, y1, nSizeX, nSizeY are in terrain units
 	//! pTerrainBlock points to a square 2D array with dimensions GetTerrainSize()
 	//! by default update only elevation.
-	virtual void SetTerrainElevation(int x1, int y1, int nSizeX, int nSizeY, float* pTerrainBlock, uint8* pSurfaceData, int nSurfOrgX, int nSurfOrgY, int nSurfSizeX, int nSurfSizeY, uint32* pResolMap, int nResolMapSizeX, int nResolMapSizeY, int nSID = DEFAULT_SID) = 0;
+	virtual void SetTerrainElevation(int x1, int y1, int nSizeX, int nSizeY, float* pTerrainBlock, SSurfaceTypeItem* pSurfaceData, int nSurfOrgX, int nSurfOrgY, int nSurfSizeX, int nSurfSizeY, uint32* pResolMap, int nResolMapSizeX, int nResolMapSizeY) = 0;
 
 	//! Checks if it is possible to paint on the terrain with a given surface type ID.
 	//! \note Should be called by the editor to avoid overflowing the sector surface type palettes.
@@ -772,100 +819,52 @@ struct ITerrain
 	//! Retrieves the resource (mostly texture system memory) memory usage for a given region of the terrain.
 	//! \param pSizer Pointer to an instance of the CrySizer object. The purpose of this object is making sure each element is accounted only once.
 	//! \param crstAABB -  Is a reference to the bounding box in which region we want to analyze the resources.
-	virtual void GetResourceMemoryUsage(ICrySizer* pSizer, const AABB& crstAABB, int nSID = 0) = 0;
+	virtual void GetResourceMemoryUsage(ICrySizer* pSizer, const AABB& crstAABB) = 0;
 
 	//! \return number of used detail texture materials. Fills materials array if materials!=NULL.
-	virtual int GetDetailTextureMaterials(IMaterial* materials[], int nSID = 0) = 0;
-
-	//! Deallocate segment data in the deleted array
-	virtual void ReleaseInactiveSegments() = 0;
-
-	//! Allocate new world segment.
-	//! \return Handle of newly created segment (usually it is just id of segment in the list of currently loaded segments)
-	virtual int CreateSegment(Vec3 vSegmentSize, Vec3 vSegmentOrigin = Vec3(0, 0, 0), const char* pcPath = 0) = 0;
-
-	//! Changes the segment file path
-	//! \return true if specified segment exist and path was successfully updated
-	virtual bool SetSegmentPath(int nSID, const char* pcPath) = 0;
-
-	//! \return a pointer to the segment file path
-	virtual const char* GetSegmentPath(int nSID) = 0;
-
-	//! Set new origin for existing world segment
-	//! \return true if specified segment exist and origin was successfully updated
-	virtual bool SetSegmentOrigin(int nSID, Vec3 vSegmentOrigin, bool callOffsetPosition = true) = 0;
-
-	//! \return the segment origin of the given segment id.
-	virtual Vec3 GetSegmentOrigin(int nSID) = 0;
-
-	//! Get origin for existing world segment, really.
-	//! \return Vec3 with position or NaNs if segment ID is invalid
-	virtual const Vec3& GetSegmentOrigin(int nSID) const = 0;
-
-	//! Set new origin for existing world segment
-	//! \return true if specified segment was found and successfully deleted
-	virtual bool DeleteSegment(int nSID, bool bDeleteNow) = 0;
-
-	//! Find (first) world segment containing given point (in local world coordinates)
-	//! \return id of the found segment or -1 if not found
-	virtual int FindSegment(Vec3 vPt) = 0;
-
-	//! Find (first) world segment containing given point (in heightmap coordinates)
-	//! \return id of the found segment or -1 if not found
-	virtual int FindSegment(int x, int y) = 0;
-
-	//! \return a number bigger than the last valid segment ID
-	//! to be used in loops like: for (int nSID = 0; nSID < GetMaxSegmentsCount(); ++nSID)
-	virtual int GetMaxSegmentsCount() const = 0;
-
-	//! Fills bbox with the bounding box of the specified segment (nSID)
-	//! \return true if succeeded, false if nSID is not valid segment id
-	virtual bool GetSegmentBounds(int nSID, AABB& bbox) = 0;
-
-	//! If nSID < 0 finds segment containing vPt (in local world coordinates) and
-	//! adjusts vPt to be relative to segment's origin
-	//! if nSID >= 0 does nothing
-	//! \return id of the found segment or -1 if not found
-	virtual int WorldToSegment(Vec3& vPt, int nSID = DEFAULT_SID) = 0;
-
-	//! If nSID < 0 finds segment containing given point
-	//! on input, (x << nBitShift, y << nBitShift) represents a point in local world coordinates
-	//! on output, x and y are adjusted to be relative to found segment
-	//! if nSID >= 0 does nothing
-	//! \return id of the found segment or -1 if not found
-	virtual int WorldToSegment(int& x, int& y, int nBitShift, int nSID = DEFAULT_SID) = 0;
+	virtual int GetDetailTextureMaterials(IMaterial* materials[]) = 0;
 
 	//! Changes the ocean material
 	virtual void ChangeOceanMaterial(IMaterial* pMat) = 0;
+
+	//! Request heightmap mesh update in specified area
+	//! if pBox == 0 update entire heightmap
+	virtual void ResetTerrainVertBuffers(const AABB* pBox) = 0;
+
+	//! Inform terrain engine about terrain painting/sculpting action finish
+	virtual void OnTerrainPaintActionComplete() = 0;
 };
 
+//! \cond INTERNAL
 //! Callbacks interface for higher level segments management.
+//! Warning: deprecated Segmented World implementation is not supported by CryEngine anymore
 struct ISegmentsManager
 {
-	enum ESegmentLoadFlags
+	enum ESegmentLoadFlags : uint32
 	{
-		slfTerrain    = BIT(1),
-		slfVisArea    = BIT(2),
-		slfEntity     = BIT(3),
-		slfNavigation = BIT(4),
+		slfTerrain    = BIT32(1),
+		slfVisArea    = BIT32(2),
+		slfEntity     = BIT32(3),
+		slfNavigation = BIT32(4),
 
-		slfAll        = slfTerrain | slfVisArea | slfEntity | slfNavigation,
+		slfAll        = slfTerrain | slfVisArea | slfEntity | slfNavigation
 	};
-	virtual ~ISegmentsManager(){}
-	virtual void WorldVecToGlobalSegVec(const Vec3& inPos, Vec3& outPos, Vec2& outAbsCoords) = 0;
-	virtual void GlobalSegVecToLocalSegVec(const Vec3& inPos, const Vec2& inAbsCoords, Vec3& outPos) = 0;
-	virtual Vec3 WorldVecToLocalSegVec(const Vec3& inPos) = 0;
-	virtual Vec3 LocalToAbsolutePosition(Vec3 const& vPos, f32 fDir = 1.f) const = 0;
-	virtual void GetTerrainSizeInMeters(int& x, int& y) = 0;
-	virtual int  GetSegmentSizeInMeters() = 0;
-	virtual bool CreateSegments(ITerrain* pTerrain) = 0;
-	virtual bool DeleteSegments(ITerrain* pTerrain) = 0;
-	virtual bool FindSegment(ITerrain* pTerrain, const Vec3& pt, int& nSID) = 0;
-	virtual bool FindSegmentCoordByID(int nSID, int& x, int& y) = 0;
-	virtual void ForceLoadSegments(unsigned int flags) = 0;
-	virtual bool PushEntityToSegment(unsigned int id, bool bLocal = true) = 0;
+	virtual ~ISegmentsManager() {}
+	virtual void WorldVecToGlobalSegVec(const Vec3& inPos, Vec3& outPos, Vec2& outAbsCoords)         {}
+	virtual void GlobalSegVecToLocalSegVec(const Vec3& inPos, const Vec2& inAbsCoords, Vec3& outPos) {}
+	virtual Vec3 WorldVecToLocalSegVec(const Vec3& inPos)                                            { return Vec3(0, 0, 0); }
+	virtual Vec3 LocalToAbsolutePosition(Vec3 const& vPos, f32 fDir = 1.f) const                     { return Vec3(0, 0, 0); }
+	virtual void GetTerrainSizeInMeters(int& x, int& y)                                              {}
+	virtual int  GetSegmentSizeInMeters()                                                            { return 0; }
+	virtual bool CreateSegments(ITerrain* pTerrain)                                                  { return false; }
+	virtual bool DeleteSegments(ITerrain* pTerrain)                                                  { return false; }
+	virtual bool FindSegment(ITerrain* pTerrain, const Vec3& pt, int& nSID)                          { return false; }
+	virtual bool FindSegmentCoordByID(int nSID, int& x, int& y)                                      { return false; }
+	virtual void ForceLoadSegments(unsigned int flags)                                               {}
+	virtual bool PushEntityToSegment(unsigned int id, bool bLocal = true)                            { return false; }
 	// </interfuscator:shuffle>
 };
+//! \endcond
 
 struct IVisAreaCallback
 {
@@ -877,6 +876,7 @@ struct IVisAreaCallback
 
 struct IVisAreaTestCallback
 {
+	virtual ~IVisAreaTestCallback() {}
 	virtual bool TestVisArea(IVisArea* pVisArea) const = 0;
 };
 
@@ -885,10 +885,10 @@ struct IVisAreaManager
 	// <interfuscator:shuffle>
 	virtual ~IVisAreaManager(){}
 	//! Loads data into VisAreaManager engine from memory block.
-	virtual bool SetCompiledData(uint8* pData, int nDataSize, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable, bool bHotUpdate, SHotUpdateInfo* pExportInfo, const Vec3& vSegmentOrigin = Vec3(0, 0, 0)) = 0;
+	virtual bool SetCompiledData(uint8* pData, int nDataSize, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable, bool bHotUpdate, SHotUpdateInfo* pExportInfo) = 0;
 
 	//! Saves data from VisAreaManager engine into memory block.
-	virtual bool GetCompiledData(uint8* pData, int nDataSize, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable, std::vector<struct IStatInstGroup*>** ppStatInstGroupTable, EEndian eEndian, SHotUpdateInfo* pExportInfo = NULL, const Vec3& segment = Vec3(0, 0, 0)) = 0;
+	virtual bool GetCompiledData(uint8* pData, int nDataSize, std::vector<struct IStatObj*>** ppStatObjTable, std::vector<IMaterial*>** ppMatTable, std::vector<struct IStatInstGroup*>** ppStatInstGroupTable, EEndian eEndian, SHotUpdateInfo* pExportInfo = NULL) = 0;
 
 	//! \return VisAreaManager data memory block size.
 	virtual int GetCompiledDataSize(SHotUpdateInfo* pExportInfo = NULL) = 0;
@@ -902,12 +902,6 @@ struct IVisAreaManager
 	virtual void      AddListener(IVisAreaCallback* pListener) = 0;
 	virtual void      RemoveListener(IVisAreaCallback* pListener) = 0;
 
-	virtual void      PrepareSegmentData(const AABB& box) = 0;
-	virtual void      ReleaseInactiveSegments() = 0;
-	virtual bool      CreateSegment(int nSID) = 0;
-	virtual bool      DeleteSegment(int nSID, bool bDeleteNow) = 0;
-	virtual bool      StreamCompiledData(uint8* pData, int nDataSize, int nSID, std::vector<struct IStatObj*>* pStatObjTable, std::vector<IMaterial*>* pMatTable, std::vector<struct IStatInstGroup*>* pStatInstGroupTable, const Vec3& vSegmentOrigin, const Vec2& vIndexOffset) = 0;
-	virtual void      OffsetPosition(const Vec3& delta) = 0;
 	virtual void      UpdateConnections() = 0;
 
 	//! Clones all vis areas in a region of the level, offsetting and rotating them based
@@ -921,12 +915,13 @@ struct IVisAreaManager
 	// </interfuscator:shuffle>
 };
 
+//! \cond INTERNAL
 //! Manages simple pre-merged mesh instances into pre-baked sectors.
 struct IMergedMeshesManager
 {
 	enum CLUSTER_FLAGS
 	{
-		//! Uses the samples themselves to calculate the bounds of the areacluster.
+		//! Uses the samples themselves to calculate the bounds of the area cluster.
 		//! If not set, it will use the bounds of the patches to calculate the cluster.
 		CLUSTER_BOUNDARY_FROM_SAMPLES = 1 << 0,
 
@@ -945,7 +940,7 @@ struct IMergedMeshesManager
 	struct SInstanceSector
 	{
 		DynArray<uint8> data;    //!< Memory stream of internally compiled data.
-		string          id;      //!< Unique identifier string identifing this sector.
+		string          id;      //!< Unique identifier string identifying this sector.
 	};
 
 	struct SMeshAreaCluster
@@ -1018,15 +1013,8 @@ struct IMergedMeshesManager
 	//! The number of visible instances last frame.
 	virtual size_t VisibleInstances() const = 0;
 	// </interfuscator:shuffle>
-
-	virtual void PrepareSegmentData(const AABB& aabb) = 0;
-
-	virtual int  GetSegmentNodeCount() = 0;
-
-	virtual int  GetCompiledDataSize(uint32 index) = 0;
-
-	virtual bool GetCompiledData(uint32 index, byte* pData, int nSize, string* pName, std::vector<struct IStatInstGroup*>** ppStatInstGroupTable, const Vec3& segmentOffset) = 0;
 };
+//! \endcond
 
 struct IFoliage
 {
@@ -1036,8 +1024,8 @@ struct IFoliage
 	virtual ~IFoliage(){}
 	enum EFoliageFlags { FLAG_FROZEN = 1 };
 	virtual int              Serialize(TSerialize ser) = 0;
-	virtual void             SetFlags(int flags) = 0;
-	virtual int              GetFlags() = 0;
+	virtual void             SetFlags(uint flags) = 0;
+	virtual uint             GetFlags() = 0;
 	virtual IRenderNode*     GetIRenderNode() = 0;
 	virtual int              GetBranchCount() = 0;
 	virtual IPhysicalEntity* GetBranchPhysics(int iBranch) = 0;
@@ -1045,19 +1033,28 @@ struct IFoliage
 	// </interfuscator:shuffle>
 };
 
+//////////////////////////////////////////////////////////////////////
+//! Sky rendering
+enum eSkyType // Maps to "e_SkyType" CVar
+{
+	eSkySpec_Low = 0,
+	eSkySpec_Def = 1,
+
+	eSkySpec_NumSkySpecs,
+};
+
 struct SSkyLightRenderParams
 {
-	static const int skyDomeTextureWidth = 64;
-	static const int skyDomeTextureHeight = 32;
-	static const int skyDomeTextureSize = 64 * 32;
+	static constexpr int skyDomeTextureWidth = 64;
+	static constexpr int skyDomeTextureHeight = 32;
+	static constexpr int skyDomeTextureSize = 64 * 32;
 
-	static const int skyDomeTextureWidthBy8 = 8;
-	static const int skyDomeTextureWidthBy4Log = 4;   //!< = log2(64/4).
-	static const int skyDomeTextureHeightBy2Log = 4;  //!< = log2(32/2).
+	static constexpr int skyDomeTextureWidthBy8 = 8;
+	static constexpr int skyDomeTextureWidthBy4Log = 4;   //!< = log2(64/4).
+	static constexpr int skyDomeTextureHeightBy2Log = 4;  //!< = log2(32/2).
 
 	SSkyLightRenderParams()
-		: m_pSkyDomeMesh(0)
-		, m_pSkyDomeTextureDataMie(0)
+		: m_pSkyDomeTextureDataMie(0)
 		, m_pSkyDomeTextureDataRayleigh(0)
 		, m_skyDomeTexturePitch(0)
 		, m_skyDomeTextureTimeStamp(-1)
@@ -1075,9 +1072,6 @@ struct SSkyLightRenderParams
 		, m_skyColorWest(0.0f, 0.0f, 0.0f)
 	{
 	}
-
-	//! Sky dome mesh.
-	_smart_ptr<IRenderMesh> m_pSkyDomeMesh;
 
 	// temporarily add padding bytes to prevent fetching Vec4 constants below from wrong offset
 	uint32 dummy0;
@@ -1133,7 +1127,7 @@ struct SVisAreaInfo
 
 struct SDebugFPSInfo
 {
-	SDebugFPSInfo() : fAverageFPS(0.0f), fMaxFPS(0.0f), fMinFPS(0.0f)
+	SDebugFPSInfo() : fAverageFPS(0.0f), fMinFPS(0.0f), fMaxFPS(0.0f)
 	{
 	}
 	float fAverageFPS;
@@ -1142,50 +1136,43 @@ struct SDebugFPSInfo
 };
 
 //! Common scene rain parameters shared across engine and editor.
-struct SRainParams
+struct CRY_ALIGN(16) SRainParams
 {
-	SRainParams()
-		: fAmount(0.f), fCurrentAmount(0.f), fRadius(0.f), nUpdateFrameID(-1), bIgnoreVisareas(false), bDisableOcclusion(false)
-		, matOccTrans(IDENTITY), matOccTransRender(IDENTITY), qRainRotation(IDENTITY), areaAABB(AABB::RESET)
-		, bApplySkyColor(false), fSkyColorWeight(0.5f)
-	{
-	}
+	Matrix44 matOccTrans = IDENTITY;         //!< Transformation matrix for rendering into a new occ map.
+	Matrix44 matOccTransRender = IDENTITY;   //!< Transformation matrix for rendering occluded rain using current occ map.
+	Quat qRainRotation = IDENTITY;           //!< Quaternion for the scene's rain entity rotation.
+	AABB areaAABB = AABB::RESET;
 
-	Matrix44 matOccTrans;         //!< Transformation matrix for rendering into a new occ map.
-	Matrix44 matOccTransRender;   //!< Transformation matrix for rendering occluded rain using current occ map.
-	Quat     qRainRotation;       //!< Quaternion for the scene's rain entity rotation.
-	AABB     areaAABB;
+	Vec3 vWorldPos = {};
+	Vec3 vColor = {};
 
-	Vec3     vWorldPos;
-	Vec3     vColor;
+	float fAmount = 0.0f;
+	float fCurrentAmount = 0.0f;
+	float fRadius = 0.0f;
 
-	float    fAmount;
-	float    fCurrentAmount;
-	float    fRadius;
+	float fFakeGlossiness = 0.0f;
+	float fFakeReflectionAmount = 0.0f;
+	float fDiffuseDarkening = 0.0f;
 
-	float    fFakeGlossiness;
-	float    fFakeReflectionAmount;
-	float    fDiffuseDarkening;
+	float fRainDropsAmount = 0.0f;
+	float fRainDropsSpeed = 0.0f;
+	float fRainDropsLighting = 0.0f;
 
-	float    fRainDropsAmount;
-	float    fRainDropsSpeed;
-	float    fRainDropsLighting;
+	float fMistAmount = 0.0f;
+	float fMistHeight = 0.0f;
 
-	float    fMistAmount;
-	float    fMistHeight;
+	float fPuddlesAmount = 0.0f;
+	float fPuddlesMaskAmount = 0.0f;
+	float fPuddlesRippleAmount = 0.0f;
+	float fSplashesAmount = 0.0f;
 
-	float    fPuddlesAmount;
-	float    fPuddlesMaskAmount;
-	float    fPuddlesRippleAmount;
-	float    fSplashesAmount;
+	int nUpdateFrameID = -1;
+	bool bApplyOcclusion = false;
+	bool bIgnoreVisareas = false;
+	bool bDisableOcclusion = false;
 
-	int      nUpdateFrameID;
-	bool     bApplyOcclusion;
-	bool     bIgnoreVisareas;
-	bool     bDisableOcclusion;
-
-	bool     bApplySkyColor;
-	float    fSkyColorWeight;
+	bool bApplySkyColor = false;
+	float fSkyColorWeight = 0.5f; 
 };
 
 struct SSnowParams
@@ -1239,6 +1226,13 @@ protected:
 	virtual ~IStreamedObjectListener() {}
 };
 
+struct IRenderNodeStatusListener
+{
+	virtual void OnEntityDeleted(IRenderNode* pRenderNode) = 0;
+protected:
+	virtual ~IRenderNodeStatusListener() {}
+};
+
 #pragma pack(push, 16)
 
 //     Light volumes data
@@ -1277,6 +1271,11 @@ struct SLightVolume
 
 #pragma pack(pop)
 
+struct I3DEngineModule : public Cry::IDefaultModule
+{
+	CRYINTERFACE_DECLARE_GUID(I3DEngineModule, "31bd20ff-1347-4f02-b923-c3f83ba73d84"_cry_guid);
+};
+
 //! Interface to the 3d Engine.
 struct I3DEngine : public IProcess
 {
@@ -1309,6 +1308,14 @@ struct I3DEngine : public IProcess
 		eStreamingSubsystem_Audio,
 	};
 
+	//! Result of time-sliced level loading
+	enum class ELevelLoadStatus
+	{
+		InProgress,  //!< Loading in progress
+		Done,        //!< Loading done
+		Failed       //!< Loading failed
+	};
+
 	// <interfuscator:shuffle>
 	//! Initializes the 3D Engine.
 	virtual bool Init() = 0;
@@ -1317,17 +1324,30 @@ struct I3DEngine : public IProcess
 	//! \param szFolderName Should contains the folder to be used.
 	virtual void SetLevelPath(const char* szFolderName) = 0;
 
-	virtual void PrepareOcclusion(const CCamera& rCamera) = 0;
+	virtual void PrepareOcclusion(const CCamera& rCamera, const SGraphicsPipelineKey& cullGraphicsContextKey) = 0;
 	virtual void EndOcclusion() = 0;
 
 	//! Load a level.
 	//! Will load a level from the folder specified with SetLevelPath. If a
 	//! level is already loaded, the resources will be deleted before.
 	//! \param szFolderName - Name of the subfolder to load
-	//! \param szMissionName - Name of the mission
+	//! \param missionXml - Xml data with the mission information
 	//! \return A boolean which indicate the result of the function; true if succeeded, false if failed.
-	virtual bool LoadLevel(const char* szFolderName, const char* szMissionName) = 0;
+	virtual bool LoadLevel(const char* szFolderName, XmlNodeRef missionXml) = 0;
 	virtual bool InitLevelForEditor(const char* szFolderName, const char* szMissionName) = 0;
+
+	//CRY_DEPRECATED("Use different function override to pass missionXml data directly")
+	virtual bool LoadLevel(const char* szFolderName, const char* szMissionName) = 0;
+
+	//! Start time-sliced loading of a level.
+	//! \param szFolderName - Name of the subfolder to load
+	//! \param missionXml - Xml data with the mission information
+	//! \return A boolean which indicate the result of the function; true if succeeded, false if failed.
+	virtual bool StartLoadLevel(const char* szFolderName, XmlNodeRef missionXml) = 0;
+
+	//! Updates time-sliced level loading.
+	//! \return Loading status result.
+	virtual ELevelLoadStatus UpdateLoadLevelStatus() = 0;
 
 	//! Handles any work needed at start of new frame.
 	//! \note Should be called for every frame.
@@ -1348,7 +1368,7 @@ struct I3DEngine : public IProcess
 
 	//! \note This is the camera which should be used for all Engine side culling (since e_camerafreeze allows easy debugging then)
 	//! \note Only valid during RenderWorld(else the camera of the last frame is used)
-	//! \return the Camera used for Rendering on 3DEngine Side, normaly equal to the view camera, except if frozen with e_camerafreeze
+	//! \return the Camera used for Rendering on 3DEngine Side, normally equal to the view camera, except if frozen with e_camerafreeze
 	virtual const CCamera& GetRenderingCamera() const = 0;
 	virtual float          GetZoomFactor() const = 0;
 	virtual float          IsZoomInProgress()  const = 0;
@@ -1358,6 +1378,9 @@ struct I3DEngine : public IProcess
 
 	//! Update all ShaderItems flags, only required after shaders were reloaded at runtime.
 	virtual void UpdateShaderItems() = 0;
+
+	//! Notifies all permanent objects to be invalidated.
+	virtual void ReleasePermanentObjectsRenderResources() = 0;
 
 	//! Deletes the 3D Engine instance.
 	virtual void Release() = 0;
@@ -1402,26 +1425,26 @@ struct I3DEngine : public IProcess
 	virtual void GetObjectsStreamingStatus(SObjectsStreamingStatus& outStatus) = 0;
 
 	//! Gets stats on the streaming bandwidth requests from subsystems.
-	//! \param subsystem Rhe streaming subsystem for which we want bandwidth data.
+	//! \param subsystem The streaming subsystem for which we want bandwidth data.
 	//! \param outData Structure containing the bandwidth data for the subsystem requested.
 	virtual void GetStreamingSubsystemData(int subsystem, SStremaingBandwidthData& outData) = 0;
 
 	//! Registers an entity to be rendered.
 	//! \param pEntity The entity to render.
-	virtual void RegisterEntity(IRenderNode* pEntity, int nSID = -1, int nSIDConsideredSafe = -1) = 0;
+	virtual void RegisterEntity(IRenderNode* pEntity) = 0;
 
 	//! Selects an entity for debugging.
 	//! \param pEntity - The entity to render.
 	virtual void SelectEntity(IRenderNode* pEntity) = 0;
 
 #ifndef _RELEASE
-	enum EDebugDrawListAssetTypes
+	enum EDebugDrawListAssetTypes : uint32
 	{
 		DLOT_ALL        = 0,
-		DLOT_BRUSH      = BIT(0),
-		DLOT_VEGETATION = BIT(1),
-		DLOT_CHARACTER  = BIT(2),
-		DLOT_STATOBJ    = BIT(3)
+		DLOT_BRUSH      = BIT32(0),
+		DLOT_VEGETATION = BIT32(1),
+		DLOT_CHARACTER  = BIT32(2),
+		DLOT_STATOBJ    = BIT32(3)
 	};
 
 	struct SObjectInfoToAddToDebugDrawList
@@ -1499,19 +1522,18 @@ struct I3DEngine : public IProcess
 	virtual float GetAccurateOceanHeight(const Vec3& pCurrPos) const = 0;
 
 	//! Gets caustics parameters.
-	//! \return A Vec4 value which constains:
+	//! \return A Vec4 value which contains:
 	//! \return x = unused, y = distance attenuation, z = caustics multiplier, w = caustics darkening multiplier
 	virtual Vec4 GetCausticsParams() const = 0;
 
 	//! Gets ocean animation caustics parameters.
-	//! \return A Vec4 value which constains: x = unused, y = height, z = depth, w = intensity
+	//! \return A Vec4 value which contains: x = unused, y = height, z = depth, w = intensity
 	virtual Vec4 GetOceanAnimationCausticsParams() const = 0;
 
 	//! Gets ocean animation parameters.
-	//! \return 2 Vec4s which constain:
-	//!         0: x = ocean wind direction, y = wind speed, z = waves speed, w = waves amount
+	//! \return 2 Vec4s which contain:
+	//!         0: x = ocean wind direction, y = wind speed, z = free, w = waves amount
 	//!         1: x = waves size, y = free, z = free, w = free
-
 	virtual void GetOceanAnimationParams(Vec4& pParams0, Vec4& pParams1) const = 0;
 
 	//! Gets HDR setup parameters.
@@ -1617,21 +1639,21 @@ struct I3DEngine : public IProcess
 	//! \param x X coordinate of the location.
 	//! \param y Y coordinate of the location.
 	//! \return A float which indicate the elevation level.
-	virtual float GetTerrainElevation(float x, float y, int nSID = DEFAULT_SID) = 0;
+	virtual float GetTerrainElevation(float x, float y) = 0;
 
 	//! Gets the terrain elevation for a specified location.
 	//! Only values between 0 and WORLD_SIZE.
 	//! \param x X coordinate of the location.
 	//! \param y Y coordinate of the location.
 	//! \return A float which indicate the elevation level.
-	virtual float GetTerrainZ(int x, int y) = 0;
+	virtual float GetTerrainZ(float x, float y) = 0;
 
 	//! Gets the terrain hole flag for a specified location.
 	//! Only values between 0 and WORLD_SIZE.
 	//! \param x - X coordinate of the location.
 	//! \param y - Y coordinate of the location.
 	//! \return A bool which indicate is there hole or not.
-	virtual bool GetTerrainHole(int x, int y) = 0;
+	virtual bool GetTerrainHole(float x, float y) = 0;
 
 	//! Gets the terrain surface normal for a specified location.
 	//! \param vPos.x - X coordinate of the location.
@@ -1643,7 +1665,7 @@ struct I3DEngine : public IProcess
 	//! Gets the unit size of the terrain.
 	//! The value should currently be 2.
 	//! \return A int value representing the terrain unit size in meters.
-	virtual int GetHeightMapUnitSize() = 0;
+	virtual float GetHeightMapUnitSize() = 0;
 
 	//! Gets the size of the terrain.
 	//! The value should be 2048 by default.
@@ -1668,7 +1690,7 @@ struct I3DEngine : public IProcess
 	//	virtual bool PhysicalizeStaticObject(void *pForeignData,int iForeignData,int iForeignFlags) = 0;
 	// Summary:
 	//		Removes all static objects on the map (for editor)
-	virtual void RemoveAllStaticObjects(int nSID = DEFAULT_SID) = 0;
+	virtual void RemoveAllStaticObjects() = 0;
 	// Summary:
 	//		Allows to set terrain surface type id for specified point in the map (for editor)
 	virtual void SetTerrainSurfaceType(int x, int y, int nType) = 0; // from 0 to 6 - sur type ( 7 = hole )
@@ -1696,18 +1718,18 @@ struct I3DEngine : public IProcess
 
 	// Summary:
 	//		Sets group parameters
-	virtual bool SetStatInstGroup(int nGroupId, const IStatInstGroup& siGroup, int nSID = 0) = 0;
+	virtual bool SetStatInstGroup(int nGroupId, const IStatInstGroup& siGroup) = 0;
 
 	// Summary:
 	//		Gets group parameters
-	virtual bool GetStatInstGroup(int nGroupId, IStatInstGroup& siGroup, int nSID = 0) = 0;
+	virtual bool GetStatInstGroup(int nGroupId, IStatInstGroup& siGroup) = 0;
 
 	// Summary:
-	//		Sets burbed out flag
+	//		Sets burned out flag
 	virtual void SetTerrainBurnedOut(int x, int y, bool bBurnedOut) = 0;
 
 	// Summary:
-	//		Gets burbed out flag
+	//		Gets burned out flag
 	virtual bool IsTerrainBurnedOut(int x, int y) = 0;
 
 	//! Notifies of an explosion, and maybe creates an hole in the terrain.
@@ -1718,28 +1740,22 @@ struct I3DEngine : public IProcess
 	virtual void OnExplosion(Vec3 vPos, float fRadius, bool bDeformTerrain = true) = 0;
 
 	//! Sets the physics material enumerator.
-	//! \param pPhysMaterialEnumerator The physics material enumarator to set.
+	//! \param pPhysMaterialEnumerator The physics material enumerator to set.
 	virtual void SetPhysMaterialEnumerator(IPhysMaterialEnumerator* pPhysMaterialEnumerator) = 0;
 
 	//! Gets the physics material enumerator.
 	//! \return A pointer to an IPhysMaterialEnumerator derived object.
 	virtual IPhysMaterialEnumerator* GetPhysMaterialEnumerator() = 0;
 
-	// Internal functions.
-
-	// Summary:
-	//	 Allows to enable fog in editor
-	virtual void SetupDistanceFog() = 0;
-
 	// Summary:
 	//	 Loads environment settings for specified mission
 	virtual void LoadMissionDataFromXMLNode(const char* szMissionName) = 0;
 
-	virtual void LoadEnvironmentSettingsFromXML(XmlNodeRef pInputNode, int nSID = DEFAULT_SID) = 0;
+	virtual void LoadEnvironmentSettingsFromXML(XmlNodeRef pInputNode) = 0;
 
 	// Summary:
 	//	 Loads detail texture and detail object settings from XML doc (load from current LevelData.xml if pDoc is 0)
-	virtual void LoadTerrainSurfacesFromXML(XmlNodeRef pDoc, bool bUpdateTerrain, int nSID = DEFAULT_SID) = 0;
+	virtual void LoadTerrainSurfacesFromXML(XmlNodeRef pDoc, bool bUpdateTerrain) = 0;
 
 	//! Applies physics in a specified area
 	//! Physics applied to the area will apply to vegetations and allow it to move/blend.
@@ -1769,7 +1785,7 @@ struct I3DEngine : public IProcess
 
 	//! \internal
 	//! Internal function used by 3d engine and renderer.
-	//! Gets distance to the sector containig ocean water
+	//! Gets distance to the sector containing ocean water
 	virtual float GetDistanceToSectorWithWater() = 0;
 
 	//! Gets the environment ambient color.
@@ -1800,7 +1816,7 @@ struct I3DEngine : public IProcess
 
 	//! Retrieves terrain texture multiplier.
 	//! \return Scalar value
-	virtual float GetTerrainTextureMultiplier(int nSID = 0) const = 0;
+	virtual float GetTerrainTextureMultiplier() const = 0;
 
 	//  check object visibility taking into account portals and terrain occlusion test
 	//  virtual bool IsBoxVisibleOnTheScreen(const Vec3 & vBoxMin, const Vec3 & vBoxMax, OcclusionTestClient * pOcclusionTestClient = NULL)=0;
@@ -1879,7 +1895,7 @@ struct I3DEngine : public IProcess
 	//! \param pRenderMesh Pointer to new render mesh.
 	//! \param worldTM Updated world transform.
 	//! \param szName Updated ClipVolume name.
-	virtual void UpdateClipVolume(IClipVolume* pClipVolume, _smart_ptr<IRenderMesh> pRenderMesh, IBSPTree3D* pBspTree, const Matrix34& worldTM, bool bActive, uint32 flags, const char* szName) = 0;
+	virtual void UpdateClipVolume(IClipVolume* pClipVolume, _smart_ptr<IRenderMesh> pRenderMesh, IBSPTree3D* pBspTree, const Matrix34& worldTM, uint8 viewDistRatio, bool bActive, uint32 flags, const char* szName) = 0;
 
 	//mat: todo
 
@@ -1902,15 +1918,18 @@ struct I3DEngine : public IProcess
 	//! \note The positions defining the samples will be overwritten with the accumulated wind influences.
 	virtual bool SampleWind(Vec3* pSamples, int nSamples, const AABB& volume, bool bIndoors) const = 0;
 
+	//! Retrieve pointer to the breeze generator interface.
+	virtual IBreezeGenerator* GetBreezeGenerator() const = 0;
+
 	//! Gets the VisArea which is present at a specified point.
 	//! \return VisArea containing point, if any, 0 otherwise.
-	virtual IVisArea* GetVisAreaFromPos(const Vec3& vPos) = 0;
+	virtual IVisArea* GetVisAreaFromPos(const Vec3& vPos) const = 0;
 
 	//! Tests for intersection against Vis Areas.
 	//! \param[in] box Volume to test for intersection.
-	//! \paran[out] pNodeCache Optional, set to a cached pointer for quicker calls to ClipToVisAreas.
+	//! \param[out] pNodeCache Optional, set to a cached pointer for quicker calls to ClipToVisAreas.
 	//! \return Whether box intersects any vis areas.
-	virtual bool IntersectsVisAreas(const AABB& box, void** pNodeCache = 0) = 0;
+	virtual bool IntersectsVisAreas(const AABB& box, void** pNodeCache = 0) const = 0;
 
 	//! Clips geometry against the boundaries of VisAreas.
 	//! \param pInside: Vis Area to clip inside of. If 0, clip outside all Vis Areas.
@@ -1930,8 +1949,8 @@ struct I3DEngine : public IProcess
 	virtual void DeleteLightSource(ILightSource* pLightSource) = 0;
 
 	//! Gives access to the list holding all static light sources.
-	//! \return An array holding all the CDLight pointers.
-	virtual const PodArray<CDLight*>*      GetStaticLightSources() = 0;
+	//! \return An array holding all the SRenderLight pointers.
+	virtual const PodArray<SRenderLight*>* GetStaticLightSources() = 0;
 	virtual const PodArray<ILightSource*>* GetLightEntities() = 0;
 
 	//! Gives access to list holding all lighting volumes.
@@ -1942,7 +1961,7 @@ struct I3DEngine : public IProcess
 	//! Reloading the heightmap will resets all decals and particles.
 	//! \note In future will restore deleted vegetations
 	//! \return true on success, false otherwise.
-	virtual bool RestoreTerrainFromDisk(int nSID = 0) = 0;
+	virtual bool RestoreTerrainFromDisk() = 0;
 
 	//! \internal
 	//! Tmp.
@@ -1964,6 +1983,7 @@ struct I3DEngine : public IProcess
 	virtual void  SetShadowsGSMCache(bool bCache) = 0;
 	virtual void  SetCachedShadowBounds(const AABB& shadowBounds, float fAdditionalCascadesScale) = 0;
 	virtual void  SetRecomputeCachedShadows(uint nUpdateStrategy = 0) = 0;
+	virtual void  InvalidateShadowCacheData() = 0;
 
 	//! Physicalizes area if not physicalized yet.
 	virtual void CheckPhysicalized(const Vec3& vBoxMin, const Vec3& vBoxMax) = 0;
@@ -1972,12 +1992,12 @@ struct I3DEngine : public IProcess
 	virtual void CheckMemoryHeap() = 0;
 
 	//! Closes terrain texture file handle and allows to replace/update it.
-	virtual void CloseTerrainTextureFile(int nSID = DEFAULT_SID) = 0;
+	virtual void CloseTerrainTextureFile() = 0;
 
 	//! Removes all decals attached to specified entity.
 	virtual void DeleteEntityDecals(IRenderNode* pEntity) = 0;
 
-	//! Finishes objects geometery generation/loading.
+	//! Finishes objects geometry generation/loading.
 	virtual void CompleteObjectsGeometry() = 0;
 
 	//! Disables CGFs unloading.
@@ -2071,19 +2091,29 @@ struct I3DEngine : public IProcess
 	//! \return TOD interface.
 	virtual ITimeOfDay* GetTimeOfDay() = 0;
 
-	//! \return SkyBox material.
-	virtual IMaterial* GetSkyMaterial() = 0;
+	virtual IColorGradingCtrl* GetColorGradingCtrl() = 0;
 
-	//! Sets SkyBox Material.
-	virtual void SetSkyMaterial(IMaterial* pSkyMat) = 0;
+	//////////////////////////////////////////////////////////////////////////
+	// Sky
+	virtual bool IsSkyVisible() const = 0;
+	virtual eSkyType GetSkyType() const = 0;
+
+	//! Updates sky parameters from specified material
+	virtual IMaterial* GetSkyMaterial() const = 0;
+	virtual void SetSkyMaterial(IMaterial* pSkyMat, eSkyType type) = 0;
+
+	virtual const SSkyLightRenderParams* GetSkyLightRenderParams() const = 0;
+	
+	virtual string GetMoonTextureName() const = 0;
+	virtual void   SetMoonTextureName(string name) = 0;
 
 	//! Sets global 3d engine parameter.
 	virtual void SetGlobalParameter(E3DEngineParameter param, const Vec3& v) = 0;
-	void         SetGlobalParameter(E3DEngineParameter param, float val) { SetGlobalParameter(param, Vec3(val, 0, 0)); };
+	void         SetGlobalParameter(E3DEngineParameter param, float val) { SetGlobalParameter(param, Vec3(val, 0, 0)); }
 
 	//! Retrieves global 3d engine parameter.
 	virtual void                     GetGlobalParameter(E3DEngineParameter param, Vec3& v) = 0;
-	float                            GetGlobalParameter(E3DEngineParameter param) { Vec3 v(0, 0, 0); GetGlobalParameter(param, v); return v.x; };
+	float                            GetGlobalParameter(E3DEngineParameter param) { Vec3 v(0, 0, 0); GetGlobalParameter(param, v); return v.x; }
 
 	virtual void                     SetShadowMode(EShadowMode shadowMode) = 0;
 	virtual EShadowMode              GetShadowMode() const = 0;
@@ -2099,11 +2129,11 @@ struct I3DEngine : public IProcess
 	//! Loads statobj from a stream
 	virtual IStatObj* LoadStatObj(TSerialize ser) = 0;
 
-	//! \return true if input line segment intersect clouds sprites.
-	virtual bool CheckIntersectClouds(const Vec3& p1, const Vec3& p2) = 0;
-
 	//! Removes references to RenderMesh
 	virtual void OnRenderMeshDeleted(IRenderMesh* pRenderMesh) = 0;
+
+	//! Removes references to IEntity
+	virtual void OnEntityDeleted(struct IEntity* pEntity) = 0;
 
 	//! Used to highlight an object under the reticule.
 	virtual void DebugDraw_UpdateDebugNode() = 0;
@@ -2115,12 +2145,14 @@ struct I3DEngine : public IProcess
 	virtual bool RenderMeshRayIntersection(IRenderMesh* pRenderMesh, SRayHitInfo& hitInfo, IMaterial* pCustomMtl = 0) = 0;
 
 	// pointer to ISegmentsManager interface
-	virtual ISegmentsManager* GetSegmentsManager() = 0;
-	virtual void              SetSegmentsManager(ISegmentsManager* pSegmentsManager) = 0;
+	//! Warning: deprecated Segmented World implementation is not supported by CryEngine anymore
+	virtual ISegmentsManager* GetSegmentsManager()                                   { return nullptr; }
+	virtual void              SetSegmentsManager(ISegmentsManager* pSegmentsManager) {}
 
 	//! \return true if segmented world is performing an operation (load/save/move/etc).
-	virtual bool IsSegmentOperationInProgress() = 0;
-	virtual void SetSegmentOperationInProgress(bool bActive) = 0;
+	//! Warning: deprecated Segmented World implementation is not supported by CryEngine anymore
+	virtual bool IsSegmentOperationInProgress()              { return false; }
+	virtual void SetSegmentOperationInProgress(bool bActive) {}
 
 	//! Call function 2 times (first to get the size then to fill in the data)
 	//! \param pObjects 0 if only the count is required
@@ -2135,28 +2167,28 @@ struct I3DEngine : public IProcess
 
 	virtual void        FillDebugFPSInfo(SDebugFPSInfo&) = 0;
 
-	virtual void        SetTerrainLayerBaseTextureData(int nLayerId, byte* pImage, int nDim, const char* nImgFileName, IMaterial* pMat, float fBr, float fTiling, int nDetailSurfTypeId, float fTilingDetail, float fSpecularAmount, float fSortOrder, ColorF layerFilterColor, float fUseRemeshing, bool bShowSelection) = 0;
-
 	virtual bool        IsAreaActivationInUse() = 0;
-
-	virtual void        RenderRenderNode_ShadowPass(IShadowCaster* pRNode, const SRenderingPassInfo& passInfo) = 0;
 
 	virtual const char* GetVoxelEditOperationName(EVoxelEditOperation eOperation) = 0;
 
-	//! Gives 3dengine access to original and most precise heighmap data in the editor
-	virtual void                SetGetLayerIdAtCallback(IGetLayerIdAtCallback* pCallBack) = 0;
+	//! Gives 3dengine access to original and most precise heightmap data in the editor
+	virtual void                     SetEditorHeightmapCallback(IEditorHeightmap* pCallBack) = 0;
 
-	virtual PodArray<CDLight*>* GetDynamicLightSources() = 0;
+	virtual PodArray<SRenderLight*>* GetDynamicLightSources() = 0;
 
-	virtual IParticleManager*   GetParticleManager() = 0;
+	virtual IParticleManager*        GetParticleManager() = 0;
 
-	virtual IOpticsManager*     GetOpticsManager() = 0;
+	virtual IOpticsManager*          GetOpticsManager() = 0;
 
 	//! Syncs and performs outstanding operations for the Asyncrhon ProcessStreaming Update
 	virtual void SyncProcessStreamingUpdate() = 0;
 
 	//! Set Callback for Editor to store additional information in Minimap tool.
 	virtual void SetScreenshotCallback(IScreenshotCallback* pCallback) = 0;
+
+	//! Register or unregister a call back for render node status updates
+	virtual void RegisterRenderNodeStatusListener(IRenderNodeStatusListener* pListener, EERType renderNodeType) = 0;
+	virtual void UnregisterRenderNodeStatusListener(IRenderNodeStatusListener* pListener, EERType renderNodeType) = 0;
 
 	//! Show/Hide objects by layer (useful for streaming and performance).
 	virtual void ActivateObjectsLayer(uint16 nLayerId, bool bActivate, bool bPhys, bool bObjects, bool bStaticLights, const char* pLayerName, IGeneralMemoryHeap* pHeap = NULL, bool bCheckLayerActivation = true) = 0;
@@ -2174,10 +2206,7 @@ struct I3DEngine : public IProcess
 	virtual void PrecacheCharacter(IRenderNode* pObj, const float fImportance, ICharacterInstance* pCharacter, IMaterial* pSlotMat, const Matrix34& matParent, const float fEntDistance, const float fScale, int nMaxDepth, bool bForceStreamingSystemUpdate, const SRenderingPassInfo& passInfo) = 0;
 
 	//! Activate streaming of render node and all sub-components.
-	virtual void PrecacheRenderNode(IRenderNode* pObj, float fEntDistanceReal) = 0;
-
-	//! Called when the segmented world moves.
-	virtual void                          OffsetPosition(Vec3& delta) = 0;
+	virtual void                          PrecacheRenderNode(IRenderNode* pObj, float fEntDistanceReal) = 0;
 
 	virtual IDeferredPhysicsEventManager* GetDeferredPhysicsEventManager() = 0;
 
@@ -2236,34 +2265,32 @@ struct I3DEngine : public IProcess
 		}
 
 		// SVO data pools
-		ITexture* pTexTree;
-		ITexture* pTexOpac;
-	#ifdef FEATURE_SVO_GI_ALLOW_HQ
-		ITexture* pTexTris;
-		ITexture* pTexRgb0;
-		ITexture* pTexRgb1;
-		ITexture* pTexDynl;
-		ITexture* pTexRgb2;
-		ITexture* pTexRgb3;
-		ITexture* pTexRgb4;
-		ITexture* pTexNorm;
-		ITexture* pTexAldi;
+		_smart_ptr<ITexture> pTexTree;
+		_smart_ptr<ITexture> pTexOpac;
+		_smart_ptr<ITexture> pTexTris;
+		_smart_ptr<ITexture> pTexRgb0;
+		_smart_ptr<ITexture> pTexRgb1;
+		_smart_ptr<ITexture> pTexDynl;
+		_smart_ptr<ITexture> pTexRgb2;
+		_smart_ptr<ITexture> pTexRgb3;
+		_smart_ptr<ITexture> pTexRgb4;
+		_smart_ptr<ITexture> pTexNorm;
+		_smart_ptr<ITexture> pTexAldi;
 
 		// mesh tracing data atlases
-		ITexture* pTexTriA;
-		ITexture* pTexTexA;
-		ITexture* pTexIndA;
+		_smart_ptr<ITexture> pTexTriA;
+		_smart_ptr<ITexture> pTexTexA;
+		_smart_ptr<ITexture> pTexIndA;
 
-		ITexture* pGlobalSpecCM;
-	#endif
+		_smart_ptr<ITexture> pGlobalSpecCM;
 
-		float  fGlobalSpecCM_Mult;
-		int    nTexDimXY;
-		int    nTexDimZ;
-		int    nBrickSize;
-		bool   bSvoReady;
-		bool   bSvoFreeze;
-		Sphere helperInfo;
+		float                fGlobalSpecCM_Mult;
+		int                  nTexDimXY;
+		int                  nTexDimZ;
+		int                  nBrickSize;
+		bool                 bSvoReady;
+		bool                 bSvoFreeze;
+		Sphere               helperInfo;
 
 	#define SVO_MAX_PORTALS 8
 		Vec4 arrPortalsPos[SVO_MAX_PORTALS];
@@ -2279,11 +2306,11 @@ struct I3DEngine : public IProcess
 
 	struct SLightTI
 	{
-		Vec4            vPosR;
-		Vec4            vDirF;
-		Vec4            vCol;
-		float           fSortVal;
-		class ITexture* pCM;
+		Vec4      vPosR;
+		Vec4      vDirF;
+		Vec4      vCol;
+		float     fSortVal;
+		ITexture* pCM;
 	};
 
 	virtual bool GetSvoStaticTextures(I3DEngine::SSvoStaticTexInfo& svoInfo, PodArray<I3DEngine::SLightTI>* pLightsTI_S, PodArray<I3DEngine::SLightTI>* pLightsTI_D) = 0;
@@ -2296,6 +2323,8 @@ struct I3DEngine : public IProcess
 	};
 
 	virtual void GetSvoBricksForUpdate(PodArray<SSvoNodeInfo>& arrNodeInfo, float fNodeSize, PodArray<SVF_P3F_C4B_T2F>* pVertsOut) = 0;
+	virtual bool IsSvoReady(bool testPostponed) const = 0;
+	virtual int  GetSvoCompiledData(ICryArchive* pArchive) = 0;
 
 #endif
 
@@ -2320,6 +2349,7 @@ struct I3DEngine : public IProcess
 
 //==============================================================================================
 
+//! \cond INTERNAL
 //! Types of binary files used by 3dengine.
 enum EFileTypes
 {
@@ -2331,7 +2361,7 @@ enum EFileTypes
 //! Common header for binary files used by 3dengine.
 struct SCommonFileHeader
 {
-	void Set(uint16 t, uint16 v)   { cry_strcpy(signature, "CRY"); file_type = (uint8)t; version = v; }
+	void Set(uint16 t, uint16 v)   { cry_fixed_size_strcpy(signature, "CRY"); file_type = (uint8)t; version = v; }
 	bool Check(uint16 t, uint16 v) { return strcmp(signature, "CRY") == 0 && t == file_type && v == version; }
 
 	char   signature[4];                //!< File signature, should be "CRY ".
@@ -2390,9 +2420,9 @@ struct SRendItemSorter
 
 	//! Deferred PreProcess needs a special ordering, use these to prefix the values
 	//! to ensure the deferred shading pass is after all LPV objects.
-	enum EDeferredPreprocess
+	enum EDeferredPreprocess : uint32
 	{
-		eDeferredShadingPass = BIT(30)
+		eDeferredShadingPass = BIT32(30)
 	};
 	void   IncreaseOctreeCounter()   { nValue += eOctreeNodeCounter; }
 	void   IncreaseObjectCounter()   { nValue += eObjectCounter; }
@@ -2400,8 +2430,6 @@ struct SRendItemSorter
 
 	void   IncreaseParticleCounter() { nValue += eParticleCounter; }
 	uint32 ParticleCounter() const   { return nValue & ~eRecursivePassMask; }
-
-	uint32 ShadowFrustumID() const   { return nValue & ~eRecursivePassMask; }
 
 	uint32 GetValue() const          { return nValue; }
 
@@ -2441,11 +2469,17 @@ private:
 
 	uint32 nValue;
 };
+//! \endcond
 
 //! State of 3dengine during rendering.
 //! Used to prevent global state.
 struct SRenderingPassInfo
 {
+	operator SRenderObjectAccessThreadConfig() const
+	{
+		return SRenderObjectAccessThreadConfig(ThreadID());
+	}
+
 	enum EShadowMapType
 	{
 		SHADOW_MAP_NONE = 0,
@@ -2456,26 +2490,26 @@ struct SRenderingPassInfo
 	};
 
 	//! Enum flags to identify which objects to skip for this pass.
-	enum ESkipRenderingFlags
+	enum ESkipRenderingFlags : uint32
 	{
-		SHADOWS                    = BIT(0),
-		BRUSHES                    = BIT(1),
-		VEGETATION                 = BIT(2),
-		ENTITIES                   = BIT(3),
-		TERRAIN                    = BIT(4),
-		WATEROCEAN                 = BIT(5),
-		PARTICLES                  = BIT(6),
-		DECALS                     = BIT(7),
-		TERRAIN_DETAIL_MATERIALS   = BIT(8),
-		FAR_SPRITES                = BIT(9),
-		MERGED_MESHES              = BIT(10),
-		WATER_WAVES                = BIT(12),
-		ROADS                      = BIT(13),
-		WATER_VOLUMES              = BIT(14),
-		CLOUDS                     = BIT(15),
-		CUBEMAP_GEN                = BIT(16),
-		GEOM_CACHES                = BIT(17),
-		DISABLE_RENDER_CHUNK_MERGE = BIT(18),
+		SHADOWS                    = BIT32(0),
+		BRUSHES                    = BIT32(1),
+		VEGETATION                 = BIT32(2),
+		ENTITIES                   = BIT32(3),
+		TERRAIN                    = BIT32(4),
+		WATEROCEAN                 = BIT32(5),
+		PARTICLES                  = BIT32(6),
+		DECALS                     = BIT32(7),
+		TERRAIN_DETAIL_MATERIALS   = BIT32(8),
+		FAR_SPRITES                = BIT32(9),
+		MERGED_MESHES              = BIT32(10),
+		WATER_WAVES                = BIT32(12),
+		ROADS                      = BIT32(13),
+		WATER_VOLUMES              = BIT32(14),
+		CLOUDS                     = BIT32(15),
+		CUBEMAP_GEN                = BIT32(16),
+		GEOM_CACHES                = BIT32(17),
+		DISABLE_RENDER_CHUNK_MERGE = BIT32(18),
 
 		// below are precombined flags
 		STATIC_OBJECTS          = BRUSHES | VEGETATION,
@@ -2485,140 +2519,136 @@ struct SRenderingPassInfo
 	};
 
 	//! Creating function for RenderingPassInfo, the create functions will fetch all other necessary information like thread id/frame id, etc.
-	static SRenderingPassInfo CreateGeneralPassRenderingInfo(const CCamera& rCamera, uint32 nRenderingFlags = DEFAULT_FLAGS, bool bAuxWindow = false);
-	static SRenderingPassInfo CreateRecursivePassRenderingInfo(const CCamera& rCamera, uint32 nRenderingFlags = DEFAULT_RECURSIVE_FLAGS);
-	static SRenderingPassInfo CreateShadowPassRenderingInfo(CRenderView* pRenderView, const CCamera& rCamera, int nLightFlags, int nShadowMapLod, bool bExtendedLod, bool bIsMGPUCopy, uint32* pShadowGenMask, uint32 nSide, uint32 nShadowFrustumID, uint32 nRenderingFlags = DEFAULT_SHADOWS_FLAGS);
-	static SRenderingPassInfo CreateBillBoardGenPassRenderingInfo(const CCamera& rCamera, uint32 nRenderingFlags = DEFAULT_FLAGS);
+	static SRenderingPassInfo CreateGeneralPassRenderingInfo(const SGraphicsPipelineKey graphicsPipelineKey, const CCamera& rCamera, uint32 nRenderingFlags = DEFAULT_FLAGS, bool bAuxWindow = false, SDisplayContextKey displayContextKey = {});
+	static SRenderingPassInfo CreateRecursivePassRenderingInfo(const SGraphicsPipelineKey graphicsPipelineKey, const CCamera& rCamera, uint32 nRenderingFlags = DEFAULT_RECURSIVE_FLAGS);
+	static SRenderingPassInfo CreateShadowPassRenderingInfo(const SGraphicsPipelineKey graphicsPipelineKey, IRenderViewPtr pRenderView, const CCamera& rCamera, int nLightFlags, int nShadowMapLod, int nShadowCacheLod, bool bExtendedLod, bool bIsMGPUCopy, uint32 nSide, uint32 nRenderingFlags = DEFAULT_SHADOWS_FLAGS);
+	static SRenderingPassInfo CreateBillBoardGenPassRenderingInfo(const SGraphicsPipelineKey graphicsPipelineKey, const CCamera& rCamera, uint32 nRenderingFlags = DEFAULT_FLAGS);
 	static SRenderingPassInfo CreateTempRenderingInfo(const CCamera& rCamera, const SRenderingPassInfo& rPassInfo);
 	static SRenderingPassInfo CreateTempRenderingInfo(uint32 nRenderingFlags, const SRenderingPassInfo& rPassInfo);
+	static SRenderingPassInfo CreateTempRenderingInfo(SRendItemSorter s, const SRenderingPassInfo& rPassInfo);
 
 	// state getter
-	bool             IsGeneralPass() const;
+	bool                             IsGeneralPass() const;
 
-	bool             IsRecursivePass() const;
-	uint32           GetRecursiveLevel() const;
+	bool                             IsRecursivePass() const;
+	uint32                           GetRecursiveLevel() const;
 
-	bool             IsShadowPass() const;
-	bool             IsCachedShadowPass() const;
-	EShadowMapType   GetShadowMapType() const;
-	bool             IsDisableRenderChunkMerge() const;
+	bool                             IsShadowPass() const;
+	bool                             IsCachedShadowPass() const;
+	EShadowMapType                   GetShadowMapType() const;
+	bool                             IsDisableRenderChunkMerge() const;
 
-	bool             IsAuxWindow() const;
+	bool                             IsAuxWindow() const;
 
-	threadID         ThreadID() const;
-	void             SetThreadID(threadID id) { m_nThreadID = static_cast<uint8>(id); }
+	threadID                         ThreadID() const;
+	void                             SetThreadID(threadID id) { m_nThreadID = static_cast<uint8>(id); }
 
-	int              GetFrameID() const;
-	uint32           GetMainFrameID() const;
+	int                              GetFrameID() const;
+	uint32                           GetMainFrameID() const;
 
-	const CCamera&   GetCamera() const;
-	bool             IsCameraUnderWater() const;
+	const CCamera&                   GetCamera() const;
+	bool                             IsCameraUnderWater() const;
 
-	float            GetZoomFactor() const;
-	float            GetInverseZoomFactor() const;
-	bool             IsZoomActive() const;
-	bool             IsZoomInProgress() const;
+	float                            GetZoomFactor() const;
+	float                            GetInverseZoomFactor() const;
+	bool                             IsZoomActive() const;
+	bool                             IsZoomInProgress() const;
 
-	bool             RenderShadows() const;
-	bool             RenderBrushes() const;
-	bool             RenderVegetation() const;
-	bool             RenderEntities() const;
-	bool             RenderTerrain() const;
-	bool             RenderWaterOcean() const;
-	bool             RenderParticles() const;
-	bool             RenderDecals() const;
-	bool             RenderTerrainDetailMaterial() const;
-	bool             RenderFarSprites() const;
-	bool             RenderMergedMeshes() const;
-	bool             RenderWaterWaves() const;
-	bool             RenderRoads() const;
-	bool             RenderWaterVolumes() const;
-	bool             RenderClouds() const;
-	bool             RenderGeomCaches() const;
+	bool                             RenderShadows() const;
+	bool                             RenderBrushes() const;
+	bool                             RenderVegetation() const;
+	bool                             RenderEntities() const;
+	bool                             RenderTerrain() const;
+	bool                             RenderWaterOcean() const;
+	bool                             RenderParticles() const;
+	bool                             RenderDecals() const;
+	bool                             RenderTerrainDetailMaterial() const;
+	bool                             RenderFarSprites() const;
+	bool                             RenderMergedMeshes() const;
+	bool                             RenderWaterWaves() const;
+	bool                             RenderRoads() const;
+	bool                             RenderWaterVolumes() const;
+	bool                             RenderClouds() const;
+	bool                             RenderGeomCaches() const;
 
-	bool             IsRenderingCubemap() const;
+	bool                             IsRenderingCubemap() const;
 
-	uint32*          ShadowGenMaskAddress() const;
-	uint32           ShadowFrustumID() const;
-	uint8            ShadowFrustumSide() const;
-	uint8            ShadowFrustumLod() const;
+	uint8                            ShadowFrustumSide() const;
+	uint8                            ShadowFrustumLod() const;
+	uint8                            ShadowCacheLod() const;
 
-	CRenderView*     GetRenderView() const;
-	IRenderView*     GetIRenderView() const;
+	CRenderView*                     GetRenderView() const;
+	IRenderView*                     GetIRenderView() const;
 
-	SRendItemSorter& GetRendItemSorter() const                   { return m_renderItemSorter; };
-	void             OverrideRenderItemSorter(SRendItemSorter s) { m_renderItemSorter = s; }
+	SRendItemSorter&                 GetRendItemSorter() const                                 { return m_renderItemSorter; }
+	void                             OverrideRenderItemSorter(SRendItemSorter s)               { m_renderItemSorter = s; }
 
-	// Job state associated with rendering to this view
-	void  SetWriteMutex(void* jobState) { m_pJobState = jobState; }
-	void* WriteMutex() const            { return m_pJobState; };
+	const SDisplayContextKey&        GetDisplayContextKey() const                              { return m_displayContextKey; }
+	const SGraphicsPipelineKey&      GetGraphicsPipelineKey() const                            { return m_graphicsPipelineKey; }
 
-	SRenderingPassInfo(threadID id) : SRenderingPassInfo()
+	void                             SetShadowPasses(class std::vector<SRenderingPassInfo>* p) { m_pShadowPasses = p; }
+	std::vector<SRenderingPassInfo>* GetShadowPasses() const                                   { return m_pShadowPasses; }
+
+	SRenderingPassInfo(threadID id)
 	{
 		SetThreadID(id);
 	}
 
 private:
-
 	//! Private constructor, creation is only allowed with create functions.
 	SRenderingPassInfo()
-		: pShadowGenMask(NULL)
-		, nShadowSide(0)
-		, nShadowLod(0)
-		, nShadowFrustumId(0)
-		, m_bAuxWindow(0)
-		, m_nRenderStackLevel(0)
-		, m_eShadowMapRendering(static_cast<uint8>(SHADOW_MAP_NONE))
-		, m_bCameraUnderWater(0)
-		, m_nRenderingFlags(0)
-		, m_fZoomFactor(0.0f)
-		, m_pCamera(NULL)
-		, m_nZoomInProgress(0)
-		, m_nZoomMode(0)
-		, m_pJobState(nullptr)
 	{
 		threadID nThreadID = 0;
 		gEnv->pRenderer->EF_Query(EFQ_MainThreadList, nThreadID);
 		m_nThreadID = static_cast<uint8>(nThreadID);
-		m_nRenderFrameID = gEnv->pRenderer->GetFrameID();
-		m_nRenderMainFrameID = gEnv->pRenderer->GetFrameID(false);
+		m_nRenderMainFrameID = gEnv->nMainFrameID;
 	}
 
 	void InitRenderingFlags(uint32 nRenderingFlags);
 	void SetCamera(const CCamera& cam);
-	void SetRenderView(CRenderView* pRenderView);
 
-	uint8  m_nThreadID;
-	uint8  m_nRenderStackLevel;
-	uint8  m_eShadowMapRendering;   //!< State flag denoting what type of shadow map is being currently rendered into.
-	uint8  m_bCameraUnderWater;
+	void SetRenderView(int nThreadID, IRenderView::EViewType Type = IRenderView::eViewType_Default, const SGraphicsPipelineKey& graphicsPipelineKey = SGraphicsPipelineKey::BaseGraphicsPipelineKey);
+	void SetRenderView(IRenderViewPtr pRenderView, const SGraphicsPipelineKey& graphicsPipelineKey = SGraphicsPipelineKey::BaseGraphicsPipelineKey);
+	void SetRenderView(IRenderView* pRenderView, const SGraphicsPipelineKey& graphicsPipelineKey = SGraphicsPipelineKey::BaseGraphicsPipelineKey);
 
-	uint32 m_nRenderingFlags;
+	uint8  m_nThreadID = 0;
+	uint8  m_nRenderStackLevel = 0;
+	uint8  m_eShadowMapRendering = static_cast<uint8>(SHADOW_MAP_NONE);   //!< State flag denoting what type of shadow map is being currently rendered into.
+	uint8  m_bCameraUnderWater = false;
 
-	float  m_fZoomFactor;
+	uint32 m_nRenderingFlags = 0;
 
-	int    m_nRenderFrameID;
-	uint32 m_nRenderMainFrameID;
+	float  m_fZoomFactor = 1.0f;
+
+	uint32 m_nRenderMainFrameID = 0;
 
 	// Current pass render item sorter.
 	mutable SRendItemSorter m_renderItemSorter;
 
-	const CCamera*          m_pCamera;
+	const CCamera*          m_pCamera = nullptr;
 
 	// Render view used for this rendering pass
-	CRenderView* m_pRenderView;
+	IRenderViewPtr m_pRenderView;
 
 	// members used only in shadow pass
-	uint32* pShadowGenMask;
-	uint32  nShadowFrustumId;
-	uint8   nShadowSide : 4;
-	uint8   nShadowLod  : 4;
-	uint8   m_nZoomInProgress;
-	uint8   m_nZoomMode;
-	uint8   m_bAuxWindow;
+	uint8 nShadowSide;
+	uint8 nShadowLod;
+	uint8 nShadowCacheLod = 0;
+	uint8 m_nZoomInProgress = false;
+	uint8 m_nZoomMode = 0;
+	uint8 m_bAuxWindow = false;
 
-	// Job state to use for all jobs spawned by rendering with this pass.
-	void* m_pJobState;
+	// Windows handle of the target Display Context in the multi-context rendering (in Editor)
+	SDisplayContextKey m_displayContextKey;
+
+	// Key to access current graphics pipeline
+	SGraphicsPipelineKey m_graphicsPipelineKey;
+
+	// Optional render target clear color.
+	ColorB m_clearColor = { 0, 0, 0, 0 };
+
+	// Additional sub-passes like shadow frustums (in the future - reflections and portals)
+	std::vector<SRenderingPassInfo>* m_pShadowPasses = nullptr;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -2674,7 +2704,7 @@ inline threadID SRenderingPassInfo::ThreadID() const
 ///////////////////////////////////////////////////////////////////////////////
 inline int SRenderingPassInfo::GetFrameID() const
 {
-	return m_nRenderFrameID;
+	return (int)m_nRenderMainFrameID;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -2829,19 +2859,6 @@ inline bool SRenderingPassInfo::IsDisableRenderChunkMerge() const
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-inline uint32* SRenderingPassInfo::ShadowGenMaskAddress() const
-{
-	assert(pShadowGenMask);
-	return pShadowGenMask;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-inline uint32 SRenderingPassInfo::ShadowFrustumID() const
-{
-	return nShadowFrustumId;
-}
-
-////////////////////////////////////////////////////////////////////////////////
 inline uint8 SRenderingPassInfo::ShadowFrustumSide() const
 {
 	return nShadowSide;
@@ -2854,23 +2871,30 @@ inline uint8 SRenderingPassInfo::ShadowFrustumLod() const
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+inline uint8 SRenderingPassInfo::ShadowCacheLod() const
+{
+	return nShadowCacheLod;
+}
+
+////////////////////////////////////////////////////////////////////////////////
 inline CRenderView* SRenderingPassInfo::GetRenderView() const
 {
-	return m_pRenderView;
+	return reinterpret_cast<CRenderView*>(m_pRenderView.get());
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 inline IRenderView* SRenderingPassInfo::GetIRenderView() const
 {
-	return (IRenderView*)m_pRenderView;
+	return m_pRenderView.get();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 inline void SRenderingPassInfo::SetCamera(const CCamera& cam)
 {
+	cam.CalculateRenderMatrices();
 	m_pCamera = gEnv->p3DEngine->GetRenderingPassCamera(cam);
 	m_bCameraUnderWater = gEnv->p3DEngine->IsUnderWater(cam.GetPosition());
-	m_fZoomFactor = 0.2f + 0.8f * (RAD2DEG(cam.GetFov()) / 60.f);
+	m_fZoomFactor = 0.4f + 0.6f * (RAD2DEG(cam.GetFov()) / 60.f);
 	m_nZoomInProgress = 0;
 	m_nZoomMode = 0;
 }
@@ -2922,32 +2946,50 @@ inline void SRenderingPassInfo::InitRenderingFlags(uint32 nRenderingFlags)
 }
 
 //////////////////////////////////////////////////////////////////////////
-inline void SRenderingPassInfo::SetRenderView(CRenderView* pRenderView)
+
+inline void SRenderingPassInfo::SetRenderView(int nThreadID, IRenderView::EViewType Type, const SGraphicsPipelineKey& graphicsPipelineKey)
 {
-	m_pRenderView = pRenderView;
-	GetIRenderView()->SetSkipRenderingFlags(m_nRenderingFlags);
-	SetWriteMutex(GetIRenderView()->GetWriteMutex());
+	m_pRenderView = reinterpret_cast<IRenderView*>(gEnv->pRenderer->GetOrCreateRenderView(Type));
+	SetRenderView(m_pRenderView.get(), graphicsPipelineKey);
+}
+
+inline void SRenderingPassInfo::SetRenderView(IRenderViewPtr pRenderView, const SGraphicsPipelineKey& graphicsPipelineKey)
+{
+	SetRenderView(pRenderView.get(), graphicsPipelineKey);
+	m_pRenderView = std::move(pRenderView);
+}
+
+inline void SRenderingPassInfo::SetRenderView(IRenderView* pRenderView, const SGraphicsPipelineKey& graphicsPipelineKey)
+{
+	pRenderView->SetSkipRenderingFlags(m_nRenderingFlags);
+	pRenderView->SetFrameId(GetFrameID());
+	pRenderView->SetFrameTime(gEnv->pTimer->GetFrameStartTime(ITimer::ETIMER_UI));
+	pRenderView->SetViewport(SRenderViewport(0, 0, m_pCamera->GetViewSurfaceX(), m_pCamera->GetViewSurfaceZ()));
+	pRenderView->SetGraphicsPipeline(gEnv->pRenderer->FindGraphicsPipeline(graphicsPipelineKey));
+	m_graphicsPipelineKey = graphicsPipelineKey;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-inline SRenderingPassInfo SRenderingPassInfo::CreateBillBoardGenPassRenderingInfo(const CCamera& rCamera, uint32 nRenderingFlags)
+inline SRenderingPassInfo SRenderingPassInfo::CreateBillBoardGenPassRenderingInfo(const SGraphicsPipelineKey graphicsPipelineKey, const CCamera& rCamera, uint32 nRenderingFlags)
 {
 	const CCamera& rCameraToSet = rCamera;
 
 	SRenderingPassInfo passInfo;
+
 	passInfo.SetCamera(rCameraToSet);
 	passInfo.InitRenderingFlags(nRenderingFlags);
+	passInfo.SetRenderView(passInfo.ThreadID(), IRenderView::eViewType_BillboardGen, graphicsPipelineKey);
+
 	passInfo.m_bAuxWindow = false;
-
+	passInfo.m_displayContextKey = {};
 	passInfo.m_renderItemSorter.nValue = 0;
-
-	passInfo.SetRenderView(gEnv->pRenderer->GetRenderViewForThread(passInfo.ThreadID(), IRenderView::eViewType_BillboardGen));
 
 	return passInfo;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-inline SRenderingPassInfo SRenderingPassInfo::CreateGeneralPassRenderingInfo(const CCamera& rCamera, uint32 nRenderingFlags, bool bAuxWindow)
+inline SRenderingPassInfo SRenderingPassInfo::CreateGeneralPassRenderingInfo(const SGraphicsPipelineKey graphicsPipelineKey, const CCamera& rCamera,
+                                                                             uint32 nRenderingFlags, bool bAuxWindow, SDisplayContextKey displayContextKey)
 {
 	static ICVar* pCameraFreeze = gEnv->pConsole->GetCVar("e_CameraFreeze");
 
@@ -2955,14 +2997,18 @@ inline SRenderingPassInfo SRenderingPassInfo::CreateGeneralPassRenderingInfo(con
 	const CCamera& rCameraToSet = (pCameraFreeze && pCameraFreeze->GetIVal() != 0) ? gEnv->p3DEngine->GetRenderingCamera() : rCamera;
 
 	SRenderingPassInfo passInfo;
+
 	passInfo.SetCamera(rCameraToSet);
 	passInfo.InitRenderingFlags(nRenderingFlags);
+	passInfo.SetRenderView(passInfo.ThreadID(), IRenderView::eViewType_Default, graphicsPipelineKey);
+
 	passInfo.m_bAuxWindow = bAuxWindow;
+	passInfo.m_displayContextKey = displayContextKey;
+	passInfo.m_renderItemSorter.nValue = 0;
 
 	// update general pass zoom factor
-	passInfo.m_nZoomMode = gEnv->p3DEngine->GetZoomMode();
 	float fPrevZoomFactor = gEnv->p3DEngine->GetPrevZoomFactor();
-
+	passInfo.m_nZoomMode = gEnv->p3DEngine->GetZoomMode();
 	passInfo.m_nZoomInProgress = passInfo.m_nZoomMode && fabs(fPrevZoomFactor - passInfo.m_fZoomFactor) > 0.02f;
 
 	int nZoomMode = passInfo.m_nZoomMode;
@@ -2979,41 +3025,40 @@ inline SRenderingPassInfo SRenderingPassInfo::CreateGeneralPassRenderingInfo(con
 	gEnv->p3DEngine->SetPrevZoomFactor(passInfo.m_fZoomFactor);
 	gEnv->p3DEngine->SetZoomMode(passInfo.m_nZoomMode);
 
-	passInfo.m_renderItemSorter.nValue = 0;
-
-	passInfo.SetRenderView(gEnv->pRenderer->GetRenderViewForThread(passInfo.ThreadID(), IRenderView::eViewType_Default));
-
 	return passInfo;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-inline SRenderingPassInfo SRenderingPassInfo::CreateRecursivePassRenderingInfo(const CCamera& rCamera, uint32 nRenderingFlags)
+inline SRenderingPassInfo SRenderingPassInfo::CreateRecursivePassRenderingInfo(const SGraphicsPipelineKey graphicsPipelineKey, const CCamera& rCamera, uint32 nRenderingFlags)
 {
 	static ICVar* pRecursionViewDistRatio = gEnv->pConsole->GetCVar("e_RecursionViewDistRatio");
 
 	SRenderingPassInfo passInfo;
-	passInfo.m_nRenderStackLevel = 1;
+
 	passInfo.SetCamera(rCamera);
+	passInfo.InitRenderingFlags(nRenderingFlags);
+	passInfo.SetRenderView(passInfo.ThreadID(), IRenderView::eViewType_Recursive, graphicsPipelineKey);
+
+	//	passInfo.m_bAuxWindow = bAuxWindow;
+	passInfo.m_renderItemSorter.nValue = SRendItemSorter::eRecursivePassMask;
+	passInfo.m_nRenderStackLevel = 1;
 
 	// adjust view distance in recursive mode by adjusting the ZoomFactor
 	passInfo.m_fZoomFactor /= pRecursionViewDistRatio->GetFVal();
-
-	passInfo.InitRenderingFlags(nRenderingFlags);
-
-	passInfo.SetRenderView(gEnv->pRenderer->GetRenderViewForThread(passInfo.ThreadID(), IRenderView::eViewType_Recursive));
-
-	passInfo.m_renderItemSorter.nValue = SRendItemSorter::eRecursivePassMask;
 
 	return passInfo;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-inline SRenderingPassInfo SRenderingPassInfo::CreateShadowPassRenderingInfo(CRenderView* pRenderView, const CCamera& rCamera, int nLightFlags, int nShadowMapLod, bool bExtendedLod, bool bIsMGPUCopy, uint32* pShadowGenMask, uint32 nSide, uint32 nShadowFrustumID, uint32 nRenderingFlags)
+inline SRenderingPassInfo SRenderingPassInfo::CreateShadowPassRenderingInfo(const SGraphicsPipelineKey graphicsPipelineKey, IRenderViewPtr pRenderView, const CCamera& rCamera, int nLightFlags, int nShadowMapLod,
+                                                                            int nShadowCacheLod, bool bExtendedLod, bool bIsMGPUCopy, uint32 nSide,
+                                                                            uint32 nRenderingFlags)
 {
 	SRenderingPassInfo passInfo;
+
 	passInfo.SetCamera(rCamera);
 	passInfo.InitRenderingFlags(nRenderingFlags);
-	passInfo.SetRenderView(pRenderView);
+	passInfo.SetRenderView(pRenderView, graphicsPipelineKey);
 
 	// set correct shadow map type
 	if (nLightFlags & DLF_SUN)
@@ -3024,19 +3069,14 @@ inline SRenderingPassInfo SRenderingPassInfo::CreateShadowPassRenderingInfo(CRen
 		else
 			passInfo.m_eShadowMapRendering = SHADOW_MAP_GSM;
 	}
-	else if (nLightFlags & (DLF_POINT | DLF_PROJECT | DLF_AREA_LIGHT))
+	else if (nLightFlags & (DLF_POINT | DLF_PROJECT | DLF_AREA))
 		passInfo.m_eShadowMapRendering = static_cast<uint8>(SHADOW_MAP_LOCAL);
 	else
 		passInfo.m_eShadowMapRendering = static_cast<uint8>(SHADOW_MAP_NONE);
 
-	passInfo.pShadowGenMask = pShadowGenMask;
 	passInfo.nShadowSide = nSide;
 	passInfo.nShadowLod = nShadowMapLod;
-	passInfo.nShadowFrustumId = nShadowFrustumID;
-
-	passInfo.m_renderItemSorter.nValue = passInfo.ShadowFrustumID();
-	//passInfo.m_renderItemSorter.nValue |= passInfo.IsRecursivePass() ? SRendItemSorter::eRecursivePassMask : 0;
-
+	passInfo.nShadowCacheLod = nShadowCacheLod;
 	return passInfo;
 }
 
@@ -3044,11 +3084,9 @@ inline SRenderingPassInfo SRenderingPassInfo::CreateShadowPassRenderingInfo(CRen
 inline SRenderingPassInfo SRenderingPassInfo::CreateTempRenderingInfo(const CCamera& rCamera, const SRenderingPassInfo& rPassInfo)
 {
 	SRenderingPassInfo passInfo = rPassInfo;
-	passInfo.SetCamera(rCamera);
 
-	passInfo.pShadowGenMask = NULL;
+	passInfo.SetCamera(rCamera);
 	passInfo.nShadowSide = 0;
-	passInfo.nShadowFrustumId = 0;
 
 	return passInfo;
 }
@@ -3057,7 +3095,20 @@ inline SRenderingPassInfo SRenderingPassInfo::CreateTempRenderingInfo(const CCam
 inline SRenderingPassInfo SRenderingPassInfo::CreateTempRenderingInfo(uint32 nRenderingFlags, const SRenderingPassInfo& rPassInfo)
 {
 	SRenderingPassInfo passInfo = rPassInfo;
+
+	passInfo.SetRenderView(nullptr);
 	passInfo.m_nRenderingFlags = nRenderingFlags;
 	passInfo.GetIRenderView()->SetSkipRenderingFlags(nRenderingFlags);
+
+	return passInfo;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+inline SRenderingPassInfo SRenderingPassInfo::CreateTempRenderingInfo(SRendItemSorter s, const SRenderingPassInfo& rPassInfo)
+{
+	SRenderingPassInfo passInfo = rPassInfo;
+
+	passInfo.OverrideRenderItemSorter(s);
+
 	return passInfo;
 }

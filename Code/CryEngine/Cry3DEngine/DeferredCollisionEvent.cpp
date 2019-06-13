@@ -1,13 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   DeferredCollisionEvent.h
-//  Version:     v1.00
-//  Created:     12/08/2010 by Christopher Bolte
-//  Compilers:   Visual Studio.NET
-// -------------------------------------------------------------------------
-//  History:
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "DeferredCollisionEvent.h"

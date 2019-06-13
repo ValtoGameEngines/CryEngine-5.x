@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -226,7 +226,7 @@ void CVehicleSeatActionRotateTurret::UpdateFromPassenger(const float frameTime, 
 
 void CVehicleSeatActionRotateTurret::DoUpdate(const float frameTime)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ACTION);
+	CRY_PROFILE_FUNCTION(PROFILE_ACTION);
 
 	if (gEnv->IsClient() && m_pVehicle->IsProbablyDistant() && !m_pVehicle->GetGameObject()->IsProbablyVisible())
 		return;
@@ -396,12 +396,9 @@ void CVehicleSeatActionRotateTurret::UpdatePartRotation(EVehicleTurretRotationTy
 {
 	CRY_ASSERT(eType < eVTRT_NumRotationTypes);
 
-	const float threshold = 0.01f;
 	if (frameTime > 0.08f) frameTime = 0.08f;
 
 	CVehiclePartBase* pPart = m_rotations[eType].m_pPart;
-	IVehiclePart* pParent = pPart->GetParent();
-	IActor* pActor = m_pSeat->GetPassengerActor();
 
 	float rot_dir = fsgnf(m_rotations[eType].m_action);
 	float max_rotation = fabsf(m_rotations[eType].m_action);

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*
    definitions for job manager
@@ -18,6 +18,8 @@
 #include "JobStructs.h"
 
 #include <map>
+#include <CryInput/IInput.h>
+#include <CryMath/Cry_Color.h>
 
 ///////////////////////////////////////////////////////////////////////////////
 namespace JobManager
@@ -25,15 +27,15 @@ namespace JobManager
 /////////////////////////////////////////////////////////////////////////////
 // Util Functions to get access Thread local data (needs to be unique per worker thread)
 namespace detail {
-// function to manipulate the per thread fallback job freelist
-void                    PushToFallbackJobList(JobManager::SInfoBlock* pInfoBlock);
-JobManager::SInfoBlock* PopFromFallbackJobList();
 
 // functions to access the per thread worker thread id
 void   SetWorkerThreadId(uint32 nWorkerThreadId);
 uint32 GetWorkerThreadId();
 
 } // namespace detail
+
+namespace ThreadBackEnd   { class CThreadBackEnd; }
+namespace BlockingBackEnd { class CBlockingBackEnd; }
 
 // Tracks CPU/PPU worker thread(s) utilization and job execution time per frame
 class CWorkerBackEndProfiler : public IWorkerBackEndProfiler
@@ -95,50 +97,15 @@ protected:
 	SWorkerStatsInfo m_WorkerStatsInfo;   // Information about each worker's utilization
 };
 
-class CJobLambda : public CJobBase
-{
-public:
-	CJobLambda(const char* jobName, const std::function<void()>& lambda)
-	{
-		m_jobHandle = gEnv->GetJobManager()->GetJobHandle(jobName, &Invoke);
-		m_JobDelegator.SetJobParamData(0);
-		m_JobDelegator.SetParamDataSize(0);
-		m_JobDelegator.SetDelegator(Invoke);
-		m_JobDelegator.SetLambda(lambda);
-		SetJobProgramData(m_jobHandle);
-	}
-	void SetPriorityLevel(unsigned int nPriorityLevel)
-	{
-		m_JobDelegator.SetPriorityLevel(nPriorityLevel);
-	}
-	void SetBlocking()
-	{
-		m_JobDelegator.SetBlocking();
-	}
-
-private:
-	static void Invoke(void* p)
-	{
-	}
-
-public:
-	TJobHandle m_jobHandle;
-};
-
 // singleton managing the job queues
-class CRY_ALIGN(128) CJobManager: public IJobManager, public IInputEventListener
+class CRY_ALIGN(128) CJobManager final: public IJobManager, public IInputEventListener
 {
 public:
 	// singleton stuff
 	static CJobManager* Instance();
 
 	//destructor
-	virtual ~CJobManager()
-	{
-		delete m_pThreadBackEnd;
-		delete m_pFallBackBackEnd;
-		CryAlignedDelete(m_pBlockingBackEnd);
-	}
+	virtual ~CJobManager();
 
 	virtual void Init(uint32 nSysMaxWorker) override;
 
@@ -148,8 +115,6 @@ public:
 	//adds a job
 	virtual void AddJob(JobManager::CJobDelegator & crJob, const JobManager::TJobHandle cJobHandle) override;
 
-	virtual void AddLambdaJob(const char* jobName, const std::function<void()> &lambdaCallback, TPriorityLevel priority = JobManager::eRegularPriority, SJobState * pJobState = nullptr) override;
-
 	//obtain job handle from name
 	virtual const JobManager::TJobHandle GetJobHandle(const char* cpJobName, const uint32 cStrLen, JobManager::Invoker pInvoker) override;
 	virtual const JobManager::TJobHandle GetJobHandle(const char* cpJobName, JobManager::Invoker pInvoker) override
@@ -157,25 +122,7 @@ public:
 		return GetJobHandle(cpJobName, strlen(cpJobName), pInvoker);
 	}
 
-	virtual JobManager::IBackend* GetBackEnd(JobManager::EBackEndType backEndType) override
-	{
-		switch (backEndType)
-		{
-		case eBET_Thread:
-			return m_pThreadBackEnd;
-		case eBET_Blocking:
-			return m_pBlockingBackEnd;
-		case eBET_Fallback:
-			return m_pFallBackBackEnd;
-		default:
-			CRY_ASSERT_MESSAGE(0, "Unsupported EBackEndType encountered.");
-			__debugbreak();
-			return 0;
-		}
-		;
-
-		return 0;
-	}
+	virtual JobManager::IBackend* GetBackEnd(JobManager::EBackEndType backEndType) override;
 
 	//shuts down job manager
 	virtual void ShutDown() override;
@@ -193,31 +140,6 @@ public:
 		m_nJobSystemEnabled = nEnable;
 	}
 
-	virtual void PushProfilingMarker(const char* pName) override;
-	virtual void PopProfilingMarker() override;
-
-	// move to right place
-	enum { nMarkerEntries = 1024 };
-	struct SMarker
-	{
-		typedef CryFixedStringT<64> TMarkerString;
-		enum MarkerType { PUSH_MARKER, POP_MARKER };
-
-		SMarker() {}
-		SMarker(MarkerType _type, CTimeValue _time, bool _bIsMainThread) : type(_type), time(_time), bIsMainThread(_bIsMainThread) {}
-		SMarker(MarkerType _type, const char* pName, CTimeValue _time, bool _bIsMainThread) : type(_type), marker(pName), time(_time), bIsMainThread(_bIsMainThread) {}
-
-		TMarkerString marker;
-		MarkerType    type;
-		CTimeValue    time;
-		bool          bIsMainThread;
-	};
-	uint32 m_nMainThreadMarkerIndex[SJobProfilingDataContainer::nCapturedFrames];
-	uint32 m_nRenderThreadMarkerIndex[SJobProfilingDataContainer::nCapturedFrames];
-	SMarker m_arrMainThreadMarker[SJobProfilingDataContainer::nCapturedFrames][nMarkerEntries];
-	SMarker m_arrRenderThreadMarker[SJobProfilingDataContainer::nCapturedFrames][nMarkerEntries];
-	// move to right place
-
 	//copy the job parameter into the jobinfo  structure
 	static void CopyJobParameter(const uint32 cJobParamSize, void* pDest, const void* pSrc);
 
@@ -228,19 +150,17 @@ public:
 
 	void Update(int nJobSystemProfiler) override;
 
-	virtual void SetFrameStartTime(const CTimeValue &rFrameStartTime) override;
+	void SetFrameStartTime(const CTimeValue &rFrameStartTime) override;
+	void SetMainDoneTime(const CTimeValue &) override;
+	void SetRenderDoneTime(const CTimeValue &) override;
 
-	ColorB GetRegionColor(SMarker::TMarkerString marker);
 	JobManager::Invoker GetJobInvoker(uint32 nIdx)
 	{
 		assert(nIdx < m_nJobInvokerIdx);
 		assert(nIdx < JOBSYSTEM_INVOKER_COUNT);
 		return m_arrJobInvokers[nIdx];
 	}
-	virtual uint32 GetNumWorkerThreads() const override
-	{
-		return m_pThreadBackEnd ? m_pThreadBackEnd->GetNumWorkerThreads() : 0;
-	}
+	virtual uint32 GetNumWorkerThreads() const override;
 
 	// get a free semaphore from the jobmanager pool
 	virtual JobManager::TSemaphoreHandle AllocateSemaphore(volatile const void* pOwner) override;
@@ -261,12 +181,13 @@ public:
 	void IncreaseRunJobs();
 	void IncreaseRunFallbackJobs();
 
-	void AddBlockingFallbackJob(JobManager::SInfoBlock * pInfoBlock, uint32 nWorkerThreadID);
-
 	const char* GetJobName(JobManager::Invoker invoker);
 
 private:
 	static ColorB GenerateColorBasedOnName(const char* name);
+
+	void KickTempWorker() const;
+	void StopTempWorker() const;
 
 	CryCriticalSection m_JobManagerLock;                             // lock to protect non-performance critical parts of the jobmanager
 	JobManager::Invoker m_arrJobInvokers[JOBSYSTEM_INVOKER_COUNT];   // support 128 jobs for now
@@ -279,9 +200,8 @@ private:
 
 	bool m_Initialized;                                     //true if JobManager have been initialized
 
-	IBackend* m_pFallBackBackEnd;               // Backend for development, jobs are executed in their calling thread
-	IBackend* m_pThreadBackEnd;                 // Backend for regular jobs, available on PC/XBOX. on Xbox threads are polling with a low priority
-	IBackend* m_pBlockingBackEnd;               // Backend for tasks which can block to prevent stalling regular jobs in this case
+	ThreadBackEnd::CThreadBackEnd*     m_pThreadBackEnd;    // Backend for regular jobs, available on PC/XBOX. on Xbox threads are polling with a low priority
+	BlockingBackEnd::CBlockingBackEnd* m_pBlockingBackEnd;  // Backend for tasks which can block to prevent stalling regular jobs in this case
 
 	uint16 m_nJobIdCounter;                     // JobId counter for jobs dynamically allocated at runtime
 
@@ -304,9 +224,9 @@ private:
 #if defined(JOBMANAGER_SUPPORT_PROFILING)
 	SJobProfilingDataContainer m_profilingData;
 	std::map<JobManager::SJobStringHandle, ColorB> m_JobColors;
-	std::map<SMarker::TMarkerString, ColorB> m_RegionColors;
 	CTimeValue m_FrameStartTime[SJobProfilingDataContainer::nCapturedFrames];
-
+	CTimeValue m_mainDoneTime[SJobProfilingDataContainer::nCapturedFrames];
+	CTimeValue m_renderDoneTime[SJobProfilingDataContainer::nCapturedFrames];
 #endif
 
 	// singleton stuff
@@ -330,12 +250,6 @@ inline void JobManager::CJobManager::CopyJobParameter(const uint32 cJobParamSize
 inline void JobManager::CJobManager::IncreaseRunJobs()
 {
 	CryInterlockedIncrement((int volatile*)&m_nJobsRunCounter);
-}
-
-///////////////////////////////////////////////////////////////////////////////
-inline void JobManager::CJobManager::IncreaseRunFallbackJobs()
-{
-	CryInterlockedIncrement((int volatile*)&m_nFallbackJobsRunCounter);
 }
 
 #endif //__JOB_MANAGER_H__

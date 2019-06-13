@@ -1,12 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "AudioNode.h"
 #include "AnimTrack.h"
 #include "Tracks.h"
 #include <algorithm>
-
-using namespace CryAudio;
 
 namespace AudioNode
 {
@@ -38,7 +36,6 @@ void CAudioNode::Initialize()
 		AudioNode::s_audioParams.reserve(4);
 
 		AudioNode::AddSupportedParam("Trigger", eAnimParamType_AudioTrigger, eAnimValue_Unknown);
-		AudioNode::AddSupportedParam("File", eAnimParamType_AudioFile, eAnimValue_Unknown);
 		AudioNode::AddSupportedParam("Parameter", eAnimParamType_AudioParameter, eAnimValue_Float);
 		AudioNode::AddSupportedParam("Switch", eAnimParamType_AudioSwitch, eAnimValue_Unknown);
 	}
@@ -49,7 +46,6 @@ void CAudioNode::Animate(SAnimContext& animContext)
 	size_t numAudioParameterTracks = 0;
 	size_t numAudioTriggerTracks = 0;
 	size_t numAudioSwitchTracks = 0;
-	size_t numAudioFileTracks = 0;
 
 	const int trackCount = NumTracks();
 	for (int paramIndex = 0; paramIndex < trackCount; ++paramIndex)
@@ -57,11 +53,11 @@ void CAudioNode::Animate(SAnimContext& animContext)
 		const CAnimParamType paramType = m_tracks[paramIndex]->GetParameterType();
 		IAnimTrack* pTrack = m_tracks[paramIndex];
 
-		const bool bMuted = gEnv->IsEditor() && (pTrack->GetFlags() & IAnimTrack::eAnimTrackFlags_Muted);
 		if (!pTrack || pTrack->GetNumKeys() == 0 || pTrack->GetFlags() & IAnimTrack::eAnimTrackFlags_Disabled)
 		{
 			continue;
 		}
+		const bool bMuted = gEnv->IsEditor() && (pTrack->GetFlags() & IAnimTrack::eAnimTrackFlags_Muted);
 
 		switch (paramType.GetType())
 		{
@@ -86,6 +82,7 @@ void CAudioNode::Animate(SAnimContext& animContext)
 						if (audioTriggerInfo.audioKeyStart < audioTriggerKeyNum)
 						{
 							ApplyAudioTriggerKey(audioTriggerKey.m_startTriggerId);
+							m_activeAudioTriggers.emplace_back(audioTriggerKey);
 						}
 
 						if (audioTriggerInfo.audioKeyStart > audioTriggerKeyNum)
@@ -101,7 +98,7 @@ void CAudioNode::Animate(SAnimContext& animContext)
 							{
 								audioTriggerInfo.audioKeyStop = audioTriggerKeyNum;
 
-								if (audioTriggerKey.m_stopTriggerId != InvalidControlId)
+								if (audioTriggerKey.m_stopTriggerId != CryAudio::InvalidControlId)
 								{
 									ApplyAudioTriggerKey(audioTriggerKey.m_stopTriggerId);
 								}
@@ -109,6 +106,8 @@ void CAudioNode::Animate(SAnimContext& animContext)
 								{
 									ApplyAudioTriggerKey(audioTriggerKey.m_startTriggerId, false);
 								}
+
+								m_activeAudioTriggers.erase(std::remove(m_activeAudioTriggers.begin(), m_activeAudioTriggers.end(), audioTriggerKey), m_activeAudioTriggers.end());
 							}
 						}
 						else
@@ -125,45 +124,6 @@ void CAudioNode::Animate(SAnimContext& animContext)
 			}
 			break;
 
-		case eAnimParamType_AudioFile:
-			{
-				++numAudioFileTracks;
-
-				if (numAudioFileTracks > m_audioFileTracks.size())
-				{
-					m_audioFileTracks.resize(numAudioFileTracks);
-				}
-
-				if (!animContext.bResetting && !bMuted)
-				{
-					SAudioFileKey audioFileKey;
-					SAudioInfo& audioFileInfo = m_audioFileTracks[numAudioFileTracks - 1];
-					const int audioFileKeyNum = static_cast<CAudioFileTrack*>(pTrack)->GetActiveKey(animContext.time, &audioFileKey);
-					if (audioFileKeyNum >= 0 && audioFileKey.m_duration > SAnimTime(0) && !(audioFileKey.m_bNoTriggerInScrubbing && animContext.bSingleFrame))
-					{
-						const SAnimTime audioKeyTime = (animContext.time - audioFileKey.m_time);
-						if (animContext.time <= audioFileKey.m_time + audioFileKey.m_duration)
-						{
-							if (audioFileInfo.audioKeyStart < audioFileKeyNum)
-							{
-								ApplyAudioFileKey(audioFileKey.m_audioFile, audioFileKey.m_bIsLocalized);
-							}
-
-							audioFileInfo.audioKeyStart = audioFileKeyNum;
-						}
-						else if (audioKeyTime >= audioFileKey.m_duration)
-						{
-							audioFileInfo.audioKeyStart = -1;
-						}
-					}
-					else
-					{
-						audioFileInfo.audioKeyStart = -1;
-					}
-				}
-			}
-			break;
-
 		case eAnimParamType_AudioParameter:
 			{
 				++numAudioParameterTracks;
@@ -173,8 +133,8 @@ void CAudioNode::Animate(SAnimContext& animContext)
 					m_audioParameterTracks.resize(numAudioParameterTracks, 0.0f);
 				}
 
-				ControlId audioParameterId = static_cast<CAudioParameterTrack*>(pTrack)->m_audioParameterId;
-				if (audioParameterId != InvalidControlId)
+				CryAudio::ControlId audioParameterId = static_cast<CAudioParameterTrack*>(pTrack)->m_audioParameterId;
+				if (audioParameterId != CryAudio::InvalidControlId)
 				{
 					const float newAudioParameterValue = stl::get<float>(pTrack->GetValue(animContext.time));
 					float& prevAudioParameterValue = m_audioParameterTracks[numAudioParameterTracks - 1];
@@ -217,12 +177,33 @@ void CAudioNode::Animate(SAnimContext& animContext)
 	}
 }
 
+void CAudioNode::OnStart()
+{
+	CRY_ASSERT_MESSAGE(m_activeAudioTriggers.empty(), "m_activeAudioTriggers is not empty during CAudioNode::OnStart");
+}
+
 void CAudioNode::OnReset()
 {
 	m_audioParameterTracks.clear();
 	m_audioTriggerTracks.clear();
 	m_audioSwitchTracks.clear();
-	m_audioFileTracks.clear();
+}
+
+void CAudioNode::OnStop()
+{
+	for (auto const& audioTriggerKey : m_activeAudioTriggers)
+	{
+		if (audioTriggerKey.m_stopTriggerId != CryAudio::InvalidControlId)
+		{
+			ApplyAudioTriggerKey(audioTriggerKey.m_stopTriggerId);
+		}
+		else
+		{
+			ApplyAudioTriggerKey(audioTriggerKey.m_startTriggerId, false);
+		}
+	}
+
+	m_activeAudioTriggers.clear();
 }
 
 unsigned int CAudioNode::GetParamCount() const
@@ -256,26 +237,17 @@ bool CAudioNode::GetParamInfoFromType(const CAnimParamType& paramId, SParamInfo&
 	return false;
 }
 
-void CAudioNode::ApplyAudioFileKey(const string& filePath, const bool bLocalized)
+void CAudioNode::ApplyAudioSwitchKey(CryAudio::ControlId audioSwitchId, CryAudio::SwitchStateId audioSwitchStateId)
 {
-	if (!filePath.empty())
-	{
-		SPlayFileInfo const info(filePath.c_str(), bLocalized);
-		gEnv->pAudioSystem->PlayFile(info);
-	}
-}
-
-void CAudioNode::ApplyAudioSwitchKey(ControlId audioSwitchId, SwitchStateId audioSwitchStateId)
-{
-	if (audioSwitchId != InvalidControlId && audioSwitchStateId != InvalidSwitchStateId)
+	if (audioSwitchId != CryAudio::InvalidControlId && audioSwitchStateId != CryAudio::InvalidSwitchStateId)
 	{
 		gEnv->pAudioSystem->SetSwitchState(audioSwitchId, audioSwitchStateId);
 	}
 }
 
-void CAudioNode::ApplyAudioTriggerKey(ControlId audioTriggerId, const bool bPlay)
+void CAudioNode::ApplyAudioTriggerKey(CryAudio::ControlId audioTriggerId, const bool bPlay)
 {
-	if (audioTriggerId != InvalidControlId)
+	if (audioTriggerId != CryAudio::InvalidControlId)
 	{
 		if (bPlay)
 		{
@@ -288,9 +260,9 @@ void CAudioNode::ApplyAudioTriggerKey(ControlId audioTriggerId, const bool bPlay
 	}
 }
 
-void CAudioNode::ApplyAudioParameterValue(ControlId audioParameterId, const float value)
+void CAudioNode::ApplyAudioParameterValue(CryAudio::ControlId audioParameterId, const float value)
 {
-	if (audioParameterId != InvalidControlId)
+	if (audioParameterId != CryAudio::InvalidControlId)
 	{
 		gEnv->pAudioSystem->SetParameter(audioParameterId, value);
 	}

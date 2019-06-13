@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -41,6 +41,24 @@ ILINE LONG CryInterlockedAdd(volatile LONG* pDst, LONG add)
 }
 
 // Returns the resulting added value
+ILINE int64 CryInterlockedAdd(volatile int64* pDst, int64 add)
+{
+#if CRY_PLATFORM_X64
+	static_assert(sizeof(int64) == sizeof(LONGLONG), "Unsecured cast. int64 is not same size as LONGLONG.");
+	return (int64)_InterlockedExchangeAdd64((volatile LONGLONG*)pDst, add) + add;
+#else
+	int64 val;
+	int64 sum;
+	do {
+		val = *pDst;
+		sum = val + add;
+	}
+	while (CryInterlockedCompareExchange64(pDst, sum, val) != val);
+	return sum;
+#endif
+}
+
+// Returns the resulting added value
 ILINE size_t CryInterlockedAdd(volatile size_t* pDst, size_t add)
 {
 #if CRY_PLATFORM_X64
@@ -49,7 +67,6 @@ ILINE size_t CryInterlockedAdd(volatile size_t* pDst, size_t add)
 #else
 	static_assert(sizeof(size_t) == sizeof(LONG), "Unsecured cast. size_t is not same size as LONG.");
 	return (size_t)CryInterlockedAdd((volatile LONG*)pDst, (LONG)add);
-
 #endif
 }
 
@@ -69,6 +86,12 @@ ILINE LONG CryInterlockedExchange(volatile LONG* pDst, LONG exchange)
 ILINE LONG CryInterlockedExchangeAdd(volatile LONG* pDst, LONG value)
 {
 	return _InterlockedExchangeAdd(pDst, value);
+}
+
+// Returns initial value prior exchange
+ILINE int64 CryInterlockedExchange64(volatile int64* pDst, int64 value)
+{
+	return _InterlockedExchange64(pDst, value);
 }
 
 // Returns initial value prior exchange
@@ -130,7 +153,6 @@ ILINE int64 CryInterlockedCompareExchange64(volatile int64* pDst, int64 exchange
 	return _InterlockedCompareExchange64(pDst, exchange, compare);
 }
 
-#if CRY_PLATFORM_64BIT
 // Returns initial value prior exchange
 ILINE unsigned char CryInterlockedCompareExchange128(volatile int64* pDst, int64 exchangeHigh, int64 exchangeLow, int64* pComparandResult)
 {
@@ -138,7 +160,6 @@ ILINE unsigned char CryInterlockedCompareExchange128(volatile int64* pDst, int64
 	CRY_ASSERT_MESSAGE((((int64)pDst) & 15) == 0, "The destination data must be 16-byte aligned to avoid a general protection fault.");
 	return _InterlockedCompareExchange128(pDst, exchangeHigh, exchangeLow, pComparandResult);
 }
-#endif
 //////////////////////////////////////////////////////////////////////////
 // Helper
 //////////////////////////////////////////////////////////////////////////
@@ -146,23 +167,15 @@ ILINE unsigned char CryInterlockedCompareExchange128(volatile int64* pDst, int64
 class CSimpleThreadBackOff
 {
 public:
-	static const uint32 kSoftYieldInterval = 0x3FF;
-	static const uint32 kHardYieldInterval = 0x1FFF;
+	static const uint32 kSoftYieldInterval = 0x3F; // after 63 tries follow soft yield strategy
+	static const uint32 kHardYieldInterval = 0x1FFF; // after 8191 tries follow hard yield strategy
 
 public:
 	CSimpleThreadBackOff() : m_counter(0) {}
 
-	void reset() { m_counter = 0; }
+	void Reset() { m_counter = 0; }
 
-	void backoff()
-	{
-		// Note: Not using Sleep(x) and SwitchToThread()
-		// Sleep(0): Give OS the CPU ... something none game related could block the core for a while (same for SwitchToThread())
-		// Sleep(1): System timer resolution dependent. Usual default is 1/64sec. So the worst case is we have to wait 15.6ms.
-
-		// Simply yield processor (good for hyper threaded systems. Allows the logical core to run)
-		_mm_pause();
-	}
+	void Backoff();
 
 private:
 	int m_counter;

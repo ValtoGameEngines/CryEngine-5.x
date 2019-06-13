@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -81,6 +81,9 @@ public:
 	// </interfuscator:shuffle>
 };
 
+#include <CrySystem/ISystem.h>
+
+#if defined(USE_FPE)
 class CScopedFloatingPointException
 {
 public:
@@ -96,3 +99,11 @@ public:
 private:
 	uint oldMask;
 };
+#else
+class CScopedFloatingPointException
+{
+public:
+	CScopedFloatingPointException(EFPE_Severity eFPESeverity){}
+	~CScopedFloatingPointException(){}
+};
+#endif

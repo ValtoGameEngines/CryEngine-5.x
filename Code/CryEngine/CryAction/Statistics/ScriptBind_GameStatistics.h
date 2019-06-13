@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef   __SCRIPTBIND_GAMESTATISTICS_H__
 #define   __SCRIPTBIND_GAMESTATISTICS_H__
@@ -8,7 +8,6 @@
 #endif
 
 #include <CryScriptSystem/IScriptSystem.h>
-#include <CryScriptSystem/ScriptHelpers.h>
 
 #define STATISTICS_CHECK_BINDING 1
 

@@ -1,11 +1,13 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <CrySystem/IConsole.h>
 #include <CryNetwork/INotificationNetwork.h>
 #include <CryNetwork/CrySocks.h>
+#include <CryThreading/CryThread.h>
 #include <CryThreading/IThreadManager.h>
+#include <queue>
 
 class CNotificationNetwork;
 namespace NotificationNetwork {

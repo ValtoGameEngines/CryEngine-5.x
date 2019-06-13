@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -36,19 +36,19 @@ bool compareInputListener(const IInputEventListener* pListenerA, const IInputEve
 
 CBaseInput::CBaseInput()
 	: m_pExclusiveListener(0)
+	, m_touchListeners(1)
 	, m_enableEventPosting(true)
 	, m_retriggering(false)
 	, m_hasFocus(false)
+	, m_forceFeedbackDeviceIndex(EFF_INVALID_DEVICE_INDEX)
 	, m_modifiers(0)
 	, m_pCVars(new CInputCVars())
-	, m_platformFlags(0)
-	, m_forceFeedbackDeviceIndex(EFF_INVALID_DEVICE_INDEX)
 	, m_pKinectInput(0)
 	, m_pEyeTrackerInput(0)
 	, m_pNaturalPointInput(0)
-	, m_touchListeners(1)
+	, m_platformFlags(0)
 {
-	GetISystem()->GetISystemEventDispatcher()->RegisterListener(this);
+	GetISystem()->GetISystemEventDispatcher()->RegisterListener(this, "CBaseInput");
 
 	g_pInputCVars = m_pCVars;
 
@@ -109,11 +109,11 @@ void CBaseInput::PostInit()
 	}
 }
 
-void CBaseInput::Update(bool bFocus)
+void CBaseInput::Update(bool bHasFocus)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_INPUT);
+	CRY_PROFILE_FUNCTION(PROFILE_INPUT);
 
-	m_hasFocus = bFocus;
+	m_hasFocus = bHasFocus;
 
 	// Update blocking inputs
 	UpdateBlockingInputs();
@@ -123,7 +123,7 @@ void CBaseInput::Update(bool bFocus)
 	for (TInputDevices::iterator i = m_inputDevices.begin(); i != m_inputDevices.end(); ++i)
 	{
 		if ((*i)->IsEnabled())
-			(*i)->Update(bFocus);
+			(*i)->Update(bHasFocus);
 	}
 
 	// send commit event after all input processing for this frame has finished
@@ -442,6 +442,20 @@ bool CBaseInput::AddInputDevice(IInputDevice* pDevice)
 	return false;
 }
 
+bool CBaseInput::RemoveInputDevice(IInputDevice* pDevice)
+{
+	for(auto it = m_inputDevices.begin(), end = m_inputDevices.end(); it != end; ++it)
+	{
+		if (*it == pDevice)
+		{
+			m_inputDevices.erase(it);
+			delete pDevice;
+			return true;
+		}
+	}
+	return false;
+}
+
 void CBaseInput::EnableEventPosting(bool bEnable)
 {
 	m_enableEventPosting = bEnable;
@@ -458,7 +472,7 @@ bool CBaseInput::IsEventPostingEnabled() const
 
 void CBaseInput::PostInputEvent(const SInputEvent& event, bool bForce)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_INPUT);
+	CRY_PROFILE_FUNCTION(PROFILE_INPUT);
 	//CryAutoCriticalSection postInputLock(m_postInputEventMutex);
 
 	if (!bForce && !m_enableEventPosting)
@@ -495,7 +509,7 @@ void CBaseInput::PostInputEvent(const SInputEvent& event, bool bForce)
 
 void CBaseInput::PostUnicodeEvent(const SUnicodeEvent& event, bool bForce)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_INPUT);
+	CRY_PROFILE_FUNCTION(PROFILE_INPUT);
 	assert(event.inputChar != 0 && Unicode::Validate(event.inputChar) && "Attempt to post invalid unicode event");
 
 	if (!bForce && !m_enableEventPosting)
@@ -713,7 +727,7 @@ void CBaseInput::UpdateBlockingInputs()
 
 void CBaseInput::PostHoldEvents()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_INPUT);
+	CRY_PROFILE_FUNCTION(PROFILE_INPUT);
 	SInputEvent event;
 
 	// DARIO_NOTE: In this loop, m_holdSymbols size and content is changed so previous

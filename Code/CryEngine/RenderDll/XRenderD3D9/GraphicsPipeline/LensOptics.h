@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -11,19 +11,27 @@ class CRenderView;
 class CLensOpticsStage : public CGraphicsPipelineStage
 {
 public:
-	void      Init();
-	void      Execute(CRenderView* pRenderView);
+	static const EGraphicsPipelineStage StageID = eStage_LensOptics;
+
+	CLensOpticsStage(CGraphicsPipeline& graphicsPipeline)
+		: CGraphicsPipelineStage(graphicsPipeline) {}
+
+	bool IsStageActive(EShaderRenderingFlags flags) const final
+	{
+		return CRenderer::CV_r_flares && !CRenderer::CV_r_durango_async_dips;
+	}
+
+	void      Init() final;
+	void      Execute();
 
 	bool      HasContent() const { return m_primitivesRendered>0; }
 
 private:
-	void      UpdateOcclusionQueries(CStandardGraphicsPipeline::SViewInfo* pViewInfo, int viewInfoCount);
+	void      UpdateOcclusionQueries(SRenderViewInfo* pViewInfo, int viewInfoCount);
 
 	CPrimitiveRenderPass  m_passLensOptics;
 	CSoftOcclusionManager m_softOcclusionManager;
 
-	int             m_samplerPoint         = -1;
-	int             m_samplerLinear        = -1;
-	int             m_occlusionUpdateFrame = -1;
-	int             m_primitivesRendered   =  0;
+	int                   m_occlusionUpdateFrame = -1;
+	int                   m_primitivesRendered   = 0;
 };

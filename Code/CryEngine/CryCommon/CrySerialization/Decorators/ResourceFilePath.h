@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -25,6 +25,8 @@ struct ResourceFilePath
 		, flags(flags)
 	{
 	}
+
+	virtual ~ResourceFilePath() {}
 
 	//! This function should stay virtual to ensure cross-dll calls are using right heap.
 	virtual void SetPath(const char* path) { *this->path = path; }

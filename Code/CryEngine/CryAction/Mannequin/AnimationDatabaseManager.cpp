@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 //
 ////////////////////////////////////////////////////////////////////////////
@@ -284,8 +284,6 @@ void CAnimationControllerDefLibrary::CreateResource(THandle& hdlOut, const char*
 	char normalizedFilename[DEF_PATH_LENGTH];
 	NormalizeFilename(normalizedFilename, name);
 
-	uint32 crc32 = CCrc32::ComputeLowercase(normalizedFilename);
-
 	SControllerDef* pDef = NULL;
 	XmlNodeRef xml = gEnv->pSystem->GetXmlUtils()->LoadXmlFromFile(normalizedFilename);
 	if (xml)
@@ -338,7 +336,13 @@ const IAnimationDatabase* CAnimationDatabaseManager::FindDatabase(uint32 crcFile
 
 const IAnimationDatabase* CAnimationDatabaseManager::Load(const char* databaseName)
 {
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Mannequin, 0, "Load ADB: %s", databaseName);
+	//Don't load if there is no database
+	if (databaseName == nullptr || strlen(databaseName) == 0)
+	{
+		return nullptr;
+	}
+
+	MEMSTAT_CONTEXT_FMT(EMemStatContextType::Mannequin, "Load ADB: %s", databaseName);
 
 	const IAnimationDatabase* pDb = CAnimationDatabaseLibrary::LoadResource(databaseName, 0);
 	return pDb;
@@ -349,7 +353,7 @@ IAnimationDatabase* CAnimationDatabaseManager::Create(const char* filename, cons
 	char normalizedFilename[DEF_PATH_LENGTH];
 	NormalizeFilename(normalizedFilename, filename);
 
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Mannequin, 0, "Create ADB: %s", normalizedFilename);
+	MEMSTAT_CONTEXT_FMT(EMemStatContextType::Mannequin, "Create ADB: %s", normalizedFilename);
 
 	uint32 crc32 = CCrc32::ComputeLowercase(normalizedFilename);
 
@@ -401,7 +405,7 @@ CTagDefinition* CAnimationDatabaseManager::CreateTagDefinition(const char* filen
 	char normalizedFilename[DEF_PATH_LENGTH];
 	NormalizeFilename(normalizedFilename, filename);
 
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Mannequin, 0, "Create TagDefinition: %s", normalizedFilename);
+	MEMSTAT_CONTEXT_FMT(EMemStatContextType::Mannequin, "Create TagDefinition: %s", normalizedFilename);
 
 	uint32 crc32 = CCrc32::ComputeLowercase(normalizedFilename);
 
@@ -416,7 +420,7 @@ CTagDefinition* CAnimationDatabaseManager::CreateTagDefinition(const char* filen
 
 const SControllerDef* CAnimationDatabaseManager::LoadControllerDef(const char* filename)
 {
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Mannequin, 0, "Load ControllerDef: %s", filename);
+	MEMSTAT_CONTEXT_FMT(EMemStatContextType::Mannequin, "Load ControllerDef: %s", filename);
 
 	const SControllerDef* const pDef = CAnimationControllerDefLibrary::LoadResource(filename, 0);
 	return pDef;
@@ -442,7 +446,7 @@ const CTagDefinition* CAnimationDatabaseManager::LoadTagDefs(const char* filenam
 	char normalizedFilename[DEF_PATH_LENGTH];
 	NormalizeFilename(normalizedFilename, filename);
 
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Mannequin, 0, "Load TagDefs: %s", normalizedFilename);
+	MEMSTAT_CONTEXT_FMT(EMemStatContextType::Mannequin, "Load TagDefs: %s", normalizedFilename);
 
 	const CTagDefinition* pTagDef = CAnimationTagDefLibrary::LoadResource(filename, isTags ? eTDF_Tags : 0);
 	return pTagDef;
@@ -706,7 +710,8 @@ void CAnimationDatabaseManager::GetAffectedFragmentsString(const CTagDefinition*
 				for (uint32 tagSetIndex = 0; tagSetIndex < numTagSets; ++tagSetIndex)
 				{
 					SFragTagState tagState;
-					uint32 numOptions = pCurrentDatabase->GetTagSetInfo(fragIndex, tagSetIndex, tagState);
+					pCurrentDatabase->GetTagSetInfo(fragIndex, tagSetIndex, tagState);
+
 					if (isGlobalTag)
 					{
 						if (pQueryTagDef->IsSet(tagState.globalTags, tagID))
@@ -986,8 +991,7 @@ void CAnimationDatabaseLibrary::AnimEntryToXML(XmlNodeRef outXmlAnimEntry, const
 	{
 		outXmlAnimEntry->setAttr("weightList", animEntry.weightList);
 	}
-	char channelName[10];
-	cry_strcpy(channelName, "channel0");
+	char channelName[] = "channel0";
 	for (uint32 i = 0; i < MANN_NUMBER_BLEND_CHANNELS; i++)
 	{
 		if (animEntry.blendChannels[i] != 0.0f)
@@ -1009,8 +1013,7 @@ bool CAnimationDatabaseLibrary::XMLToAnimEntry(SAnimationEntry& animEntry, XmlNo
 	root->getAttr("weight", animEntry.playbackWeight);
 	root->getAttr("weightList", animEntry.weightList);
 
-	char channelName[10];
-	cry_strcpy(channelName, "channel0");
+	char channelName[] = "channel0";
 	for (uint32 i = 0; i < MANN_NUMBER_BLEND_CHANNELS; i++)
 	{
 		channelName[7] = '0' + i;
@@ -1745,7 +1748,6 @@ XmlNodeRef CAnimationDatabaseManager::SaveDatabase
 	}
 
 	const CAnimationDatabase::TSubADBList& vSubADBs = subAnimDB ? subAnimDB->subADBs : animDB.m_subADBs;
-	const uint32 numSubADBs = vSubADBs.size();
 	if (!vSubADBs.empty())
 	{
 		XmlNodeRef subADBList;
@@ -2294,9 +2296,12 @@ EModifyFragmentIdResult CAnimationDatabaseManager::CreateFragmentID(const CTagDe
 	{
 		return eMFIR_DuplicateName;
 	}
-
+#if defined(USE_CRY_ASSERT)
 	const int newFragmentTagId = fragmentDefs->AddTag(szFragmentIdName);
 	assert(newFragmentTagId != FRAGMENT_ID_INVALID);
+#else
+	fragmentDefs->AddTag(szFragmentIdName);
+#endif
 
 	for (TControllerDefList::const_iterator cit = m_controllerDefs.begin(); cit != m_controllerDefs.end(); ++cit)
 	{
@@ -2525,8 +2530,12 @@ uint32 CAnimationDatabaseManager::AddFragmentEntry(IAnimationDatabase* pDatabase
 			pCurrDatabase->m_pTagDef->TagListToFlags(sTaglist.c_str(), targetTagState.globalTags);
 			FragmentID targetFragID = pCurrDatabase->m_pFragDef->Find(fragCRC);
 
+#if defined(USE_CRY_ASSERT)
 			uint32 currIdx = pCurrDatabase->AddEntry(targetFragID, targetTagState, fragment);
 			CRY_ASSERT(currIdx == idxRoot);
+#else
+			pCurrDatabase->AddEntry(targetFragID, targetTagState, fragment);
+#endif
 		}
 	}
 
@@ -2827,6 +2836,8 @@ void CAnimationDatabaseManager::SaveAll(IMannequinWriter* pWriter) const
 		CTagDefinition* pTagDefinition = cit->second;
 		SaveTagDefinition(pWriter, pTagDefinition);
 	}
+
+	pWriter->WriteModifiedFiles();
 }
 
 void CAnimationDatabaseManager::SaveSubADB

@@ -1,166 +1,179 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  Created:     23/09/2014 by Filipe amim
-//  Description:
-// -------------------------------------------------------------------------
-//
-////////////////////////////////////////////////////////////////////////////
-
-#ifndef PARTICLEEMITTER_H
-#define PARTICLEEMITTER_H
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include "ParticleEffect.h"
 #include "ParticleEnviron.h"
+#include "ParticleComponentRuntime.h"
+#include "ParticleAttributes.h"
 #include <CryRenderer/IGpuParticles.h>
+#include <Cry3DEngine/GeomRef.h>
 
 namespace pfx2
 {
 
-class CParticleEmitter : public IParticleEmitter, public Cry3DEngineBase
+class CParticleEmitter final : public IParticleEmitter, public Cry3DEngineBase
 {
-private:
-	struct SRuntimeRef
-	{
-		SRuntimeRef(CParticleEffect* effect, CParticleEmitter* emitter, CParticleComponent* component, const SRuntimeInitializationParameters& params);
-		SRuntimeRef() : pRuntime(nullptr), pComponent(nullptr) {}
-		_smart_ptr<ICommonParticleComponentRuntime> pRuntime;
-		CParticleComponent*                         pComponent;
-	};
-
-	typedef std::vector<SRuntimeRef> TComponentRuntimes;
-
 public:
-	CParticleEmitter(uint emitterId);
+	CParticleEmitter(CParticleEffect* pEffect, uint emitterId);
 	~CParticleEmitter();
 
+	using TRuntimes = TSmartArray<CParticleComponentRuntime>;
+
 	// IRenderNode
-	virtual EERType          GetRenderNodeType() override;
+	virtual EERType          GetRenderNodeType() const override { return eERType_ParticleEmitter; }
 	virtual const char*      GetEntityClassName() const override;
 	virtual const char*      GetName() const override;
 	virtual void             SetMatrix(const Matrix34& mat) override;
 	virtual Vec3             GetPos(bool bWorldOnly = true) const override;
 	virtual void             Render(const struct SRendParams& rParam, const SRenderingPassInfo& passInfo) override;
-	virtual IPhysicalEntity* GetPhysics() const override;
-	virtual void             SetPhysics(IPhysicalEntity*) override;
-	virtual void             SetMaterial(IMaterial* pMat) override;
-	virtual IMaterial*       GetMaterial(Vec3* pHitPos = 0) const override;
-	virtual IMaterial*       GetMaterialOverride() override;
-	virtual float            GetMaxViewDist() override;
-	virtual void             Precache() override;
+	virtual IPhysicalEntity* GetPhysics() const override                   { return nullptr; }
+	virtual void             SetPhysics(IPhysicalEntity*) override         {}
+	virtual void             SetMaterial(IMaterial* pMat) override         {}
+	virtual IMaterial*       GetMaterial(Vec3* pHitPos = 0) const override { return nullptr; }
+	virtual IMaterial*       GetMaterialOverride() const override          { return nullptr; }
+	virtual float            GetMaxViewDist() const override;
+	virtual void             Precache() override                           {}
 	virtual void             GetMemoryUsage(ICrySizer* pSizer) const override;
-	virtual const AABB       GetBBox() const override;
-	virtual void             FillBBox(AABB& aabb) override;
-	virtual void             SetBBox(const AABB& WSBBox) override;
-	virtual void             OffsetPosition(const Vec3& delta) override;
-	virtual bool             IsAllocatedOutsideOf3DEngineDLL() override;
+	virtual const AABB       GetBBox() const                      override { return m_bounds.IsReset() ? AABB(m_location.t, 0.05f) : m_bounds; }
+	virtual void             FillBBox(AABB& aabb) const           override { aabb = GetBBox(); }
+	virtual void             SetBBox(const AABB& WSBBox)          override {}
+	virtual void             OffsetPosition(const Vec3& delta)    override {}
+	virtual bool             IsAllocatedOutsideOf3DEngineDLL()    override { return false; }
 	virtual void             SetViewDistRatio(int nViewDistRatio) override;
 	virtual void             ReleaseNode(bool bImmediate) override;
-	// ~IRenderNode
+	virtual void             SetOwnerEntity(IEntity* pEntity) override     { SetEntity(pEntity, m_entitySlot); }
+	virtual IEntity*         GetOwnerEntity() const override               { return m_entityOwner; }
+	virtual void             UpdateStreamingPriority(const SUpdateStreamingPriorityContext& streamingContext) override;
 
-	// pfx2 IParticleEmitter
-	virtual const IParticleEffect* GetEffect() const override;
+	// pfx1 CPArticleEmitter
+	virtual int                    GetVersion() const override                        { return 2; }
+	virtual bool                   IsAlive() const override                           { return m_alive; }
+	virtual bool                   IsActive() const;
 	virtual void                   Activate(bool activate) override;
 	virtual void                   Kill() override;
-	virtual bool                   IsActive() const;
-	virtual void                   Prime();
+	virtual void                   Restart() override;
+	virtual void                   SetEffect(const ::IParticleEffect* pEffect) override {}
+	virtual const ::IParticleEffect* GetEffect() const override                       { return m_pEffectOriginal; }
+	virtual void                   SetEmitGeom(const GeomRef& geom) override;
+	virtual void                   SetSpawnParams(const SpawnParams& spawnParams) override;
+	virtual void                   GetSpawnParams(SpawnParams& sp) const override;
+	using                          IParticleEmitter::GetSpawnParams;
+	virtual void                   SetEntity(IEntity* pEntity, int nSlot) override;
+	virtual void                   InvalidateCachedEntityData() override;
+	virtual uint                   GetAttachedEntityId() override;
+	virtual int                    GetAttachedEntitySlot() override                   { return m_entitySlot; }
 	virtual void                   SetLocation(const QuatTS& loc) override;
-	virtual QuatTS                 GetLocation() const override { return m_location; }
+	virtual QuatTS                 GetLocation() const override                       { return m_location; }
+	virtual void                   SetTarget(const ParticleTarget& target) override;
+	virtual void                   Update() override                                  { UpdateState(); }
 	virtual void                   EmitParticle(const EmitParticleData* pData = NULL)  override;
-	virtual IParticleAttributes& GetAttributes()  override    { return m_attributeInstance; }
-	virtual void                 SetEntity(IEntity* pEntity, int nSlot) override;
-	virtual void                 InvalidateCachedEntityData() override;
-	virtual void                 SetTarget(const ParticleTarget& target) override;
-	virtual bool                 UpdateStreamableComponents(float fImportance, const Matrix34A& objMatrix, IRenderNode* pRenderNode, float fEntDistance, bool bFullUpdate, int nLod) override;
-	// ~pfx2 IParticleEmitter
 
-	// pfx1 IParticleEmitter
-	virtual int          GetVersion() const override                        { return 2; }
-	virtual bool         IsAlive() const override                           { return m_registered; }
-	virtual bool         IsInstant() const override                         { return false; }
-	virtual void         Restart() override                                 {}
-	virtual void         SetEffect(const IParticleEffect* pEffect) override {}
-	virtual void         SetEmitGeom(const GeomRef& geom) override          { m_emitterGeometry = geom; }
-	virtual void         SetSpawnParams(const SpawnParams& spawnParams) override;
-	virtual void         GetSpawnParams(SpawnParams& sp) const override;
-	using IParticleEmitter::GetSpawnParams;
-	virtual void         Update() override;
-	virtual unsigned int GetAttachedEntityId() override   { return 0; }
-	virtual int          GetAttachedEntitySlot() override { return 0; }
-	// ~pfx1 CPArticleEmitter
+	// pfx2 IParticleEmitter
+	virtual IParticleAttributes& GetAttributes()  override { return m_attributeInstance; }
+	virtual void                 SetEmitterFeatures(TParticleFeatures& features) override;
 
+	// CParticleEmitter
+	void                      InitSeed();
+	void                      DebugRender(const SRenderingPassInfo& passInfo) const;
+	void                      CheckUpdated();
+	bool                      UpdateState();
+	bool                      UpdateParticles();
+	void                      SyncUpdateParticles();
 	void                      PostUpdate();
-	CParticleContainer&       GetParentContainer()       { return m_parentContainer; }
-	const CParticleContainer& GetParentContainer() const { return m_parentContainer; }
-	virtual void              GetParentData(const int parentComponentId, const uint* parentParticleIds, const int numParentParticleIds, SInitialData* data) const override;
-	const TComponentRuntimes& GetRuntimes() const        { return m_componentRuntimes; }
-	void                      SetCEffect(CParticleEffect* pEffect);
-	const CParticleEffect*    GetCEffect() const         { return m_pEffect; }
-	CParticleEffect*          GetCEffect()               { return m_pEffect; }
+	void                      RenderDeferred(const SRenderContext& renderContext);
+	CParticleContainer&       GetParentContainer()         { return m_parentContainer; }
+	const CParticleContainer& GetParentContainer() const   { return m_parentContainer; }
+	const TRuntimes&          GetRuntimes() const          { return m_runtimes; }
+	const TRuntimes&          GetRuntimesPreUpdate() const { return m_runtimesPreUpdate; }
+	const TRuntimes&          GetRuntimesDeferred() const  { return m_runtimesDeferred; }
+	CParticleComponentRuntime*GetRuntimeFor(CParticleComponent* pComponent) { return m_runtimesFor[pComponent->GetComponentId()]; }
+	const CParticleEffect*    GetCEffect() const           { return m_pEffect; }
+	CParticleEffect*          GetCEffect()                 { return m_pEffect; }
 	void                      Register();
 	void                      Unregister();
-	bool                      IsIndependent() const { return Unique(); }
-	bool                      HasParticles() const;
+	void                      Clear();
+	void                      UpdateRuntimes();
 	void                      UpdateEmitGeomFromEntity();
 	const SVisEnviron&        GetVisEnv() const            { return m_visEnviron; }
 	const SPhysEnviron&       GetPhysicsEnv() const        { return m_physEnviron; }
+	void                      UpdatePhysEnv();
+	const SpawnParams&        GetSpawnParams() const       { return m_spawnParams; }
 	const GeomRef&            GetEmitterGeometry() const   { return m_emitterGeometry; }
 	QuatTS                    GetEmitterGeometryLocation() const;
 	const CAttributeInstance& GetAttributeInstance() const { return m_attributeInstance; }
+	TParticleFeatures&        GetFeatures()                { return m_emitterFeatures; }
 	const ParticleTarget&     GetTarget() const            { return m_target; }
 	float                     GetViewDistRatio() const     { return m_viewDistRatio; }
-	float                     GetTimeScale() const         { return Cry3DEngineBase::GetCVars()->e_ParticlesDebug & AlphaBit('z') ? 0.0f : m_timeScale; }
-	CRenderObject*            GetRenderObject(uint threadId, uint renderObjectIdx);
-	void                      SetRenderObject(CRenderObject* pRenderObject, uint threadId, uint renderObjectIdx);
-	float                     GetTime() const        { return m_time; }
-	uint32                    GetInitialSeed() const { return m_initialSeed; }
-	uint32                    GetCurrentSeed() const { return m_currentSeed; }
-	EntityId                  GetEntityId() const { return m_entityId; }
-  uint                      GetEmitterId() const { return m_emitterId; }
-  ColorF                    GetProfilerColor() const { return m_profilerColor; }
+	float                     GetTimeScale() const         { return Cry3DEngineBase::GetCVars()->e_ParticlesDebug & AlphaBit('z') ? 0.0f : m_spawnParams.fTimeScale; }
+	float                     GetDeltaTime() const         { return m_time - m_timeUpdated; }
+	float                     GetTime() const              { return m_time; }
+	float                     GetAge() const               { return m_time - m_timeCreated; }
+	STimingParams             GetMaxTimings() const;
+	bool                      WasRenderedLastFrame() const { return m_unrendered <= 1 && !IsHidden(); }
+	uint32                    GetInitialSeed() const       { return m_initialSeed; }
+	uint32                    GetCurrentSeed() const       { return m_currentSeed; }
+	uint                      GetEmitterId() const         { return m_emitterId; }
+	ColorF                    GetProfilerColor() const     { return m_profilerColor; }
+	uint                      GetParticleSpec() const;
 
-	void                      AccumCounts(SParticleCounts& counts);
-	void                      AddDrawCallCounts(int numRendererdParticles, int numClippedParticles);
+	void                      SetChanged();
+	bool                      IsStable() const             { return m_time > m_timeStable && !m_bounds.IsReset(); }
+	bool                      IsIndependent() const        { return Unique(); }
+	bool                      HasParticles() const;
+	bool                      HasBounds() const            { return m_bounds.GetVolume() > 0.0f; }
+	void                      AddBounds(const AABB& bb);
+	bool                      NeedsUpdate() const          { return ThreadMode() < 3 || !IsStable() || WasRenderedLastFrame(); }
+	uint                      Debug() const                { return m_debug; }
 
 private:
-	void     UpdateRuntimeRefs();
-	void     AddInstance();
-	void     StopInstances();
+	void     UpdateBounds();
 	void     UpdateFromEntity();
-	void     UpdateTargetFromEntity(IEntity* pEntity);
 	IEntity* GetEmitGeometryEntity() const;
-	void     ResetRenderObjects();
 
-	std::vector<CRenderObject*> m_pRenderObjects[RT_COMMAND_BUF_COUNT];
+private:
+	_smart_ptr<CParticleEffect> m_pEffect;
+	_smart_ptr<CParticleEffect> m_pEffectOriginal;
 	SVisEnviron                 m_visEnviron;
 	SPhysEnviron                m_physEnviron;
+	SpawnParams                 m_spawnParams;
 	CAttributeInstance          m_attributeInstance;
+	TParticleFeatures           m_emitterFeatures;
+	AABB                        m_realBounds;
+	AABB                        m_nextBounds;
 	AABB                        m_bounds;
 	CParticleContainer          m_parentContainer;
-	TComponentRuntimes          m_componentRuntimes;
-	CParticleEffect*            m_pEffect;
-	SContainerCounts            m_emitterCounts;
-	CryMutex                    m_countsMutex;
+	TRuntimes                   m_runtimes;
+	TRuntimes                   m_runtimesFor;
+	TRuntimes                   m_runtimesPreUpdate;
+	TRuntimes                   m_runtimesDeferred;
+	uint                        m_environFlags;
 	QuatTS                      m_location;
+	IEntity*                    m_entityOwner;
+	int                         m_entitySlot;
 	ParticleTarget              m_target;
-	EntityId                    m_entityId;
 	GeomRef                     m_emitterGeometry;
-  ColorF                      m_profilerColor;
-  int                         m_entitySlot;
 	int                         m_emitterGeometrySlot;
+	ColorF                      m_profilerColor;
 	float                       m_viewDistRatio;
 	float                       m_time;
-	float                       m_timeScale;
-	int                         m_editVersion;
+	float                       m_timeCreated;
+	float                       m_timeStable;
+	float                       m_timeUpdated;
+	float                       m_timeDeath;
+	int                         m_emitterEditVersion;
+	int                         m_effectEditVersion;
 	uint                        m_initialSeed;
 	uint                        m_currentSeed;
-  uint                        m_emitterId;
+	uint                        m_emitterId;
 	bool                        m_registered;
+	bool                        m_reRegister;
 	bool                        m_active;
+	bool                        m_alive;
+	uint                        m_unrendered;
+	uint                        m_debug;
+	stl::PSyncMultiThread       m_lock;
 };
 
 }
 
-#endif // PARTICLEEMITTER_H

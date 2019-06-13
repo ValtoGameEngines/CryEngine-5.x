@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -11,6 +11,7 @@
 #include <CrySystem/ISystem.h>
 #include <IWorldQuery.h>
 #include <CryFlowGraph/IFlowBaseNode.h>
+#include <CryPhysics/IPhysics.h>
 
 class CPressureWaveNode : public CFlowBaseNode<eNCT_Instanced>
 {

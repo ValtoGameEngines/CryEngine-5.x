@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "DeathManager.h"
@@ -8,6 +8,7 @@
 #include <CryAISystem/IAIGroupProxy.h>
 #include <CryAISystem/ITargetTrackManager.h>
 #include <CryAISystem/VisionMapTypes.h>
+#include <CryCore/functor.h>
 
 //
 //   Victim Detection
@@ -30,16 +31,21 @@ namespace GameAI
 		, m_rayID(0)
 	{
 		assert(gEnv->pAISystem);
-		gEnv->pAISystem->RegisterListener(this);
+		gEnv->pAISystem->RegisterSystemComponent(this);
+
+		gEnv->pAISystem->Callbacks().AgentDied().Add(functor(*this, &DeathManager::OnAgentDeath));
 	}
 
 	DeathManager::~DeathManager()
 	{
 		if (gEnv->pAISystem)
-			gEnv->pAISystem->UnregisterListener(this);
+		{
+			gEnv->pAISystem->Callbacks().AgentDied().Remove(functor(*this, &DeathManager::OnAgentDeath));
+			gEnv->pAISystem->UnregisterSystemComponent(this);
+		}
 	}
 
-	void DeathManager::Update()
+	void DeathManager::GameUpdate()
 	{
 		ProcessDeferredDeathReactions();
 	}
@@ -50,9 +56,10 @@ namespace GameAI
 		{
 			if (IAIObject* pAI = pObjectEntity->GetAI())
 			{
-				if (IAIActor* pAIActor = pAI->CastToIAIActor())
+				if (pAI->CastToIAIActor() != nullptr)
 				{
-					gEnv->pAISystem->SendSignal(SIGNALFILTER_GROUPONLY_EXCEPT, AISIGNAL_DEFAULT, "GroupMemberGrabbedByPlayer", pAI);
+					const AISignals::SignalSharedPtr pSignal = gEnv->pAISystem->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, gEnv->pAISystem->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnGroupMemberGrabbedByPlayer(), pAI->GetEntityID());
+					gEnv->pAISystem->SendSignal(AISignals::ESignalFilter::SIGNALFILTER_GROUPONLY_EXCEPT, pSignal);
 				}
 			}
 		}
@@ -65,7 +72,6 @@ namespace GameAI
 		EntityId closestMemberID = 0;
 		EntityId closestWitnessMemberID = 0;
 		float closestDistSq = FLT_MAX;
-		float closestWitnessDistSq = FLT_MAX;
 
 		int groupID = deadAgent.GetGroupID();
 		int memberCount = aiSystem.GetGroupCount(groupID);
@@ -174,7 +180,8 @@ namespace GameAI
 			if (IAIGroupProxy* group = aiSystem.GetAIGroupProxy(ddr.groupID))
 			{
 				InjectDeadGroupMemberDataIntoScriptTable(group->GetScriptTable(), ddr.victimID, ddr.killerID, ddr.deathPos);
-				aiSystem.SendSignal(SIGNALFILTER_GROUPONLY, AISIGNAL_DEFAULT, "GroupMemberDied", arbitraryMember.GetAIObject());
+				const AISignals::SignalSharedPtr pSignal = gEnv->pAISystem->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, gEnv->pAISystem->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnGroupMemberDied(), arbitraryMember.GetAIObject() ? arbitraryMember.GetAIObject()->GetEntityID() : INVALID_ENTITYID);
+				aiSystem.SendSignal(AISignals::ESignalFilter::SIGNALFILTER_GROUPONLY_EXCEPT, pSignal);
 			}
 		}
 
@@ -186,7 +193,7 @@ namespace GameAI
 		if (witness)
 		{
 			InjectDeadGroupMemberDataIntoScriptTable(witness.GetScriptTable(), ddr.victimID, ddr.killerID, ddr.deathPos);
-			witness.SetSignal(AISIGNAL_DEFAULT, "WatchedMateDie");
+			witness.SetSignal(gEnv->pAISystem->GetSignalManager()->CreateSignal(AISIGNAL_DEFAULT, gEnv->pAISystem->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnWatchMeDie()));
 
 			#ifdef BUILD_WITH_DEATH_MANAGER_DEBUG_INFORMATION
 			if (g_pGameCVars->ai_DebugDeferredDeath)
@@ -255,7 +262,7 @@ namespace GameAI
 				#endif
 
 				InjectDeadGroupMemberDataIntoScriptTable(agent.GetScriptTable(), deadBody.entityID, deadBody.killerID, deadBody.position);
-				agent.SetSignal(0, "SpottedDeadGroupMember");
+				agent.SetSignal(gEnv->pAISystem->GetSignalManager()->CreateSignal(AISIGNAL_INCLUDE_DISABLED, gEnv->pAISystem->GetSignalManager()->GetBuiltInSignalDescriptions().GetOnSpottedDeadGroupMember()));
 
 				// Stimulate finder so that he gets scared of the body (with killer's ID)
 				// This only happens if the agent doesn't have an attention target.
@@ -431,9 +438,9 @@ namespace GameAI
 		}
 	}
 
-	void DeathManager::OnAgentUpdate(EntityId entityID)
+	void DeathManager::OnActorUpdate(IAIObject* pAIObject, IAIObject::EUpdateType type, float frameDelta)
 	{
-		Agent agent(entityID);
+		Agent agent(pAIObject);
 		if (agent)
 		{
 			CheckDeadBodyVisibilityFor(agent);

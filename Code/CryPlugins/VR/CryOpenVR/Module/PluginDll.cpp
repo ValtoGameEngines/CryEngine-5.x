@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "PluginDll.h"
@@ -13,33 +13,25 @@ namespace CryVR
 {
 namespace OpenVR {
 
-	float CPlugin_OpenVR::s_hmd_quad_distance = 0.25f;
-	float CPlugin_OpenVR::s_hmd_quad_width = 1.0f;
-	int CPlugin_OpenVR::s_hmd_quad_absolute = 1;
-
 CPlugin_OpenVR::~CPlugin_OpenVR()
 {
-	CryVR::OpenVR::Resources::Shutdown();
-
-	if (IConsole* const pConsole = gEnv->pConsole)
+	ISystem* pSystem = GetISystem();
+	if (pSystem)
 	{
-		pConsole->UnregisterVariable("hmd_quad_distance");
-		pConsole->UnregisterVariable("hmd_quad_width");
-		pConsole->UnregisterVariable("hmd_quad_absolute");
+		pSystem->GetHmdManager()->UnregisterDevice(GetName());
 	}
 
-	GetISystem()->GetISystemEventDispatcher()->RemoveListener(this);
+	CryVR::OpenVR::Resources::Shutdown();
+
+	if (pSystem)
+	{
+		pSystem->GetISystemEventDispatcher()->RemoveListener(this);
+	}
 }
 
 bool CPlugin_OpenVR::Initialize(SSystemGlobalEnvironment& env, const SSystemInitParams& initParams)
 {
-	GetISystem()->GetISystemEventDispatcher()->RegisterListener(this);
-
-	REGISTER_CVAR2("hmd_quad_distance", &s_hmd_quad_distance, s_hmd_quad_distance, VF_NULL, "Distance between eyes and UI quad");
-
-	REGISTER_CVAR2("hmd_quad_width", &s_hmd_quad_width, s_hmd_quad_width, VF_NULL, "Width of the UI quad in meters");
-
-	REGISTER_CVAR2("hmd_quad_absolute", &s_hmd_quad_absolute, s_hmd_quad_absolute, VF_NULL, "Should quads be placed relative to the HMD or in absolute tracking space? (Default = 1: Absolute UI positioning)");
+	GetISystem()->GetISystemEventDispatcher()->RegisterListener(this,"CPlugin_OpenVR");
 
 	return true;
 }

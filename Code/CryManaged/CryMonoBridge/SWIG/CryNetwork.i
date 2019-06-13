@@ -7,7 +7,11 @@
 #include <CryNetwork/ICryOnlineStorage.h>
 #include <CryNetwork/ISimpleHttpServer.h>
 %}
+
+%typemap(csbase) INetwork::ENetContextCreationFlags "uint"
+
 %csconstvalue("0xFFFFFFFFu") eEA_All;
+%ignore INetworkEngineModule;
 %ignore ISerializableInfo;
 %ignore IBreakDescriptionInfo::SerialiseSimpleBreakage;
 %ignore INetSender::ser;

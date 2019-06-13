@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -17,6 +17,7 @@ History:
 #define __ScreenLayoutManager_H__
 
 #include "IUIDraw.h" // For alignment flags.
+#include <CryRenderer/IRenderer.h>
 
 typedef uint8 ScreenLayoutStates;
 

@@ -1,16 +1,17 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #include <CryString/StringUtils.h>
 #include <CryCore/Platform/platform.h>
 #include <CrySystem/ISystem.h>
-#include <CrySystem/CryUnitTest.h>
+#include <CrySystem/Testing/ITestSystem.h>
+#include <CrySystem/Testing/CryTest.h>
 #include <CryExtension/RegFactoryNode.h>
 #include <CryExtension/ICryFactoryRegistryImpl.h>
 #include <CryString/UnicodeFunctions.h>
 #include <CrySystem/CryUtils.h>
-#include <CryCore/Platform/CryWindows.h>
+#include <CryFlowGraph/IFlowBaseNode.h>
 
 //////////////////////////////////////////////////////////////////////////
 // Global environment variable.
@@ -22,12 +23,119 @@ SSystemGlobalEnvironment gEnv;
 extern SSystemGlobalEnvironment gEnv;
 	#endif
 #else
-struct SSystemGlobalEnvironment* gEnv = NULL;
+struct SSystemGlobalEnvironment* gEnv = nullptr;
 #endif
 
-#if defined(_LAUNCHER) && (defined(_RELEASE) || CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID || CRY_PLATFORM_APPLE || CRY_PLATFORM_ORBIS) || !defined(_LIB)
+#if defined(CRY_IS_MONOLITHIC_BUILD) && defined(_LAUNCHER)
+// Include common type defines for static linking
+// Manually instantiate templates as needed here.
+#include <CryCore/Common_TypeInfo.h>
+STRUCT_INFO_T_INSTANTIATE(Vec2_tpl, <float>)
+STRUCT_INFO_T_INSTANTIATE(Vec2_tpl, <int>)
+STRUCT_INFO_T_INSTANTIATE(Vec4_tpl, <short>)
+STRUCT_INFO_T_INSTANTIATE(Vec3_tpl, <int>)
+STRUCT_INFO_T_INSTANTIATE(Ang3_tpl, <float>)
+STRUCT_INFO_T_INSTANTIATE(Quat_tpl, <float>)
+STRUCT_INFO_T_INSTANTIATE(Plane_tpl, <float>)
+STRUCT_INFO_T_INSTANTIATE(Matrix33_tpl, <float>)
+STRUCT_INFO_T_INSTANTIATE(Color_tpl, <float>)
+STRUCT_INFO_T_INSTANTIATE(Color_tpl, <uint8>)
+#endif
+
+#if CRY_PLATFORM_WINAPI && defined(CRY_IS_APPLICATION) 
+
+template<typename T>
+struct LazyInstance
+{
+	using storage_t = typename std::aligned_storage<sizeof(T), alignof(T)>::type;
+	storage_t storage;
+	bool initialized = false;
+
+	~LazyInstance()
+	{
+		if(initialized)
+		{
+			reinterpret_cast<T*>(&storage)->~T();
+		}
+	}
+
+	T* operator->() 
+	{
+		return static_cast<T*>(*this);
+	}
+
+	operator T* ()
+	{
+		IF_UNLIKELY(!initialized)
+		{
+			new (&storage)T;
+			initialized = true;
+		}
+		return reinterpret_cast<T*>(&storage);
+	}
+};
+
+// This belongs to the ClassFactoryManager::the() singleton in ClassFactory.h and must only exist in executables, not in DLLs.
+#include <CrySerialization/yasli/ClassFactory.h>
+
+#if defined(NOT_USE_CRY_MEMORY_MANAGER)
+extern "C" DLL_EXPORT yasli::ClassFactoryManager* GetYasliClassFactoryManager()
+{
+	// Cannot be used by code that uses CryMemoryManager as it might not be initialized yet.
+	static yasli::ClassFactoryManager* g_classFactoryManager = nullptr;
+	if (g_classFactoryManager == nullptr)
+	{
+		g_classFactoryManager = new yasli::ClassFactoryManager();
+	}
+	return g_classFactoryManager;
+}
+#else
+// We cannot initialize g_pClassFactoryManager as a local static because during certain 
+// scenarios we cannot be sure that the mutex guarding the function local static is initialized. 
+// Also we cannot instantiate the ClassFactoryManager as a global static because this function 
+// is called during global initialization of other other objects and the initialization order 
+// of globals is undefined.
+static LazyInstance<yasli::ClassFactoryManager> g_pClassFactoryManager;
+extern "C" DLL_EXPORT yasli::ClassFactoryManager* GetYasliClassFactoryManager()
+{
+	return g_pClassFactoryManager;
+}
+#endif
+
+#endif // CRY_PLATFORM_WINAPI && defined(CRY_IS_APPLICATION)
+
+#if (defined(_LAUNCHER) && defined(CRY_IS_MONOLITHIC_BUILD)) || !defined(_LIB)
 //The reg factory is used for registering the different modules along the whole project
-struct SRegFactoryNode* g_pHeadToRegFactories = 0;
+struct SRegFactoryNode* g_pHeadToRegFactories = nullptr;
+std::vector<const char*> g_moduleCommands;
+std::vector<const char*> g_moduleCVars;
+
+extern "C" DLL_EXPORT void CleanupModuleCVars()
+{
+	if (auto pConsole = gEnv->pConsole)
+	{
+		// Unregister all commands that were registered from within the plugin/module
+		for (auto& it : g_moduleCommands)
+		{
+			pConsole->RemoveCommand(it);
+		}
+		g_moduleCommands.clear();
+
+		// Unregister all CVars that were registered from within the plugin/module
+		for (auto& it : g_moduleCVars)
+		{
+			pConsole->UnregisterVariable(it);
+		}
+		g_moduleCVars.clear();
+	}
+}
+#endif
+
+#if !defined(CRY_IS_MONOLITHIC_BUILD)  || defined(_LAUNCHER)
+extern "C" DLL_EXPORT SRegFactoryNode* GetHeadToRegFactories()
+{
+	return g_pHeadToRegFactories;
+}
 #endif
 
 #if !defined(_LIB) || defined(_LAUNCHER)
@@ -38,6 +146,10 @@ struct SRegFactoryNode* g_pHeadToRegFactories = 0;
 	#include <CryMath/ISplineSerialization_impl.h>
 
 	#include <CryCore/TypeInfo_impl.h>
+	#include <CryMemory/VirtualMemory_impl.h>
+	#if CRY_PLATFORM_ORBIS
+		#include <CryMemory/VirtualMemory_impl_sce.h>
+	#endif
 
 	#define CRY_PLATFORM_IMPL_H_FILE 1
 	#include <CryCore/CryTypeInfo.inl>
@@ -45,10 +157,6 @@ struct SRegFactoryNode* g_pHeadToRegFactories = 0;
 		#include "WinBase.inl"
 	#endif
 	#undef CRY_PLATFORM_IMPL_H_FILE
-
-// Define UnitTest static variables
-CryUnitTest::Test* CryUnitTest::Test::m_pFirst = 0;
-CryUnitTest::Test* CryUnitTest::Test::m_pLast = 0;
 
 	#if CRY_PLATFORM_WINDOWS
 void CryPureCallHandler()
@@ -63,15 +171,14 @@ void CryInvalidParameterHandler(
   unsigned int line,
   uintptr_t pReserved)
 {
-	//size_t i;
-	//char sFunc[128];
-	//char sExpression[128];
-	//char sFile[128];
-	//wcstombs_s( &i,sFunc,sizeof(sFunc),function,_TRUNCATE );
-	//wcstombs_s( &i,sExpression,sizeof(sExpression),expression,_TRUNCATE );
-	//wcstombs_s( &i,sFile,sizeof(sFile),file,_TRUNCATE );
-	//CryFatalError( "Invalid parameter detected in function %s. File: %s Line: %d, Expression: %s",sFunc,sFile,line,sExpression );
-	CryFatalError("Invalid parameter detected in CRT function");
+	size_t i;
+	char sFunc[128];
+	char sExpression[128];
+	char sFile[128];
+	wcstombs_s(&i, sFunc, sizeof(sFunc), function, _TRUNCATE);
+	wcstombs_s(&i, sExpression, sizeof(sExpression), expression, _TRUNCATE);
+	wcstombs_s(&i, sFile, sizeof(sFile), file, _TRUNCATE);
+	CryFatalError("Invalid parameter detected in function %s. File: %s Line: %d, Expression: %s", sFunc, sFile, line, sExpression);
 }
 
 void InitCRTHandlers()
@@ -88,10 +195,6 @@ void InitCRTHandlers() {}
 //////////////////////////////////////////////////////////////////////////
 extern "C" DLL_EXPORT void ModuleInitISystem(ISystem* pSystem, const char* moduleName)
 {
-	#if defined(USE_CRY_ASSERT)
-	CryAssertSetGlobalFlagAddress(pSystem->GetAssertFlagAddress());
-	#endif
-
 	if (gEnv) // Already registered.
 		return;
 
@@ -108,14 +211,23 @@ extern "C" DLL_EXPORT void ModuleInitISystem(ISystem* pSystem, const char* modul
 		pCryFactoryImpl->RegisterFactories(g_pHeadToRegFactories);
 	}
 	#endif
-	#ifdef CRY_UNIT_TESTING
+	#ifdef CRY_TESTING
 	// Register All unit tests of this module.
 	if (pSystem)
 	{
-		if (CryUnitTest::IUnitTestManager* pTestManager = pSystem->GetITestSystem()->GetIUnitTestManager())
-			pTestManager->CreateTests(CryUnitTest::Test::m_pFirst, moduleName);
+		auto pTestSystem = pSystem->GetITestSystem();
+		if (pTestSystem)
+		{
+			for (CryTest::CTestFactory* pFactory = CryTest::CTestFactory::GetFirstInstance();
+				pFactory != nullptr;
+				pFactory = pFactory->GetNextInstance())
+			{
+				pFactory->SetModuleName(moduleName);
+				pTestSystem->AddFactory(pFactory);
+			}
+		}
 	}
-	#endif //CRY_UNIT_TESTING
+	#endif //CRY_TESTING
 }
 
 int g_iTraceAllocations = 0;
@@ -130,9 +242,53 @@ int g_iTraceAllocations = 0;
 	#include <CryCore/Assert/CryAssert_impl.h>
 
 //////////////////////////////////////////////////////////////////////////
+bool CryInitializeEngine(SSystemInitParams& startupParams, bool bManualEngineLoop)
+{
+	CryFindRootFolderAndSetAsCurrentWorkingDirectory();
+
+#if !defined(CRY_IS_MONOLITHIC_BUILD)
+	CCryLibrary systemLibrary(CryLibraryDefName("CrySystem"));
+	if (!systemLibrary.IsLoaded())
+	{
+		string errorStr = string().Format("Failed to load the " CryLibraryDefName("CrySystem") " library!");
+		CryMessageBox(errorStr.c_str(), "Engine initialization failed!");
+		return false;
+	}
+
+	PFNCREATESYSTEMINTERFACE CreateSystemInterface = systemLibrary.GetProcedureAddress<PFNCREATESYSTEMINTERFACE>("CreateSystemInterface");
+	if (CreateSystemInterface == nullptr)
+	{
+		string errorStr = string().Format(CryLibraryDefName("CrySystem") " library was invalid, entry-point not found!");
+		CryMessageBox(errorStr.c_str(), "Engine initialization failed!");
+
+		return false;
+	}
+#endif
+
+	if (CreateSystemInterface(startupParams, bManualEngineLoop) != nullptr)
+	{
+#if !defined(CRY_IS_MONOLITHIC_BUILD)
+		if (bManualEngineLoop)
+		{
+			// Forward ownership to the function caller
+			// This is done since the engine loop will be updated outside of this function scope
+			// In other cases we would be exiting the engine at this point.
+			systemLibrary.ReleaseOwnership();
+		}
+#endif
+	}
+	else
+	{
+		return false;
+	}
+
+	return true;
+}
+
+//////////////////////////////////////////////////////////////////////////
 void CrySleep(unsigned int dwMilliseconds)
 {
-	Sleep(dwMilliseconds);
+	::Sleep(dwMilliseconds);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -190,209 +346,11 @@ void CryDebugBreak()
 	}
 }
 
-	#if CRY_PLATFORM_WINAPI
-
-//////////////////////////////////////////////////////////////////////////
-EQuestionResult CryMessageBox(const char* lpText, const char* lpCaption, EMessageBox uType)
-{
-#if CRY_PLATFORM_WINDOWS
-	#if !defined(RESOURCE_COMPILER)
-	ICVar* const pCVar = gEnv->pConsole ? gEnv->pConsole->GetCVar("sys_no_crash_dialog") : NULL;
-	if ((pCVar && pCVar->GetIVal() != 0) || gEnv->bNoAssertDialog)
-	{
-		return eQR_None;
-	}
-	#endif
-
-	if (gEnv && gEnv->pSystem)
-	{
-		return gEnv->pSystem->ShowMessage(lpText, lpCaption, uType);
-	}
-#endif
-	return eQR_None;
-}
-
-//////////////////////////////////////////////////////////////////////////
-bool CryCreateDirectory(const char* lpPathName)
-{
-	// Convert from UTF-8 to UNICODE
-	wstring widePath;
-	Unicode::Convert(widePath, lpPathName);
-
-	const DWORD dwAttr = ::GetFileAttributesW(widePath.c_str());
-	if (dwAttr != INVALID_FILE_ATTRIBUTES && (dwAttr & FILE_ATTRIBUTE_DIRECTORY) != 0)
-	{
-		return true;
-	}
-
-	return ::CreateDirectoryW(widePath.c_str(), 0) != 0;
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CryGetCurrentDirectory(unsigned int nBufferLength, char* lpBuffer)
-{
-	if (nBufferLength <= 0 || !lpBuffer)
-	{
-		return;
-	}
-
-	*lpBuffer = 0;
-
-	// Get directory in UTF-16
-	std::vector<wchar_t> buffer;
-	{
-		const size_t requiredLength = ::GetCurrentDirectoryW(0, 0);
-
-		if (requiredLength <= 0)
-		{
-			return;
-		}
-
-		buffer.resize(requiredLength, 0);
-
-		if (::GetCurrentDirectoryW(requiredLength, &buffer[0]) != requiredLength - 1)
-		{
-			return;
-		}
-	}
-
-	// Convert to UTF-8
-	if (Unicode::Convert<Unicode::eEncoding_UTF16, Unicode::eEncoding_UTF8>(lpBuffer, nBufferLength, &buffer[0]) > nBufferLength)
-	{
-		*lpBuffer = 0;
-	}
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CrySetCurrentWorkingDirectory(const char* szWorkingDirectory)
-{
-	SetCurrentDirectoryW(Unicode::Convert<wstring>(szWorkingDirectory).c_str());
-}
-
-//////////////////////////////////////////////////////////////////////////
-		#include <CryString/CryPath.h>
-void CryGetExecutableFolder(unsigned int pathSize, char* szPath)
-{
-	WCHAR filePath[512];
-	size_t nLen = GetModuleFileNameW(CryGetCurrentModule(), filePath, CRY_ARRAY_COUNT(filePath));
-
-	if (nLen >= CRY_ARRAY_COUNT(filePath))
-	{
-		CryFatalError("The path to the current executable exceeds the expected length. TruncatedPath:%s", filePath);
-	}
-
-	if (nLen <= 0)
-	{
-		CryFatalError("Unexpected error encountered trying to get executable path. GetModuleFileNameW failed.");
-	}
-
-	if (wchar_t* pathEnd = wcsrchr(filePath, L'\\'))
-	{
-		pathEnd[1] = L'\0';
-	}
-
-	size_t requiredLength = Unicode::Convert(szPath, pathSize, filePath);
-	if (requiredLength > pathSize)
-	{
-		CryFatalError("Executable path is to long. MaxPathSize:%u, PathSize:%u, Path:%s", pathSize, (uint)requiredLength, filePath);
-	}
-}
-
-//////////////////////////////////////////////////////////////////////////
-int CryGetWritableDirectory(unsigned int nBufferLength, char* lpBuffer)
-{
-	return 0;
-}
-
-//////////////////////////////////////////////////////////////////////////
-short CryGetAsyncKeyState(int vKey)
-{
-		#if CRY_PLATFORM_WINDOWS
-	return GetAsyncKeyState(vKey);
-		#else
-	return 0;
-		#endif
-}
-
-//////////////////////////////////////////////////////////////////////////
-void* CryCreateCriticalSection()
-{
-	CRITICAL_SECTION* pCS = new CRITICAL_SECTION;
-	InitializeCriticalSection(pCS);
-	return pCS;
-}
-
-void CryCreateCriticalSectionInplace(void* pCS)
-{
-	InitializeCriticalSection((CRITICAL_SECTION*)pCS);
-}
-//////////////////////////////////////////////////////////////////////////
-void CryDeleteCriticalSection(void* cs)
-{
-	CRITICAL_SECTION* pCS = (CRITICAL_SECTION*)cs;
-	if (pCS->LockCount >= 0)
-		CryFatalError("Critical Section hanging lock");
-	DeleteCriticalSection(pCS);
-	delete pCS;
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CryDeleteCriticalSectionInplace(void* cs)
-{
-	CRITICAL_SECTION* pCS = (CRITICAL_SECTION*)cs;
-	if (pCS->LockCount >= 0)
-		CryFatalError("Critical Section hanging lock");
-	DeleteCriticalSection(pCS);
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CryEnterCriticalSection(void* cs)
-{
-	EnterCriticalSection((CRITICAL_SECTION*)cs);
-}
-
-//////////////////////////////////////////////////////////////////////////
-bool CryTryCriticalSection(void* cs)
-{
-	return TryEnterCriticalSection((CRITICAL_SECTION*)cs) != 0;
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CryLeaveCriticalSection(void* cs)
-{
-	LeaveCriticalSection((CRITICAL_SECTION*)cs);
-}
-
-//////////////////////////////////////////////////////////////////////////
-uint32 CryGetFileAttributes(const char* lpFileName)
-{
-	// Normal GetFileAttributes not available anymore in non desktop applications (eg Durango)
-	WIN32_FILE_ATTRIBUTE_DATA data;
-	BOOL res;
-		#if CRY_PLATFORM_DURANGO
-	res = GetFileAttributesExA(lpFileName, GetFileExInfoStandard, &data);
-		#else
-	res = GetFileAttributesEx(lpFileName, GetFileExInfoStandard, &data);
-		#endif
-	return res ? data.dwFileAttributes : -1;
-}
-
-//////////////////////////////////////////////////////////////////////////
-bool CrySetFileAttributes(const char* lpFileName, uint32 dwFileAttributes)
-{
-		#if CRY_PLATFORM_DURANGO
-	return SetFileAttributesA(lpFileName, dwFileAttributes) != 0;
-		#else
-	return SetFileAttributes(lpFileName, dwFileAttributes) != 0;
-		#endif
-}
-
-	#endif // CRY_PLATFORM_WINAPI
 
 //////////////////////////////////////////////////////////////////////////
 void CryFindRootFolderAndSetAsCurrentWorkingDirectory()
 {
-	char szEngineRootDir[_MAX_PATH];
+	char szEngineRootDir[_MAX_PATH] = "";
 	CryFindEngineRootFolder(CRY_ARRAY_COUNT(szEngineRootDir), szEngineRootDir);
 
 #if CRY_PLATFORM_WINAPI || CRY_PLATFORM_LINUX
@@ -409,7 +367,7 @@ void CryFindEngineRootFolder(unsigned int engineRootPathSize, char* szEngineRoot
 		#elif CRY_PLATFORM_POSIX
 	char osSeperator = '/';
 		#endif
-	char szExecFilePath[_MAX_PATH];
+	char szExecFilePath[_MAX_PATH] = "";
 	CryGetExecutableFolder(CRY_ARRAY_COUNT(szExecFilePath), szExecFilePath);
 
 	string strTempPath(szExecFilePath);
@@ -424,9 +382,7 @@ void CryFindEngineRootFolder(unsigned int engineRootPathSize, char* szEngineRoot
 			strTempPath.erase(nCurDirSlashPos + 1, string::npos);
 			strTempPath.append(i == 0 ? "Engine" : "engine");
 
-			// Does directory exist
-			struct stat info;
-			if (stat(strTempPath.c_str(), &info) == 0 && (info.st_mode & S_IFMT) == S_IFDIR)
+			if(CryDirectoryExists(strTempPath.c_str()))
 			{
 				bFoundMatch = true;
 				break;
@@ -440,9 +396,9 @@ void CryFindEngineRootFolder(unsigned int engineRootPathSize, char* szEngineRoot
 		nCurDirSlashPos = strTempPath.rfind(osSeperator, nCurDirSlashPos - 1);
 
 	}
-	while (nCurDirSlashPos > 0);
+	while (nCurDirSlashPos != 0 && nCurDirSlashPos != string::npos);
 
-	if (nCurDirSlashPos == 0)
+	if (nCurDirSlashPos == 0 || nCurDirSlashPos == string::npos)
 	{
 		CryFatalError("Unable to locate CryEngine root folder. Ensure that the 'engine' folder exists in your CryEngine root directory");
 		return;
@@ -455,35 +411,7 @@ void CryFindEngineRootFolder(unsigned int engineRootPathSize, char* szEngineRoot
 	}
 }
 
-#elif CRY_PLATFORM_ORBIS
-void CryFindEngineRootFolder(unsigned int engineRootPathSize, char* szEngineRootPath)
-{
-	cry_strcpy(szEngineRootPath, engineRootPathSize, ".");
-}
-
-void CryGetExecutableFolder(unsigned int nBufferLength, char* lpBuffer)
-{
-	CryFindEngineRootFolder(nBufferLength, lpBuffer);
-}
-
-#elif CRY_PLATFORM_ANDROID
-
-void CryFindEngineRootFolder(unsigned int engineRootPathSize, char* szEngineRootPath)
-{
-	// Hack! Android currently does not support a directory layout, there is an explicit search in main for GameSDK/GameData.pak
-	// and the executable folder is not related to the engine or game folder. - 18/03/2016
-	cry_strcpy(szEngineRootPath, engineRootPathSize, CryGetProjectStoragePath());
-}
-
 #endif 
-
-#if CRY_PLATFORM_DURANGO
-HMODULE DurangoLoadLibrary(const char* libName)
-{
-	HMODULE h = ::LoadLibraryExA(libName, 0, 0);
-	return h;
-}
-	#endif
 
 int64 CryGetTicks()
 {
@@ -492,39 +420,75 @@ int64 CryGetTicks()
 	return li.QuadPart;
 }
 
-#endif //!defined(_LIB) || defined(_LAUNCHER)
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Threads implementation. For static linking it must be declared inline otherwise creating multiple symbols
-////////////////////////////////////////////////////////////////////////////////////////////////////////////
-#if defined(_LIB) && !defined(_LAUNCHER)
-	#define THR_INLINE inline
-#else
-	#define THR_INLINE
+#if CRY_PLATFORM_WINAPI
+#include "platform_impl_winapi.inl"
+#elif CRY_PLATFORM_ANDROID
+#include "platform_impl_android.inl"
+#elif CRY_PLATFORM_ORBIS
+#include "platform_impl_orbis.inl"
+#elif CRY_PLATFORM_MAC
+#include "platform_impl_mac.inl"
 #endif
+
+#if CRY_PLATFORM_POSIX
+#include "platform_impl_posix.inl"
+#endif
+
+// Functions that depend on the platform-specific includes below
+
+EQuestionResult CryMessageBox(const char* szText, const char* szCaption, EMessageBox type)
+{
+	if (gEnv && gEnv->bUnattendedMode)
+	{
+		return eQR_None;
+	}
+
+	if (gEnv && gEnv->pSystem && gEnv->pSystem->GetUserCallback() != nullptr)
+	{
+		return gEnv->pSystem->GetUserCallback()->ShowMessage(szText, szCaption, type);
+	}
+
+#if !defined(CRY_PLATFORM_MOBILE) && !defined(CRY_PLATFORM_LINUX)
+	// Invoke platform-specific implementation
+	EQuestionResult result = CryMessageBoxImpl(szText, szCaption, type);
+#else
+	EQuestionResult result = eQR_None;
+#endif
+
+	if (gEnv && gEnv->pSystem && gEnv->pLog)
+	{
+		CryLogAlways("Messagebox: cap: %s  text:%s\n", szCaption != nullptr ? szCaption : " ", szText != nullptr ? szText : " ");
+	}
+	else
+	{
+		printf("Messagebox: cap: %s  text:%s\n", szCaption != nullptr ? szCaption : " ", szText != nullptr ? szText : " ");
+	}
+
+	return result;
+}
+
+EQuestionResult CryMessageBox(const wchar_t* szText, const wchar_t* szCaption, EMessageBox type)
+{
+#if CRY_PLATFORM_WINAPI
+	if (gEnv && gEnv->bUnattendedMode)
+	{
+		return eQR_None;
+	}
+
+	// Invoke platform-specific implementation
+	return CryMessageBoxImpl(szText, szCaption, type);
+#else
+	return eQR_None;
+#endif
+}
 
 //////////////////////////////////////////////////////////////////////////
-//inline void CryDebugStr( const char *format,... )
-//{
-/*
-   #ifdef CRYSYSTEM_EXPORTS
-   va_list	ArgList;
-   char		szBuffer[65535];
-   va_start(ArgList, format);
-   cry_vsprintf(szBuffer, format, ArgList);
-   va_end(ArgList);
-   cry_strcat(szBuffer,"\n");
-   OutputDebugString(szBuffer);
-   #endif
- */
-//}
+// Support for automatic FlowNode types registration
+//////////////////////////////////////////////////////////////////////////
+CAutoRegFlowNodeBase* CAutoRegFlowNodeBase::s_pFirst = nullptr;
+CAutoRegFlowNodeBase* CAutoRegFlowNodeBase::s_pLast = nullptr;
+bool                  CAutoRegFlowNodeBase::s_bNodesRegistered = false;
 
-// load implementation of platform profile marker
-#if !defined(_LIB) || defined(_LAUNCHER)
-	#include <CrySystem/Profilers/FrameProfiler/FrameProfiler_impl.h>
-#endif
-
-#if !defined(_LIB) || defined(_LAUNCHER)
 CRY_ALIGN(64) uint32 BoxSides[0x40 * 8] = {
 	0, 0, 0, 0, 0, 0, 0, 0, //00
 	0, 4, 6, 2, 0, 0, 0, 4, //01
@@ -591,8 +555,17 @@ CRY_ALIGN(64) uint32 BoxSides[0x40 * 8] = {
 	0, 0, 0, 0, 0, 0, 0, 0, //3e
 	0, 0, 0, 0, 0, 0, 0, 0, //3f
 };
-#endif // !_LIB || _LAUNCHER
 
-#if !defined(_LIB) || defined(_LAUNCHER)
-	#include <Cry3DEngine/GeomRef.inl>
+#include <Cry3DEngine/GeomRef.inl>
+#include <CryMath/GeomQuery.inl>
+
+#endif //!defined(_LIB) || defined(_LAUNCHER)
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Threads implementation. For static linking it must be declared inline otherwise creating multiple symbols
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+#if defined(_LIB) && !defined(_LAUNCHER)
+	#define THR_INLINE inline
+#else
+	#define THR_INLINE
 #endif

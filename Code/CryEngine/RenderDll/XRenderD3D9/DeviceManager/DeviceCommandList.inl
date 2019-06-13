@@ -1,10 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
+#pragma once
 
 #include "DeviceObjects.h"
-#if !defined (__DEVICE_COMMAND_LIST_INL__)
-#define __DEVICE_COMMAND_LIST_INL__
 
-#if defined(CRY_USE_GNM_RENDERER)
+#if defined(CRY_RENDERER_GNM)
 #include "GNM/DeviceCommandList_GNM.inl"
 #endif
 
@@ -25,11 +25,17 @@ inline CDeviceNvidiaCommandInterface* CDeviceCommandList::GetNvidiaCommandInterf
 	return reinterpret_cast<CDeviceNvidiaCommandInterface*>(GetNvidiaCommandInterfaceImpl());
 }
 
+inline CDeviceCopyCommandInterface* CDeviceCommandList::GetCopyInterface()
+{
+	return reinterpret_cast<CDeviceCopyCommandInterface*>(GetCopyInterfaceImpl());
+}
+
 inline void CDeviceCommandList::Reset()
 {
 	ZeroStruct(m_graphicsState.pPipelineState);
 	ZeroStruct(m_graphicsState.pResourceLayout);
-	ZeroArray(m_graphicsState.pResources);
+	ZeroArray(m_graphicsState.pResourceSets);
+	ZeroArray(m_graphicsState.pInlineResources);
 	m_graphicsState.stencilRef = -1;
 	m_graphicsState.vertexStreams = nullptr;
 	m_graphicsState.indexStream = nullptr;
@@ -38,7 +44,8 @@ inline void CDeviceCommandList::Reset()
 
 	ZeroStruct(m_computeState.pPipelineState);
 	ZeroStruct(m_computeState.pResourceLayout);
-	ZeroArray(m_computeState.pResources);
+	ZeroArray(m_computeState.pResourceSets);
+	ZeroArray(m_computeState.pInlineResources);
 	m_computeState.requiredResourceBindings = 0;
 	m_computeState.validResourceBindings = 0;
 
@@ -48,6 +55,8 @@ inline void CDeviceCommandList::Reset()
 	m_primitiveTypeForProfiling = eptUnknown;
 	m_profilingStats.Reset();
 #endif
+
+	ClearStateImpl(false);
 }
 
 inline void CDeviceCommandList::LockToThread()
@@ -69,29 +78,54 @@ inline const SProfilingStats& CDeviceCommandList::EndProfilingSection()
 
 ////////////////////////////////////////////////////////////////////////////
 
-inline void CDeviceGraphicsCommandInterface::PrepareUAVsForUse(uint32 viewCount, CGpuBuffer** pViews) const
+inline void CDeviceGraphicsCommandInterface::ClearState(bool bOutputMergerOnly) const
 {
-	PrepareUAVsForUseImpl(viewCount, pViews);
+	ClearStateImpl(bOutputMergerOnly);
 }
 
-inline void CDeviceGraphicsCommandInterface::PrepareRenderTargetsForUse(uint32 targetCount, CTexture** pTargets, SDepthTexture* pDepthTarget, const SResourceView::KeyType* pRenderTargetViews /*= nullptr*/) const
+inline void CDeviceGraphicsCommandInterface::PrepareUAVsForUse(uint32 viewCount, CDeviceBuffer** pViews, bool bCompute) const
 {
-	PrepareRenderTargetsForUseImpl(targetCount, pTargets, pDepthTarget, pRenderTargetViews);
+	PrepareUAVsForUseImpl(viewCount, pViews, bCompute);
 }
 
-inline void CDeviceGraphicsCommandInterface::PrepareResourcesForUse(uint32 bindSlot, CDeviceResourceSet* pResources, ::EShaderStage srvUsage) const
+inline void CDeviceGraphicsCommandInterface::PrepareRenderPassForUse(CDeviceRenderPass& renderPass) const
 {
-	PrepareResourcesForUseImpl(bindSlot, pResources, srvUsage);
+	PrepareRenderPassForUseImpl(renderPass);
+}
+
+inline void CDeviceGraphicsCommandInterface::PrepareResourceForUse(uint32 bindSlot, CTexture* pTexture, const ResourceViewHandle TextureView, ::EShaderStage srvUsage) const
+{
+	PrepareResourceForUseImpl(bindSlot, pTexture, TextureView, srvUsage);
+}
+
+inline void CDeviceGraphicsCommandInterface::PrepareResourcesForUse(uint32 bindSlot, CDeviceResourceSet* pResources) const
+{
+	CRY_ASSERT(bindSlot < EResourceLayoutSlot_Num);
+	PrepareResourcesForUseImpl(bindSlot, pResources);
 }
 
 inline void CDeviceGraphicsCommandInterface::PrepareInlineConstantBufferForUse(uint32 bindSlot, CConstantBuffer* pBuffer, EConstantBufferShaderSlot shaderSlot, EHWShaderClass shaderClass) const
 {
+	CRY_ASSERT(bindSlot < EResourceLayoutSlot_Num);
 	PrepareInlineConstantBufferForUseImpl(bindSlot, pBuffer, shaderSlot, shaderClass);
 }
 
 inline void CDeviceGraphicsCommandInterface::PrepareInlineConstantBufferForUse(uint32 bindSlot, CConstantBuffer* pBuffer, EConstantBufferShaderSlot shaderSlot, ::EShaderStage shaderStages) const
 {
+	CRY_ASSERT(bindSlot < EResourceLayoutSlot_Num);
 	PrepareInlineConstantBufferForUseImpl(bindSlot, pBuffer, shaderSlot, shaderStages);
+}
+
+inline void CDeviceGraphicsCommandInterface::PrepareInlineShaderResourceForUse(uint32 bindSlot, CDeviceBuffer* pBuffer, EShaderResourceShaderSlot shaderSlot, EHWShaderClass shaderClass) const
+{
+	CRY_ASSERT(bindSlot < EResourceLayoutSlot_Num);
+	PrepareInlineShaderResourceForUseImpl(bindSlot, pBuffer, shaderSlot, shaderClass);
+}
+
+inline void CDeviceGraphicsCommandInterface::PrepareInlineShaderResourceForUse(uint32 bindSlot, CDeviceBuffer* pBuffer, EShaderResourceShaderSlot shaderSlot, ::EShaderStage shaderStages) const
+{
+	CRY_ASSERT(bindSlot < EResourceLayoutSlot_Num);
+	PrepareInlineShaderResourceForUseImpl(bindSlot, pBuffer, shaderSlot, shaderStages);
 }
 
 inline void CDeviceGraphicsCommandInterface::PrepareVertexBuffersForUse(uint32 streamCount, uint32 streamMax, const CDeviceInputStream* vertexStreams) const
@@ -109,11 +143,15 @@ inline void CDeviceGraphicsCommandInterface::BeginResourceTransitions(uint32 num
 	BeginResourceTransitionsImpl(numTextures, pTextures, type);
 }
 
-inline void CDeviceGraphicsCommandInterface::SetRenderTargets(uint32 targetCount, CTexture* const* pTargets, const SDepthTexture* pDepthTarget, const SResourceView::KeyType* pRenderTargetViews /*=nullptr*/)
+inline void CDeviceGraphicsCommandInterface::BeginRenderPass(const CDeviceRenderPass& renderPass, const D3DRectangle& renderArea)
 {
-	SetRenderTargetsImpl(targetCount, pTargets, pDepthTarget, pRenderTargetViews);
+	BeginRenderPassImpl(renderPass, renderArea);
 }
 
+inline void CDeviceGraphicsCommandInterface::EndRenderPass(const CDeviceRenderPass& renderPass)
+{
+	EndRenderPassImpl(renderPass);
+}
 inline void CDeviceGraphicsCommandInterface::SetViewports(uint32 vpCount, const D3DViewPort* pViewports)
 {
 	SetViewportsImpl(vpCount, pViewports);
@@ -143,7 +181,7 @@ inline void CDeviceGraphicsCommandInterface::SetResourceLayout(const CDeviceReso
 	{
 		// If a root signature is changed on a command list, all previous root signature bindings
 		// become stale and all newly expected bindings must be set before Draw/Dispatch
-		ZeroArray(m_graphicsState.pResources);
+		ZeroArray(m_graphicsState.pResourceSets);
 
 		m_graphicsState.requiredResourceBindings = pResourceLayout->GetRequiredResourceBindings();
 		m_graphicsState.validResourceBindings = 0;  // invalidate all resource bindings
@@ -156,14 +194,14 @@ inline void CDeviceGraphicsCommandInterface::SetResourceLayout(const CDeviceReso
 	}
 }
 
-inline void CDeviceGraphicsCommandInterface::SetResources(uint32 bindSlot, const CDeviceResourceSet* pResources, ::EShaderStage srvUsage)
+inline void CDeviceGraphicsCommandInterface::SetResources(uint32 bindSlot, const CDeviceResourceSet* pResources)
 {
-	CRY_ASSERT(bindSlot <= EResourceLayoutSlot_Max);
-	if (m_graphicsState.pResources[bindSlot].Set(pResources))
+	CRY_ASSERT(bindSlot < EResourceLayoutSlot_Num);
+	if (m_graphicsState.pResourceSets[bindSlot].Set(pResources))
 	{
 		m_graphicsState.validResourceBindings[bindSlot] = pResources->IsValid();
 
-		SetResourcesImpl(bindSlot, pResources, srvUsage);
+		SetResourcesImpl(bindSlot, pResources);
 
 #if defined(ENABLE_PROFILING_CODE)
 		++m_profilingStats.numResourceSetSwitches;
@@ -173,30 +211,77 @@ inline void CDeviceGraphicsCommandInterface::SetResources(uint32 bindSlot, const
 
 inline void CDeviceGraphicsCommandInterface::SetInlineConstantBuffer(uint32 bindSlot, const CConstantBuffer* pBuffer, EConstantBufferShaderSlot shaderSlot, EHWShaderClass shaderClass)
 {
-	// TODO: remove redundant InlineConstantBuffer sets
-	//	if (m_pCurrentResources[bindSlot] != ((char*)pBuffer->m_base_ptr + pBuffer->m_offset))
+	CRY_ASSERT(bindSlot < EResourceLayoutSlot_Num);
+	// TODO: remove redundant InlineConstantBuffer sets (problem is the offset/size which can change undetected)
+	// if (m_graphicsState.pInlineResources[bindSlot].Set(pBuffer))
 	{
-		//		m_pCurrentResources[bindSlot] = ((char*)pBuffer->m_base_ptr + pBuffer->m_offset);
-
-		m_graphicsState.validResourceBindings[bindSlot] = pBuffer != nullptr;
-		SetInlineConstantBufferImpl(bindSlot, pBuffer, shaderSlot, shaderClass);
+#if _RELEASE
+		m_graphicsState.validResourceBindings[bindSlot] = true;
+#else
+		CRY_ASSERT(pBuffer != nullptr);
+		if ((m_graphicsState.validResourceBindings[bindSlot] = (pBuffer != nullptr)))
+#endif
+			SetInlineConstantBufferImpl(bindSlot, pBuffer, shaderSlot, shaderClass);
 
 #if defined(ENABLE_PROFILING_CODE)
 		++m_profilingStats.numInlineSets;
 #endif
-
 	}
 }
 
 inline void CDeviceGraphicsCommandInterface::SetInlineConstantBuffer(uint32 bindSlot, const CConstantBuffer* pBuffer, EConstantBufferShaderSlot shaderSlot, ::EShaderStage shaderStages)
 {
-	// TODO: remove redundant InlineConstantBuffer sets
-	//	if (m_pCurrentResources[bindSlot] != ((char*)pBuffer->m_base_ptr + pBuffer->m_offset))
+	CRY_ASSERT(bindSlot < EResourceLayoutSlot_Num);
+	// TODO: remove redundant InlineConstantBuffer sets (problem is the offset/size which can change undetected)
+	// if (m_graphicsState.pInlineResources[bindSlot].Set(pBuffer))
 	{
-		//		m_pCurrentResources[bindSlot] = ((char*)pBuffer->m_base_ptr + pBuffer->m_offset);
+#if _RELEASE
+		m_graphicsState.validResourceBindings[bindSlot] = true;
+#else
+		CRY_ASSERT(pBuffer != nullptr);
+		if ((m_graphicsState.validResourceBindings[bindSlot] = (pBuffer != nullptr)))
+#endif
+			SetInlineConstantBufferImpl(bindSlot, pBuffer, shaderSlot, shaderStages);
 
-		m_graphicsState.validResourceBindings[bindSlot] = pBuffer != nullptr;
-		SetInlineConstantBufferImpl(bindSlot, pBuffer, shaderSlot, shaderStages);
+#if defined(ENABLE_PROFILING_CODE)
+		++m_profilingStats.numInlineSets;
+#endif
+	}
+}
+
+inline void CDeviceGraphicsCommandInterface::SetInlineShaderResource(uint32 bindSlot, const CDeviceBuffer* pBuffer, EShaderResourceShaderSlot shaderSlot, EHWShaderClass shaderClass, ResourceViewHandle resourceViewID)
+{
+	CRY_ASSERT(bindSlot < EResourceLayoutSlot_Num);
+	// TODO: remove redundant InlineShaderResource sets (problem is the "Default" view, which can change undetected)
+	//if (m_graphicsState.pInlineResources[bindSlot].Set(pBuffer))
+	{
+#if _RELEASE
+		m_graphicsState.validResourceBindings[bindSlot] = true;
+#else
+		CRY_ASSERT(pBuffer != nullptr);
+		if ((m_graphicsState.validResourceBindings[bindSlot] = (pBuffer != nullptr)))
+#endif
+			SetInlineShaderResourceImpl(bindSlot, pBuffer, shaderSlot, shaderClass, resourceViewID);
+
+#if defined(ENABLE_PROFILING_CODE)
+		++m_profilingStats.numInlineSets;
+#endif
+	}
+}
+
+inline void CDeviceGraphicsCommandInterface::SetInlineShaderResource(uint32 bindSlot, const CDeviceBuffer* pBuffer, EShaderResourceShaderSlot shaderSlot, ::EShaderStage shaderStages, ResourceViewHandle resourceViewID)
+{
+	CRY_ASSERT(bindSlot < EResourceLayoutSlot_Num);
+	// TODO: remove redundant InlineShaderResource sets (problem is the "Default" view, which can change undetected)
+	//if (m_graphicsState.pInlineResources[bindSlot].Set(pBuffer))
+	{
+#if _RELEASE
+		m_graphicsState.validResourceBindings[bindSlot] = true;
+#else
+		CRY_ASSERT(pBuffer != nullptr);
+		if ((m_graphicsState.validResourceBindings[bindSlot] = (pBuffer != nullptr)))
+#endif
+			SetInlineShaderResourceImpl(bindSlot, pBuffer, shaderSlot, shaderStages, resourceViewID);
 
 #if defined(ENABLE_PROFILING_CODE)
 		++m_profilingStats.numInlineSets;
@@ -206,6 +291,7 @@ inline void CDeviceGraphicsCommandInterface::SetInlineConstantBuffer(uint32 bind
 
 inline void CDeviceGraphicsCommandInterface::SetInlineConstants(uint32 bindSlot, uint32 constantCount, float* pConstants)
 {
+	CRY_ASSERT(bindSlot < EResourceLayoutSlot_Num);
 	m_graphicsState.validResourceBindings[bindSlot] = true;
 	SetInlineConstantsImpl(bindSlot, constantCount, pConstants);
 
@@ -243,6 +329,11 @@ inline void CDeviceGraphicsCommandInterface::SetDepthBias(float constBias, float
 	SetDepthBiasImpl(constBias, slopeBias, biasClamp);
 }
 
+inline void CDeviceGraphicsCommandInterface::SetDepthBounds(float fMin, float fMax)
+{
+	SetDepthBoundsImpl(fMin, fMax);
+}
+
 inline void CDeviceGraphicsCommandInterface::Draw(uint32 VertexCountPerInstance, uint32 InstanceCount, uint32 StartVertexLocation, uint32 StartInstanceLocation)
 {
 	if (m_graphicsState.validResourceBindings == m_graphicsState.requiredResourceBindings)
@@ -250,7 +341,7 @@ inline void CDeviceGraphicsCommandInterface::Draw(uint32 VertexCountPerInstance,
 		DrawImpl(VertexCountPerInstance, InstanceCount, StartVertexLocation, StartInstanceLocation);
 
 #if defined(ENABLE_PROFILING_CODE)
-		int nPrimitives;
+		int nPrimitives = VertexCountPerInstance;
 
 		switch (m_primitiveTypeForProfiling)
 		{
@@ -278,6 +369,10 @@ inline void CDeviceGraphicsCommandInterface::Draw(uint32 VertexCountPerInstance,
 			nPrimitives = VertexCountPerInstance;
 			assert(VertexCountPerInstance > 0);
 			break;
+		case ept4ControlPointPatchList:
+			nPrimitives = VertexCountPerInstance / 2;
+			assert(VertexCountPerInstance > 0);
+			break;
 
 	#ifndef _RELEASE
 		default:
@@ -302,7 +397,7 @@ inline void CDeviceGraphicsCommandInterface::DrawIndexed(uint32 IndexCountPerIns
 		DrawIndexedImpl(IndexCountPerInstance, InstanceCount, StartIndexLocation, BaseVertexLocation, StartInstanceLocation);
 
 #if defined(ENABLE_PROFILING_CODE)
-		int nPrimitives;
+		int nPrimitives = IndexCountPerInstance;
 
 		switch (m_primitiveTypeForProfiling)
 		{
@@ -352,21 +447,49 @@ inline void CDeviceGraphicsCommandInterface::ClearSurface(D3DDepthSurface* pView
 	ClearSurfaceImpl(pView, clearFlags, depth, stencil, numRects, pRects);
 }
 
+inline void CDeviceGraphicsCommandInterface::DiscardContents(D3DResource* pResource, uint32 numRects, const D3D11_RECT* pRects)
+{
+	DiscardContentsImpl(pResource, numRects, pRects);
+}
+
+inline void CDeviceGraphicsCommandInterface::DiscardContents(D3DBaseView* pView, uint32 numRects, const D3D11_RECT* pRects)
+{
+	DiscardContentsImpl(pView, numRects, pRects);
+}
+
+inline void CDeviceGraphicsCommandInterface::BeginOcclusionQuery(D3DOcclusionQuery* pQuery)
+{
+	BeginOcclusionQueryImpl(pQuery);
+}
+
+inline void CDeviceGraphicsCommandInterface::EndOcclusionQuery(D3DOcclusionQuery* pQuery)
+{
+	EndOcclusionQueryImpl(pQuery);
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-inline void CDeviceComputeCommandInterface::PrepareUAVsForUse(uint32 viewCount, CGpuBuffer** pViews) const
+inline void CDeviceComputeCommandInterface::PrepareUAVsForUse(uint32 viewCount, CDeviceBuffer** pViews) const
 {
 	PrepareUAVsForUseImpl(viewCount, pViews);
 }
 
-inline void CDeviceComputeCommandInterface::PrepareResourcesForUse(uint32 bindSlot, CDeviceResourceSet* pResources, ::EShaderStage srvUsage) const
+inline void CDeviceComputeCommandInterface::PrepareResourcesForUse(uint32 bindSlot, CDeviceResourceSet* pResources) const
 {
-	PrepareResourcesForUseImpl(bindSlot, pResources, srvUsage);
+	CRY_ASSERT(bindSlot < EResourceLayoutSlot_Num);
+	PrepareResourcesForUseImpl(bindSlot, pResources);
 }
 
 inline void CDeviceComputeCommandInterface::PrepareInlineConstantBufferForUse(uint32 bindSlot, CConstantBuffer* pBuffer, EConstantBufferShaderSlot shaderSlot) const
 {
+	CRY_ASSERT(bindSlot < EResourceLayoutSlot_Num);
 	PrepareInlineConstantBufferForUseImpl(bindSlot, pBuffer, shaderSlot);
+}
+
+inline void CDeviceComputeCommandInterface::PrepareInlineShaderResourceForUse(uint32 bindSlot, CDeviceBuffer* pBuffer, EShaderResourceShaderSlot shaderSlot) const
+{
+	CRY_ASSERT(bindSlot < EResourceLayoutSlot_Num);
+	PrepareInlineShaderResourceForUseImpl(bindSlot, pBuffer, shaderSlot);
 }
 
 inline void CDeviceComputeCommandInterface::SetPipelineState(const CDeviceComputePSO* pDevicePSO)
@@ -387,7 +510,7 @@ inline void CDeviceComputeCommandInterface::SetResourceLayout(const CDeviceResou
 	{
 		// If a root signature is changed on a command list, all previous root signature bindings
 		// become stale and all newly expected bindings must be set before Draw/Dispatch
-		ZeroArray(m_computeState.pResources);
+		ZeroArray(m_computeState.pResourceSets);
 
 		m_computeState.requiredResourceBindings = pResourceLayout->GetRequiredResourceBindings();
 		m_computeState.validResourceBindings = 0;
@@ -400,14 +523,14 @@ inline void CDeviceComputeCommandInterface::SetResourceLayout(const CDeviceResou
 	}
 }
 
-inline void CDeviceComputeCommandInterface::SetResources(uint32 bindSlot, const CDeviceResourceSet* pResources, ::EShaderStage srvUsage)
+inline void CDeviceComputeCommandInterface::SetResources(uint32 bindSlot, const CDeviceResourceSet* pResources)
 {
-	CRY_ASSERT(bindSlot <= EResourceLayoutSlot_Max);
-	if (m_computeState.pResources[bindSlot].Set(pResources))
+	CRY_ASSERT(bindSlot < EResourceLayoutSlot_Num);
+	if (m_computeState.pResourceSets[bindSlot].Set(pResources))
 	{
 		m_computeState.validResourceBindings[bindSlot] = pResources->IsValid();
 
-		SetResourcesImpl(bindSlot, pResources, srvUsage);
+		SetResourcesImpl(bindSlot, pResources);
 
 #if defined(ENABLE_PROFILING_CODE)
 		++m_profilingStats.numResourceSetSwitches;
@@ -417,14 +540,42 @@ inline void CDeviceComputeCommandInterface::SetResources(uint32 bindSlot, const 
 
 inline void CDeviceComputeCommandInterface::SetInlineConstantBuffer(uint32 bindSlot, const CConstantBuffer* pBuffer, EConstantBufferShaderSlot shaderSlot)
 {
-	m_computeState.validResourceBindings[bindSlot] = true;
-	SetInlineConstantBufferImpl(bindSlot, pBuffer, shaderSlot);
+	CRY_ASSERT(bindSlot < EResourceLayoutSlot_Num);
+	// TODO: remove redundant InlineConstantBuffer sets
+	// if (m_computeState.pInlineResources[bindSlot].Set(pBuffer))
+	{
+		m_computeState.validResourceBindings[bindSlot] = pBuffer != nullptr;
+		SetInlineConstantBufferImpl(bindSlot, pBuffer, shaderSlot);
+
+#if defined(ENABLE_PROFILING_CODE)
+		++m_profilingStats.numInlineSets;
+#endif
+	}
+}
+
+inline void CDeviceComputeCommandInterface::SetInlineShaderResource(uint32 bindSlot, const CDeviceBuffer* pBuffer, EShaderResourceShaderSlot shaderSlot, ResourceViewHandle resourceViewID)
+{
+	CRY_ASSERT(bindSlot < EResourceLayoutSlot_Num);
+	if (m_computeState.pInlineResources[bindSlot].Set(pBuffer))
+	{
+		m_computeState.validResourceBindings[bindSlot] = pBuffer != nullptr;
+		SetInlineShaderResourceImpl(bindSlot, pBuffer, shaderSlot, resourceViewID);
+
+#if defined(ENABLE_PROFILING_CODE)
+		++m_profilingStats.numInlineSets;
+#endif
+	}
 }
 
 inline void CDeviceComputeCommandInterface::SetInlineConstants(uint32 bindSlot, uint32 constantCount, float* pConstants)
 {
+	CRY_ASSERT(bindSlot < EResourceLayoutSlot_Num);
 	m_computeState.validResourceBindings[bindSlot] = true;
 	SetInlineConstantsImpl(bindSlot, constantCount, pConstants);
+
+#if defined(ENABLE_PROFILING_CODE)
+	++m_profilingStats.numInlineSets;
+#endif
 }
 
 inline void CDeviceComputeCommandInterface::Dispatch(uint32 X, uint32 Y, uint32 Z)
@@ -432,23 +583,138 @@ inline void CDeviceComputeCommandInterface::Dispatch(uint32 X, uint32 Y, uint32 
 	DispatchImpl(X, Y, Z);
 }
 
-inline void CDeviceComputeCommandInterface::ClearUAV(D3DUAV* pView, const FLOAT Values[4], UINT NumRects, const D3D11_RECT* pRects)
+inline void CDeviceComputeCommandInterface::ClearUAV(D3DUAV* pView, const ColorF& Values, UINT NumRects, const D3D11_RECT* pRects)
 {
-	ClearUAVImpl(pView, Values, NumRects, pRects);
+	ClearUAVImpl(pView, (float*)&Values, NumRects, pRects);
 }
 
-inline void CDeviceComputeCommandInterface::ClearUAV(D3DUAV* pView, const UINT Values[4], UINT NumRects, const D3D11_RECT* pRects)
+inline void CDeviceComputeCommandInterface::ClearUAV(D3DUAV* pView, const ColorI& Values, UINT NumRects, const D3D11_RECT* pRects)
 {
-	ClearUAVImpl(pView, Values, NumRects, pRects);
+	ClearUAVImpl(pView, (UINT*)&Values, NumRects, pRects);
 }
+
+inline void CDeviceComputeCommandInterface::DiscardUAVContents(D3DResource* pResource, uint32 numRects, const D3D11_RECT* pRects)
+{
+	DiscardUAVContentsImpl(pResource, numRects, pRects);
+}
+
+inline void CDeviceComputeCommandInterface::DiscardUAVContents(D3DBaseView* pView, uint32 numRects, const D3D11_RECT* pRects)
+{
+	DiscardUAVContentsImpl(pView, numRects, pRects);
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+inline void CDeviceCopyCommandInterface::Copy(CDeviceBuffer* pSrc, CDeviceBuffer* pDst)
+{
+	CopyImpl(pSrc, pDst);
+}
+
+inline void CDeviceCopyCommandInterface::Copy(D3DBuffer* pSrc, D3DBuffer* pDst)
+{
+	CopyImpl(pSrc, pDst);
+}
+
+inline void CDeviceCopyCommandInterface::Copy(CDeviceTexture* pSrc, CDeviceTexture* pDst)
+{
+	CopyImpl(pSrc, pDst);
+}
+
+inline void CDeviceCopyCommandInterface::Copy(CDeviceTexture* pSrc, D3DTexture* pDst)
+{
+	CopyImpl(pSrc, pDst);
+}
+
+inline void CDeviceCopyCommandInterface::Copy(D3DTexture* pSrc, D3DTexture* pDst)
+{
+	CopyImpl(pSrc, pDst);
+}
+
+inline void CDeviceCopyCommandInterface::Copy(D3DTexture* pSrc, CDeviceTexture* pDst)
+{
+	CopyImpl(pSrc, pDst);
+}
+
+inline void CDeviceCopyCommandInterface::Copy(CDeviceBuffer* pSrc, CDeviceBuffer* pDst, const SResourceRegionMapping& regionMapping)
+{
+	CopyImpl(pSrc, pDst, regionMapping);
+}
+
+inline void CDeviceCopyCommandInterface::Copy(D3DBuffer* pSrc, D3DBuffer* pDst, const SResourceRegionMapping& regionMapping)
+{
+	CopyImpl(pSrc, pDst, regionMapping);
+}
+
+inline void CDeviceCopyCommandInterface::Copy(CDeviceTexture* pSrc, CDeviceTexture* pDst, const SResourceRegionMapping& regionMapping)
+{
+	CopyImpl(pSrc, pDst, regionMapping);
+}
+
+inline void CDeviceCopyCommandInterface::Copy(D3DTexture* pSrc, CDeviceTexture* pDst, const SResourceRegionMapping& regionMapping)
+{
+	CopyImpl(pSrc, pDst, regionMapping);
+}
+
+inline void CDeviceCopyCommandInterface::Copy(const void* pSrc, CConstantBuffer* pDst, const SResourceMemoryAlignment& memoryLayout)
+{
+	CopyImpl(pSrc, pDst, memoryLayout);
+}
+
+inline void CDeviceCopyCommandInterface::Copy(const void* pSrc, CDeviceBuffer* pDst, const SResourceMemoryAlignment& memoryLayout)
+{
+	CopyImpl(pSrc, pDst, memoryLayout);
+}
+
+inline void CDeviceCopyCommandInterface::Copy(const void* pSrc, CDeviceTexture* pDst, const SResourceMemoryAlignment& memoryLayout)
+{
+	CopyImpl(pSrc, pDst, memoryLayout);
+}
+
+inline void CDeviceCopyCommandInterface::Copy(const void* pSrc, CConstantBuffer* pDst, const SResourceMemoryMapping& memoryMapping)
+{
+	CopyImpl(pSrc, pDst, memoryMapping);
+}
+
+inline void CDeviceCopyCommandInterface::Copy(const void* pSrc, CDeviceBuffer* pDst, const SResourceMemoryMapping& memoryMapping)
+{
+	CopyImpl(pSrc, pDst, memoryMapping);
+}
+
+inline void CDeviceCopyCommandInterface::Copy(const void* pSrc, CDeviceTexture* pDst, const SResourceMemoryMapping& memoryMapping)
+{
+	CopyImpl(pSrc, pDst, memoryMapping);
+}
+
+inline void CDeviceCopyCommandInterface::Copy(CDeviceBuffer* pSrc, void* pDst, const SResourceMemoryAlignment& memoryLayout)
+{
+	CopyImpl(pSrc, pDst, memoryLayout);
+}
+
+inline void CDeviceCopyCommandInterface::Copy(CDeviceTexture* pSrc, void* pDst, const SResourceMemoryAlignment& memoryLayout)
+{
+	CopyImpl(pSrc, pDst, memoryLayout);
+}
+
+inline void CDeviceCopyCommandInterface::Copy(CDeviceBuffer* pSrc, void* pDst, const SResourceMemoryMapping& memoryMapping)
+{
+	CopyImpl(pSrc, pDst, memoryMapping);
+}
+
+inline void CDeviceCopyCommandInterface::Copy(CDeviceTexture* pSrc, void* pDst, const SResourceMemoryMapping& memoryMapping)
+{
+	CopyImpl(pSrc, pDst, memoryMapping);
+}
+
+#if CRY_RENDERER_GNM
+	#include "GNM/DeviceCommandList_GNM.inl"
+#endif
+
 
 inline void CDeviceNvidiaCommandInterface::SetModifiedWMode(bool enabled, uint32 numViewports, const float* pA, const float* pB)
 {
-#if defined(CRY_PLATFORM_CONSOLE) || defined(CRY_USE_DX12)
-	CRY_ASSERT_MESSAGE(false, "Only supported on DirectX11, PC");
-#else
+#if defined(USE_NV_API) && (CRY_RENDERER_DIRECT3D >= 110) && (CRY_RENDERER_DIRECT3D < 120)
 	SetModifiedWModeImpl(enabled, numViewports, pA, pB);
+#else
+	CRY_ASSERT_MESSAGE(false, "Only supported on DirectX11, PC");
 #endif
 }
-
-#endif

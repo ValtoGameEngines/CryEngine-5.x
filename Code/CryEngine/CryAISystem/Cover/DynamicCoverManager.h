@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __DynamicCoverManager_h__
 #define __DynamicCoverManager_h__
@@ -47,7 +47,7 @@ public:
 	DynamicCoverManager();
 
 	// IEntityEventListener
-	virtual void OnEntityEvent(IEntity* entity, SEntityEvent& event);
+	virtual void OnEntityEvent(IEntity* entity, const SEntityEvent& event);
 	//~IEntityEventListener
 
 	void AddValidationSegment(const ValidationSegment& segment);
@@ -58,7 +58,7 @@ public:
 	void Reset();
 	void Clear();
 	void ClearValidationSegments();
-	void Update(float updateTime);
+	void Update(const CTimeValue frameStartTime, const float frameDeltaTime);
 
 	void BreakEvent(const Vec3& position, float radius);
 	void MoveEvent(EntityId entityID, const Matrix34& worldTM);
@@ -167,6 +167,9 @@ private:
 	EntityCover        m_entityCover;
 
 	EntityCoverSampler m_entityCoverSampler;
+
+	CTimeValue m_frameStartTime;
+	float      m_frameDeltaTime;
 };
 
 #endif

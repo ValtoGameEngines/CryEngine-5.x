@@ -1,9 +1,7 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
-#include <CryThreading/CryThreadSafeRendererContainer.h>
-#include <CryThreading/CryThreadSafeWorkerContainer.h>
 #include <CryMath/Range.h>
 
 #include "RenderPipeline.h"
@@ -48,7 +46,7 @@ public:
 			if (pCommandLists.size())
 			{
 				gEnv->pJobManager->WaitForJob(jobState);
-				CCryDeviceWrapper::GetObjectFactory().ForfeitCommandLists(std::move(pCommandLists));
+				GetDeviceObjectFactory().ForfeitCommandLists(std::move(pCommandLists));
 			}
 		}
 
@@ -56,7 +54,7 @@ public:
 		{
 			WaitForJobs();
 
-			pCommandLists = CCryDeviceWrapper::GetObjectFactory().AcquireCommandLists(numTasks);
+			pCommandLists = GetDeviceObjectFactory().AcquireCommandLists(numTasks);
 		}
 
 		std::vector<SGraphicsPipelinePassContext> rendList;

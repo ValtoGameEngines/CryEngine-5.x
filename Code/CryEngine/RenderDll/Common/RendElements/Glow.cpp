@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "Glow.h"
@@ -29,8 +29,9 @@ Glow::Glow(const char* name)
 	, m_fGamma(1)
 {
 	CConstantBufferPtr pcb = gcpRendD3D->m_DevBufMan.CreateConstantBuffer(sizeof(SShaderParams), true, true);
+	if (pcb) pcb->SetDebugName("Glow Per-Primitive CB");
 
-	m_primitive.SetInlineConstantBuffer(eConstantBufferShaderSlot_PerBatch, pcb, EShaderStage_Vertex | EShaderStage_Pixel);
+	m_primitive.SetInlineConstantBuffer(eConstantBufferShaderSlot_PerPrimitive, pcb, EShaderStage_Vertex | EShaderStage_Pixel);
 }
 
 void Glow::Load(IXmlNode* pNode)
@@ -75,7 +76,7 @@ bool Glow::PreparePrimitives(const SPreparePrimitivesContext& context)
 
 	// update constants
 	{
-		auto constants = m_primitive.GetConstantManager().BeginTypedConstantUpdate<SShaderParams>(eConstantBufferShaderSlot_PerBatch, EShaderStage_Vertex | EShaderStage_Pixel);
+		auto constants = m_primitive.GetConstantManager().BeginTypedConstantUpdate<SShaderParams>(eConstantBufferShaderSlot_PerPrimitive, EShaderStage_Vertex | EShaderStage_Pixel);
 
 		for (int i = 0; i < context.viewInfoCount; ++i)
 		{
@@ -96,9 +97,10 @@ bool Glow::PreparePrimitives(const SPreparePrimitivesContext& context)
 
 	ValidateMesh();
 
-	m_primitive.SetCustomVertexStream(m_vertexBuffer, eVF_P3F_C4B_T2F, sizeof(SVF_P3F_C4B_T2F));
+	m_primitive.SetCustomVertexStream(m_vertexBuffer, EDefaultInputLayouts::P3F_C4B_T2F, sizeof(SVF_P3F_C4B_T2F));
 	m_primitive.SetCustomIndexStream(m_indexBuffer, Index16);
 	m_primitive.SetDrawInfo(eptTriangleList, 0, 0, GetIndexCount());
+	m_primitive.Compile(context.pass);
 
 	context.pass.AddPrimitive(&m_primitive);
 

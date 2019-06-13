@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 //
 ////////////////////////////////////////////////////////////////////////////
@@ -10,10 +10,12 @@
 
 #include "AnimationDatabase.h"
 
+#include <CryRenderer/IRenderAuxGeom.h>
 #include <CryExtension/CryCreateClassInstance.h>
 
 #include "MannequinUtils.h"
 #include "MannequinDebug.h"
+#include <CrySystem/ConsoleRegistration.h>
 
 const uint32 MAX_ALLOWED_QUEUE_SIZE = 10;
 
@@ -102,8 +104,7 @@ void CActionController::RegisterCVars()
 		REGISTER_CVAR3("mn_fatalerroroninvalidcharinst", s_mnFatalErrorOnInvalidCharInst, 1, VF_CHEAT, "Throw a fatal error when an invalid character instance is detected");
 #endif //!CRYMANNEQUIN_WARN_ABOUT_VALIDITY()
 
-		char channelName[10];
-		cry_strcpy(channelName, "channel0");
+		char channelName[] = "channel0";
 		for (uint32 i = 0; i < MANN_NUMBER_BLEND_CHANNELS; i++)
 		{
 			channelName[7] = '0' + i;
@@ -180,11 +181,13 @@ void CActionController::OnShutdown()
 
 	if (numControllers > 0)
 	{
+#if !defined(EXCLUDE_NORMAL_LOG)
 		for (TActionControllerList::iterator iter = s_actionControllers.begin(); iter != s_actionControllers.end(); ++iter)
 		{
 			CActionController* pAC = *iter;
 			CryLogAlways("ActionController not released - Owner Controller Def: %s", pAC->GetContext().controllerDef.m_filename.c_str());
 		}
+#endif
 		CryFatalError("ActionControllers (%u) not released at shutdown", numControllers);
 	}
 }
@@ -963,9 +966,9 @@ void CActionController::ValidateActions()
 void CActionController::ResolveActionStates()
 {
 	m_scopeFlushMask &= m_activeScopes;
-	ActionScopes scopeFlag=1;
-	for (uint32 i=0; i<m_scopeCount; i++, scopeFlag <<= 1)
+	for (uint32 i = 0; i < m_scopeCount; ++i)
 	{
+		const auto scopeFlag = ActionScopes(1) << i;
 		if (scopeFlag & m_scopeFlushMask)
 		{
 			CActionScope& scope = m_scopeArray[i];
@@ -974,6 +977,17 @@ void CActionController::ResolveActionStates()
 		}
 	}
 	m_scopeFlushMask = 0;
+
+	// Release dangling references.
+	for (uint32 i = 0; i < m_scopeCount; ++i)
+	{
+		const auto scopeFlag = ActionScopes(1) << i;
+		CActionScope& scope = m_scopeArray[i];
+		if (scope.m_pAction && !(scope.m_pAction->m_installedScopeMask & scopeFlag))
+		{
+			scope.m_pAction.reset();
+		}
+	}
 
 	//--- Now delete dead actions
 	for (uint32 i = 0; i < m_endedActions.size(); i++)
@@ -1509,7 +1523,6 @@ void CActionController::Flush()
 	ActionScopes scopeFlag = 1;
 	for (uint32 i=0; i<m_scopeCount; i++, scopeFlag <<= 1)
 	{
-		CActionScope& scope = m_scopeArray[i];
 		FlushScope(i, scopeFlag);
 	}
 
@@ -1665,7 +1678,6 @@ ActionScopes CActionController::EndActionsOnScope(ActionScopes scopeMask, IActio
 
 void CActionController::PushOntoQueue(IAction& action)
 {
-	const int priority = action.GetPriority();
 	const bool requeued = ((action.GetFlags() & IAction::Requeued) != 0);
 
 	for (TActionList::iterator iter = m_queuedActions.begin(); iter != m_queuedActions.end(); ++iter)
@@ -2003,7 +2015,6 @@ void CActionController::DebugDraw() const
 
 		if (scope.m_scopeContext.pCharInst)
 		{
-			IAnimationSet* animSet = scope.m_scopeContext.pCharInst->GetIAnimationSet();
 			for (uint32 l = 0; l < scope.m_numLayers; l++)
 			{
 				const CActionScope::SSequencer& sequencer = scope.m_layerSequencers[l];
@@ -2145,7 +2156,7 @@ void CActionController::DebugDraw() const
 		}
 	}
 
-	if (m_cachedEntity)
+	if (m_cachedEntity && gEnv->pRenderer)
 	{
 		AABB bbox;
 		m_cachedEntity->GetWorldBounds(bbox);
@@ -2192,55 +2203,58 @@ void CActionController::GetStateString(string& state) const
 
 #endif //!_RELEASE
 
-IProceduralContext* CActionController::FindOrCreateProceduralContext(const char* contextName)
+IProceduralContext* CActionController::FindOrCreateProceduralContext(const CryClassID& contextId)
 {
-	IProceduralContext* procContext = FindProceduralContext(contextName);
+	IProceduralContext* procContext = FindProceduralContext(contextId);
 	if (procContext)
 		return procContext;
 
-	return CreateProceduralContext(contextName);
+	return CreateProceduralContext(contextId);
 }
 
-IProceduralContext* CActionController::CreateProceduralContext(const char* contextName)
+IProceduralContext* CActionController::CreateProceduralContext(const CryClassID& contextId)
 {
 	const bool hasValidRootEntity = UpdateRootEntityValidity();
 	if (!hasValidRootEntity)
 		return NULL;
 
-	const uint32 contextNameCRC = CCrc32::ComputeLowercase(contextName);
-
 	SProcContext newProcContext;
-	newProcContext.nameCRC = contextNameCRC;
-	CryCreateClassInstance<IProceduralContext>(contextName, newProcContext.pContext);
-	m_procContexts.push_back(newProcContext);
+	newProcContext.contextId = contextId;
+	CryCreateClassInstance<IProceduralContext>(contextId, newProcContext.pContext);
+	if (newProcContext.pContext)
+	{
+		m_procContexts.push_back(newProcContext);
 
-	newProcContext.pContext->Initialise(*m_cachedEntity, *this);
+		newProcContext.pContext->Initialise(*m_cachedEntity, *this);
+	}
+	
 	return newProcContext.pContext.get();
 }
 
-const IProceduralContext* CActionController::FindProceduralContext(const char* contextName) const
+IProceduralContext* CActionController::FindProceduralContext(const CryClassID& contextId)
 {
-	const uint32 contextNameCRC = CCrc32::ComputeLowercase(contextName);
-	return FindProceduralContext(contextNameCRC);
-}
-
-IProceduralContext* CActionController::FindProceduralContext(const char* contextName)
-{
-	const uint32 contextNameCRC = CCrc32::ComputeLowercase(contextName);
-	return FindProceduralContext(contextNameCRC);
-}
-
-IProceduralContext* CActionController::FindProceduralContext(const uint32 contextNameCRC) const
-{
-	const uint32 numContexts = m_procContexts.size();
-	for (uint32 i = 0; i < numContexts; i++)
+	for (auto& proceduralContext : m_procContexts)
 	{
-		if (m_procContexts[i].nameCRC == contextNameCRC)
+		if (proceduralContext.contextId.hipart == contextId.hipart
+			&& proceduralContext.contextId.lopart == contextId.lopart)
 		{
-			return m_procContexts[i].pContext.get();
+			return proceduralContext.pContext.get();
 		}
 	}
-	return NULL;
+	return nullptr;
+}
+
+const IProceduralContext* CActionController::FindProceduralContext(const CryClassID& contextId) const
+{
+	for(auto& proceduralContext : m_procContexts)
+	{
+		if (proceduralContext.contextId.hipart == contextId.hipart
+			&& proceduralContext.contextId.lopart == contextId.lopart)
+		{
+			return proceduralContext.pContext.get();
+		}
+	}
+	return nullptr;
 }
 
 bool CActionController::IsActionPending(uint32 userToken) const

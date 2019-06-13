@@ -1,9 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "CentralInterestManager.h"
 #include "PersonalInterestManager.h"
 #include "Puppet.h"
+#include "SmartObjects.h"
 
 // For persistent debugging
 #include <CryGame/IGameFramework.h>
@@ -103,7 +104,7 @@ void CCentralInterestManager::Reset()
 		{
 			// Start listening to all moving entities
 			CryLog("Registering CentralInterestManager with EntitySystem");
-			gEnv->pEntitySystem->AddSink(this, IEntitySystem::OnSpawn | IEntitySystem::OnRemove, 0);
+			gEnv->pEntitySystem->AddSink(this, IEntitySystem::OnSpawn | IEntitySystem::OnRemove);
 			m_bEntityEventListenerInstalled = true;
 		}
 		else
@@ -142,7 +143,7 @@ bool CCentralInterestManager::Enable(bool bEnable)
 
 void CCentralInterestManager::Update(float fDelta)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (!m_bEnabled)
 		return;
@@ -303,7 +304,6 @@ bool CCentralInterestManager::GatherData(IEntity* pEntity, SActorInterestSetting
 bool CCentralInterestManager::RegisterInterestingEntity(IEntity* pEntity, float fRadius, float fBaseInterest, const char* szActionName, const Vec3& vOffset, float fPause, int nbShared)
 {
 	SEntityInterest* pInterest = NULL;
-	bool bOnlyUpdate = false;
 	bool bSomethingChanged = false;
 
 	TVecInteresting::iterator itI = m_InterestingEntities.begin();
@@ -421,7 +421,6 @@ bool CCentralInterestManager::RegisterInterestedAIActor(IEntity* pEntity, bool b
 	TVecPIMs::iterator itEnd = m_PIMs.end();
 	for (; it != itEnd; ++it)
 	{
-		CPersonalInterestManager* p0 = &(*it);
 		if (it->IsReset())
 		{
 			it->Assign(pAIActor);
@@ -551,7 +550,7 @@ void CCentralInterestManager::DeregisterObject(IEntity* pEntity)
 }
 
 //------------------------------------------------------------------------------------------------------------------------
-void CCentralInterestManager::OnEntityEvent(IEntity* pEntity, SEntityEvent& event)
+void CCentralInterestManager::OnEntityEvent(IEntity* pEntity, const SEntityEvent& event)
 {
 	assert(pEntity);
 
@@ -802,6 +801,17 @@ bool SEntityInterest::Set(EntityId entityId, float fRadius, float fInterest, con
 	}
 
 	return bChanged;
+}
+
+void SEntityInterest::Invalidate()
+{
+	IEntity* pEntity = GetEntity();
+	if (pEntity && gAIEnv.pSmartObjectManager)
+	{
+		gAIEnv.pSmartObjectManager->RemoveSmartObjectState(pEntity, "Registered");
+	}
+	m_entityId = 0;
+	m_sActionName = string();
 }
 
 void SEntityInterest::SetAction(const char* szActionName)

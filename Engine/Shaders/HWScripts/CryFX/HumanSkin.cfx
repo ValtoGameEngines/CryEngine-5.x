@@ -1,5 +1,4 @@
-// CRYENGINE Source Code File
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "Common.cfi"
 #include "HumanSkinValidations.cfi"
@@ -7,33 +6,27 @@
 // Shader global descriptions
 float Script : STANDARDSGLOBAL
 <
-  string Script =
-           "Public;"
-#if ENABLE_TESSELLATION
-           "HWTessellation;"
-#endif
-#if %WRINKLE_BLENDING
-           "WrinkleBlending"
-#endif
-           "SupportsAttrInstancing;"
-           "SupportsDeferredShading;"
-           "SupportsFullDeferredShading;"
-           "ShaderDrawType = Light;"
-           "ShaderType = General;"
+	string Script =
+		"Public;"
+	#if ENABLE_TESSELLATION
+		"HWTessellation;"
+	#endif
+	#if %WRINKLE_BLENDING
+		"WrinkleBlending"
+	#endif
+		"SupportsAttrInstancing;"
+		"SupportsDeferredShading;"
+		"SupportsFullDeferredShading;"
+		"ShaderDrawType = Light;"
+		"ShaderType = General;"
 >;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////// Custom shading pass structure /////////////////////////////////////
 
-struct fragPassCustom
-{            
-  // ... Custom pass data ...
-};
-
-struct fragLightPassCustom
+struct CustomForwardShadingAttribs
 {
-  // ... Custom per light data ...
-}; 
+};
 
 #include "ShadeLib.cfi"
 
@@ -47,10 +40,9 @@ SUBSURFACEMAP
 DECALMAP
 OPACITYMAP
 ENVIRONMENTCUBEMAP
-DISSOLVE_NOISE_MAP
 
-Texture2D customTex          : register(t9)  = TM_Custom;
-Texture2D customSecondaryTex : register(t10) = TM_CustomSecondary; 
+CUSTOMMAP;
+CUSTOMSECONDARYMAP; 
 
 /// Tweakables //////////////////////
 
@@ -84,21 +76,6 @@ half TranslucencyMultiplier
   float UIMax = 4.0;
   float UIStep = 0.001;
 > = 0.0;
-
-/*
-half ScatterRadius
-< 
-  register = REG_PM_PARAM_0.w;  
-  string UIHelp = "Radius of light scattering on the surface.";                     
-  string UIName = "Scattering radius";         
-  string UIWidget = "slider";
-  float UIMin = 0;
-  float UIMax = 8.0;
-  float UIStep = 0.001;
-> = 2.0;
-*/
-
-const half ScatterRadius = 2.0;
 
 #if %DETAIL_MAPPING
 	half DetailBumpScale
@@ -219,17 +196,10 @@ half ComputeWrinkleBlendingWeight(float2 maskCoord)
 	half4 mask0, mask1, mask2;
 	DecodeBlendMask(customSecondaryTex, maskCoord, mask0, mask1, mask2);
 	
-#if %_RT_PER_INSTANCE_CB_TEMP
 	half weight =
-		dot(mask0, PerInstanceWrinklesMask0) + 
-		dot(mask1, PerInstanceWrinklesMask1) + 
-		dot(mask2, PerInstanceWrinklesMask2);
-#else
-	half weight =
-		dot(mask0, PI_WrinklesMask0) + 
-		dot(mask1, PI_WrinklesMask1) + 
-		dot(mask2, PI_WrinklesMask2);
-#endif
+		dot(mask0, CD_WrinklesMask0) + 
+		dot(mask1, CD_WrinklesMask1) + 
+		dot(mask2, CD_WrinklesMask2);
 
 	weight *= WrinklesBlend;
 
@@ -331,99 +301,49 @@ void GatherMaterialAttribs(in half3x3 mTangentToWS, in float2 baseTC, out Materi
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void frag_unify_parameters( inout fragPass pPass )
+void Callback_ShadingDirect(in ForwardShadingAttribs attribs, in ForwardLightParams light, out float3 diffuseAcc, out float3 specularAcc)
 {
-  pPass.bRenormalizeNormal = true;
-  pPass.bDeferredSpecularShading = true;
-	pPass.bHemisphereLighting = true;
+	float3 viewVec = normalize(-attribs.worldPos);
+	float NdotL = saturate(dot(attribs.normal, light.lightVec));
 
-  pPass.fFresnel_Bias = 1;
-  pPass.fFresnel_Scale = 0;
-
-#if %DETAIL_MAPPING
-	pPass.bDetailBumpMapping = true;
-	pPass.vDetailBumpTilling = half2(CM_DetailTilingAndAlphaRef.xy);
-	pPass.fDetailBumpScale = DetailBumpScale;
-	pPass.vDetailBlendAmount = half2(0, 0);
+    if (light.type == LIGHT_TYPE_REGULAR_AREA)
+    {
+        AreaLightLTC_GGX(attribs.normal, -normalize(attribs.areaAttribs.position), attribs.smoothness, attribs.reflectance, attribs.areaAttribs.position,
+		                 attribs.areaAttribs.lightPos, attribs.areaAttribs.lightArrayIdx, attribs.areaAttribs.transform, Fwd_SpotTexArray, diffuseAcc, specularAcc);
+    }
+    else
+    {
+        diffuseAcc.x = DiffuseBRDF(attribs.normal, viewVec, light.lightVec, attribs.smoothness, NdotL);
+        specularAcc  = SpecularBRDF(attribs.normal, viewVec, light.lightVec, attribs.smoothness, attribs.reflectance) * NdotL;
+    }
 	
-	#if %ALPHAMASK_DETAILMAP
-		pPass.bDetailBumpMappingMasking = true;
-	#endif
-#endif
+	diffuseAcc = diffuseAcc.x * light.illuminance;
+	specularAcc = specularAcc * light.illuminance;
 }
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-void frag_custom_begin(inout fragPass pPass)
-{
-	MaterialAttribsCommon attribs;
-	half3x3 mTangentToWS = half3x3(pPass.IN.vTangent.xyz, pPass.IN.vBinormal.xyz, cross(pPass.IN.vTangent.xyz, pPass.IN.vBinormal.xyz) * pPass.IN.vTangent.w);
-	GatherMaterialAttribs(mTangentToWS, pPass.IN.baseTC.xy, attribs);
-	
-	pPass.vNormal = attribs.NormalWorld;
-	pPass.fGloss = attribs.Smoothness;
-	pPass.cDiffuseMap.rgb = attribs.Albedo;
-	pPass.cSpecularMap.rgb = attribs.Reflectance;
-}
-
+#include "ForwardShading.cfi"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-void frag_custom_per_light(inout fragPass pPass, inout fragLightPass pLight)
-{         
-#if %_RT_HDR_MODE	
-	half3 cDiffuse = pLight.cDiffuse.xyz * DiffuseBRDF(pPass.vNormal.xyz, pPass.vView, pLight.vLight, pPass.fGloss, saturate(pLight.fNdotL));
-#else
-	// Use simple wrap lighting approximation in secondary viewports
-	const half wrapAmount = 0.5;
-	half wrapLighting = saturate((pLight.fNdotL + wrapAmount) / ((1 + wrapAmount) * (1 + wrapAmount)));
-	half3 cDiffuse = pLight.cDiffuse.xyz * wrapLighting;
-#endif
-
-	half3 cSpecular = pLight.cSpecular.xyz * SpecularBRDF(pPass.vNormal, pPass.vView, pLight.vLight, pPass.fGloss, pPass.cSpecularMap.rgb) * saturate(pLight.fNdotL);
-    
-	half3 cK = pLight.fOcclShadow * pLight.fFallOff * pLight.cFilter;
-  
-	pPass.cDiffuseAcc.xyz += cDiffuse.xyz * cK.xyz;
-	pPass.cSpecularAcc.xyz += cSpecular.xyz * cK.xyz;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-void frag_custom_ambient(inout fragPass pPass, inout half3 cAmbient)
-{
-	//pPass.cAmbientAcc.xyz += cAmbient.xyz;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-void frag_custom_end(inout fragPass pPass, inout half3 cFinal)
-{
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-#include "fragLib.cfi"
-
-///////////////// pixel shader //////////////////
 
 pixout SkinPS(vert2FragGeneral IN)
 {
-  pixout OUT = (pixout) 0;  
-    
-  // Initialize fragPass structure
-  fragPass pPass = (fragPass) 0;
-  frag_unify(pPass, IN);  
-  half4 cFinal = frag_shared_output(pPass);
-
-  HDROutput(OUT, cFinal, 1);
-  
-  return OUT;  
+	// Gather surface material attributes
+	MaterialAttribsCommon commonAttribs;
+	half3x3 mTangentToWS = half3x3(IN.vTangent.xyz, IN.vBinormal.xyz, cross(IN.vTangent.xyz, IN.vBinormal.xyz) * IN.vTangent.w);
+	GatherMaterialAttribs(mTangentToWS, IN.baseTC.xy, commonAttribs);
+	
+	ForwardShadingAttribs fwdAttribs;
+	fwdAttribs.screenUV = IN.screenProj.xy / IN.screenProj.w;
+	fwdAttribs.worldPos = IN.vView.xyz;
+	
+	float3 diffuseAcc = 0, specularAcc = 0;
+	Fwd_StandardOpaqueShading(commonAttribs, fwdAttribs, diffuseAcc, specularAcc);
+	
+	pixout OUT = (pixout)0;
+	OUT.Color.rgb = diffuseAcc + specularAcc;
+	
+	return OUT;
 }
 
 #include "HumanSkinTess.cfi"
@@ -434,6 +354,7 @@ technique General
 <
   string Script = 
         "TechniqueZ=ZPass;"
+        "TechniqueZPrepass=ZPrePass;"
         "TechniqueMotionBlur=MotionBlurPass;" 
         "TechniqueCustomRender=CustomRenderPass;"
         "TechniqueShadowGen=ShadowGen;"
@@ -530,15 +451,8 @@ pixout_gbuffer SkinZPassPS(vert2fragZ_C IN)
 	clip(fDiffuseAlpha - IN.baseTC.w);
 #endif
 
-#if %_RT_DISSOLVE
-	half2 noiseTC = IN.WPos.xy/(100.0f*PS_HPosScale.xy);
+	ApplyDissolve(IN.baseTC.z, (int2)IN.WPos.xy, 33);
 
-	half fNoise = GetDissolveTex(dissolveNoiseTex, noiseTC).g;
-
-	clip((fNoise-IN.baseTC.z));
-#endif
-	
-	
 	////////////////////////////////////////////////////////////////////////////////////////////////
   // Gather material attributes
 	
@@ -553,7 +467,11 @@ pixout_gbuffer SkinZPassPS(vert2fragZ_C IN)
 	////////////////////////////////////////////////////////////////////////////////////////////////
 	// Output to GBuffer
 	
+#if %_RT_SAMPLE0
+	EncodeMicroGBuffer(attribs, OUT.GBufferA, IN.WPos.xy);
+#else	
 	EncodeGBuffer( attribs, OUT.GBufferA, OUT.GBufferB, OUT.GBufferC );
+#endif
 
 	////////////////////////////////////////////////////////////////////////////////////////////////
 	// Output Velocity
@@ -591,10 +509,9 @@ technique ZPass
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#include "CommonZPrePass.cfi"
 #include "CommonMotionBlurPass.cfi"
 #include "CommonViewsPass.cfi"
 #include "ShadowCommon.cfi"
 #include "CommonShadowGenPass.cfi"
 #include "CommonDebugPass.cfi"
-
-/////////////////////// eof ///

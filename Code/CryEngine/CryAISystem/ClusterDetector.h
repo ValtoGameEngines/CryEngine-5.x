@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   ClusterDetector.h
@@ -108,7 +108,7 @@ public:
 	virtual IClusterRequestPair CreateNewRequest();
 	virtual void                QueueRequest(const ClusterRequestID requestId);
 
-	void                        Update(float frameDeltaTime);
+	void                        Update(const CTimeValue frameStartTime, const float frameDeltaTime);
 	void                        Reset();
 
 	typedef std::pair<ClusterRequestID, ClusterRequest> ClusterRequestPair;

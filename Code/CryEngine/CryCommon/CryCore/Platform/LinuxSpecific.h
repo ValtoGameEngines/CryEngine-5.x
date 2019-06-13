@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   Linux32Specific.h
@@ -32,10 +32,12 @@
 #include <vector>
 #include <string>
 
+typedef const void* LPCVOID;
 typedef void* LPVOID;
 #define VOID  void
 #define PVOID void*
 
+typedef int          INT;
 typedef unsigned int UINT;
 typedef char         CHAR;
 typedef float        FLOAT;
@@ -104,17 +106,21 @@ typedef const WCHAR* LPCUWSTR, * PCUWSTR;
 typedef int      BOOL;
 typedef int32_t  LONG;
 typedef uint32_t ULONG;
-typedef int      HRESULT;
+typedef long     HRESULT;
+typedef uint32_t HMONITOR;
 
+#if !_MSC_EXTENSIONS
 typedef int32    __int32;
-typedef uint32   __uint32;
 typedef int64    __int64;
-#if !defined(__clang__)
+
+typedef uint32   __uint32;
+#if !CRY_COMPILER_CLANG
 typedef uint64   __uint64;
 #endif
+#endif
 
-#define THREADID_NULL 0
 typedef unsigned long int threadID;
+constexpr threadID THREADID_NULL = 0;
 
 #define TRUE  1
 #define FALSE 0
@@ -129,8 +135,28 @@ typedef unsigned long int threadID;
 #define _PTRDIFF_T_DEFINED 1
 
 #define _A_RDONLY (0x01)
-#define _A_HIDDEN (0x02)
 #define _A_SUBDIR (0x10)
+#define _A_HIDDEN (0x02)
+
+//////////////////////////////////////////////////////////////////////////
+// Win32 FileAttributes.
+//////////////////////////////////////////////////////////////////////////
+#define FILE_ATTRIBUTE_READONLY            0x00000001
+#define FILE_ATTRIBUTE_HIDDEN              0x00000002
+#define FILE_ATTRIBUTE_SYSTEM              0x00000004
+#define FILE_ATTRIBUTE_DIRECTORY           0x00000010
+#define FILE_ATTRIBUTE_ARCHIVE             0x00000020
+#define FILE_ATTRIBUTE_DEVICE              0x00000040
+#define FILE_ATTRIBUTE_NORMAL              0x00000080
+#define FILE_ATTRIBUTE_TEMPORARY           0x00000100
+#define FILE_ATTRIBUTE_SPARSE_FILE         0x00000200
+#define FILE_ATTRIBUTE_REPARSE_POINT       0x00000400
+#define FILE_ATTRIBUTE_COMPRESSED          0x00000800
+#define FILE_ATTRIBUTE_OFFLINE             0x00001000
+#define FILE_ATTRIBUTE_NOT_CONTENT_INDEXED 0x00002000
+#define FILE_ATTRIBUTE_ENCRYPTED           0x00004000
+
+#define INVALID_FILE_ATTRIBUTES            (-1)
 
 typedef struct in_addr_windows
 {
@@ -353,8 +379,8 @@ public:
 	CHandle(const HandleType cHandle = U) : m_Value(cHandle){}
 	CHandle(const PointerType cpHandle) : m_Value(reinterpret_cast<HandleType>(cpHandle)){}
 	CHandle(INVALID_HANDLE_VALUE_ENUM) : m_Value(U){}        //!< To be able to use a common value for all InvalidHandle - types.
-	#if (CRY_PLATFORM_LINUX && CRY_PLATFORM_64BIT) && !defined(__clang__)
-	//! Treat __null tyope also as invalid handle type.
+	#if CRY_PLATFORM_LINUX && !CRY_COMPILER_CLANG
+	//! Treat __null type also as invalid handle type.
 	//! To be able to use a common value for all InvalidHandle - types.
 	CHandle(__typeof__(__null)) : m_Value(U){}
 	#endif
@@ -411,6 +437,15 @@ typedef void* HGLRC;
 typedef void* HDC;
 typedef void* PROC;
 typedef void* PIXELFORMATDESCRIPTOR;
+
+// In RELEASE disable printf and fprintf
+#if defined(_RELEASE) && !defined(RELEASE_LOGGING)
+#include <cstdio>
+#undef printf
+#define printf(...)  (void) 0
+#undef fprintf
+#define fprintf(...) (void) 0
+#endif
 
 // General overloads of bitwise operators for enum types.
 // This makes the type of expressions like "eFoo_Flag1 | eFoo_Flag2" to be of type EFoo, instead of int.

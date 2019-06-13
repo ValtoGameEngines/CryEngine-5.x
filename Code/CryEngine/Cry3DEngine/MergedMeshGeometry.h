@@ -1,7 +1,7 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-#ifndef _PROCEDURALVEGETATION_GEOMETRY_
-#define _PROCEDURALVEGETATION_GEOMETRY_
+#pragma once
+
 #include "MergedMeshRenderNode.h"
 #include <Cry3DEngine/IIndexedMesh.h>
 
@@ -352,12 +352,9 @@ struct CRY_ALIGN(16) SMMRMGeometry
 	};
 	size_t refCount;
 	JobManager::SJobState geomPrepareState;
-#ifdef SEG_WORLD
-	uint16 m_nStaticTypeSlot;
-#endif
 	const bool is_obj : 1;
 
-	SMMRMGeometry(CStatObj * obj, uint16 slot)
+	SMMRMGeometry(CStatObj * obj)
 		: aabb(AABB::RESET)
 		  , numIdx()
 		  , numVtx()
@@ -371,17 +368,14 @@ struct CRY_ALIGN(16) SMMRMGeometry
 		  , state(CREATED)
 		  , srcObj(obj)
 		  , geomPrepareState()
-#ifdef SEG_WORLD
-		  , m_nStaticTypeSlot(slot)
-#endif
 		  , is_obj(true)
 	{
 		memset(pChunks, 0, sizeof(pChunks));
 		memset(numChunks, 0, sizeof(numChunks));
 		aabb.max = aabb.min = Vec3(0, 0, 0);
-	};
+	}
 
-	SMMRMGeometry(uint32 groupId, uint16 slot)
+	SMMRMGeometry(uint32 groupId)
 		: srcGroupId(groupId)
 		  , aabb(AABB::RESET)
 		  , numIdx()
@@ -395,9 +389,6 @@ struct CRY_ALIGN(16) SMMRMGeometry
 		  , deform()
 		  , state(CREATED)
 		  , geomPrepareState()
-#ifdef SEG_WORLD
-		  , m_nStaticTypeSlot(slot)
-#endif
 		  , is_obj(false)
 	{
 		memset(pChunks, 0, sizeof(pChunks));
@@ -620,7 +611,7 @@ struct CRY_ALIGN(16) SMergedRMChunk
 	~SMergedRMChunk()
 	{
 		new(this)SMergedRMChunk;
-	};
+	}
 };
 
 struct SMMRMUpdateContext
@@ -840,4 +831,3 @@ inline Matrix34 CreateRotationQ(const Quat& q, const Vec3& t)
 
 extern Vec3        SampleWind(const Vec3& pos, const Vec3 (&samples)[MMRM_WIND_DIM][MMRM_WIND_DIM][MMRM_WIND_DIM]);
 extern inline Vec3 SampleWind(const Vec3& pos, const Vec3* samples);
-#endif

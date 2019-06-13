@@ -1,9 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef DEVBUFFERALLOCATOR_H
 #define DEVBUFFERALLOCATOR_H
 
 #include <CryMemory/IDefragAllocator.h>
+#include <CryThreading/CryThread.h>
+#include <CryCore/Containers/CryArray.h>
 
 #ifndef _RELEASE
 	#define CDBA_DEBUG
@@ -21,7 +23,12 @@ union SDefragAllocChunkAttr
 {
 	enum
 	{
+#if defined(CDBA_MORE_DEBUG)
+		SizeWidth        = 26,
+		InvalidatedMask  = 1 << 26,
+#else
 		SizeWidth        = 27,
+#endif
 		SizeMask         = (1 << SizeWidth) - 1,
 		BusyMask         = 1 << 27,
 		MovingMask       = 1 << 28,
@@ -45,6 +52,11 @@ union SDefragAllocChunkAttr
 	ILINE bool         IsPinned() const            { return (ui & PinnedCountMask) != 0; }
 	ILINE unsigned int GetPinCount() const         { return (ui & PinnedCountMask) >> PinnedCountShift; }
 	ILINE void         SetPinCount(unsigned int p) { ui = (ui & ~PinnedCountMask) | (p << PinnedCountShift); }
+#if defined(CDBA_MORE_DEBUG)
+	ILINE void Invalidate()                        { ui |= InvalidatedMask; }
+	ILINE void Validate()                          { ui &= ~InvalidatedMask; }
+	ILINE bool IsInvalid() const                   { return (ui & InvalidatedMask) != 0; }
+#endif
 };
 
 struct SDefragAllocChunk
@@ -83,27 +95,11 @@ struct SDefragAllocChunk
 	const char* source;
 #endif
 
-	void SwapEndian()
-	{
-		::SwapEndian(addrPrevIdx, true) ;
-		::SwapEndian(addrNextIdx, true) ;
-		::SwapEndian(packedPtr, true) ;
-		::SwapEndian(attr.ui, true);
-
-		if (attr.IsBusy())
-		{
-			::SwapEndian(pContext, true);
-		}
-		else
-		{
-			::SwapEndian(freePrevIdx, true) ;
-			::SwapEndian(freeNextIdx, true);
-		}
-
-#ifndef _RELEASE
-		::SwapEndian(source, true);
+#ifdef CDBA_MORE_DEBUG
+	uint32 hash;
 #endif
-	}
+
+	void SwapEndian();
 };
 
 struct SDefragAllocSegment
@@ -112,12 +108,7 @@ struct SDefragAllocSegment
 	uint32                   capacity;
 	SDefragAllocChunk::Index headSentinalChunkIdx;
 
-	void                     SwapEndian()
-	{
-		::SwapEndian(address, true) ;
-		::SwapEndian(capacity, true) ;
-		::SwapEndian(headSentinalChunkIdx, true);
-	}
+	void                     SwapEndian();
 };
 
 class CDefragAllocator;
@@ -162,9 +153,11 @@ public:
 	Hdl                   Allocate(size_t sz, const char* source, void* pContext = NULL);
 	Hdl                   AllocateAligned(size_t sz, size_t alignment, const char* source, void* pContext = NULL);
 	AllocatePinnedResult  AllocatePinned(size_t sz, const char* source, void* pContext = NULL);
+	AllocatePinnedResult  AllocateAlignedPinned(size_t sz, size_t alignment, const char* source, void* pContext = NULL);
 	bool                  Free(Hdl hdl);
 
 	void                  ChangeContext(Hdl hdl, void* pNewContext);
+	void*                 GetContext(Hdl hdl);
 
 	size_t                GetAllocated() const { return (size_t)(m_capacity - m_available) << m_logMinAlignment; }
 	IDefragAllocatorStats GetStats();
@@ -217,6 +210,9 @@ public:
 			CDBA_ASSERT(attr.IsBusy());
 
 			newAttr.IncPinCount();
+#if defined(CDBA_MORE_DEBUG)
+			newAttr.Invalidate();
+#endif
 		}
 		while (CryInterlockedCompareExchange(alias_cast<volatile LONG*>(&chunk.attr.ui), newAttr.ui, attr.ui) != attr.ui);
 
@@ -294,12 +290,7 @@ private:
 		bool                             relocated;
 		bool                             cancelled;
 
-		void                             SwapEndian()
-		{
-			::SwapEndian(srcChunkIdx, true) ;
-			::SwapEndian(dstChunkIdx, true) ;
-			::SwapEndian(userMoveId, true);
-		}
+		void                             SwapEndian();
 	};
 
 	struct PendingMoveSrcChunkPredicate
@@ -561,6 +552,21 @@ private:
 		while (CryInterlockedCompareExchange(alias_cast<volatile LONG*>(&src.attr.ui), srcNewAttr.ui, srcAttr.ui) != srcAttr.ui);
 	}
 
+#if defined(CDBA_MORE_DEBUG)
+	void MarkAsNotMovingValid(SDefragAllocChunk& src)
+	{
+		SDefragAllocChunkAttr srcAttr, srcNewAttr;
+		do
+		{
+			srcAttr.ui = const_cast<volatile uint32&>(src.attr.ui);
+			srcNewAttr.ui = srcAttr.ui;
+			srcNewAttr.SetMoving(false);
+			srcNewAttr.Validate();
+		}
+		while (CryInterlockedCompareExchange(alias_cast<volatile LONG*>(&src.attr.ui), srcNewAttr.ui, srcAttr.ui) != srcAttr.ui);
+	}
+#endif
+
 	ILINE bool IsMoveableCandidate(const SDefragAllocChunkAttr& a, uint32 sizeUpperBound)
 	{
 		return a.IsBusy() && !a.IsPinned() && !a.IsMoving() && (0 < a.GetSize()) && (a.GetSize() <= sizeUpperBound);
@@ -585,7 +591,7 @@ private:
 	{
 		UINT_PTR dstChunkBase = dstChunk.ptr;
 		UINT_PTR dstChunkEnd = dstChunkBase + dstChunk.attr.GetSize();
-#if (CRY_PLATFORM_WINDOWS && CRY_PLATFORM_64BIT) || CRY_PLATFORM_DURANGO
+#if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_DURANGO
 		UINT_PTR allocAlign = BIT64(srcChunk.logAlign);
 #else
 		UINT_PTR allocAlign = BIT(srcChunk.logAlign);
@@ -612,6 +618,7 @@ private:
 
 #ifdef CDBA_MORE_DEBUG
 	void Defrag_ValidateFreeBlockIteration();
+	void Tick_Validation_Locked();
 #endif
 
 	Index        BestFit_FindFreeBlockForSegment(size_t sz, size_t alignment, uint32 nSegment);
@@ -654,8 +661,8 @@ private:
 	uint32                         m_available;
 	Index                          m_numAllocs;
 
-	uint16                         m_minAlignment;
-	uint16                         m_logMinAlignment;
+	uint32                         m_minAlignment;
+	uint32                         m_logMinAlignment;
 
 	Index                          m_freeBuckets[NumBuckets];
 
@@ -667,6 +674,10 @@ private:
 	uint32                         m_nCancelledMoves;
 
 	Policy                         m_policy;
+
+#ifdef CDBA_MORE_DEBUG
+	uint32                         m_nLastCheckedChunk;
+#endif
 };
 
 #endif

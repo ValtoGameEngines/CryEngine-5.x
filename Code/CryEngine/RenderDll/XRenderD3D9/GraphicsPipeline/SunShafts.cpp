@@ -1,9 +1,8 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "SunShafts.h"
 
-#include "DriverD3D.h"
 #include "D3DPostProcess.h"
 
 // TODO: Add support for occlusion query to find out if sky is visible at all
@@ -16,38 +15,37 @@ struct SSunShaftConstants
 
 void CSunShaftsStage::Init()
 {
-	m_samplerPoint = CTexture::GetTexState(STexState(FILTER_POINT, true));
-	m_samplerLinear = CTexture::GetTexState(STexState(FILTER_LINEAR, true));
-
 	m_passShaftsMask.SetFlags(CPrimitiveRenderPass::ePassFlags_VrProjectionPass);
-	m_passShaftsGen0.SetFlags(CPrimitiveRenderPass::ePassFlags_VrProjectionPass);
-	m_passShaftsGen1.SetFlags(CPrimitiveRenderPass::ePassFlags_VrProjectionPass);
-	
-	m_passShaftsGen0.AllocateTypedConstantBuffer<SSunShaftConstants>(eConstantBufferShaderSlot_PerBatch, EShaderStage_Pixel);
-	m_passShaftsGen1.AllocateTypedConstantBuffer<SSunShaftConstants>(eConstantBufferShaderSlot_PerBatch, EShaderStage_Pixel);
 
+	m_passShaftsGen0.SetFlags(CPrimitiveRenderPass::ePassFlags_VrProjectionPass);
+	m_passShaftsGen0.SetPrimitiveFlags(CRenderPrimitive::eFlags_None);
 	m_passShaftsGen0.SetRequirePerViewConstantBuffer(true);
+	m_passShaftsGen0.AllocateTypedConstantBuffer<SSunShaftConstants>(eConstantBufferShaderSlot_PerPrimitive, EShaderStage_Pixel);
+
+	m_passShaftsGen1.SetFlags(CPrimitiveRenderPass::ePassFlags_VrProjectionPass);
+	m_passShaftsGen1.SetPrimitiveFlags(CRenderPrimitive::eFlags_None);
+	m_passShaftsGen1.AllocateTypedConstantBuffer<SSunShaftConstants>(eConstantBufferShaderSlot_PerPrimitive, EShaderStage_Pixel);
 	m_passShaftsGen1.SetRequirePerViewConstantBuffer(true);
 }
 
-bool CSunShaftsStage::IsActive()
+int CSunShaftsStage::GetDownscaledTargetsIndex()
 {
-	return CRenderer::CV_r_sunshafts && CRenderer::CV_r_PostProcess;
+	return gRenDev->EF_GetRenderQuality() >= eRQ_High ? 0 : 1;
 }
 
 CTexture* CSunShaftsStage::GetFinalOutputRT()
 {
-	return gcpRendD3D->m_RP.m_eQuality >= eRQ_High ? CTexture::s_ptexBackBufferScaled[0] : CTexture::s_ptexBackBufferScaled[1];
+	return m_graphicsPipelineResources.m_pTexDisplayTargetScaled[GetDownscaledTargetsIndex()];
 }
 
 CTexture* CSunShaftsStage::GetTempOutputRT()
 {
-	return gcpRendD3D->m_RP.m_eQuality >= eRQ_High ? CTexture::s_ptexBackBufferScaledTemp[0] : CTexture::s_ptexBackBufferScaledTemp[1];
+	return m_graphicsPipelineResources.m_pTexDisplayTargetScaledTemp[GetDownscaledTargetsIndex()];
 }
 
 void CSunShaftsStage::GetCompositionParams(Vec4& params0, Vec4& params1)
 {
-	CSunShafts* pSunShafts = (CSunShafts*)PostEffectMgr()->GetEffect(ePFX_SunShafts);
+	CSunShafts* pSunShafts = (CSunShafts*)PostEffectMgr()->GetEffect(EPostEffectID::SunShafts);
 	Vec4 params[2];
 	pSunShafts->GetSunShaftsParams(params);
 	params0 = params[0];
@@ -56,54 +54,42 @@ void CSunShaftsStage::GetCompositionParams(Vec4& params0, Vec4& params1)
 
 void CSunShaftsStage::Execute()
 {
+	FUNCTION_PROFILER_RENDERER();
 	PROFILE_LABEL_SCOPE("SUNSHAFTS_GEN");
 
-	if (!IsActive())
-		return;
-
-	CSunShafts* pSunShafts = (CSunShafts*)PostEffectMgr()->GetEffect(ePFX_SunShafts);
+	CSunShafts* pSunShafts = (CSunShafts*)PostEffectMgr()->GetEffect(EPostEffectID::SunShafts);
 	float rayAttenuation = clamp_tpl<float>(pSunShafts->m_pRaysAttenuation->GetParam(), 0.0f, 10.0f);
 
 	CShader* pShader = CShaderMan::s_shPostSunShafts;
 	CTexture* pFinalRT = GetFinalOutputRT();
 	CTexture* pTempRT = GetTempOutputRT();
+	const int downscaledSourceIndex = GetDownscaledTargetsIndex();
 
 	// Generate mask for sun shafts
 	{
-		if (m_passShaftsMask.InputChanged())
+		if (m_passShaftsMask.IsDirty())
 		{
 			static CCryNameTSCRC techMaskGen("SunShaftsMaskGen");
 			uint64 rtMask = g_HWSR_MaskBit[HWSR_SAMPLE0];
+			m_passShaftsMask.SetPrimitiveFlags(CRenderPrimitive::eFlags_ReflectShaderConstants_VS);
+			m_passShaftsMask.SetPrimitiveType(CRenderPrimitive::ePrim_ProceduralTriangle);
 			m_passShaftsMask.SetTechnique(pShader, techMaskGen, rtMask);
 			m_passShaftsMask.SetRenderTarget(0, pFinalRT);
 			m_passShaftsMask.SetState(GS_NODEPTHTEST);
 
-			m_passShaftsMask.SetTextureSamplerPair(0, CTexture::s_ptexZTargetScaled, m_samplerPoint);
-			m_passShaftsMask.SetTextureSamplerPair(1, CTexture::s_ptexHDRTargetScaled[0], m_samplerPoint);  // TODO
+			m_passShaftsMask.SetTexture(0, m_graphicsPipelineResources.m_pTexLinearDepthScaled[downscaledSourceIndex]);
+			m_passShaftsMask.SetTexture(1, m_graphicsPipelineResources.m_pTexHDRTargetScaled[downscaledSourceIndex][0]);
+			m_passShaftsMask.SetSampler(0, EDefaultSamplerStates::PointClamp);
 		}
 
-		static CCryNameR nameParams0("texToTexParams0");
-		static CCryNameR nameParams1("texToTexParams1");
-
 		m_passShaftsMask.BeginConstantUpdate();
-
-		// Set sample positions (using rotated grid)
-		float sampleSize = ((float)CTexture::s_ptexBackBuffer->GetWidth() / (float)pFinalRT->GetWidth()) * 0.5f;
-		float s1 = sampleSize / (float)CTexture::s_ptexBackBuffer->GetWidth();
-		float t1 = sampleSize / (float)CTexture::s_ptexBackBuffer->GetHeight();
-		Vec4 params0 = Vec4(s1 * 0.95f, t1 * 0.25f, -s1 * 0.25f, t1 * 0.96f);
-		Vec4 params1 = Vec4(-s1 * 0.96f, -t1 * 0.25f, s1 * 0.25f, -t1 * 0.96f);
-
-		m_passShaftsMask.SetConstant(nameParams0, params0, eHWSC_Pixel);
-		m_passShaftsMask.SetConstant(nameParams1, params1, eHWSC_Pixel);
-
 		m_passShaftsMask.Execute();
 	}
 
 	// Apply local radial blur to mask
 	{
-		CStandardGraphicsPipeline::SViewInfo viewInfo[2];
-		int viewInfoCount = gcpRendD3D->GetGraphicsPipeline().GetViewInfo(viewInfo);
+		SRenderViewInfo viewInfo[2];
+		int viewInfoCount = m_graphicsPipeline.GenerateViewInfo(viewInfo);
 
 		Vec4 sunPosScreen[2];
 		Vec3 sunPos = gEnv->p3DEngine->GetSunDir() * 1000.0f;
@@ -118,21 +104,22 @@ void CSunShaftsStage::Execute()
 
 		// Pass 1
 		{
-			if (m_passShaftsGen0.InputChanged())
+			if (m_passShaftsGen0.IsDirty())
 			{
 				static CCryNameTSCRC techShaftsGen("SunShaftsGen");
 				uint64 rtMask = g_HWSR_MaskBit[HWSR_SAMPLE0];
 				m_passShaftsGen0.SetTechnique(pShader, techShaftsGen, rtMask);
+				m_passShaftsGen0.SetPrimitiveType(CRenderPrimitive::ePrim_ProceduralTriangle);
 				m_passShaftsGen0.SetRenderTarget(0, pTempRT);
 				m_passShaftsGen0.SetState(GS_NODEPTHTEST);
-
-				m_passShaftsGen0.SetTextureSamplerPair(0, pFinalRT, m_samplerLinear);
+				m_passShaftsGen0.SetTexture(0, pFinalRT);
+				m_passShaftsGen0.SetSampler(0, EDefaultSamplerStates::LinearClamp);
 			}
 
-			auto constants = m_passShaftsGen0.BeginTypedConstantUpdate<SSunShaftConstants>(eConstantBufferShaderSlot_PerBatch);
+			auto constants = m_passShaftsGen0.BeginTypedConstantUpdate<SSunShaftConstants>(eConstantBufferShaderSlot_PerPrimitive);
 			constants->sunPos = sunPosScreen[0];
 			constants->params = Vec4(0.1f, rayAttenuation, 0, 0);
-			
+
 			if (viewInfoCount > 1)
 			{
 				constants.BeginStereoOverride();
@@ -145,18 +132,19 @@ void CSunShaftsStage::Execute()
 
 		// Pass 2
 		{
-			if (m_passShaftsGen1.InputChanged())
+			if (m_passShaftsGen1.IsDirty())
 			{
 				static CCryNameTSCRC techShaftsGen("SunShaftsGen");
 				uint64 rtMask = g_HWSR_MaskBit[HWSR_SAMPLE0];
 				m_passShaftsGen1.SetTechnique(pShader, techShaftsGen, rtMask);
+				m_passShaftsGen1.SetPrimitiveType(CRenderPrimitive::ePrim_ProceduralTriangle);
 				m_passShaftsGen1.SetRenderTarget(0, pFinalRT);
 				m_passShaftsGen1.SetState(GS_NODEPTHTEST);
-
-				m_passShaftsGen1.SetTextureSamplerPair(0, pTempRT, m_samplerLinear);
+				m_passShaftsGen1.SetTexture(0, pTempRT);
+				m_passShaftsGen1.SetSampler(0, EDefaultSamplerStates::LinearClamp);
 			}
 
-			auto constants = m_passShaftsGen1.BeginTypedConstantUpdate<SSunShaftConstants>(eConstantBufferShaderSlot_PerBatch);
+			auto constants = m_passShaftsGen1.BeginTypedConstantUpdate<SSunShaftConstants>(eConstantBufferShaderSlot_PerPrimitive);
 			constants->sunPos = sunPosScreen[0];
 			constants->params = Vec4(0.025f, rayAttenuation, 0, 0);
 

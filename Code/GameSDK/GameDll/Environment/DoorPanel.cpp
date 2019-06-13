@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -17,6 +17,7 @@ History:
 #include "../AutoAimManager.h"
 #include "../TacticalManager.h"
 #include "EntityUtility/EntityScriptCalls.h"
+#include "GameConstantCVars.h"
 #include "UI/HUD/HUDUtils.h"
 #include <GameObjects/GameObject.h>
 
@@ -187,7 +188,7 @@ void CDoorPanel::Update( SEntityUpdateContext& ctx, int slot )
 	// Check visible distance
 	if (m_fVisibleDistanceSq > 0.0f)
 	{
-		const float fCurTime = ctx.fCurrTime;
+		const float fCurTime = gEnv->pTimer->GetCurrTime();
 		if ((fCurTime - m_fLastVisibleDistanceCheckTime) >= GetGameConstCVar(g_flashdoorpanel_distancecheckinterval))
 		{
 			m_fLastVisibleDistanceCheckTime = fCurTime;
@@ -264,7 +265,7 @@ void CDoorPanel::HandleEvent( const SGameObjectEvent& gameObjectEvent )
 	}
 }
 
-void CDoorPanel::ProcessEvent( SEntityEvent& entityEvent )
+void CDoorPanel::ProcessEvent( const SEntityEvent& entityEvent )
 {
 	switch(entityEvent.event)
 	{
@@ -318,6 +319,11 @@ void CDoorPanel::ProcessEvent( SEntityEvent& entityEvent )
 	}
 }
 
+Cry::Entity::EventFlags CDoorPanel::GetEventMask() const
+{
+	return ENTITY_EVENT_RESET | ENTITY_EVENT_UNHIDE | ENTITY_EVENT_HIDE | ENTITY_EVENT_LINK | ENTITY_EVENT_DELINK;
+}
+
 void CDoorPanel::GetMemoryUsage( ICrySizer *pSizer ) const
 {
 
@@ -341,8 +347,6 @@ void CDoorPanel::HandleFSCommand(const char* pCommand, const char* pArgs, void* 
 EDoorPanelBehaviorState CDoorPanel::GetInitialBehaviorStateId() const
 {
 	EDoorPanelBehaviorState doorPanelState = eDoorPanelBehaviorState_Invalid;
-
-	IEntity* pEntity = GetEntity();
 
 	char* szDoorPanelStateName = NULL;
 	bool bResult = EntityScripts::GetEntityProperty(GetEntity(), "esDoorPanelState", szDoorPanelStateName);
@@ -413,7 +417,6 @@ void CDoorPanel::AssignAsFSCommandHandler()
 			if (pFlashPlayer) // Valid to not have a flash player, since will update when flash setup
 			{
 				pFlashPlayer->SetFSCommandHandler(this);
-				pFlashPlayer->Release();
 			}
 		}
 	}

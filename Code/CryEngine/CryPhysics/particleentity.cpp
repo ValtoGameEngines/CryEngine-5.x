@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -16,7 +16,7 @@
 #include "waterman.h"
 #include "particleentity.h"
 
-CParticleEntity *CParticleEntity::g_pCurParticle[MAX_PHYS_THREADS+1] = { 0 };
+CParticleEntity *CParticleEntity::g_pCurParticle[MAX_TOT_THREADS] = { 0 };
 
 
 CParticleEntity::CParticleEntity(CPhysicalWorld *pWorld, IGeneralMemoryHeap* pHeap)
@@ -145,7 +145,7 @@ int CParticleEntity::SetParams(pe_params *_params, int bThreadSafe)
 			if (m_ig[0].x==NO_GRID_REG)
 				m_ig[0].x=m_ig[1].x=m_ig[0].y=m_ig[1].y = GRID_REG_PENDING;
 			if (m_pos.len2()>0)
-				AtomicAdd(&m_pWorld->m_lockGrid,-m_pWorld->RepositionEntity(this,1));
+				m_pWorld->RepositionEntity(this,1|8);
 		}	else {
 			if (m_ig[0].x!=NO_GRID_REG) {
         WriteLock __lock(m_pWorld->m_lockGrid);
@@ -376,6 +376,11 @@ int CParticleEntity::SetStateFromSnapshot(TSerialize ser, int flags)
 			ser.EndGroup();
 			m_heading=m_vel.normalized();
 		}
+		else // Make sure we don't move
+		{
+			m_vel = Vec3(ZERO);
+			m_wspin = Vec3(ZERO);
+		}
 
 		ser.Value("pos", m_pos, 'wrl3');
 	}
@@ -507,8 +512,10 @@ int g_retest=0;*/
 
 int CParticleEntity::DoStep(float time_interval, int iCaller)
 {
-	static ray_hit _hits[MAX_PHYS_THREADS+1][8];
-  ray_hit (&hits)[8] = _hits[get_iCaller()];
+	if (iCaller==MAX_PHYS_THREADS)
+		iCaller += alloc_extCaller();
+	static ray_hit _hits[MAX_TOT_THREADS][8];
+  ray_hit (&hits)[8] = _hits[iCaller];
 	pe_action_impulse ai;
 	//pe_action_register_coll_event arce;
 	pe_status_dynamics sd;
@@ -518,11 +525,13 @@ int CParticleEntity::DoStep(float time_interval, int iCaller)
 	quaternionf qrot = m_qrot;
 	int i,j,nhits,bHit,flags,bHasIgnore=(m_pColliderToIgnore!=0);
 	IPhysicalWorld::SRWIParams rp;
+	IPhysicalEntity *portals[16];
 	EventPhysCollision event;
 	event.penetration=event.radius = 0;
+	portals[0] = nullptr;
 
 	if (m_depth<0) {
-		gravity = m_waterGravity*min(1.0f,-m_depth*m_rdim); kAirResistance = m_kWaterResistance;
+		gravity = m_waterGravity*min(1.0f,max(0.0f,-m_depth*m_rdim-0.1f)); kAirResistance = m_kWaterResistance;
 	} else {
 		gravity = m_gravity; kAirResistance = m_kAirResistance;
 	}
@@ -537,7 +546,7 @@ int CParticleEntity::DoStep(float time_interval, int iCaller)
     m_timeSurplus=1;
 
 	if (IsAwake()) {
-		FUNCTION_PROFILER( GetISystem(),PROFILE_PHYSICS );
+		CRY_PROFILE_FUNCTION(PROFILE_PHYSICS );
 		PHYS_ENTITY_PROFILER
 		g_pCurParticle[iCaller] = this;
 
@@ -626,6 +635,7 @@ int CParticleEntity::DoStep(float time_interval, int iCaller)
 		if (iCaller<MAX_PHYS_THREADS && m_pWorld->m_bWorldStep==2 && m_iPierceability<=sf_max_pierceable) {
 			CPhysicalEntity **pentlist;
 			pe_status_pos sp; sp.timeBack = 1;//time_interval;
+			sp.pGridRefEnt = this;
 			Vec3 posFixed;
 			int nents = m_pWorld->GetEntitiesAround(pos0-Vec3(m_dim,m_dim,m_dim),pos0+Vec3(m_dim,m_dim,m_dim),pentlist,ent_rigid,0,0,iCaller);
 
@@ -658,8 +668,8 @@ int CParticleEntity::DoStep(float time_interval, int iCaller)
 			nhits = m_pWorld->RayWorldIntersection(
 				rp.Init(pos0,pos-pos0+heading0*m_dim, m_collTypes|ent_water,
 					m_iPierceability|(geom_colltype_ray|geom_colltype13)<<rwi_colltype_bit|rwi_colltype_any|
-					rwi_force_pierceable_noncoll|rwi_ignore_solid_back_faces, m_collisionClass, hits,8, 
-					pIgnoredColliders+1-bHasIgnore,1+bHasIgnore),
+					rwi_force_pierceable_noncoll|rwi_ignore_solid_back_faces|rwi_separate_important_hits, m_collisionClass, hits,8, 
+					pIgnoredColliders+1-bHasIgnore,1+bHasIgnore, 0,0,0, portals,CRY_ARRAY_COUNT(portals)-1),
 				"RayWorldIntersection(PhysParticles)", iCaller);
 			bHit = isneg(-nhits) & (isneg(hits[0].dist+0.5f)^1);
 			/*if (bHit && hits[0].n*(pos-pos0)>0)	{
@@ -669,7 +679,7 @@ int CParticleEntity::DoStep(float time_interval, int iCaller)
 		}
 
 		event.pEntity[0] = this; event.pForeignData[0] = m_pForeignData; event.iForeignData[0] = m_iForeignData;
-		if (iCaller<MAX_PHYS_THREADS) for(i=0; i<nhits; i++) {	// register all hits in history 
+		for(i=0; i<nhits; i++) {	// register all hits in history 
 			j = i+1 & i-(nhits-bHit)>>31;
 			event.pt = hits[j].pt;//-heading0*m_dim;	// store not contact, but position of particle center at the time of contact
 			event.n = hits[j].n;									// it's better for explosions to be created at some distance from the wall
@@ -680,7 +690,7 @@ int CParticleEntity::DoStep(float time_interval, int iCaller)
 				event.pEntity[1] = hits[j].pCollider;
 				event.pForeignData[1] = pCollider->m_pForeignData; 
 				event.iForeignData[1] = pCollider->m_iForeignData;
-				RigidBody *pbody = pCollider->GetRigidBody(hits[j].ipart);
+				RigidBody body(false), *pbody = pCollider->GetRigidBodyTrans(&body,hits[j].ipart,this);
 				event.vloc[1] = pbody->v+(pbody->w^event.pt-pbody->pos);
 				event.mass[1] = pbody->M;
 				event.idCollider = m_pWorld->GetPhysicalEntityId(hits[j].pCollider);
@@ -688,7 +698,9 @@ int CParticleEntity::DoStep(float time_interval, int iCaller)
 				event.partid[1] += hits[j].iNode-event.partid[1] & pCollider->m_nParts-1>>31; // return iNode for partless entitis (ropes, cloth)
 				event.iPrim[1] = max(0,hits[j].iPrim);
 
-				if (pCollider->GetType()!=PE_PARTICLE && 
+				if (pCollider->m_parts[ipart].flags & geom_no_coll_response)
+					hits[j].pCollider = 0; // will also disregard the hit as solid
+				else if (pCollider->GetType()!=PE_PARTICLE && 
 						(pCollider->m_iSimClass>0 || pCollider->m_parts[ipart].flags & geom_monitor_contacts) && 
 						!(pCollider->m_parts[ipart].flagsCollider & geom_no_particle_impulse)) 
 				{	Vec3 vrel = vel0-event.vloc[1];
@@ -817,14 +829,40 @@ int CParticleEntity::DoStep(float time_interval, int iCaller)
 			bGridLocked = m_pWorld->RepositionEntity(this,1,BBox);
 		{ WriteLock lock(m_lockUpdate);
 			m_pos=pos; m_qrot=qrot; m_BBox[0]=BBox[0]; m_BBox[1]=BBox[1];
-			JobAtomicAdd(&m_pWorld->m_lockGrid,-bGridLocked);
+			m_pWorld->UnlockGrid(this,-bGridLocked);
 		}
 		{ WriteLock lock(m_lockParticle);
 			m_vel=vel; m_slide_normal=slide_normal; m_heading=heading;
 		}
+
 /*if (CheckPointInside(m_pos) && g_retest) {
 m_pos=postest; m_vel=veltest; m_heading=headingtest; m_slide_normal=slidingnormaltest; m_bSliding=bslidingtest;
 goto doretest; }*/
+
+		if (iCaller<MAX_PHYS_THREADS) {
+			IPhysicalEntity *gridRefNew[2] = { nullptr,nullptr };
+			for(i=0; portals[i]; i++)	{
+				pe_params_outer_entity poe;
+				IPhysicalEntity *insideWhat = portals[i]->GetParams(&poe) && poe.pOuterEntity ? poe.pOuterEntity : portals[i];
+				pe_status_contains_point scp;
+				scp.pt = m_pWorld->GetGrid(insideWhat)->m_transW.GetInverted() * (m_pWorld->GetGrid(this)->m_transW * m_pos);
+				int isExit = 1-isneg(-(((CPhysicalPlaceholder*)portals[i])->m_iForeignFlags & TRIGGER_PORTAL_INV));
+				int inside = insideWhat->GetStatus(&scp);
+				if (inside ^ isExit)
+					gridRefNew[isExit] = ((CPhysicalPlaceholder*)portals[i])->m_pEntBuddy;
+			}
+			if (!gridRefNew[0])
+				gridRefNew[0] = gridRefNew[1];
+			if (gridRefNew[0] && m_pWorld->GetGrid(this)!=m_pWorld->GetGrid(gridRefNew[0])) {
+				pe_params_pos pp;
+				pp.pGridRefEnt = gridRefNew[0];
+				SetParams(&pp);
+			}
+
+			EventPhysPostStep epps;	InitEvent(&epps,this,iCaller);
+			epps.dt=time_interval; epps.pos=m_pos; epps.q=m_qrot; epps.idStep=m_pWorld->m_idStep;
+			m_pWorld->OnEvent(m_flags,&epps);
+		}
 
 		if ((m_nStepCount|(int)(char)m_areaCheckPeriod>>31)==0) {
 			pe_params_buoyancy pb[4];
@@ -833,7 +871,7 @@ goto doretest; }*/
 
 			if (nhits = m_pWorld->CheckAreas(this,gravity,pb,4,Vec3(ZERO),iCaller)) {
 				if (!is_unused(gravity))
-					m_waterGravity=m_gravity = (gravity-m_pWorld->m_vars.gravity).len2() < gravity.len2()*sqr(0.01) ? m_gravity0 : gravity;
+					m_gravity = (gravity-m_pWorld->m_vars.gravity).len2() < gravity.len2()*sqr(0.01) ? m_gravity0 : gravity;
 				for(i=0,m_depth=depth=0; i<nhits; i++) {
 					vmedium[pb[i].iMedium] += pb[i].waterFlow;
 					if (pb[i].iMedium==0 && (depth=(m_pos-pb[i].waterPlane.origin)*pb[i].waterPlane.n)<0)
@@ -845,12 +883,6 @@ goto doretest; }*/
 		}
 		m_nStepCount -= 1+((int)(char)m_nStepCount>>31);
 
-		if (iCaller<MAX_PHYS_THREADS) {
-			EventPhysPostStep epps;
-			epps.pEntity=this; epps.pForeignData=m_pForeignData; epps.iForeignData=m_iForeignData;
-			epps.dt=time_interval; epps.pos=m_pos; epps.q=m_qrot; epps.idStep=m_pWorld->m_idStep;
-			m_pWorld->OnEvent(m_flags,&epps);
-		}
 		g_pCurParticle[iCaller] = 0;
 	} else
 		m_sleepTime += time_interval;
@@ -858,7 +890,7 @@ goto doretest; }*/
 	return 1;
 }
 
-static geom_contact g_ParticleContact[MAX_PHYS_THREADS+1];
+static geom_contact g_ParticleContact[MAX_TOT_THREADS];
 
 int CParticleEntity::RayTrace(SRayTraceRes& rtr)
 {
@@ -876,7 +908,7 @@ int CParticleEntity::RayTrace(SRayTraceRes& rtr)
 
 	if (box_ray_intersection(&abox,&rtr.pRay->m_ray,&inters)) {
 		int caller = get_iCaller();
-		assert (0 <= caller && caller < (MAX_PHYS_THREADS+1));
+		assert (0 <= caller && caller < MAX_TOT_THREADS);
 
 		rtr.pcontacts = &g_ParticleContact[caller];
 		rtr.pcontacts->pt = inters.pt[0];

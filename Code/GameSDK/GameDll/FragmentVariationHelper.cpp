@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 //
 ////////////////////////////////////////////////////////////////////////////
@@ -59,7 +59,7 @@ bool CFragmentVariationHelper::Reevaluate( const IAnimationDatabase* pDatabase, 
 	if ( m_requestedFragmentId != FRAGMENT_ID_INVALID )
 	{
 		SFragmentQuery fragQuery(m_requestedFragmentId, m_requestedTagState);
-		const uint32 optionCount = pDatabase->FindBestMatchingTag( fragQuery, &matchingTagState );
+		pDatabase->FindBestMatchingTag( fragQuery, &matchingTagState );
 	}
 
 	const bool fragmentTagsChanged = ( matchingTagState != m_selectedTagState );

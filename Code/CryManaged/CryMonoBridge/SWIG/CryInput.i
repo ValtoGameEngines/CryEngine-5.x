@@ -12,11 +12,14 @@
 %ignore operator==(const char *str,const TKeyName &n);
 
 %typemap(csbase) EKeyId "uint"
+%typemap(csbase) EInputDeviceType "byte"
 %typemap(csbase) KIN_IDENTITY_ENROLLMENT "uint"
+
 %feature("director") IInputEventListener;
 %feature("director") ITouchEventListener;
 %feature("director") IKinectInputAudioListener;
 %feature("director") IKinectInputListener;
+%ignore IInputEngineModule;
 %ignore CreateInput;
 %include "../../../../CryEngine/CryCommon/CryInput/IInput.h"
 %feature("director") IHardwareMouseEventListener;

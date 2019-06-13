@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    CryGame Source File.
@@ -270,7 +270,7 @@ inline CHashSpace<T, TraitsT>::CHashSpace(const Vec3& cellSize, int buckets, con
 	m_buckets(buckets),
 	m_totalNumObjects(0)
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Navigation, 0, "HashSpace");
+	MEMSTAT_CONTEXT(EMemStatContextType::Navigation, "HashSpace");
 	m_cells.resize(m_buckets);
 }
 
@@ -281,7 +281,7 @@ inline CHashSpace<T, TraitsT>::CHashSpace(const Vec3& cellSize, int buckets) :
 	m_buckets(buckets),
 	m_totalNumObjects(0)
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Navigation, 0, "HashSpace");
+	MEMSTAT_CONTEXT(EMemStatContextType::Navigation, "HashSpace");
 	m_cells.resize(m_buckets);
 }
 
@@ -486,7 +486,7 @@ bool CHashSpace<T, TraitsT >::GetObjectWithinRadius(const Vec3& pos, float radiu
 template<typename T, typename TraitsT>
 bool CHashSpace<T, TraitsT >::ReadFromFile(CCryFile& file)
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Navigation, 0, "HashSpace");
+	MEMSTAT_CONTEXT(EMemStatContextType::Navigation, "HashSpace");
 
 	Clear(false);
 	int version = 1;

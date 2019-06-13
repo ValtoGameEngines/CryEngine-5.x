@@ -1,9 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "AICorpse.h"
 
 #include <CryAnimation/ICryAnimation.h>
+#include <CryRenderer/IRenderAuxGeom.h>
 #include <IItemSystem.h>
 
 #include "Game.h"
@@ -515,7 +516,7 @@ EntityId CAICorpseManager::SpawnAICorpseFromEntity( IEntity& sourceEntity, const
 		assert((uint32)m_corpsesArray.size() < m_maxCorpses);
 	}
 
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, EMemStatContextFlags::MSF_None, "AICorpseManager::SpawnCorpse");
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "AICorpseManager::SpawnCorpse");
 
 	EntityId corpseId = 0;
 	IPhysicalEntity* pSourcePhysics = sourceEntity.GetPhysics();
@@ -584,8 +585,10 @@ void CAICorpseManager::RemoveSomeCorpses()
 	const uint32 corspeCount = (uint32)m_corpsesArray.size();
 	assert(corspeCount > AI_CORPSES_MINIMUM);
 
-	const uint32 maxCorpsesToRemove = MIN((corspeCount / AI_CORPSES_MINIMUM), 8);
+#if defined(USE_CRY_ASSERT)
+	const uint32 maxCorpsesToRemove = std::min((corspeCount / AI_CORPSES_MINIMUM), (uint32)8);
 	assert(maxCorpsesToRemove > 0);
+#endif
 
 	std::vector<SCorpseRemovalScore> corpseScoresInfo;
 	corpseScoresInfo.reserve( corspeCount );
@@ -625,7 +628,7 @@ void CAICorpseManager::RemoveSomeCorpses()
 	assert(maxCorpsesToRemove < corpseScoresInfo.size());
 
 	const uint32 corpseScoresCount = corpseScoresInfo.size();
-	for(uint32 i = 0; i < maxCorpsesToRemove; ++i)
+	for(uint32 i = 0; i < corpseScoresCount; ++i)
 	{
 		RemoveCorpse(corpseScoresInfo[i].corpseId);
 	}

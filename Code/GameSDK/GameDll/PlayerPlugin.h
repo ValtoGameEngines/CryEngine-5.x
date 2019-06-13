@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -10,6 +10,8 @@ Base class for creating additional optional player functionality
 #define __PLAYER_PLUGIN_H__
 
 #include "AutoEnum.h"
+#include <CryNetwork/INetEntity.h>
+#include <CryNetwork/ISerialize.h>
 
 struct HitInfo;
 

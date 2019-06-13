@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -157,7 +157,7 @@ SCreateChannelResult CGameServerNub::CreateChannel(INetChannel* pChannel, const 
 //------------------------------------------------------------------------
 void CGameServerNub::Update()
 {
-	const int timeout = MAX(0, sv_timeout_disconnect->GetIVal());
+	const int timeout = std::max(0, sv_timeout_disconnect->GetIVal());
 
 	CTimeValue now = gEnv->pTimer->GetFrameStartTime();
 
@@ -177,6 +177,21 @@ void CGameServerNub::Update()
 void CGameServerNub::FailedActiveConnect(EDisconnectionCause cause, const char* description)
 {
 	CRY_ASSERT(false && "Shouldn't be called from here");
+}
+
+//------------------------------------------------------------------------
+void CGameServerNub::AddSendableToRemoteClients(INetSendablePtr pMsg, int numAfterHandle, const SSendableHandle* afterHandle, SSendableHandle* handle)
+{
+	INetChannel* pLocalChannel = GetLocalChannel();
+
+	for (TServerChannelMap::iterator iter = m_channels.begin(); iter != m_channels.end(); ++iter)
+	{
+		INetChannel* pNetChannel = iter->second->GetNetChannel();
+		if (pNetChannel != nullptr && pNetChannel != pLocalChannel)
+		{
+			pNetChannel->AddSendable(pMsg, numAfterHandle, afterHandle, handle);
+		}
+	}
 }
 
 //------------------------------------------------------------------------
@@ -422,11 +437,13 @@ void CGameServerNub::BannedStatus()
 			m_banned.erase(m_banned.begin() + i);
 			--i;
 		}
+#if !defined(EXCLUDE_NORMAL_LOG)
 		else
 		{
 			int left = int((m_banned[i].time - gEnv->pTimer->GetFrameStartTime()).GetSeconds() + 0.5f);
 			CryLogAlways("profile : %d, time left : %d:%02d", m_banned[i].profileId, left / 60, left % 60);
 		}
+#endif
 	}
 	CryLogAlways("-----------------------------------------");
 }

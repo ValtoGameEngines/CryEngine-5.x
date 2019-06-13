@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -8,6 +8,7 @@
 	#include "FFont.h"
 	#include "FontTexture.h"
 	#include "FontRenderer.h"
+	#include <CrySystem/ConsoleRegistration.h>
 
 	#if !defined(_RELEASE)
 static void DumpFontTexture(IConsoleCmdArgs* pArgs)

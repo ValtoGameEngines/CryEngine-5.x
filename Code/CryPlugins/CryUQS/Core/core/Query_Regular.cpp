@@ -1,15 +1,15 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
 // make the global Serialize() functions available for use in yasli serialization
-using uqs::core::Serialize;
+using UQS::Core::Serialize;
 
-namespace uqs
+namespace UQS
 {
-	namespace core
+	namespace Core
 	{
 
 		//===================================================================================
@@ -18,9 +18,8 @@ namespace uqs
 		//
 		//===================================================================================
 
-		CQuery_Regular::SPhaseUpdateContext::SPhaseUpdateContext(const CTimeValue& _timeLimit, shared::CUqsString& _error)
-			: timeLimit(_timeLimit)
-			, error(_error)
+		CQuery_Regular::SPhaseUpdateContext::SPhaseUpdateContext(Shared::CUqsString& _error)
+			: error(_error)
 		{}
 
 		//===================================================================================
@@ -51,18 +50,20 @@ namespace uqs
 		//
 		//===================================================================================
 
-		CQuery_Regular::SInstantEvaluatorWithIndex::SInstantEvaluatorWithIndex(client::InstantEvaluatorUniquePtr _pInstantEvaluator, client::ParamsHolderUniquePtr _pParamsHolder, const client::IInputParameterRegistry* _pInputParameterRegistry, size_t _originalIndexInQueryBlueprint)
+		CQuery_Regular::SInstantEvaluatorWithIndex::SInstantEvaluatorWithIndex(Client::InstantEvaluatorUniquePtr _pInstantEvaluator, Client::ParamsHolderUniquePtr _pParamsHolder, const Client::IInputParameterRegistry* _pInputParameterRegistry, const CEvaluationResultTransform& _evaluationResultTransform, size_t _originalIndexInQueryBlueprint)
 			: pInstantEvaluator(std::move(_pInstantEvaluator))
 			, pParamsHolder(std::move(_pParamsHolder))
 			, pInputParameterRegistry(_pInputParameterRegistry)
+			, evaluationResultTransform(_evaluationResultTransform)
 			, originalIndexInQueryBlueprint(_originalIndexInQueryBlueprint)
 		{}
 
 		CQuery_Regular::SInstantEvaluatorWithIndex::SInstantEvaluatorWithIndex(SInstantEvaluatorWithIndex&& other)
 			: pInstantEvaluator(std::move(other.pInstantEvaluator))
 			, pParamsHolder(std::move(other.pParamsHolder))
-			, pInputParameterRegistry(other.pInputParameterRegistry)
-			, originalIndexInQueryBlueprint(other.originalIndexInQueryBlueprint)
+			, pInputParameterRegistry(std::move(other.pInputParameterRegistry))
+			, evaluationResultTransform(std::move(other.evaluationResultTransform))
+			, originalIndexInQueryBlueprint(std::move(other.originalIndexInQueryBlueprint))
 		{}
 
 		CQuery_Regular::SInstantEvaluatorWithIndex& CQuery_Regular::SInstantEvaluatorWithIndex::operator=(SInstantEvaluatorWithIndex&& other)
@@ -71,8 +72,9 @@ namespace uqs
 			{
 				pInstantEvaluator = std::move(other.pInstantEvaluator);
 				pParamsHolder = std::move(other.pParamsHolder);
-				pInputParameterRegistry = other.pInputParameterRegistry;
-				originalIndexInQueryBlueprint = other.originalIndexInQueryBlueprint;
+				pInputParameterRegistry = std::move(other.pInputParameterRegistry);
+				evaluationResultTransform = std::move(other.evaluationResultTransform);
+				originalIndexInQueryBlueprint = std::move(other.originalIndexInQueryBlueprint);
 			}
 			return *this;
 		}
@@ -83,14 +85,16 @@ namespace uqs
 		//
 		//===================================================================================
 
-		CQuery_Regular::SDeferredEvaluatorWithIndex::SDeferredEvaluatorWithIndex(client::DeferredEvaluatorUniquePtr _pDeferredEvaluator, size_t _originalIndexInQueryBlueprint)
+		CQuery_Regular::SDeferredEvaluatorWithIndex::SDeferredEvaluatorWithIndex(Client::DeferredEvaluatorUniquePtr _pDeferredEvaluator, const CEvaluationResultTransform& _evaluationResultTransform, size_t _originalIndexInQueryBlueprint)
 			: pDeferredEvaluator(std::move(_pDeferredEvaluator))
+			, evaluationResultTransform(_evaluationResultTransform)
 			, originalIndexInQueryBlueprint(_originalIndexInQueryBlueprint)
 		{}
 
 		CQuery_Regular::SDeferredEvaluatorWithIndex::SDeferredEvaluatorWithIndex(SDeferredEvaluatorWithIndex&& other)
 			: pDeferredEvaluator(std::move(other.pDeferredEvaluator))
-			, originalIndexInQueryBlueprint(other.originalIndexInQueryBlueprint)
+			, evaluationResultTransform(std::move(other.evaluationResultTransform))
+			, originalIndexInQueryBlueprint(std::move(other.originalIndexInQueryBlueprint))
 		{}
 
 		CQuery_Regular::SDeferredEvaluatorWithIndex& CQuery_Regular::SDeferredEvaluatorWithIndex::operator=(SDeferredEvaluatorWithIndex&& other)
@@ -98,7 +102,8 @@ namespace uqs
 			if (this != &other)
 			{
 				pDeferredEvaluator = std::move(other.pDeferredEvaluator);
-				originalIndexInQueryBlueprint = other.originalIndexInQueryBlueprint;
+				evaluationResultTransform = std::move(other.evaluationResultTransform);
+				originalIndexInQueryBlueprint = std::move(other.originalIndexInQueryBlueprint);
 			}
 			return *this;
 		}
@@ -122,8 +127,9 @@ namespace uqs
 		//===================================================================================
 
 		CQuery_Regular::CQuery_Regular(const SCtorContext& ctorContext)
-			: CQueryBase(ctorContext, true)  // true = yes, we need some time budget from CQueryManager for some potentially complex computations
+			: CQueryBase(ctorContext)
 			, m_currentPhaseFn(&CQuery_Regular::Phase1_PrepareGenerationPhase)
+			, m_currentItemIndexForCreatingDebugRepresentations(0)
 			, m_maxCandidates(0)
 			, m_remainingItemWorkingDatasIndexForCheapInstantEvaluators(0)
 		{
@@ -132,32 +138,27 @@ namespace uqs
 			m_peakElapsedTimePerPhaseUpdate.resize(1);    // ditto for the peak call duration
 		}
 
-		bool CQuery_Regular::OnInstantiateFromQueryBlueprint(const shared::IVariantDict& runtimeParams, shared::CUqsString& error)
+		bool CQuery_Regular::OnStart(const Shared::IVariantDict& runtimeParams, Shared::IUqsString& error)
 		{
 			// ensure that a generator exists in the query-blueprint (CQuery_Regular::Phase1_PrepareGenerationPhase() uses it)
-			if (!m_queryBlueprint->GetGeneratorBlueprint())
+			if (!m_pQueryBlueprint->GetGeneratorBlueprint())
 			{
-				error.Format("CQuery_Regular::OnInstantiateFromQueryBlueprint: the query-blueprint '%s' has no generator specified", m_queryBlueprint->GetName());
+				error.Format("CQuery_Regular::OnStart: the query-blueprint '%s' has no generator specified", m_pQueryBlueprint->GetName());
 				return false;
 			}
 
 			return true;
 		}
 
-		CQuery_Regular::EUpdateState CQuery_Regular::OnUpdate(const CTimeValue& timeBudget, shared::CUqsString& error)
+		CQuery_Regular::EUpdateState CQuery_Regular::OnUpdate(const CTimeValue& amountOfGrantedTime, Shared::CUqsString& error)
 		{
-			assert(m_currentPhaseFn);	// query has already finished before; cannot recycle a query
+			CRY_ASSERT(m_currentPhaseFn);	// query has already finished before; cannot recycle a query
 
-			++m_elapsedFramesPerPhase.back();
+			const SPhaseUpdateContext phaseUpdateContext(error);
 
-			const CTimeValue queryStartTime = gEnv->pTimer->GetAsyncTime();
-			const CTimeValue queryTimeLimit = queryStartTime + timeBudget;
-			const SPhaseUpdateContext phaseUpdateContext(queryTimeLimit, error);
-
-			CTimeValue endTime;
 			EUpdateState status = EUpdateState::StillRunning;
 
-			do
+			while(1)
 			{
 				const CTimeValue phaseStartTime = gEnv->pTimer->GetAsyncTime();
 
@@ -166,8 +167,8 @@ namespace uqs
 				const EPhaseStatus phaseStatus = (this->*m_currentPhaseFn)(phaseUpdateContext);
 
 				// keep track of the elapsed time in the current phase
-				endTime = gEnv->pTimer->GetAsyncTime();
-				const CTimeValue elapsedTimeInPhaseUpdate = (endTime - phaseStartTime);
+				const CTimeValue phaseEndTime = gEnv->pTimer->GetAsyncTime();
+				const CTimeValue elapsedTimeInPhaseUpdate = (phaseEndTime - phaseStartTime);
 				m_elapsedTimePerPhase.back() += elapsedTimeInPhaseUpdate;
 				m_peakElapsedTimePerPhaseUpdate.back() = std::max(m_peakElapsedTimePerPhaseUpdate.back(), elapsedTimeInPhaseUpdate);
 
@@ -190,9 +191,10 @@ namespace uqs
 				}
 
 				// if we're still in the same phase, it means that the phase figured that it either ran out of time or that it just couldn't do any more work in the current frame
-				// -> we prematurely interrupt the running query and continue from here on the next frame
+				// -> we prematurely interrupt the running query and continue from here on the next frame (and reflect that in the current phase's frame counter)
 				if (oldPhaseFn == m_currentPhaseFn)
 				{
+					++m_elapsedFramesPerPhase.back();
 					break;
 				}
 				else
@@ -203,7 +205,9 @@ namespace uqs
 					m_peakElapsedTimePerPhaseUpdate.resize(m_peakElapsedTimePerPhaseUpdate.size() + 1);
 				}
 
-			} while(endTime < queryTimeLimit);
+				if (m_timeBudgetForCurrentUpdate.IsExhausted())
+					break;
+			}
 
 			return status;
 		}
@@ -219,13 +223,16 @@ namespace uqs
 			out.elapsedTimePerPhase = m_elapsedTimePerPhase;
 			out.peakElapsedTimePerPhaseUpdate = m_peakElapsedTimePerPhaseUpdate;
 
+			const int maxItemsToKeepInResultSet = m_pQueryBlueprint->GetMaxItemsToKeepInResultSet();
+
+			out.numDesiredItems = (maxItemsToKeepInResultSet < 1) ? 0 : (size_t)maxItemsToKeepInResultSet;
 			out.numGeneratedItems = m_generatedItems.GetItemCount();
 			out.numRemainingItemsToInspect = m_remainingItemWorkingDatasToInspect.size();
 			out.numItemsInFinalResultSet = m_candidates.size();
 
 			// Instant-Evaluator runs
 			{
-				const size_t numInstantEvaluatorBPs = m_queryBlueprint->GetInstantEvaluatorBlueprints().size();
+				const size_t numInstantEvaluatorBPs = m_pQueryBlueprint->GetInstantEvaluatorBlueprints().size();
 
 				out.instantEvaluatorsRuns.resize(numInstantEvaluatorBPs);
 
@@ -246,7 +253,7 @@ namespace uqs
 
 			// Deferred-Evaluator runs
 			{
-				const size_t numDeferredEvaluatorBPs = m_queryBlueprint->GetDeferredEvaluatorBlueprints().size();
+				const size_t numDeferredEvaluatorBPs = m_pQueryBlueprint->GetDeferredEvaluatorBlueprints().size();
 
 				out.deferredEvaluatorsFullRuns.resize(numDeferredEvaluatorBPs);
 				out.deferredEvaluatorsAbortedRuns.resize(numDeferredEvaluatorBPs);
@@ -276,13 +283,15 @@ namespace uqs
 
 		CQuery_Regular::EPhaseStatus CQuery_Regular::Phase1_PrepareGenerationPhase(const SPhaseUpdateContext& phaseUpdateContext)
 		{
+			CRY_PROFILE_FUNCTION_ARG(UQS_PROFILED_SUBSYSTEM_TO_USE, m_pQueryBlueprint->GetName());
+
 			//
 			// instantiate the generator
 			//
 
-			const CGeneratorBlueprint* pGenBP = m_queryBlueprint->GetGeneratorBlueprint();
-			assert(pGenBP);   // should have been detected by OnInstantiateFromQueryBlueprint() already
-			m_pGenerator = pGenBP->InstantiateGenerator(m_blackboard, phaseUpdateContext.error);
+			const CGeneratorBlueprint* pGenBP = m_pQueryBlueprint->GetGeneratorBlueprint();
+			CRY_ASSERT(pGenBP);   // should have been detected by OnStart() already
+			m_pGenerator = pGenBP->InstantiateGenerator(m_queryContext, phaseUpdateContext.error);
 			if (!m_pGenerator)
 			{
 				return EPhaseStatus::ExceptionOccurred;
@@ -302,47 +311,58 @@ namespace uqs
 
 		CQuery_Regular::EPhaseStatus CQuery_Regular::Phase2_GenerateItems(const SPhaseUpdateContext& phaseUpdateContext)
 		{
-			const client::IGenerator::SUpdateContext updateContext(m_queryID, m_blackboard, phaseUpdateContext.error);
-			const client::IGenerator::EUpdateStatus generatorStatus = m_pGenerator->Update(updateContext, m_generatedItems);
+			CRY_PROFILE_FUNCTION_ARG(UQS_PROFILED_SUBSYSTEM_TO_USE, m_pQueryBlueprint->GetName());
+
+			const Client::IGenerator::SUpdateContext updateContext(m_queryContext, phaseUpdateContext.error);
+			const Client::IGenerator::EUpdateStatus generatorStatus = m_pGenerator->Update(updateContext, m_generatedItems);
 
 			switch (generatorStatus)
 			{
-			case client::IGenerator::EUpdateStatus::StillGeneratingItems:
+			case Client::IGenerator::EUpdateStatus::StillGeneratingItems:
 				// keep generating
 				return EPhaseStatus::Ok;
 
-			case client::IGenerator::EUpdateStatus::FinishedGeneratingItems:
+			case Client::IGenerator::EUpdateStatus::FinishedGeneratingItems:
 				if (m_pHistory)
 				{
-					m_pHistory->OnGenerationPhaseFinished(m_generatedItems.GetItemCount(), *m_queryBlueprint);
+					m_pHistory->OnGenerationPhaseFinished(m_generatedItems.GetItemCount(), *m_pQueryBlueprint);
 				}
 				m_currentPhaseFn = &CQuery_Regular::Phase3_CreateDebugRepresentationsOfGeneratedItemsIfHistoryLoggingIsDesired;
 				return EPhaseStatus::Ok;
 
-			case client::IGenerator::EUpdateStatus::ExceptionOccurred:
+			case Client::IGenerator::EUpdateStatus::ExceptionOccurred:
 				return EPhaseStatus::ExceptionOccurred;
 
 			default:
-				assert(0);
+				CRY_ASSERT(0);
 				return EPhaseStatus::ExceptionOccurred;
 			}
 		}
 
 		CQuery_Regular::EPhaseStatus CQuery_Regular::Phase3_CreateDebugRepresentationsOfGeneratedItemsIfHistoryLoggingIsDesired(const SPhaseUpdateContext& phaseUpdateContext)
 		{
+			CRY_PROFILE_FUNCTION_ARG(UQS_PROFILED_SUBSYSTEM_TO_USE, m_pQueryBlueprint->GetName());
+
 			if (m_pHistory)
 			{
-				const client::IItemFactory& itemFactory = m_generatedItems.GetItemFactory();
-				CDebugRenderWorld& debugRenderWorld = m_pHistory->GetDebugRenderWorld();
+				const Client::IItemFactory& itemFactory = m_generatedItems.GetItemFactory();
+				CDebugRenderWorldPersistent& debugRenderWorld = m_pHistory->GetDebugRenderWorldPersistent();
 
-				for (size_t i = 0, n = m_generatedItems.GetItemCount(); i < n; ++i)
+				for (size_t n = m_generatedItems.GetItemCount(); m_currentItemIndexForCreatingDebugRepresentations < n; ++m_currentItemIndexForCreatingDebugRepresentations)
 				{
-					const void* pItem = m_generatedItems.GetItemAtIndex(i);
-					m_pHistory->CreateItemDebugProxyViaItemFactoryForItem(itemFactory, pItem, i);
-					debugRenderWorld.AssociateAllUpcomingAddedPrimitivesWithItem(i);
+					const void* pItem = m_generatedItems.GetItemAtIndex(m_currentItemIndexForCreatingDebugRepresentations);
+					m_pHistory->CreateItemDebugProxyViaItemFactoryForItem(itemFactory, pItem, m_currentItemIndexForCreatingDebugRepresentations);
+					debugRenderWorld.AssociateAllUpcomingAddedPrimitivesWithItem(m_currentItemIndexForCreatingDebugRepresentations);
 					debugRenderWorld.ItemConstructionBegin();
 					itemFactory.AddItemToDebugRenderWorld(pItem, debugRenderWorld);
 					debugRenderWorld.ItemConstructionEnd();
+
+					// check for having run out of time every 16th item
+					if ((m_currentItemIndexForCreatingDebugRepresentations & 0xF) == 0 && m_timeBudgetForCurrentUpdate.IsExhausted())
+					{
+						// continue in the next frame
+						return EPhaseStatus::Ok;
+					}
 				}
 			}
 			m_currentPhaseFn = &CQuery_Regular::Phase4_PrepareEvaluationPhase;
@@ -351,12 +371,14 @@ namespace uqs
 
 		CQuery_Regular::EPhaseStatus CQuery_Regular::Phase4_PrepareEvaluationPhase(const SPhaseUpdateContext& phaseUpdateContext)
 		{
+			CRY_PROFILE_FUNCTION_ARG(UQS_PROFILED_SUBSYSTEM_TO_USE, m_pQueryBlueprint->GetName());
+
 			//
 			// make the generated items accessible to all functions in all evaluators from now on
 			//
 
 			m_pItemIterationContext.reset(new SItemIterationContext(m_generatedItems));
-			m_blackboard.pItemIterationContext = m_pItemIterationContext.get();
+			m_queryContext.pItemIterationContext = m_pItemIterationContext.get();
 
 			//
 			// - instantiate the function-call-hierarchies of instant-evaluators and deferred-evaluators
@@ -366,14 +388,14 @@ namespace uqs
 
 			// instant-evaluator blueprints
 			{
-				const std::vector<CInstantEvaluatorBlueprint*>& instantEvaluatorBlueprints = m_queryBlueprint->GetInstantEvaluatorBlueprints();
+				const std::vector<CInstantEvaluatorBlueprint*>& instantEvaluatorBlueprints = m_pQueryBlueprint->GetInstantEvaluatorBlueprints();
 				const size_t numInstantEvaluators = instantEvaluatorBlueprints.size();
 				m_functionCallHierarchyPerInstantEvalBP.reserve(numInstantEvaluators);
 
 				for (size_t i = 0; i < numInstantEvaluators; ++i)
 				{
 					std::unique_ptr<CFunctionCallHierarchy> pFunctionCallHierarchy(new CFunctionCallHierarchy);
-					if (!instantEvaluatorBlueprints[i]->InstantiateFunctionCallHierarchy(*pFunctionCallHierarchy, m_blackboard, phaseUpdateContext.error))
+					if (!instantEvaluatorBlueprints[i]->InstantiateFunctionCallHierarchy(*pFunctionCallHierarchy, m_queryContext, phaseUpdateContext.error))
 					{
 						return EPhaseStatus::ExceptionOccurred;
 					}
@@ -383,14 +405,14 @@ namespace uqs
 
 			// deferred-evaluator blueprints
 			{
-				const std::vector<CDeferredEvaluatorBlueprint*>& deferredEvaluatorBlueprints = m_queryBlueprint->GetDeferredEvaluatorBlueprints();
+				const std::vector<CDeferredEvaluatorBlueprint*>& deferredEvaluatorBlueprints = m_pQueryBlueprint->GetDeferredEvaluatorBlueprints();
 				const size_t numDeferredEvaluators = deferredEvaluatorBlueprints.size();
 				m_functionCallHierarchyPerDeferredEvalBP.reserve(numDeferredEvaluators);
 
 				for (size_t i = 0; i < numDeferredEvaluators; ++i)
 				{
 					std::unique_ptr<CFunctionCallHierarchy> pFunctionCallHierarchy(new CFunctionCallHierarchy);
-					if (!deferredEvaluatorBlueprints[i]->InstantiateFunctionCallHierarchy(*pFunctionCallHierarchy, m_blackboard, phaseUpdateContext.error))
+					if (!deferredEvaluatorBlueprints[i]->InstantiateFunctionCallHierarchy(*pFunctionCallHierarchy, m_queryContext, phaseUpdateContext.error))
 					{
 						return EPhaseStatus::ExceptionOccurred;
 					}
@@ -404,96 +426,32 @@ namespace uqs
 			//
 
 			{
-				const std::vector<CInstantEvaluatorBlueprint*>& instantEvaluatorBlueprints = m_queryBlueprint->GetInstantEvaluatorBlueprints();
+				const std::vector<CInstantEvaluatorBlueprint*>& instantEvaluatorBlueprints = m_pQueryBlueprint->GetInstantEvaluatorBlueprints();
 				const size_t numInstantEvaluators = instantEvaluatorBlueprints.size();
-
-				//
-				// - instantiate all instant-evaluators into temporary containers
-				// - afterwards, we'll sort and keep them around in the following order:
-				//    m_cheapInstantEvaluators:     [tester1, tester2, tester3, ..., scorer1, scorer2, scorer3, ...]
-				//    m_expensiveInstantEvaluators: [tester1, tester2, tester3, ..., scorer1, scorer2, scorer3, ...]
-				//
-				// FIXME: the sorting could be done at the blueprint level already
-
-				std::vector<SInstantEvaluatorWithIndex> cheapTesters;
-				std::vector<SInstantEvaluatorWithIndex> cheapScorers;
-				std::vector<SInstantEvaluatorWithIndex> expensiveTesters;
-				std::vector<SInstantEvaluatorWithIndex> expensiveScorers;
 
 				for (size_t i = 0; i < numInstantEvaluators; ++i)
 				{
-					client::IInstantEvaluatorFactory& instantEvaluatorFactory = instantEvaluatorBlueprints[i]->GetFactory();
-					client::InstantEvaluatorUniquePtr pEval = instantEvaluatorFactory.CreateInstantEvaluator();
-					client::ParamsHolderUniquePtr pParamsHolder = instantEvaluatorFactory.GetParamsHolderFactory().CreateParamsHolder();
-					const client::IInputParameterRegistry* pInputParameterRegistry = &instantEvaluatorFactory.GetInputParameterRegistry();
-
-					const client::IInstantEvaluatorFactory::ECostCategory costCategory = instantEvaluatorFactory.GetCostCategory();
-					const client::IInstantEvaluatorFactory::EEvaluationModality evaluationModality = instantEvaluatorFactory.GetEvaluationModality();
+					const CInstantEvaluatorBlueprint* pInstantEvaluatorBlueprint = instantEvaluatorBlueprints[i];
+					Client::IInstantEvaluatorFactory& instantEvaluatorFactory = pInstantEvaluatorBlueprint->GetFactory();
+					Client::InstantEvaluatorUniquePtr pEval = instantEvaluatorFactory.CreateInstantEvaluator();
+					Client::ParamsHolderUniquePtr pParamsHolder = instantEvaluatorFactory.GetParamsHolderFactory().CreateParamsHolder();
+					const Client::IInputParameterRegistry* pInputParameterRegistry = &instantEvaluatorFactory.GetInputParameterRegistry();
+					const CEvaluationResultTransform& evaluationResultTransform = pInstantEvaluatorBlueprint->GetEvaluationResultTransform();
+					const Client::IInstantEvaluatorFactory::ECostCategory costCategory = instantEvaluatorFactory.GetCostCategory();
 
 					switch (costCategory)
 					{
-					case client::IInstantEvaluatorFactory::ECostCategory::Cheap:
-						switch (evaluationModality)
-						{
-						case client::IInstantEvaluatorFactory::EEvaluationModality::Testing:
-							cheapTesters.emplace_back(std::move(pEval), std::move(pParamsHolder), pInputParameterRegistry, i);
-							break;
-
-						case client::IInstantEvaluatorFactory::EEvaluationModality::Scoring:
-							cheapScorers.emplace_back(std::move(pEval), std::move(pParamsHolder), pInputParameterRegistry, i);
-							break;
-
-						default:
-							assert(0);
-						}
+					case Client::IInstantEvaluatorFactory::ECostCategory::Cheap:
+						m_cheapInstantEvaluators.emplace_back(std::move(pEval), std::move(pParamsHolder), pInputParameterRegistry, evaluationResultTransform, i);
 						break;
 
-					case client::IInstantEvaluatorFactory::ECostCategory::Expensive:
-						switch (evaluationModality)
-						{
-						case client::IInstantEvaluatorFactory::EEvaluationModality::Testing:
-							expensiveTesters.emplace_back(std::move(pEval), std::move(pParamsHolder), pInputParameterRegistry, i);
-							break;
-
-						case client::IInstantEvaluatorFactory::EEvaluationModality::Scoring:
-							expensiveScorers.emplace_back(std::move(pEval), std::move(pParamsHolder), pInputParameterRegistry, i);
-							break;
-
-						default:
-							assert(0);
-						}
+					case Client::IInstantEvaluatorFactory::ECostCategory::Expensive:
+						m_expensiveInstantEvaluators.emplace_back(std::move(pEval), std::move(pParamsHolder), pInputParameterRegistry, evaluationResultTransform, i);
 						break;
 
 					default:
-						assert(0);
+						CRY_ASSERT(0);
 					}
-				}
-
-				m_cheapInstantEvaluators.reserve(cheapTesters.size() + cheapScorers.size());
-				m_expensiveInstantEvaluators.reserve(expensiveTesters.size() + expensiveScorers.size());
-
-				// cheap testers
-				for (SInstantEvaluatorWithIndex& eval : cheapTesters)
-				{
-					m_cheapInstantEvaluators.push_back(std::move(eval));
-				}
-
-				// cheap scorers
-				for (SInstantEvaluatorWithIndex& eval : cheapScorers)
-				{
-					m_cheapInstantEvaluators.push_back(std::move(eval));
-				}
-
-				// expensive testers
-				for (SInstantEvaluatorWithIndex& eval : expensiveTesters)
-				{
-					m_expensiveInstantEvaluators.push_back(std::move(eval));
-				}
-
-				// expensive scorers
-				for (SInstantEvaluatorWithIndex& eval : expensiveScorers)
-				{
-					m_expensiveInstantEvaluators.push_back(std::move(eval));
 				}
 			}
 
@@ -517,7 +475,7 @@ namespace uqs
 			// - notice: we might end up with less candidates than the desired limit after the query finishes
 			//
 
-			const int maxItemsToKeepInResultSet = m_queryBlueprint->GetMaxItemsToKeepInResultSet();
+			const int maxItemsToKeepInResultSet = m_pQueryBlueprint->GetMaxItemsToKeepInResultSet();
 			m_maxCandidates = (maxItemsToKeepInResultSet < 1) ? numGeneratedItems : std::min((size_t)maxItemsToKeepInResultSet, numGeneratedItems);
 			m_candidates.reserve(m_maxCandidates);
 
@@ -527,34 +485,39 @@ namespace uqs
 
 		void CQuery_Regular::RunInstantEvaluator(const SInstantEvaluatorWithIndex& instantEvaluatorToRun, SItemWorkingData& workingDataToWriteResultTo)
 		{
-			assert(workingDataToWriteResultTo.bitsDiscardedByInstantEvaluators == 0);
-			assert(workingDataToWriteResultTo.bitsWorkingDeferredEvaluators == 0);
-			assert(workingDataToWriteResultTo.bitsDiscardedByDeferredEvaluators == 0);
-			assert(workingDataToWriteResultTo.bitsFinishedDeferredEvaluators == 0);
-			assert(workingDataToWriteResultTo.bitsAbortedDeferredEvaluators == 0);
-			assert(!workingDataToWriteResultTo.bDisqualifiedDueToBadScore);
-			assert(workingDataToWriteResultTo.bitsExceptionByInstantEvaluatorFunctionCalls == 0);
-			assert(workingDataToWriteResultTo.bitsExceptionByInstantEvaluatorsThemselves == 0);
-			assert(workingDataToWriteResultTo.bitsExceptionByDeferredEvaluatorFunctionCalls == 0);
-			assert(workingDataToWriteResultTo.bitsExceptionByDeferredEvaluatorsThemselves == 0);
+			CRY_PROFILE_FUNCTION_ARG(UQS_PROFILED_SUBSYSTEM_TO_USE, m_pQueryBlueprint->GetName());
+
+			CRY_ASSERT(workingDataToWriteResultTo.bitsDiscardedByInstantEvaluators == 0);
+			CRY_ASSERT(workingDataToWriteResultTo.bitsWorkingDeferredEvaluators == 0);
+			CRY_ASSERT(workingDataToWriteResultTo.bitsDiscardedByDeferredEvaluators == 0);
+			CRY_ASSERT(workingDataToWriteResultTo.bitsFinishedDeferredEvaluators == 0);
+			CRY_ASSERT(workingDataToWriteResultTo.bitsAbortedDeferredEvaluators == 0);
+			CRY_ASSERT(!workingDataToWriteResultTo.bDisqualifiedDueToBadScore);
+			CRY_ASSERT(workingDataToWriteResultTo.bitsExceptionByInstantEvaluatorFunctionCalls == 0);
+			CRY_ASSERT(workingDataToWriteResultTo.bitsExceptionByInstantEvaluatorsThemselves == 0);
+			CRY_ASSERT(workingDataToWriteResultTo.bitsExceptionByDeferredEvaluatorFunctionCalls == 0);
+			CRY_ASSERT(workingDataToWriteResultTo.bitsExceptionByDeferredEvaluatorsThemselves == 0);
+
+			// original index of the instant-evaluator as it appears in the blueprint
+			const size_t instantEvaluatorIndex = instantEvaluatorToRun.originalIndexInQueryBlueprint;
 
 			// associate given item with all primitives that the upcoming function and evaluators draw
 			if (m_pHistory)
 			{
-				m_pHistory->GetDebugRenderWorld().AssociateAllUpcomingAddedPrimitivesWithItem(workingDataToWriteResultTo.indexInGeneratedItems);
+				CDebugRenderWorldPersistent& debugRW = m_pHistory->GetDebugRenderWorldPersistent();
+				debugRW.AssociateAllUpcomingAddedPrimitivesWithItem(workingDataToWriteResultTo.indexInGeneratedItems);
+				debugRW.AssociateAllUpcomingAddedPrimitivesAlsoWithInstantEvaluator(instantEvaluatorIndex);
+				debugRW.AssociateAllUpcomingAddedPrimitivesAlsoWithDeferredEvaluator(CDebugRenderWorldPersistent::kIndexWithoutAssociation);
 			}
-
-			// original index of the instant-evaluator as it appears in the blueprint
-			const size_t instantEvaluatorIndex = instantEvaluatorToRun.originalIndexInQueryBlueprint;
 
 			// re-use the parameters from possible previous calls (they'll get overwritten by the function calls below)
 			void* pParams = instantEvaluatorToRun.pParamsHolder->GetParams();
 
 			// fill the parameters for this instant-evaluator by making function calls
 			{
-				shared::CUqsString exceptionMessageFromFunctionCalls;
+				Shared::CUqsString exceptionMessageFromFunctionCalls;
 				bool bExceptionOccurredInFunctionCalls = false;
-				const client::IFunction::SExecuteContext executeContext(workingDataToWriteResultTo.indexInGeneratedItems, m_blackboard, exceptionMessageFromFunctionCalls, bExceptionOccurredInFunctionCalls);
+				const Client::IFunction::SExecuteContext executeContext(workingDataToWriteResultTo.indexInGeneratedItems, m_queryContext, exceptionMessageFromFunctionCalls, bExceptionOccurredInFunctionCalls);
 				const CFunctionCallHierarchy* pFunctionCalls = m_functionCallHierarchyPerInstantEvalBP[instantEvaluatorIndex].get();
 				pFunctionCalls->ExecuteAll(executeContext, pParams, *instantEvaluatorToRun.pInputParameterRegistry);
 
@@ -572,17 +535,20 @@ namespace uqs
 
 			// run this instant-evaluator
 			SItemEvaluationResult evaluationResult;
-			shared::CUqsString exceptionMessageFromInstantEvaluatorHimself;
-			const client::IInstantEvaluator* pInstantEvaluator = instantEvaluatorToRun.pInstantEvaluator.get();
-			const client::IInstantEvaluator::SRunContext runContext(evaluationResult, m_blackboard, exceptionMessageFromInstantEvaluatorHimself);
-			const client::IInstantEvaluator::ERunStatus status = pInstantEvaluator->Run(runContext, pParams);
+			Shared::CUqsString exceptionMessageFromInstantEvaluatorHimself;
+			const Client::IInstantEvaluator* pInstantEvaluator = instantEvaluatorToRun.pInstantEvaluator.get();
+			const Client::IInstantEvaluator::SRunContext runContext(evaluationResult, m_queryContext, exceptionMessageFromInstantEvaluatorHimself);
+			const Client::IInstantEvaluator::ERunStatus status = pInstantEvaluator->Run(runContext, pParams);
 
 			switch(status)
 			{
-			case client::IInstantEvaluator::ERunStatus::Finished:
+			case Client::IInstantEvaluator::ERunStatus::Finished:
 				{
 					// mark the evaluator as finished (this may only be done if the evaluator finished with whatever he was supposed to do without causing an exception)
 					workingDataToWriteResultTo.bitsFinishedInstantEvaluators |= (evaluatorsBitfield_t)1 << instantEvaluatorIndex;
+
+					// transform the evaluation result
+					instantEvaluatorToRun.evaluationResultTransform.TransformItemEvaluationResult(evaluationResult);
 
 					if (evaluationResult.bDiscardItem)
 					{
@@ -597,7 +563,7 @@ namespace uqs
 					else
 					{
 						// update the item's score so far
-						const float weight = m_queryBlueprint->GetInstantEvaluatorBlueprints()[instantEvaluatorIndex]->GetWeight();	// FIXME: could cache the weights of all evaluators and spare the pointer access
+						const float weight = m_pQueryBlueprint->GetInstantEvaluatorBlueprints()[instantEvaluatorIndex]->GetWeight();	// FIXME: could cache the weights of all evaluators and spare the pointer access
 						const float weightedScore = evaluationResult.score * weight;
 						workingDataToWriteResultTo.accumulatedAndWeightedScoreSoFar += weightedScore;
 
@@ -609,7 +575,7 @@ namespace uqs
 				}
 				break;
 
-			case client::IInstantEvaluator::ERunStatus::ExceptionOccurred:
+			case Client::IInstantEvaluator::ERunStatus::ExceptionOccurred:
 				{
 					// the instant-evaluator himself caused an exception (meaning that he did *not* fully run to its end, so doesn't count as "finished")
 					workingDataToWriteResultTo.bitsExceptionByInstantEvaluatorsThemselves |= (evaluatorsBitfield_t)1 << instantEvaluatorIndex;
@@ -622,12 +588,14 @@ namespace uqs
 				break;
 
 			default:
-				assert(0);
+				CRY_ASSERT(0);
 			}
 		}
 
 		CQuery_Regular::EPhaseStatus CQuery_Regular::Phase5_RunCheapEvaluators(const SPhaseUpdateContext& phaseUpdateContext)
 		{
+			CRY_PROFILE_FUNCTION_ARG(UQS_PROFILED_SUBSYSTEM_TO_USE, m_pQueryBlueprint->GetName());
+
 			//
 			// basically, the algorithm goes like this:
 			//
@@ -645,11 +613,11 @@ namespace uqs
 			{
 				SItemWorkingData* pWorkingData = m_remainingItemWorkingDatasToInspect[m_remainingItemWorkingDatasIndexForCheapInstantEvaluators];
 
-				assert(pWorkingData->bitsDiscardedByInstantEvaluators == 0);
-				assert(pWorkingData->bitsDiscardedByDeferredEvaluators == 0);
-				assert(pWorkingData->bitsFinishedDeferredEvaluators == 0);
-				assert(pWorkingData->bitsAbortedDeferredEvaluators == 0);
-				assert(!pWorkingData->bDisqualifiedDueToBadScore);
+				CRY_ASSERT(pWorkingData->bitsDiscardedByInstantEvaluators == 0);
+				CRY_ASSERT(pWorkingData->bitsDiscardedByDeferredEvaluators == 0);
+				CRY_ASSERT(pWorkingData->bitsFinishedDeferredEvaluators == 0);
+				CRY_ASSERT(pWorkingData->bitsAbortedDeferredEvaluators == 0);
+				CRY_ASSERT(!pWorkingData->bDisqualifiedDueToBadScore);
 
 				bool bDiscardedItem = false;
 
@@ -667,18 +635,19 @@ namespace uqs
 
 				if (bDiscardedItem)
 				{
-					m_remainingItemWorkingDatasToInspect.erase(m_remainingItemWorkingDatasToInspect.begin() + m_remainingItemWorkingDatasIndexForCheapInstantEvaluators);
+					m_remainingItemWorkingDatasToInspect[m_remainingItemWorkingDatasIndexForCheapInstantEvaluators] = m_remainingItemWorkingDatasToInspect.back();
+					m_remainingItemWorkingDatasToInspect.pop_back();
 				}
 				else
 				{
 					++m_remainingItemWorkingDatasIndexForCheapInstantEvaluators;
 				}
 
-				if (phaseUpdateContext.timeLimit <= gEnv->pTimer->GetAsyncTime())
+				if (m_timeBudgetForCurrentUpdate.IsExhausted())
 					break;
 			}
 
-			assert(m_remainingItemWorkingDatasIndexForCheapInstantEvaluators <= m_remainingItemWorkingDatasToInspect.size());
+			CRY_ASSERT(m_remainingItemWorkingDatasIndexForCheapInstantEvaluators <= m_remainingItemWorkingDatasToInspect.size());
 
 			// examined all items? -> proceed to next phase
 			if (m_remainingItemWorkingDatasIndexForCheapInstantEvaluators == m_remainingItemWorkingDatasToInspect.size())
@@ -691,10 +660,12 @@ namespace uqs
 
 		CQuery_Regular::EPhaseStatus CQuery_Regular::Phase6_SortByScoreSoFar(const SPhaseUpdateContext& phaseUpdateContext)
 		{
+			CRY_PROFILE_FUNCTION_ARG(UQS_PROFILED_SUBSYSTEM_TO_USE, m_pQueryBlueprint->GetName());
+
 			// sort the remaining items such that the ones with higher scores come first
-			auto sorter = [](const SItemWorkingData* lhs, const SItemWorkingData* rhs)
+			auto sorter = [](const SItemWorkingData* pLHS, const SItemWorkingData* pRHS)
 			{
-				return lhs->accumulatedAndWeightedScoreSoFar > rhs->accumulatedAndWeightedScoreSoFar;
+				return pLHS->accumulatedAndWeightedScoreSoFar > pRHS->accumulatedAndWeightedScoreSoFar;
 			};
 			std::sort(m_remainingItemWorkingDatasToInspect.begin(), m_remainingItemWorkingDatasToInspect.end(), sorter);
 
@@ -704,6 +675,8 @@ namespace uqs
 
 		void CQuery_Regular::UpdateDeferredTasks()
 		{
+			CRY_PROFILE_FUNCTION_ARG(UQS_PROFILED_SUBSYSTEM_TO_USE, m_pQueryBlueprint->GetName());
+
 			for (auto it = m_deferredTasks.begin(); it != m_deferredTasks.end(); )
 			{
 				SDeferredTask& taskToUpdate = *it;
@@ -725,22 +698,25 @@ namespace uqs
 
 		void CQuery_Regular::UpdateDeferredTask(SDeferredTask& taskToUpdate)
 		{
-			assert(taskToUpdate.pWorkingData->bitsDiscardedByInstantEvaluators == 0);
-			assert(taskToUpdate.pWorkingData->bitsDiscardedByDeferredEvaluators == 0);
-			assert(taskToUpdate.pWorkingData->bitsWorkingDeferredEvaluators != 0);
-			assert(taskToUpdate.pWorkingData->bitsFinishedDeferredEvaluators == 0);
-			assert(!taskToUpdate.pWorkingData->bDisqualifiedDueToBadScore);
-			assert(taskToUpdate.pWorkingData->bitsExceptionByInstantEvaluatorFunctionCalls == 0);
-			assert(taskToUpdate.pWorkingData->bitsExceptionByInstantEvaluatorsThemselves == 0);
-			assert(taskToUpdate.pWorkingData->bitsExceptionByDeferredEvaluatorFunctionCalls == 0);
-			assert(taskToUpdate.pWorkingData->bitsExceptionByDeferredEvaluatorsThemselves == 0);
+			CRY_PROFILE_FUNCTION_ARG(UQS_PROFILED_SUBSYSTEM_TO_USE, m_pQueryBlueprint->GetName());
+
+			CRY_ASSERT(taskToUpdate.pWorkingData->bitsDiscardedByInstantEvaluators == 0);
+			CRY_ASSERT(taskToUpdate.pWorkingData->bitsDiscardedByDeferredEvaluators == 0);
+			CRY_ASSERT(taskToUpdate.pWorkingData->bitsWorkingDeferredEvaluators != 0);
+			CRY_ASSERT(!taskToUpdate.pWorkingData->bDisqualifiedDueToBadScore);
+			CRY_ASSERT(taskToUpdate.pWorkingData->bitsExceptionByInstantEvaluatorFunctionCalls == 0);
+			CRY_ASSERT(taskToUpdate.pWorkingData->bitsExceptionByInstantEvaluatorsThemselves == 0);
+			CRY_ASSERT(taskToUpdate.pWorkingData->bitsExceptionByDeferredEvaluatorFunctionCalls == 0);
+			CRY_ASSERT(taskToUpdate.pWorkingData->bitsExceptionByDeferredEvaluatorsThemselves == 0);
 
 			taskToUpdate.status = 0;
 
 			// associate given item with all primitives that the upcoming functions and evaluators draw
 			if (m_pHistory)
 			{
-				m_pHistory->GetDebugRenderWorld().AssociateAllUpcomingAddedPrimitivesWithItem(taskToUpdate.pWorkingData->indexInGeneratedItems);
+				CDebugRenderWorldPersistent& debugRW = m_pHistory->GetDebugRenderWorldPersistent();
+				debugRW.AssociateAllUpcomingAddedPrimitivesWithItem(taskToUpdate.pWorkingData->indexInGeneratedItems);
+				debugRW.AssociateAllUpcomingAddedPrimitivesAlsoWithInstantEvaluator(CDebugRenderWorldPersistent::kIndexWithoutAssociation);
 			}
 
 			bool bDiscardedItem = false;
@@ -748,34 +724,44 @@ namespace uqs
 
 			for (auto it = taskToUpdate.deferredEvaluators.begin(); it != taskToUpdate.deferredEvaluators.end() && !bDiscardedItem; )
 			{
+				SDeferredEvaluatorWithIndex& de = *it;
+
+				//
+				// associate this deferred-evaluator with all primitives that will get added by it
+				//
+
+				if (m_pHistory)
+				{
+					m_pHistory->GetDebugRenderWorldPersistent().AssociateAllUpcomingAddedPrimitivesAlsoWithDeferredEvaluator(de.originalIndexInQueryBlueprint);
+				}
+
 				//
 				// update this deferred-evaluator
 				//
 
-				SDeferredEvaluatorWithIndex& de = *it;
 				SItemEvaluationResult evaluationResult;
-				shared::CUqsString exceptionMessageFromDeferredEvaluatorHimself;
-				const client::IDeferredEvaluator::SUpdateContext evaluatorUpdateContext(evaluationResult, m_blackboard, exceptionMessageFromDeferredEvaluatorHimself);
-				const client::IDeferredEvaluator::EUpdateStatus evaluatorStatus = de.pDeferredEvaluator->Update(evaluatorUpdateContext);
+				Shared::CUqsString exceptionMessageFromDeferredEvaluatorHimself;
+				const Client::IDeferredEvaluator::SUpdateContext evaluatorUpdateContext(evaluationResult, m_queryContext, exceptionMessageFromDeferredEvaluatorHimself);
+				const Client::IDeferredEvaluator::EUpdateStatus evaluatorStatus = de.pDeferredEvaluator->Update(evaluatorUpdateContext);
 
 				switch (evaluatorStatus)
 				{
-				case client::IDeferredEvaluator::EUpdateStatus::BusyWaitingForExternalSchedulerFeedback:
+				case Client::IDeferredEvaluator::EUpdateStatus::BusyWaitingForExternalSchedulerFeedback:
 					taskToUpdate.status |= SDeferredTask::statusFlag_atLeastOneEvaluatorIsWaitingForExternalResourceInCurrentFrame;
 					++it;
 					break;
 
-				case client::IDeferredEvaluator::EUpdateStatus::BusyButBlockedDueToResourceShortage:
+				case Client::IDeferredEvaluator::EUpdateStatus::BusyButBlockedDueToResourceShortage:
 					taskToUpdate.status |= SDeferredTask::statusFlag_atLeastOneEvaluatorIsShortOnResources;
 					++it;
 					break;
 
-				case client::IDeferredEvaluator::EUpdateStatus::BusyDoingTimeSlicedWork:
+				case Client::IDeferredEvaluator::EUpdateStatus::BusyDoingTimeSlicedWork:
 					taskToUpdate.status |= SDeferredTask::statusFlag_atLeastOneEvaluatorIsDoingTimeSlicedWork;
 					++it;
 					break;
 
-				case client::IDeferredEvaluator::EUpdateStatus::Finished:
+				case Client::IDeferredEvaluator::EUpdateStatus::Finished:
 					{
 						const evaluatorsBitfield_t myOwnBit = (evaluatorsBitfield_t)1 << de.originalIndexInQueryBlueprint;
 
@@ -784,6 +770,9 @@ namespace uqs
 
 						// leave our finished mark
 						taskToUpdate.pWorkingData->bitsFinishedDeferredEvaluators |= myOwnBit;
+
+						// transform the evaluation result
+						de.evaluationResultTransform.TransformItemEvaluationResult(evaluationResult);
 
 						if (evaluationResult.bDiscardItem)
 						{
@@ -798,7 +787,7 @@ namespace uqs
 						}
 						else
 						{
-							const float weight = m_queryBlueprint->GetDeferredEvaluatorBlueprints()[de.originalIndexInQueryBlueprint]->GetWeight();	// FIXME: could cache the weights of all evaluators and spare the pointer access
+							const float weight = m_pQueryBlueprint->GetDeferredEvaluatorBlueprints()[de.originalIndexInQueryBlueprint]->GetWeight();	// FIXME: could cache the weights of all evaluators and spare the pointer access
 							const float weightedScore = evaluationResult.score * weight;
 							taskToUpdate.pWorkingData->accumulatedAndWeightedScoreSoFar += weightedScore;
 
@@ -812,7 +801,7 @@ namespace uqs
 					}
 					break;
 
-				case client::IDeferredEvaluator::EUpdateStatus::ExceptionOccurred:
+				case Client::IDeferredEvaluator::EUpdateStatus::ExceptionOccurred:
 					{
 						const evaluatorsBitfield_t myOwnBit = (evaluatorsBitfield_t)1 << de.originalIndexInQueryBlueprint;
 
@@ -835,7 +824,7 @@ namespace uqs
 					break;
 
 				default:
-					assert(0);
+					CRY_ASSERT(0);
 				}
 			}
 
@@ -849,7 +838,7 @@ namespace uqs
 			}
 		}
 
-		void CQuery_Regular::AbortDeferredTask(SDeferredTask& taskToAbort, const char* reasonForAbort)
+		void CQuery_Regular::AbortDeferredTask(SDeferredTask& taskToAbort, const char* szReasonForAbort)
 		{
 			// abort all remaining deferred-evaluators and mark them as "aborted"
 			while (!taskToAbort.deferredEvaluators.empty())
@@ -858,7 +847,7 @@ namespace uqs
 				const evaluatorsBitfield_t myOwnBit = (evaluatorsBitfield_t)1 << originalIndexInQueryBlueprint;
 
 				// the deferred-evaluator must have been working already before (to be consistent)
-				assert(taskToAbort.pWorkingData->bitsWorkingDeferredEvaluators & myOwnBit);
+				CRY_ASSERT(taskToAbort.pWorkingData->bitsWorkingDeferredEvaluators & myOwnBit);
 
 				// prematurely destroy it (this can save processing time on those doing time-sliced work)
 				taskToAbort.deferredEvaluators.pop_front();
@@ -871,7 +860,7 @@ namespace uqs
 
 				if (m_pHistory)
 				{
-					m_pHistory->OnDeferredEvaluatorGotAborted(originalIndexInQueryBlueprint, taskToAbort.pWorkingData->indexInGeneratedItems, reasonForAbort);
+					m_pHistory->OnDeferredEvaluatorGotAborted(originalIndexInQueryBlueprint, taskToAbort.pWorkingData->indexInGeneratedItems, szReasonForAbort);
 				}
 			}
 		}
@@ -879,13 +868,13 @@ namespace uqs
 		bool CQuery_Regular::CanItemStillBeatTheWorstCandidate(const SItemWorkingData& itemToCheck) const
 		{
 			// the list of final candidates must be already full
-			assert(m_candidates.size() == m_maxCandidates);
+			CRY_ASSERT(m_candidates.size() == m_maxCandidates);
 
 			// given item must not have encountered any kind of exception
-			assert(itemToCheck.bitsExceptionByInstantEvaluatorFunctionCalls == 0);
-			assert(itemToCheck.bitsExceptionByInstantEvaluatorsThemselves == 0);
-			assert(itemToCheck.bitsExceptionByDeferredEvaluatorFunctionCalls == 0);
-			assert(itemToCheck.bitsExceptionByDeferredEvaluatorsThemselves == 0);
+			CRY_ASSERT(itemToCheck.bitsExceptionByInstantEvaluatorFunctionCalls == 0);
+			CRY_ASSERT(itemToCheck.bitsExceptionByInstantEvaluatorsThemselves == 0);
+			CRY_ASSERT(itemToCheck.bitsExceptionByDeferredEvaluatorFunctionCalls == 0);
+			CRY_ASSERT(itemToCheck.bitsExceptionByDeferredEvaluatorsThemselves == 0);
 
 			// - assume that all cheap instant-evaluators have already run and didn't discard the item, as we don't check for them here
 			// - in other words: we may only get called from the expensive evaluators phase
@@ -894,7 +883,7 @@ namespace uqs
 
 			// accumulate best possible score from expensive instant-evaluators that haven't run yet
 			{
-				const std::vector<CInstantEvaluatorBlueprint*>& instantEvaluatorBlueprints = m_queryBlueprint->GetInstantEvaluatorBlueprints();
+				const std::vector<CInstantEvaluatorBlueprint*>& instantEvaluatorBlueprints = m_pQueryBlueprint->GetInstantEvaluatorBlueprints();
 
 				for(const SInstantEvaluatorWithIndex& ie : m_expensiveInstantEvaluators)
 				{
@@ -909,16 +898,16 @@ namespace uqs
 
 			// accumulate best possible score from deferred-evaluators
 			{
-				const std::vector<CDeferredEvaluatorBlueprint*>& deferredEvaluatorBlueprints = m_queryBlueprint->GetDeferredEvaluatorBlueprints();
+				const std::vector<CDeferredEvaluatorBlueprint*>& deferredEvaluatorBlueprints = m_pQueryBlueprint->GetDeferredEvaluatorBlueprints();
 				const size_t numDeferredEvaluatorBlueprints = deferredEvaluatorBlueprints.size();
 
 				// figure out the best possible score that given item can still achieve
 				for (size_t blueprintIndex = 0; blueprintIndex < numDeferredEvaluatorBlueprints; ++blueprintIndex)
 				{
 					// assume that no deferred-evaluator has run or attempted to run yet (check for exception has been done above already)
-					assert((itemToCheck.bitsFinishedDeferredEvaluators & ((evaluatorsBitfield_t)1 << blueprintIndex)) == 0);
-					assert((itemToCheck.bitsWorkingDeferredEvaluators & ((evaluatorsBitfield_t)1 << blueprintIndex)) == 0);
-					assert((itemToCheck.bitsAbortedDeferredEvaluators & ((evaluatorsBitfield_t)1 << blueprintIndex)) == 0);
+					CRY_ASSERT((itemToCheck.bitsFinishedDeferredEvaluators & ((evaluatorsBitfield_t)1 << blueprintIndex)) == 0);
+					CRY_ASSERT((itemToCheck.bitsWorkingDeferredEvaluators & ((evaluatorsBitfield_t)1 << blueprintIndex)) == 0);
+					CRY_ASSERT((itemToCheck.bitsAbortedDeferredEvaluators & ((evaluatorsBitfield_t)1 << blueprintIndex)) == 0);
 
 					// TODO: cache the weights upfront
 					bestPossibleScore += deferredEvaluatorBlueprints[blueprintIndex]->GetWeight();
@@ -931,14 +920,14 @@ namespace uqs
 
 		void CQuery_Regular::AddItemToResultSetOrDisqualifyIt(SItemWorkingData& itemThatJustFinishedAndSurvivedAllEvaluators)
 		{
-			assert(itemThatJustFinishedAndSurvivedAllEvaluators.bitsDiscardedByInstantEvaluators == 0);
-			assert(itemThatJustFinishedAndSurvivedAllEvaluators.bitsDiscardedByDeferredEvaluators == 0);
-			assert(itemThatJustFinishedAndSurvivedAllEvaluators.bitsWorkingDeferredEvaluators == 0);
-			assert(itemThatJustFinishedAndSurvivedAllEvaluators.bitsAbortedDeferredEvaluators == 0);
-			assert(itemThatJustFinishedAndSurvivedAllEvaluators.bitsExceptionByInstantEvaluatorFunctionCalls == 0);
-			assert(itemThatJustFinishedAndSurvivedAllEvaluators.bitsExceptionByInstantEvaluatorsThemselves == 0);
-			assert(itemThatJustFinishedAndSurvivedAllEvaluators.bitsExceptionByDeferredEvaluatorFunctionCalls == 0);
-			assert(itemThatJustFinishedAndSurvivedAllEvaluators.bitsExceptionByDeferredEvaluatorsThemselves == 0);
+			CRY_ASSERT(itemThatJustFinishedAndSurvivedAllEvaluators.bitsDiscardedByInstantEvaluators == 0);
+			CRY_ASSERT(itemThatJustFinishedAndSurvivedAllEvaluators.bitsDiscardedByDeferredEvaluators == 0);
+			CRY_ASSERT(itemThatJustFinishedAndSurvivedAllEvaluators.bitsWorkingDeferredEvaluators == 0);
+			CRY_ASSERT(itemThatJustFinishedAndSurvivedAllEvaluators.bitsAbortedDeferredEvaluators == 0);
+			CRY_ASSERT(itemThatJustFinishedAndSurvivedAllEvaluators.bitsExceptionByInstantEvaluatorFunctionCalls == 0);
+			CRY_ASSERT(itemThatJustFinishedAndSurvivedAllEvaluators.bitsExceptionByInstantEvaluatorsThemselves == 0);
+			CRY_ASSERT(itemThatJustFinishedAndSurvivedAllEvaluators.bitsExceptionByDeferredEvaluatorFunctionCalls == 0);
+			CRY_ASSERT(itemThatJustFinishedAndSurvivedAllEvaluators.bitsExceptionByDeferredEvaluatorsThemselves == 0);
 
 			bool bKeepItemAsCandidate = true;
 
@@ -994,17 +983,17 @@ namespace uqs
 			//
 
 			// none of the deferred-evaluators shall be working on the item anymore
-			assert(itemToFinalize.bitsWorkingDeferredEvaluators == 0);
+			CRY_ASSERT(itemToFinalize.bitsWorkingDeferredEvaluators == 0);
 
 			// items that already got discarded by an instant-evaluator shouldn't even make it until here
-			assert(itemToFinalize.bitsDiscardedByInstantEvaluators == 0);
+			CRY_ASSERT(itemToFinalize.bitsDiscardedByInstantEvaluators == 0);
 
 			// only we (this method) shall figure out if an item can no longer make it into the final result set
-			assert(!itemToFinalize.bDisqualifiedDueToBadScore);
+			CRY_ASSERT(!itemToFinalize.bDisqualifiedDueToBadScore);
 
 			// items that encountered any kind of exception in the context of past instant-evaluators shouldn't have made it until here
-			assert(itemToFinalize.bitsExceptionByInstantEvaluatorFunctionCalls == 0);
-			assert(itemToFinalize.bitsExceptionByInstantEvaluatorsThemselves == 0);
+			CRY_ASSERT(itemToFinalize.bitsExceptionByInstantEvaluatorFunctionCalls == 0);
+			CRY_ASSERT(itemToFinalize.bitsExceptionByInstantEvaluatorsThemselves == 0);
 
 			// did this item encounter an exception in the context of deferred-evaluators?
 			if (itemToFinalize.bitsExceptionByDeferredEvaluatorFunctionCalls != 0 || itemToFinalize.bitsExceptionByDeferredEvaluatorsThemselves != 0)
@@ -1025,29 +1014,31 @@ namespace uqs
 			//
 
 			// all deferred-evaluators must have had their say on the item
-			assert(itemToFinalize.bitsFinishedDeferredEvaluators == ((evaluatorsBitfield_t)1 << m_queryBlueprint->GetDeferredEvaluatorBlueprints().size()) - 1);
+			CRY_ASSERT(itemToFinalize.bitsFinishedDeferredEvaluators == ((evaluatorsBitfield_t)1 << m_pQueryBlueprint->GetDeferredEvaluatorBlueprints().size()) - 1);
 
 			AddItemToResultSetOrDisqualifyIt(itemToFinalize);
 		}
 
 		void CQuery_Regular::StartMoreEvaluatorsOnRemainingItems(const SPhaseUpdateContext& phaseUpdateContext)
 		{
+			CRY_PROFILE_FUNCTION_ARG(UQS_PROFILED_SUBSYSTEM_TO_USE, m_pQueryBlueprint->GetName());
+
 			//
 			// still more items to inspect?
 			//
 
 			while (!m_remainingItemWorkingDatasToInspect.empty())
 			{
-				assert(m_candidates.size() <= m_maxCandidates);
+				CRY_ASSERT(m_candidates.size() <= m_maxCandidates);
 
 				//
 				// - check for whether there's still room in the potential result set
-				// - notice that we allow one more item to get evaluated even if the capacity has already been exhausted
+				// - notice that we may allow one more item to get evaluated even if the capacity has already been exhausted
 				//   => it's this particular item that will tell us whether any of the remaining items are still promising (or whether we can cut them all off)
 				//
 
 				const size_t remainingCapacityInResultSet = m_maxCandidates - m_candidates.size();
-				const bool bRemainingCapacityAllowsToStartMoreEvaluators = (m_deferredTasks.size() < remainingCapacityInResultSet + 1);
+				const bool bRemainingCapacityAllowsToStartMoreEvaluators = (m_deferredTasks.size() < remainingCapacityInResultSet || m_deferredTasks.empty());
 
 				if (!bRemainingCapacityAllowsToStartMoreEvaluators)
 					break;
@@ -1055,16 +1046,16 @@ namespace uqs
 				auto itWorkingDataToInspectNext = m_remainingItemWorkingDatasToInspect.begin();
 				SItemWorkingData* pWorkingDataToInspectNext = *itWorkingDataToInspectNext;
 
-				assert(pWorkingDataToInspectNext->bitsDiscardedByInstantEvaluators == 0);
-				assert(pWorkingDataToInspectNext->bitsDiscardedByDeferredEvaluators == 0);
-				assert(pWorkingDataToInspectNext->bitsWorkingDeferredEvaluators == 0);
-				assert(pWorkingDataToInspectNext->bitsFinishedDeferredEvaluators == 0);
-				assert(pWorkingDataToInspectNext->bitsAbortedDeferredEvaluators == 0);
-				assert(!pWorkingDataToInspectNext->bDisqualifiedDueToBadScore);
-				assert(pWorkingDataToInspectNext->bitsExceptionByInstantEvaluatorFunctionCalls == 0);
-				assert(pWorkingDataToInspectNext->bitsExceptionByInstantEvaluatorsThemselves == 0);
-				assert(pWorkingDataToInspectNext->bitsExceptionByDeferredEvaluatorFunctionCalls == 0);
-				assert(pWorkingDataToInspectNext->bitsExceptionByDeferredEvaluatorsThemselves == 0);
+				CRY_ASSERT(pWorkingDataToInspectNext->bitsDiscardedByInstantEvaluators == 0);
+				CRY_ASSERT(pWorkingDataToInspectNext->bitsDiscardedByDeferredEvaluators == 0);
+				CRY_ASSERT(pWorkingDataToInspectNext->bitsWorkingDeferredEvaluators == 0);
+				CRY_ASSERT(pWorkingDataToInspectNext->bitsFinishedDeferredEvaluators == 0);
+				CRY_ASSERT(pWorkingDataToInspectNext->bitsAbortedDeferredEvaluators == 0);
+				CRY_ASSERT(!pWorkingDataToInspectNext->bDisqualifiedDueToBadScore);
+				CRY_ASSERT(pWorkingDataToInspectNext->bitsExceptionByInstantEvaluatorFunctionCalls == 0);
+				CRY_ASSERT(pWorkingDataToInspectNext->bitsExceptionByInstantEvaluatorsThemselves == 0);
+				CRY_ASSERT(pWorkingDataToInspectNext->bitsExceptionByDeferredEvaluatorFunctionCalls == 0);
+				CRY_ASSERT(pWorkingDataToInspectNext->bitsExceptionByDeferredEvaluatorsThemselves == 0);
 
 				//
 				// if the potential result set is already full, check for whether the upcoming item (and all remaining ones) can still make it into the result set
@@ -1124,7 +1115,7 @@ namespace uqs
 					// - if it doesn't then there's no need to set up a costly deferred task that will ultimately be a NOP
 					//
 
-					const size_t numDeferredEvaluatorBlueprints = m_queryBlueprint->GetDeferredEvaluatorBlueprints().size();
+					const size_t numDeferredEvaluatorBlueprints = m_pQueryBlueprint->GetDeferredEvaluatorBlueprints().size();
 
 					if (numDeferredEvaluatorBlueprints > 0)
 					{
@@ -1134,7 +1125,7 @@ namespace uqs
 							// yep => schedule a deferred task on it
 							if (SDeferredTask* pNewTask = StartDeferredTask(pWorkingDataToInspectNext))
 							{
-								assert(&m_deferredTasks.back() == pNewTask);
+								CRY_ASSERT(&m_deferredTasks.back() == pNewTask);
 
 								UpdateDeferredTask(*pNewTask);
 
@@ -1173,14 +1164,14 @@ namespace uqs
 
 				m_remainingItemWorkingDatasToInspect.erase(itWorkingDataToInspectNext);
 
-				if (phaseUpdateContext.timeLimit <= gEnv->pTimer->GetAsyncTime())
+				if (m_timeBudgetForCurrentUpdate.IsExhausted())
 					break;
 			}
 		}
 
 		CQuery_Regular::SDeferredTask* CQuery_Regular::StartDeferredTask(SItemWorkingData* pWorkingDataToInspectNext)
 		{
-			const std::vector<CDeferredEvaluatorBlueprint*>& deferredEvaluatorBlueprints = m_queryBlueprint->GetDeferredEvaluatorBlueprints();
+			const std::vector<CDeferredEvaluatorBlueprint*>& deferredEvaluatorBlueprints = m_pQueryBlueprint->GetDeferredEvaluatorBlueprints();
 			const size_t numDeferredEvaluatorBlueprints = deferredEvaluatorBlueprints.size();
 
 			// create a new task (we'll fill it with deferred-evaluators below)
@@ -1188,17 +1179,18 @@ namespace uqs
 			SDeferredTask& freshlyCreatedTask = m_deferredTasks.back();
 
 			// function execution context (used for all function calls)
-			shared::CUqsString exceptionMessageFromFunctionCalls;
+			Shared::CUqsString exceptionMessageFromFunctionCalls;
 			bool bExceptionOccurredInFunctionCalls = false;
-			const client::IFunction::SExecuteContext executeContext(pWorkingDataToInspectNext->indexInGeneratedItems, m_blackboard, exceptionMessageFromFunctionCalls, bExceptionOccurredInFunctionCalls);
+			const Client::IFunction::SExecuteContext executeContext(pWorkingDataToInspectNext->indexInGeneratedItems, m_queryContext, exceptionMessageFromFunctionCalls, bExceptionOccurredInFunctionCalls);
 
 			// fill the new task with all deferred-evaluators
 			for (size_t deferredEvaluatorBlueprintIndex = 0; deferredEvaluatorBlueprintIndex < numDeferredEvaluatorBlueprints; ++deferredEvaluatorBlueprintIndex)
 			{
-				client::IDeferredEvaluatorFactory& deferredEvaluatorFactory = deferredEvaluatorBlueprints[deferredEvaluatorBlueprintIndex]->GetFactory();
+				const CDeferredEvaluatorBlueprint* pDeferredEvaluatorBlueprint = deferredEvaluatorBlueprints[deferredEvaluatorBlueprintIndex];
+				Client::IDeferredEvaluatorFactory& deferredEvaluatorFactory = pDeferredEvaluatorBlueprint->GetFactory();
 
 				// create input parameters (they will get filled by the function calls below)
-				client::ParamsHolderUniquePtr pParamsHolder = deferredEvaluatorFactory.GetParamsHolderFactory().CreateParamsHolder();
+				Client::ParamsHolderUniquePtr pParamsHolder = deferredEvaluatorFactory.GetParamsHolderFactory().CreateParamsHolder();
 				void* pParams = pParamsHolder->GetParams();
 
 				// fill the parameters for this deferred-evaluator by making function calls
@@ -1215,8 +1207,8 @@ namespace uqs
 				}
 
 				// instantiate a new DE and add it to the task
-				client::DeferredEvaluatorUniquePtr pDeferredEvaluator = deferredEvaluatorFactory.CreateDeferredEvaluator(pParams);
-				freshlyCreatedTask.deferredEvaluators.emplace_back(std::move(pDeferredEvaluator), deferredEvaluatorBlueprintIndex);
+				Client::DeferredEvaluatorUniquePtr pDeferredEvaluator = deferredEvaluatorFactory.CreateDeferredEvaluator(pParams);
+				freshlyCreatedTask.deferredEvaluators.emplace_back(std::move(pDeferredEvaluator), pDeferredEvaluatorBlueprint->GetEvaluationResultTransform(), deferredEvaluatorBlueprintIndex);
 
 				// mark the item as being worked on by this DE
 				pWorkingDataToInspectNext->bitsWorkingDeferredEvaluators |= (evaluatorsBitfield_t)1 << deferredEvaluatorBlueprintIndex;
@@ -1232,6 +1224,8 @@ namespace uqs
 
 		CQuery_Regular::EPhaseStatus CQuery_Regular::Phase7_RunExpensiveEvaluators(const SPhaseUpdateContext& phaseUpdateContext)
 		{
+			CRY_PROFILE_FUNCTION_ARG(UQS_PROFILED_SUBSYSTEM_TO_USE, m_pQueryBlueprint->GetName());
+
 			//
 			// update the deferred tasks (each task is working on one item)
 			//
@@ -1253,53 +1247,60 @@ namespace uqs
 			{
 				m_currentPhaseFn = nullptr;
 
+				//
 				// prepare the result set for getting inspected by the caller
-				CQueryResultSet* pResultSet = new CQueryResultSet;
-				pResultSet->SetItemFactoryAndCreateItems(m_generatedItems.GetItemFactory(), m_candidates.size());
-				for (size_t i = 0, n = m_candidates.size(); i < n; ++i)
+				//
+
+				std::vector<size_t> itemIndexes;
+				std::vector<float> itemScores;
+
+				itemIndexes.reserve(m_candidates.size());
+				itemScores.reserve(m_candidates.size());
+
+				for (const SItemWorkingData* pWD : m_candidates)
 				{
-					const SItemWorkingData* pWD = m_candidates[i];
-					const float score = pWD->accumulatedAndWeightedScoreSoFar;
-					const void* pItem = m_generatedItems.GetItemAtIndex(pWD->indexInGeneratedItems);
-					pResultSet->SetItemAndScore(i, pItem, score);
+					itemIndexes.push_back(pWD->indexInGeneratedItems);
+					itemScores.push_back(pWD->accumulatedAndWeightedScoreSoFar);
 				}
-				m_pResultSet.reset(pResultSet);
+
+				m_pResultSet.reset(new CQueryResultSet(m_generatedItems, std::move(itemIndexes), std::move(itemScores)));
 
 #ifdef UQS_CHECK_PROPER_CLEANUP_ONCE_ALL_ITEMS_ARE_INSPECTED
-				assert(m_deferredTasks.empty());
-
+				CRY_ASSERT(m_deferredTasks.empty());
+#if defined(USE_CRY_ASSERT)
 				// check the working data of all items for consistency
 				for (const SItemWorkingData& wd : m_itemWorkingDatas)
 				{
 					// none of the deferred-evaluators must be working anymore
-					assert(wd.bitsWorkingDeferredEvaluators == 0);
+					CRY_ASSERT(wd.bitsWorkingDeferredEvaluators == 0);
 
 					// if instant-evaluators discarded the item, then exactly those instant-evaluators must have fully finished their work
-					assert(wd.bitsDiscardedByInstantEvaluators == 0 || (wd.bitsFinishedInstantEvaluators & wd.bitsDiscardedByInstantEvaluators) != 0);
+					CRY_ASSERT(wd.bitsDiscardedByInstantEvaluators == 0 || (wd.bitsFinishedInstantEvaluators & wd.bitsDiscardedByInstantEvaluators) != 0);
 
 					// instant-evaluators whose function calls caused an exception cannot have done any work (read: cannot have finished)
-					assert((wd.bitsExceptionByInstantEvaluatorFunctionCalls & wd.bitsFinishedInstantEvaluators) == 0);
+					CRY_ASSERT((wd.bitsExceptionByInstantEvaluatorFunctionCalls & wd.bitsFinishedInstantEvaluators) == 0);
 
 					// instant-evaluators that caused an exception themselves cannot have finished their work
-					assert((wd.bitsExceptionByInstantEvaluatorsThemselves & wd.bitsFinishedInstantEvaluators) == 0);
+					CRY_ASSERT((wd.bitsExceptionByInstantEvaluatorsThemselves & wd.bitsFinishedInstantEvaluators) == 0);
 
 					// if deferred-evaluators discarded the item, then exactly those deferred-evaluators must have fully finished their work
-					assert(wd.bitsDiscardedByDeferredEvaluators == 0 || (wd.bitsFinishedDeferredEvaluators & wd.bitsDiscardedByDeferredEvaluators) != 0);
+					CRY_ASSERT(wd.bitsDiscardedByDeferredEvaluators == 0 || (wd.bitsFinishedDeferredEvaluators & wd.bitsDiscardedByDeferredEvaluators) != 0);
 
 					// if instant-evaluator discarded the item, then none of the deferred-evaluators must have been started on that item
 					// (instant-evaluators [no matter if cheap or expensive] always run before deferred-evaluators)
-					assert((wd.bitsDiscardedByInstantEvaluators & (wd.bitsFinishedDeferredEvaluators | wd.bitsAbortedDeferredEvaluators)) == 0);
+					CRY_ASSERT((wd.bitsDiscardedByInstantEvaluators & (wd.bitsFinishedDeferredEvaluators | wd.bitsAbortedDeferredEvaluators)) == 0);
 
 					// those deferred-evaluators that discarded the item cannot have been aborted
 					// (the deferred-evaluator who discards an item aborts all other deferred-evaluators, but he never aborts himself)
-					assert((wd.bitsDiscardedByDeferredEvaluators & wd.bitsAbortedDeferredEvaluators) == 0);
+					CRY_ASSERT((wd.bitsDiscardedByDeferredEvaluators & wd.bitsAbortedDeferredEvaluators) == 0);
 
 					// deferred-evaluators whose function calls caused an exception cannot have done any work (read: cannot have finished)
-					assert((wd.bitsExceptionByDeferredEvaluatorFunctionCalls & (wd.bitsAbortedDeferredEvaluators | wd.bitsFinishedDeferredEvaluators)) == 0);
+					CRY_ASSERT((wd.bitsExceptionByDeferredEvaluatorFunctionCalls & (wd.bitsAbortedDeferredEvaluators | wd.bitsFinishedDeferredEvaluators)) == 0);
 
 					// deferred-evaluators that caused an exception themselves cannot have finished their work
-					assert((wd.bitsExceptionByDeferredEvaluatorsThemselves & (wd.bitsAbortedDeferredEvaluators | wd.bitsFinishedDeferredEvaluators)) == 0);
+					CRY_ASSERT((wd.bitsExceptionByDeferredEvaluatorsThemselves & (wd.bitsAbortedDeferredEvaluators | wd.bitsFinishedDeferredEvaluators)) == 0);
 				}
+#endif
 #endif
 			}
 

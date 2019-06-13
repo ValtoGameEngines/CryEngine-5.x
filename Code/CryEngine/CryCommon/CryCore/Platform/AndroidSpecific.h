@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   AndroidSpecific.h
@@ -12,12 +12,8 @@
 ////////////////////////////////////////////////////////////////////////////
 #pragma once
 
-
-#define CRY_FORCE_MALLOC_NEW_ALIGN
-
 #define RC_EXECUTABLE "rc"
 #define USE_CRT       1
-#define SIZEOF_PTR    4
 
 // Standard includes.
 #include <malloc.h>
@@ -36,14 +32,10 @@
 
 typedef signed long long              INT64;
 
-typedef double                        real;
-
-typedef uint32                        DWORD;
-typedef DWORD*                        LPDWORD;
-typedef DWORD                         DWORD_PTR;
-typedef int INT_PTR, *                PINT_PTR;
-typedef unsigned int UINT_PTR, *      PUINT_PTR;
-typedef char* LPSTR, *                PSTR;
+typedef char* LPSTR, *PSTR;
+typedef uint32                        __uint32;
+typedef int32                         INT32;
+typedef uint32                        UINT32;
 typedef uint64                        __uint64;
 typedef int64                         INT64;
 typedef uint64                        UINT64;
@@ -53,6 +45,9 @@ typedef unsigned long ULONG_PTR, *    PULONG_PTR;
 
 typedef unsigned char                 BYTE;
 typedef unsigned short                WORD;
+typedef int                           INT;
+typedef unsigned int                  UINT;
+typedef float                         FLOAT;
 typedef void*                         HWND;
 typedef UINT_PTR                      WPARAM;
 typedef LONG_PTR                      LPARAM;
@@ -62,6 +57,9 @@ typedef const char* LPCSTR, *         PCSTR;
 typedef long long                     LONGLONG;
 typedef ULONG_PTR                     SIZE_T;
 typedef unsigned char                 byte;
+
+typedef uint32 HMONITOR;
+typedef const void* LPCVOID;
 
 #define _A_RDONLY (0x01)
 #define _A_SUBDIR (0x10)
@@ -93,11 +91,11 @@ extern int wcsnicmp(const wchar_t* s1, const wchar_t* s2, size_t count);
 
 #define TARGET_DEFAULT_ALIGN (16U)
 
-#define __debugbreak() __builtin_trap()
+#define __debugbreak() raise(SIGTRAP)
 
-// There is no __finite in android, only __isfinite.
+// There is no __finite in android, only isfinite.
 #undef __finite
-#define __finite  __isfinite
+#define __finite  isfinite
 
 #define S_IWRITE  S_IWUSR
 
@@ -117,43 +115,16 @@ extern int wcsnicmp(const wchar_t* s1, const wchar_t* s2, size_t count);
 	#define fprintf(...) (void) 0
 #endif
 
-
-////////////////////////////////////////
-// TEMPORARY HARDCODED PATHS
-// Could be pulled into CryCommon
-////////////////////////////////////////
-
-// Get path to user folder
-inline const char* CryGetUserStoragePath()
-{
-	return "/data/user/0/com.crytek.cryengine/files";
-}
-
-// Get path to project root. i.e. assets are stored in a subfolder here
-inline const char* CryGetProjectStoragePath()
-{
-	return "/storage/emulated/0";
-}
+#include "AndroidJNI.h"
 
 // Returns path to CRYENGINE and Crytek provided 3rd Party shared libraries 
-inline const char* CryGetSharedLibraryStoragePath()
-{
-	return "/data/data/com.crytek.cryengine/lib";
-}
+const char* CryGetSharedLibraryStoragePath();
 
-#include <dlfcn.h>
+// Get path to user folder
+const char* CryGetUserStoragePath();
+
+// Get path to project root. i.e. assets are stored in a sub folder here
+const char* CryGetProjectStoragePath();
+
 // Returns a handle to the launcher
-inline void* CryGetLauncherModuleHandle()
-{
-	// Calling dlopen(NULL, RTLD_LAZY):
-	//   Native App: [might work]   
-	//   Java App: [doesn't work]: Java -> Native e.g. via SDL2: ::dlopen(NULL, RTLD_LAZY) does not return handle of launcher but of process that loaded the launcher's .so file
-	static void* hLauncherModule = ::dlopen("/data/data/com.crytek.cryengine/lib/libAndroidLauncher.so", RTLD_LAZY);
-	return hLauncherModule;
-
-	// On Linux
-	//return ::dlopen(NULL, RTLD_LAZY);
-
-	// On Windows
-	//GetModuleHandle(0)
-}
+void* CryGetLauncherModuleHandle();

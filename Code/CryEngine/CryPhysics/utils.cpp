@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -130,76 +130,38 @@ int ChoosePrimitiveForMesh(strided_pointer<const Vec3> pVertices,strided_pointer
 	int i,j,ibest;
 	real error_max[3],error_avg[4],locerror,locarea;
 
-	if (flags & mesh_approx_cylinder) {
-		float r[3],h[3],area[2],zloc,rinv,hinv;
-		Matrix33 Basis = GetMtxFromBasis(eigen_axes);
-		Vec3 axis,ptloc,n,ptmin,ptmax,c;
-		int iz,bBest,itype;
-		error_avg[3]=(real)1E10; ibest=3;
-
-		ptmin=ptmax = Basis*pVertices[pIndices[0]];
-		for(i=1; i<nTris*3; i++) {
-			ptloc = Basis*pVertices[pIndices[i]];
-			ptmin = min(ptmin,ptloc); ptmax = max(ptmax,ptloc);
+	if (flags & mesh_approx_sphere) {
+		Vec3r p0,p1,p2,n;
+		real r,rinv,area;
+		for(i=0,r=0;i<nTris*3;i++) r += (pVertices[pIndices[i]]-center).len();
+		r /= nTris*3;	rinv = (real)1.0/r;
+		error_max[0]=error_avg[0]=area = 0;
+		for(i=0;i<nTris;i++) {
+			p0=pVertices[pIndices[i*3]]; p1=pVertices[pIndices[i*3+1]]; p2=pVertices[pIndices[i*3+2]];
+			locerror = fabs_tpl((p0-center).len()-r)*rinv;
+			locerror = max(locerror, fabs_tpl((p1-center).len()-r)*rinv);
+			locerror = max(locerror, fabs_tpl((p2-center).len()-r)*rinv);
+			n = p1-p0^p2-p0; locarea = n.len();	
+			if (locarea>1E-5)
+				locerror = max(locerror, fabs_tpl(((p0-center)*n)/locarea-r)*rinv);
+			error_max[0] = max(error_max[0],locerror);
+			error_avg[0] += locerror*locarea;
+			area += locarea;
 		}
-		c = ((ptmin+ptmax)*0.5f)*Basis;
-
-		for(iz=0;iz<3;iz++) {
-			axis = eigen_axes[iz];
-			for(i=0,r[iz]=h[iz]=0;i<nTris*3;i++) {
-				ptloc = pVertices[pIndices[i]]-c; zloc = ptloc*axis;
-				r[iz] = max(r[iz],(ptloc-axis*zloc).len2()); h[iz] = max(h[iz],zloc);
-			}
-			r[iz] = sqrt_tpl(r[iz]);
-			if (fabs_tpl(r[iz])<(real)1E-5 || fabs_tpl(h[iz])<(real)1E-5)
-				continue;
-			rinv = (real)1/r[iz];
-			hinv = (real)1/h[iz];
-			error_max[iz] = error_avg[iz] = 0;
-			area[0] = area[1] = 0;
-
-			for(i=0;i<nTris;i++) {
-				n = pVertices[pIndices[i*3+1]]-pVertices[pIndices[i*3]] ^ pVertices[pIndices[i*3+2]]-pVertices[pIndices[i*3]];
-				if (n.len2()==0) 
-					continue;
-				locarea=n.len(); n/=locarea; locarea*=(real)0.5; zloc=fabs_tpl(n*axis);
-				itype = isneg((real)0.5-zloc); // 0-cylinder side, 1-cap
-				locerror = 0;	// locerror will contain maximum distance from from triangle points to the cyl surface, normalized by cyl size
-				if (itype) for(j=0;j<3;j++)
-					locerror = max(locerror, fabs_tpl(fabs_tpl((pVertices[pIndices[i*3+j]]-c)*axis)*hinv-(real)1));
-				else for(j=0;j<3;j++) {
-					ptloc = pVertices[pIndices[i*3+j]]-c;
-					locerror = max(locerror, fabs_tpl((ptloc-axis*(ptloc*axis)).len()*rinv-(real)1));
-				}
-				error_max[iz] = max(error_max[iz],locerror);
-				error_avg[iz] += locerror*locarea;
-				area[itype] += locarea;
-			}
-			error_avg[iz] /= (area[0]+area[1]);
-			// additionally check if object area is close to that of the cylinder
-			locerror = fabs_tpl((area[0]-r[iz]*h[iz]*g_PI*4)*(rinv*hinv*((real)0.5/g_PI)));
-			locerror = max(locerror, real(fabs_tpl((area[1]-r[iz]*r[iz]*g_PI*2)*(rinv*rinv*((real)0.5/g_PI))))   );
-			error_max[iz] = max(error_max[iz], locerror);
-			error_avg[iz] = error_avg[iz]*(real)0.7+locerror*(real)0.3;
-			bBest = isneg(error_avg[iz]-error_avg[ibest]);
-			ibest = ibest&~-bBest | iz&-bBest;
-		}
-
-		if (ibest<3 && error_max[ibest]<tolerance*1.5f && error_avg[ibest]<tolerance) {
-			acyl.axis = eigen_axes[ibest];
-			acyl.center = c;
-			acyl.r = r[ibest];
-			acyl.hh = h[ibest];
-			pprim = &acyl;
-			return cylinder::type;
+		error_avg[0] /= area;
+		if (error_max[0]<tolerance*1.5f && error_avg[0]<tolerance) {
+			asphere.r = r;
+			asphere.center = center;
+			pprim = &asphere;
+			return sphere::type;
 		}
 	}
 
 	if (flags & mesh_approx_capsule) {
-		float r[3],h[3],area[2],zloc,rinv,hinv;
+		float r[3],h[3],V[3],area[2],zloc,rinv;
 		Matrix33 Basis = GetMtxFromBasis(eigen_axes);
 		Vec3 axis,ptloc,n,ptmin,ptmax,c;
-		int iz,bBest,itype;
+		int iz,itype;
 		error_avg[3]=(real)1E10; ibest=3;
 
 		ptmin=ptmax = Basis*pVertices[pIndices[0]];
@@ -216,10 +178,11 @@ int ChoosePrimitiveForMesh(strided_pointer<const Vec3> pVertices,strided_pointer
 				r[iz] = max(r[iz],(ptloc-axis*zloc).len2()); h[iz] = max(h[iz],zloc);
 			}
 			r[iz] = sqrt_tpl(r[iz]); h[iz] -= r[iz];
+			h[iz] = max(r[iz]*0.01f, h[iz]);
 			if (fabs_tpl(r[iz])<(real)1E-5 || fabs_tpl(h[iz])<(real)1E-5)
 				continue;
+			V[iz] = sqr(r[iz])*((4.0f/3)*r[iz]+h[iz]*2);
 			rinv = (real)1/r[iz];
-			hinv = (real)1/h[iz];
 			error_max[iz] = error_avg[iz] = 0;
 			area[0] = area[1] = 0;
 
@@ -227,31 +190,35 @@ int ChoosePrimitiveForMesh(strided_pointer<const Vec3> pVertices,strided_pointer
 				n = pVertices[pIndices[i*3+1]]-pVertices[pIndices[i*3]] ^ pVertices[pIndices[i*3+2]]-pVertices[pIndices[i*3]];
 				if (n.len2()==0) 
 					continue;
-				locarea=n.len(); n/=locarea; locarea*=(real)0.5; 
-				zloc = ((pVertices[pIndices[i*3]]+pVertices[pIndices[i*3+1]]+pVertices[pIndices[i*3+2]])*(1.0f/3)-c)*axis;
-				itype = isneg(h[iz]-fabs_tpl(zloc)); // 0-capsule side, 1-cap
-				locerror = 0;	// locerror will contain maximum distance from from triangle points to the capsule surface, normalized by capsule size
-				if (itype) for(j=0;j<3;j++)
-					locerror = max(locerror, (pVertices[pIndices[i*3+j]]-c-axis*(h[iz]*sgnnz(zloc))).len()*rinv-(real)1);
-				else for(j=0;j<3;j++) {
+				locarea=n.len(); n/=locarea; locarea*=(real)0.5;
+				Vec3 ptc = (pVertices[pIndices[i*3]]+pVertices[pIndices[i*3+1]]+pVertices[pIndices[i*3+2]])*(1.0f/3)-c;
+				zloc = ptc*axis;
+				// locerror will contain maximum distance from triangle points to the capsule surface, normalized by capsule radius
+				real locerrorSide=fabs_tpl((ptc-axis*(ptc*axis)).len()*rinv-(real)1), locerrorCap=0; 
+				for(j=0;j<3;j++) {
 					ptloc = pVertices[pIndices[i*3+j]]-c;
-					locerror = max(locerror, fabs_tpl((ptloc-axis*(ptloc*axis)).len()*rinv-(real)1));
+					locerrorCap = max(locerrorCap, fabs_tpl((ptloc-axis*(h[iz]*sgnnz(zloc))).len()*rinv-(real)1));
+					locerrorSide = max(locerrorSide, fabs_tpl((ptloc-axis*(ptloc*axis)).len()*rinv-(real)1));
 				}
+				locerror = min(locerrorSide, locerrorCap);
+				itype = isneg(locerrorCap-locerrorSide); // 0-capsule side, 1-cap
 				error_max[iz] = max(error_max[iz],locerror);
 				error_avg[iz] += locerror*locarea;
 				area[itype] += locarea;
 			}
 			error_avg[iz] /= max(1e-20f,area[0]+area[1]);
-			// additionally check if object area is close to that of the cylinder
-			locerror = fabs_tpl((area[0]-r[iz]*h[iz]*g_PI*4)*(rinv*hinv*((real)0.5/g_PI)));
-			locerror = max(locerror, real(fabs_tpl((area[1]-r[iz]*r[iz]*g_PI*4)*(rinv*rinv*((real)0.25/g_PI)))));
+			// additionally check if object area is close to that of the capsule
+			float areaCaps = 4*gf_PI*r[iz]*(r[iz]+h[iz]);
+			locerror = fabs_tpl(area[0]+area[1]-areaCaps)/areaCaps;
 			error_max[iz] = max(error_max[iz], locerror);
-			error_avg[iz] = error_avg[iz]*(real)0.7+locerror*(real)0.3;
-			bBest = isneg(error_avg[iz]-error_avg[ibest]);
-			ibest = ibest&~-bBest | iz&-bBest;
+			error_avg[iz] = error_avg[iz]*(real)0.6+locerror*(real)0.4;
 		}
+		float Vmin=min(min(V[0],V[1]),V[2]), Vmaxinv=1/max(max(max(V[0],V[1]),V[2]),1e-20f);
+		for(iz=0;iz<3;iz++)
+			error_avg[iz] = (error_avg[iz] + (V[iz]-Vmin)*Vmaxinv)*0.5f;
+		ibest = idxmin3(error_avg);
 
-		if (ibest<3 && error_max[ibest]<tolerance*1.5f && error_avg[ibest]<tolerance) {
+		if (error_max[ibest]<tolerance*1.5f && error_avg[ibest]<tolerance) {
 			acyl.axis = eigen_axes[ibest];
 			acyl.center = c;
 			acyl.r = r[ibest];
@@ -317,30 +284,68 @@ int ChoosePrimitiveForMesh(strided_pointer<const Vec3> pVertices,strided_pointer
 		}
 	}
 
-	if (flags & mesh_approx_sphere) {
-		Vec3r p0,p1,p2,n;
-		real r,rinv,area;
-		for(i=0,r=0;i<nTris*3;i++) r += (pVertices[pIndices[i]]-center).len();
-		r /= nTris*3;	rinv = (real)1.0/r;
-		error_max[0]=error_avg[0]=area = 0;
-		for(i=0;i<nTris;i++) {
-			p0=pVertices[pIndices[i*3]]; p1=pVertices[pIndices[i*3+1]]; p2=pVertices[pIndices[i*3+2]];
-			locerror = fabs_tpl((p0-center).len()-r)*rinv;
-			locerror = max(locerror, fabs_tpl((p1-center).len()-r)*rinv);
-			locerror = max(locerror, fabs_tpl((p2-center).len()-r)*rinv);
-			n = p1-p0^p2-p0; locarea = n.len();	
-			if (locarea>1E-5)
-				locerror = max(locerror, fabs_tpl(((p0-center)*n)/locarea-r)*rinv);
-			error_max[0] = max(error_max[0],locerror);
-			error_avg[0] += locerror*locarea;
-			area += locarea;
+	if (flags & mesh_approx_cylinder) {
+		float r[3],h[3],area[2],zloc,rinv,hinv;
+		Matrix33 Basis = GetMtxFromBasis(eigen_axes);
+		Vec3 axis,ptloc,n,ptmin,ptmax,c;
+		int iz,bBest,itype;
+		error_avg[3]=(real)1E10; ibest=3;
+
+		ptmin=ptmax = Basis*pVertices[pIndices[0]];
+		for(i=1; i<nTris*3; i++) {
+			ptloc = Basis*pVertices[pIndices[i]];
+			ptmin = min(ptmin,ptloc); ptmax = max(ptmax,ptloc);
 		}
-		error_avg[0] /= area;
-		if (error_max[0]<tolerance*1.5f && error_avg[0]<tolerance) {
-			asphere.r = r;
-			asphere.center = center;
-			pprim = &asphere;
-			return sphere::type;
+		c = ((ptmin+ptmax)*0.5f)*Basis;
+
+		for(iz=0;iz<3;iz++) {
+			axis = eigen_axes[iz];
+			for(i=0,r[iz]=h[iz]=0;i<nTris*3;i++) {
+				ptloc = pVertices[pIndices[i]]-c; zloc = ptloc*axis;
+				r[iz] = max(r[iz],(ptloc-axis*zloc).len2()); h[iz] = max(h[iz],zloc);
+			}
+			r[iz] = sqrt_tpl(r[iz]);
+			if (fabs_tpl(r[iz])<(real)1E-5 || fabs_tpl(h[iz])<(real)1E-5)
+				continue;
+			rinv = (real)1/r[iz];
+			hinv = (real)1/h[iz];
+			error_max[iz] = error_avg[iz] = 0;
+			area[0] = area[1] = 0;
+
+			for(i=0;i<nTris;i++) {
+				n = pVertices[pIndices[i*3+1]]-pVertices[pIndices[i*3]] ^ pVertices[pIndices[i*3+2]]-pVertices[pIndices[i*3]];
+				if (n.len2()==0) 
+					continue;
+				locarea=n.len(); n/=locarea; locarea*=(real)0.5; zloc=fabs_tpl(n*axis);
+				itype = isneg((real)0.5-zloc); // 0-cylinder side, 1-cap
+				locerror = 0;	// locerror will contain maximum distance from from triangle points to the cyl surface, normalized by cyl size
+				if (itype) for(j=0;j<3;j++)
+					locerror = max(locerror, fabs_tpl(fabs_tpl((pVertices[pIndices[i*3+j]]-c)*axis)*hinv-(real)1));
+				else for(j=0;j<3;j++) {
+					ptloc = pVertices[pIndices[i*3+j]]-c;
+					locerror = max(locerror, fabs_tpl((ptloc-axis*(ptloc*axis)).len()*rinv-(real)1));
+				}
+				error_max[iz] = max(error_max[iz],locerror);
+				error_avg[iz] += locerror*locarea;
+				area[itype] += locarea;
+			}
+			error_avg[iz] /= (area[0]+area[1]);
+			// additionally check if object area is close to that of the cylinder
+			locerror = fabs_tpl((area[0]-r[iz]*h[iz]*g_PI*4)*(rinv*hinv*((real)0.5/g_PI)));
+			locerror = max(locerror, real(fabs_tpl((area[1]-r[iz]*r[iz]*g_PI*2)*(rinv*rinv*((real)0.5/g_PI))))   );
+			error_max[iz] = max(error_max[iz], locerror);
+			error_avg[iz] = error_avg[iz]*(real)0.7+locerror*(real)0.3;
+			bBest = isneg(error_avg[iz]-error_avg[ibest]);
+			ibest = ibest&~-bBest | iz&-bBest;
+		}
+
+		if (ibest<3 && error_max[ibest]<tolerance*1.5f && error_avg[ibest]<tolerance) {
+			acyl.axis = eigen_axes[ibest];
+			acyl.center = c;
+			acyl.r = r[ibest];
+			acyl.hh = h[ibest];
+			pprim = &acyl;
+			return cylinder::type;
 		}
 	}
 
@@ -380,7 +385,7 @@ real RotatePointToPlane(const Vec3r &pt, const Vec3r &axis,const Vec3r &center, 
 }
 
 
-int BakeScaleIntoGeometry(phys_geometry *&pgeom,IGeomManager *pGeoman, const Vec3& s, int bReleaseOld)
+int BakeScaleIntoGeometry(phys_geometry *&pgeom,IGeomManager *pGeoman, const Vec3& s, int bReleaseOld,  const Matrix33 *pskewMtx)
 {
 	IGeometry *pGeomScaled=0;
 	if (phys_geometry *pAdam = (phys_geometry*)pgeom->pGeom->GetForeignData(DATA_UNSCALED_GEOM)) {
@@ -391,6 +396,11 @@ int BakeScaleIntoGeometry(phys_geometry *&pgeom,IGeomManager *pGeoman, const Vec
 	switch (int itype=pgeom->pGeom->GetType()) {
 		case GEOM_BOX: { 
 			const primitives::box *pbox = (const primitives::box*)pgeom->pGeom->GetData();
+			Matrix33 R = pskewMtx ? *pskewMtx*pbox->Basis.T() : pbox->Basis.T();
+			if (fabs(R.GetColumn0()*R.GetColumn1()) + fabs(R.GetColumn0()*R.GetColumn2()) + fabs(R.GetColumn1()*R.GetColumn2()) > 0.01f) {
+				pGeomScaled = pgeom->pGeom->GetTriMesh();
+				goto use_mesh; 
+			}
 			primitives::box boxScaled;	
 			boxScaled = *pbox;
 			Diag33 smtx(s);
@@ -413,21 +423,19 @@ int BakeScaleIntoGeometry(phys_geometry *&pgeom,IGeomManager *pGeoman, const Vec
 		}	break;
 		case GEOM_TRIMESH: {
 			pGeomScaled = pGeoman->CloneGeometry(pgeom->pGeom);
+		use_mesh:
 			mesh_data *pmd = (mesh_data*)pGeomScaled->GetData();
-			Diag33 smtx(s);
+			Matrix33 mtx = pskewMtx ? *pskewMtx : Diag33(s);
 			for(int i=0; i<pmd->nVertices; i++)
-				pmd->pVertices[i] = smtx*pmd->pVertices[i];
+				pmd->pVertices[i] = mtx*pmd->pVertices[i];
 			pGeomScaled->SetData(pmd);
 		} break;
 	}
 	if (pGeomScaled) {
 		if (bReleaseOld)
 			pGeoman->UnregisterGeometry(pgeom);
-		pGeomScaled->SetForeignData(pgeom,DATA_UNSCALED_GEOM);
-		int *pMatMapping = 0;
-		if (pgeom->nMats)
-			memcpy(pMatMapping = new int[pgeom->nMats], pgeom->pMatMapping, pgeom->nMats*sizeof(int));
-		pgeom = pGeoman->RegisterGeometry(pGeomScaled, pgeom->surface_idx,pMatMapping,pgeom->nMats);
+		pGeomScaled->SetForeignData(pgeom,DATA_UNSCALED_GEOM); ++pgeom->nRefCount;
+		pgeom = pGeoman->RegisterGeometry(pGeomScaled, pgeom->surface_idx, pgeom->pMatMapping,pgeom->nMats);
 		pgeom->nRefCount = 0;	pGeomScaled->Release();
 		return 1;
 	}
@@ -435,26 +443,33 @@ int BakeScaleIntoGeometry(phys_geometry *&pgeom,IGeomManager *pGeoman, const Vec
 }
 
 
-Vec3 get_xqs_from_matrices(Matrix34 *pMtx3x4,Matrix33 *pMtx3x3, Vec3 &pos,quaternionf &q,float &scale, phys_geometry **ppgeom,IGeomManager *pGeoman)
+Vec3 get_xqs_from_matrices(Matrix34 *pMtx3x4,Matrix33 *pMtx3x3, Vec3 &pos,quaternionf &q,float &scale, phys_geometry **ppgeom,IGeomManager *pGeoman, Matrix33 *pskewMtx)
 {
 	Vec3 s;
+	Matrix33 skewMtx;
 	if (pMtx3x4) {
 		s.Set(pMtx3x4->GetColumn(0).len(), pMtx3x4->GetColumn(1).len(), pMtx3x4->GetColumn(2).len());
-		q = quaternionf(Matrix33(pMtx3x4->GetColumn(0)/s.x, pMtx3x4->GetColumn(1)/s.y, pMtx3x4->GetColumn(2)/s.z));
+		q = quaternionf(Matrix33(pMtx3x4->GetColumn(0)/s.x, pMtx3x4->GetColumn(1)/s.y, pMtx3x4->GetColumn(2)/s.z)).GetNormalized();
 		pos = pMtx3x4->GetTranslation();
+		skewMtx = Matrix33(!q)*Matrix33(*pMtx3x4);
 	} else if (pMtx3x3) {
 		s.Set(pMtx3x3->GetColumn(0).len(), pMtx3x3->GetColumn(1).len(), pMtx3x3->GetColumn(2).len());
-		q = quaternionf(Matrix33(pMtx3x3->GetColumn(0)/s.x, pMtx3x3->GetColumn(1)/s.y, pMtx3x3->GetColumn(2)/s.z));
+		q = quaternionf(Matrix33(pMtx3x3->GetColumn(0)/s.x, pMtx3x3->GetColumn(1)/s.y, pMtx3x3->GetColumn(2)/s.z)).GetNormalized();
+		skewMtx = Matrix33(!q)**pMtx3x3;
 	} else
 		return Vec3(1);
 	scale = min(min(s.x,s.y),s.z);
 	if (fabs_tpl(scale-1.0f)<0.001f)
 		scale = 1.0f;
-	else
+	else {
 		s /= scale;
+		skewMtx /= scale;
+	}
 	if (s.len2()>3.03f && ppgeom && pGeoman)
-		if (!BakeScaleIntoGeometry(*ppgeom,pGeoman,s))
+		if (!BakeScaleIntoGeometry(*ppgeom,pGeoman,s,0,&skewMtx))
 			scale *= (s.x+s.y+s.z)*(1.0f/3);
+	if (pskewMtx)
+		*pskewMtx = skewMtx;
 	return s;
 }
 
@@ -911,8 +926,7 @@ int bin2ascii(const unsigned char *pin,int sz, unsigned char *pout)
 int ascii2bin(const unsigned char *pin,int sz, unsigned char *pout)
 {
 	int a[4],nout,count0;
-	const unsigned char *pin0=pin;
-	for(nout=count0=0; *pin; nout+=3) {
+	for(nout=count0=0; *pin || count0; nout+=3) {
 		for(int i=0;i<4;i++) if (count0>0) 
 			a[i]=0, count0--; 
 		else if (*pin!='#')
@@ -1306,7 +1320,6 @@ public:
 			int iPlane = GetProjCubePlane(pt[0]);
 			const int az = iPlane>>1, ay = dec_mod3[az], ax = inc_mod3[az];
 			int* rawdata = cubemap->grid[iPlane];
-			const float scale = scaleSign[iPlane&1];
 			float z = 1.f/(fabsf(pt[0][az])+1e-6f);
 			int ix0 = min(N-1,max(0, float2int((pt[0][ax]*z+1.f)*cubemap->halfN)));
 			int iy0 = min(N-1,max(0, float2int((pt[0][ay]*z+1.f)*cubemap->halfN)));

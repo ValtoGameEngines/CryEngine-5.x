@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -53,9 +53,9 @@ public:
 	virtual void StartAnimationProcessing(const SAnimationProcessParams &params) override;
 	virtual AABB                    GetAABB() const override                    { return m_SkeletonPose.GetAABB(); }
 	virtual float GetExtent(EGeomForm eForm) override;
-	virtual void GetRandomPos(PosNorm & ran, CRndGen & seed, EGeomForm eForm) const override;
+	virtual void GetRandomPoints(Array<PosNorm> points, CRndGen& seed, EGeomForm eForm) const override;
 	virtual CLodValue ComputeLod(int wantedLod, const SRenderingPassInfo &passInfo) override;
-	virtual void Render(const SRendParams &rParams, const QuatTS &Offset, const SRenderingPassInfo &passInfo) override;
+	virtual void Render(const SRendParams &rParams, const SRenderingPassInfo &passInfo) override;
 	virtual void                   SetFlags(int nFlags) override                        { m_rpFlags = nFlags; }
 	virtual int                    GetFlags() const override                            { return m_rpFlags; }
 	virtual int                    GetObjectType() const override                       { return m_pDefaultSkeleton->m_ObjectType; }
@@ -76,17 +76,22 @@ public:
 	virtual void   SetPlaybackScale(f32 speed) override { m_fPlaybackScale = max(0.0f, speed); }
 	virtual f32    GetPlaybackScale() const override    { return m_fPlaybackScale; }
 	virtual uint32 IsCharacterVisible() const override  { return m_SkeletonPose.m_bInstanceVisible; };
-	virtual void SpawnSkeletonEffect(const char* effectName, const char* boneName, const Vec3 &offset, const Vec3 &dir, const QuatTS &entityLoc) override;
+	virtual void SpawnSkeletonEffect(const AnimEventInstance& animEvent, const QuatTS &entityLoc) override;
 	virtual void KillAllSkeletonEffects() override;
 	virtual void  SetViewdir(const Vec3& rViewdir) override                                     { m_Viewdir = rViewdir; }
 	virtual float GetUniformScale() const override                                              { return m_location.s; }
 	virtual void CopyPoseFrom(const ICharacterInstance &instance) override;
-	virtual void  FinishAnimationComputations() override                                        { m_SkeletonAnim.FinishAnimationComputations(); }
-	virtual void  SetAttachmentLocation_DEPRECATED(const QuatTS& newCharacterLocation) override { m_location = newCharacterLocation; } // TODO: Resolve this issue (has been described as "This is a hack to keep entity attachments in sync.").
+	virtual void FinishAnimationComputations() override { m_SkeletonAnim.FinishAnimationComputations(); }
+	virtual void SetParentRenderNode(ICharacterRenderNode* pRenderNode) override;
+	virtual ICharacterRenderNode* GetParentRenderNode() const override { return m_pParentRenderNode; }
+	virtual void SetAttachmentLocation_DEPRECATED(const QuatTS& newCharacterLocation) override { m_location = newCharacterLocation; } // TODO: Resolve this issue (has been described as "This is a hack to keep entity attachments in sync.").
+	virtual void SetCharacterOffset(const QuatTS& offs) override                               { m_SkeletonPose.m_physics.SetOffset(offs); }
 	virtual void OnDetach() override;
-	virtual void  HideMaster(uint32 h) override                                                 { m_bHideMaster = (h > 0); };
+	virtual void HideMaster(uint32 h) override                                                 { m_bHideMaster = (h > 0); };
 	virtual void GetMemoryUsage(ICrySizer * pSizer) const override;
 	virtual void Serialize(TSerialize ser) override;
+	virtual Cry::Anim::ECharacterStaticity GetStaticity() const override { return m_staticity; }
+	virtual void SetStaticity(Cry::Anim::ECharacterStaticity staticity) override { m_staticity = staticity; }
 #ifdef EDITOR_PCDEBUGCODE
 	virtual uint32 GetResetMode() const override        { return m_ResetMode; }
 	virtual void   SetResetMode(uint32 rm) override     { m_ResetMode = rm > 0; }
@@ -98,6 +103,7 @@ public:
 #endif
 	//////////////////////////////////////////////////////////
 
+	void                                   SetProcessingContext(CharacterInstanceProcessing::SContext& context);
 	CharacterInstanceProcessing::SContext* GetProcessingContext();
 	void                                   ClearProcessingContext() { m_processingContext = -1; };
 
@@ -105,7 +111,7 @@ public:
 
 	void RuntimeInit(CDefaultSkeleton * pExtDefaultSkeleton);
 
-	SSkinningData* GetSkinningData();
+	SSkinningData* GetSkinningData(const SRenderingPassInfo& passInfo);
 
 	void           SetFilePath(const string& filePath) { m_strFilePath = filePath; }
 
@@ -140,6 +146,53 @@ public:
 	void BeginSkinningTransformationsComputation(SSkinningData * pSkinningData);
 
 	void PerFrameUpdate();
+
+	void ResetQuasiStaticSleepTimer()
+	{
+		if (m_staticity != Cry::Anim::ECharacterStaticity::Dynamic
+			&& Console::GetInst().ca_CullQuasiStaticAnimationUpdates)
+		{
+			m_quasiStaticSleepTimer = Console::GetInst().ca_QuasiStaticAnimationSleepTimeoutMs / 1000.f;
+		}
+		else
+		{
+			m_quasiStaticSleepTimer = -1.f;
+		}
+	}
+
+	bool IsQuasiStaticSleeping()
+	{
+		const bool bIsQuasiStaticCullingActive = Console::GetInst().ca_CullQuasiStaticAnimationUpdates == 1;
+		const bool bHasTimerExpired = m_quasiStaticSleepTimer <= 0.f;
+		const bool bWasUpdateForced = m_SkeletonPose.m_nForceSkeletonUpdate > 0;
+
+		const bool bPartialResult = bIsQuasiStaticCullingActive && bHasTimerExpired && !bWasUpdateForced;
+
+		const bool bIsVisible = m_SkeletonPose.m_bInstanceVisible;
+		const bool bHasJustEnteredView = m_SkeletonPose.m_bInstanceVisible && !m_SkeletonPose.m_bVisibleLastFrame;
+
+		switch (m_staticity)
+		{
+		case Cry::Anim::ECharacterStaticity::QuasiStaticFixed:
+			return bPartialResult && !bHasJustEnteredView;
+		case Cry::Anim::ECharacterStaticity::QuasiStaticLooping:
+			return bPartialResult && !bIsVisible;
+		default: // Dynamic
+			return false;
+		}
+	}
+
+	void AdvanceQuasiStaticSleepTimer()
+	{
+		if (m_staticity != Cry::Anim::ECharacterStaticity::Dynamic
+			&& Console::GetInst().ca_CullQuasiStaticAnimationUpdates)
+		{
+			if (m_quasiStaticSleepTimer >= 0.f)
+			{
+				m_quasiStaticSleepTimer -= m_fDeltaTime;
+			}
+		}
+	}
 
 private:
 	// Functions that are called from Character Instance Processing
@@ -195,6 +248,8 @@ public:
 
 private:
 
+	ICharacterRenderNode* m_pParentRenderNode;
+
 	_smart_ptr<IMaterial> m_pInstanceMaterial;
 
 	CGeomExtents m_Extents;
@@ -211,6 +266,8 @@ private:
 
 	f32 m_skinningTransformationsMovement;
 
+	f32 m_fZoomDistanceSq;
+
 	bool m_bHasVertexAnimation;
 
 	bool m_bWasVisible;
@@ -220,6 +277,10 @@ private:
 	bool m_bHideMaster;
 
 	bool m_bFacialAnimationEnabled;
+
+	Cry::Anim::ECharacterStaticity m_staticity = Cry::Anim::ECharacterStaticity::Dynamic;
+	
+	float m_quasiStaticSleepTimer = 0.f;
 
 	int m_processingContext;
 
@@ -252,12 +313,16 @@ inline int CCharInstance::Release()
 	return m_nRefCounter;
 }
 
-inline void CCharInstance::SpawnSkeletonEffect(const char* effectName, const char* boneName, const Vec3& offset, const Vec3& dir, const QuatTS& entityLoc)
+inline void CCharInstance::SpawnSkeletonEffect(const AnimEventInstance& animEvent, const QuatTS &entityLoc)
 {
-	m_skeletonEffectManager.SpawnEffect(this, effectName, boneName, offset, dir, entityLoc);
+	m_skeletonEffectManager.SpawnEffect(this, animEvent, entityLoc);
 }
 
 inline void CCharInstance::KillAllSkeletonEffects()
 {
 	m_skeletonEffectManager.KillAllEffects();
+
+	pe_params_flags pf;
+	pf.flagsOR = pef_disabled;
+	m_SkeletonPose.m_physics.SetAuxParams(&pf);
 }

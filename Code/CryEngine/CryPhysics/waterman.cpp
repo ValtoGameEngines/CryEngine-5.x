@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -126,7 +126,7 @@ void CWaterMan::OnWaterInteraction(CPhysicalEntity *pent)
 {
 	if (m_nTiles<0)
 		return;
-	FUNCTION_PROFILER( GetISystem(),PROFILE_PHYSICS );
+	CRY_PROFILE_FUNCTION(PROFILE_PHYSICS );
 	PHYS_AREA_PROFILER((CPhysArea*)m_pArea)
 
 	WriteLock lock(m_lockUpdate);
@@ -503,9 +503,9 @@ void CWaterMan::TimeStep(float time_interval)
 {
 	if (m_nTiles<0 || !m_bActive || !m_pTiles)
 		return;
-	FUNCTION_PROFILER( GetISystem(),PROFILE_PHYSICS );
+	CRY_PROFILE_FUNCTION(PROFILE_PHYSICS );
 
-	int i,j,ix,iy,i1,hasBorder=0;
+	int i,j,ix,iy,i1,hasBorder=0, tileActive,volActive=0;
 	float vmax,h,dt,vsum=0,depth=m_depth*m_cellSz,rnTiles=1.0f/max(1,m_nTiles),minh=max(depth*-0.95f,m_cellSz*-m_hlimit),maxh=m_cellSz*m_hlimit;
 	Vec2i itile,ic,ic1,dc,dc1,strideTile(1,m_nTiles*2+1),stride(1,m_nCells);
 	Diag33 damping; damping.x=damping.y=max(0.0f,1-m_dampingCenter*m_dt);
@@ -522,6 +522,7 @@ void CWaterMan::TimeStep(float time_interval)
 	for(dt=m_timeSurplus; dt<time_interval; dt+=m_dt)	{
 		float doffs = min(fabs_tpl(m_doffs),m_dt*3)*sgnnz(m_doffs);
 		m_doffs -= doffs;
+		volActive = 0;
 
 		for(itile.x=0;itile.x<=m_nTiles*2;itile.x++) for(itile.y=0;itile.y<=m_nTiles*2;itile.y++) 
 			if ((ptile=m_pTiles[itile*strideTile])->bActive) {
@@ -586,9 +587,12 @@ void CWaterMan::TimeStep(float time_interval)
 				h = max(h, ptile->ph[i] = min(maxh,max(minh, hnew))*(1-flip&inside));
 				vmax = max(vmax, ptile->pvel[i].len2());
 			}
-			ptile->Activate(isneg(sqr(m_minVel)-max(vmax,h*sqr(2*g))));
+			volActive += (tileActive = isneg(sqr(m_minVel)-max(vmax,sqr(h*2*g*m_dt))));
+			ptile->Activate(tileActive);
 		}
 	}
+	if (m_pArea && volActive)
+		m_pWorld->ActivateArea((CPhysArea*)m_pArea);
 	m_timeSurplus = dt-time_interval;
 }
 
@@ -620,4 +624,23 @@ void CWaterMan::DrawHelpers(IPhysRenderer *pRenderer)
 			pRenderer->DrawGeometry(&hf,&gwd,7);
 		}
 	}
+}
+
+void CWaterMan::GetMemoryStatistics(ICrySizer *pSizer) const
+{
+	pSizer->AddObject((const char*)this, sizeof(*this));
+	int n = sqr(m_nTiles*2+1)+1;
+	pSizer->AddObject(m_pTiles, n*sizeof(m_pTiles[0]));
+	for(int i=0;i<n;i++) {
+		pSizer->AddObject(m_pTiles[i], sizeof(m_pTiles[i]));
+		pSizer->AddObject(m_pTiles[i]->ph,  sqr(m_nCells)*sizeof(m_pTiles[i]->ph[0]));
+		pSizer->AddObject(m_pTiles[i]->pvel,sqr(m_nCells)*sizeof(m_pTiles[i]->pvel[0]));
+		pSizer->AddObject(m_pTiles[i]->mv,  sqr(m_nCells)*sizeof(m_pTiles[i]->mv[0]));
+		pSizer->AddObject(m_pTiles[i]->m,   sqr(m_nCells)*sizeof(m_pTiles[i]->m[0]));
+		pSizer->AddObject(m_pTiles[i]->norm,sqr(m_nCells)*sizeof(m_pTiles[i]->norm[0]));
+	}
+	pSizer->AddObject(m_pTilesTmp, n*sizeof(m_pTilesTmp[0])); 
+	pSizer->AddObject(m_pCellMask, (n=sqr((m_nTiles*2+1)*m_nCells+2))*sizeof(m_pCellMask[0]));
+	pSizer->AddObject(m_pCellNorm, n*sizeof(m_pCellNorm[0]));
+	pSizer->AddObject(m_pCellQueue, m_szCellQueue*sizeof(m_pCellQueue[0]));
 }

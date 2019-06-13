@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -6,33 +6,29 @@
 #include "QToolWindowManager.h"
 #include "IToolWindowArea.h"
 
-#include <QGridLayout>
-#include <QSpacerItem>
-#include <QCloseEvent>
-#include <QWindowStateChangeEvent>
-#include <QToolButton>
 #include <QApplication>
-#include <QHoverEvent>
-#include <QTime>
-#include <QStyle>
+#include <QCloseEvent>
 #include <QDesktopWidget>
+#include <QGridLayout>
+#include <QHoverEvent>
+#include <QSpacerItem>
+#include <QStyle>
+#include <QTime>
+#include <QToolButton>
+#include <QWindowStateChangeEvent>
 
 #if defined(WIN32) || defined(WIN64)
-#include <windows.h>
-#include <windowsx.h>
-#include <dwmapi.h>
+	#include <windows.h>
+	#include <windowsx.h>
+	#include <dwmapi.h>
 
-#ifdef UNICODE
-#define _UNICODE
-#endif
+	#ifdef UNICODE
+		#define _UNICODE
+	#endif
 
-#include <tchar.h>
+	#include <tchar.h>
 
-#if QT_VERSION >= 0x050000
 Q_GUI_EXPORT QPixmap qt_pixmapFromWinHICON(HICON icon);
-#else
-#define qt_pixmapFromWinHICON(hIcon)QPixmap::fromWinHICON(hIcon)
-#endif
 #endif
 
 QToolWindowCustomTitleBar::QToolWindowCustomTitleBar(QToolWindowCustomWrapper* parent)
@@ -47,7 +43,7 @@ QToolWindowCustomWrapper* QToolWindowCustomWrapper::wrapWidget(QWidget* w, QVari
 
 QToolWindowCustomWrapper::QToolWindowCustomWrapper(QToolWindowManager* manager, QWidget* wrappedWidget, QVariantMap config)
 	: QCustomWindowFrame()
-	, m_manager(manager)	
+	, m_manager(manager)
 {
 	m_manager->installEventFilter(this);
 	setStyleSheet(m_manager->styleSheet());
@@ -63,7 +59,11 @@ QToolWindowCustomWrapper::QToolWindowCustomWrapper(QToolWindowManager* manager, 
 
 QToolWindowCustomWrapper::~QToolWindowCustomWrapper()
 {
-	m_manager->removeWrapper(this);
+	if (m_manager)
+	{
+		m_manager->removeWrapper(this);
+		m_manager = nullptr;
+	}
 }
 
 bool QToolWindowCustomWrapper::event(QEvent* e)
@@ -118,7 +118,7 @@ bool QToolWindowCustomWrapper::eventFilter(QObject* o, QEvent* e)
 	{
 		switch (e->type())
 		{
-			// Don't intercept these messages in parent class.
+		// Don't intercept these messages in parent class.
 		case QEvent::Close:
 		case QEvent::HideToParent:
 		case QEvent::ShowToParent:
@@ -141,8 +141,7 @@ Qt::WindowFlags QToolWindowCustomWrapper::calcFrameWindowFlags()
 	return flags;
 }
 
-#if QT_VERSION >= 0x050000
-bool QToolWindowCustomWrapper::nativeEvent(const QByteArray &eventType, void *message, long *result)
+bool QToolWindowCustomWrapper::nativeEvent(const QByteArray& eventType, void* message, long* result)
 {
 	if (!m_titleBar)
 		return false;
@@ -154,10 +153,9 @@ bool QToolWindowCustomWrapper::nativeEvent(const QByteArray &eventType, void *me
 #endif
 	return QCustomWindowFrame::nativeEvent(eventType, message, result);
 }
-#endif
 
 #if defined(WIN32) || defined(WIN64)
-bool QToolWindowCustomWrapper::winEvent(MSG *msg, long *result)
+bool QToolWindowCustomWrapper::winEvent(MSG* msg, long* result)
 {
 	switch (msg->message)
 	{
@@ -175,29 +173,47 @@ bool QToolWindowCustomWrapper::winEvent(MSG *msg, long *result)
 		}
 		return false;
 		break;
-	case WM_EXITSIZEMOVE:
-		if (m_manager && m_manager->draggedWrapper() == this)
-		{
-			m_manager->finishWrapperDrag();
-		}
-	}
-#if QT_VERSION < 0x050000
-	return QCustomWindowFrame::winEvent(msg, result);
-#else
-	return false;
-#endif
-}
-#endif
 
-QRect QToolWindowCustomWrapper::getWrapperFrameSize()
-{
-	QRect wrapperSize;
-	wrapperSize.setTopLeft(-(m_contents->mapToGlobal(QPoint(0, 0)) - mapToGlobal(QPoint(0, 0))));
-	wrapperSize.setBottomRight(rect().bottomRight() - m_contents->rect().bottomRight() + wrapperSize.topLeft());
-	return wrapperSize;
+	case WM_SIZING:
+		if (m_manager)
+		{
+			if (m_manager->resizedWrapper() != this)
+			{
+				m_manager->startResize(this);
+			}
+		}
+		break;
+
+	case WM_EXITSIZEMOVE:
+		if (m_manager)
+		{
+			if (m_manager->draggedWrapper() == this)
+			{
+				m_manager->finishWrapperDrag();
+			}
+			else if (m_manager->resizedWrapper() == this)
+			{
+				m_manager->finishWrapperResize();
+			}
+		}
+		break;
+	}
+	return false;
 }
+#endif
 
 void QToolWindowCustomWrapper::startDrag()
 {
 	m_titleBar->onBeginDrag();
+}
+
+void QToolWindowCustomWrapper::deferDeletion()
+{
+	if (m_manager)
+	{
+		m_manager->removeWrapper(this);
+		m_manager = nullptr;
+	}
+	setParent(nullptr);
+	deleteLater();
 }

@@ -1,12 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
-namespace uqs
+namespace UQS
 {
-	namespace client
+	namespace Client
 	{
 
 		//===================================================================================
@@ -22,7 +22,7 @@ namespace uqs
 		struct IQueryBlueprintRuntimeParamVisitor
 		{
 			virtual          ~IQueryBlueprintRuntimeParamVisitor() {}
-			virtual void     OnRuntimeParamVisited(const char* paramName, IItemFactory& itemFactory) = 0;
+			virtual void     OnRuntimeParamVisited(const char* szParamName, IItemFactory& itemFactory) = 0;
 		};
 
 	}

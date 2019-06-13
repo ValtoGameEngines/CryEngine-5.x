@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    -------------------------------------------------------------------------
@@ -85,8 +85,6 @@ void CAIRadialOcclusion::RasterizeEdge(const Vec3& start, const Vec3& end, bool 
 	}
 
 	// Rasterize the span
-	float d0 = v0.len();
-	float d1 = v1.len();
 	float a0 = atan2f(v0.y, v0.x);
 	float a1 = atan2f(v1.y, v1.x);
 
@@ -596,7 +594,7 @@ void CAIRadialOcclusionRaycast::Reset()
 void CAIRadialOcclusionRaycast::Update(const Vec3& center, const Vec3& target, float unitHeight,
                                        bool flat, unsigned raysPerUpdate)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	m_lastUpdatedTime = GetAISystem()->GetFrameStartTime();
 

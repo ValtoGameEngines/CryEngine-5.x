@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __ACTIONGAME_H__
 #define __ACTIONGAME_H__
@@ -10,6 +10,7 @@
 #include "IGameRulesSystem.h"
 #include <CryAction/IMaterialEffects.h>
 #include <CryGame/IGameFramework.h>
+#include <CryPhysics/IPhysics.h>
 
 struct SGameStartParams;
 struct SGameContextParams;
@@ -296,7 +297,6 @@ public:
 	CGameClientNub* GetGameClientNub() { return m_pGameClientNub; }
 	CGameContext*   GetGameContext()   { return m_pGameContext; }
 	IActor*         GetClientActor();
-	bool ControlsEntity(EntityId);
 
 	// returns true if should be let go
 	bool Update();
@@ -327,8 +327,6 @@ public:
 	void                ReleaseGameStats();
 
 	void                FreeBrokenMeshesForEntity(IPhysicalEntity* pEntity);
-
-	void                OnEntitySystemReset();
 
 	static CActionGame* Get() { return s_this; }
 
@@ -457,7 +455,6 @@ private:
 	CGameClientNub*     m_pGameClientNub;
 	CGameServerNub*     m_pGameServerNub;
 	CGameContext*       m_pGameContext;
-	INetContext*        m_pNetContext;
 	IGameTokenSystem*   m_pGameTokenSystem;
 	IPhysicalWorld*     m_pPhysicalWorld;
 
@@ -584,9 +581,6 @@ private:
 	};
 
 	SBreakageThrottling m_throttling;
-
-	EntityId            m_clientActorID;
-	IActor*             m_pClientActor;
 
 #ifndef _RELEASE
 	float        m_timeToPromoteToServer;

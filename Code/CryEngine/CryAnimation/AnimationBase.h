@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -63,7 +63,6 @@ extern IRenderer* g_pIRenderer;
 extern IPhysicalWorld* g_pIPhysicalWorld;
 extern I3DEngine* g_pI3DEngine;
 
-extern bool g_bProfilerOn;
 extern f32 g_fCurrTime;
 extern f32 g_AverageFrameTime;
 extern CAnimation g_DefaultAnim;
@@ -134,13 +133,5 @@ extern AnimStatisticsInfo g_AnimStatisticsInfo;
 
 #define ENABLE_GET_MEMORY_USAGE 1
 
-#ifndef AUTO_PROFILE_SECTION
-	#pragma message ("Warning: ITimer not included")
-#else
-	#undef AUTO_PROFILE_SECTION
-#endif
-
-#define AUTO_PROFILE_SECTION(g_fTimer) CITimerAutoProfiler<double> __section_auto_profiler(g_pITimer, g_fTimer)
-
-#define DEFINE_PROFILER_FUNCTION()     FUNCTION_PROFILER(g_pISystem, PROFILE_ANIMATION)
-#define DEFINE_PROFILER_SECTION(NAME)  FRAME_PROFILER(NAME, g_pISystem, PROFILE_ANIMATION)
+#define DEFINE_PROFILER_FUNCTION()     CRY_PROFILE_FUNCTION(PROFILE_ANIMATION)
+#define DEFINE_PROFILER_SECTION(NAME)  CRY_PROFILE_SECTION(PROFILE_ANIMATION, NAME)

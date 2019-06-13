@@ -1,12 +1,15 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
 #include "StatObj.h"
+#include "StatObjFoliage.h"
 #include "IndexedMesh.h"
 #include "3dEngine.h"
 #include <CryParticleSystem/IParticles.h>
 #include <Cry3DEngine/CGF/CGFContent.h>
+#include <Cry3DEngine/ISurfaceType.h>
+#include <CryRenderer/RenderElements/RendElement.h>
 #include "ObjMan.h"
 #include <CryThreading/IJobManager.h>
 #include <CryThreading/IJobManager_JobDelegator.h>
@@ -14,6 +17,7 @@
 
 #define SMALL_MESH_NUM_INDEX 30
 
+#pragma warning(push)
 #pragma warning(disable: 4244)
 
 //////////////////////////////////////////////////////////////////////////
@@ -21,7 +25,7 @@ void CStatObj::PhysicalizeCompiled(CNodeCGF* pNode, int bAppend)
 {
 	FUNCTION_PROFILER_3DENGINE;
 
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Physics, 0, "Physics");
+	MEMSTAT_CONTEXT(EMemStatContextType::Physics, "Physics");
 
 	if (!GetPhysicalWorld())
 		return;
@@ -127,7 +131,7 @@ void CStatObj::PhysicalizeCompiled(CNodeCGF* pNode, int bAppend)
 				FileWarning(0, GetFilePath(), "Phys proxy rejected due to triangle count limit, %d > %d (%s)", pmd->nTris, GetCVars()->e_PhysProxyTriLimit, GetFilePath());
 				GetPhysicalWorld()->GetGeomManager()->UnregisterGeometry(pPhysGeom);
 				m_isProxyTooBig = true;
-				m_pMaterial = Get3DEngine()->GetMaterialManager()->LoadMaterial("EngineAssets/Materials/PhysProxyTooBig");
+				m_pMaterial = Get3DEngine()->GetMaterialManager()->LoadMaterial("%ENGINE%/EngineAssets/Materials/PhysProxyTooBig");
 			}
 			else
 				AssignPhysGeom(nPhysGeomType + PHYS_GEOM_TYPE_DEFAULT, pPhysGeom, bAppend, /*bLoading*/ 1);
@@ -1452,7 +1456,7 @@ static inline float qmax(float op1, float op2) { return (op1 + op2 + fabsf(op1 -
 
 static int __s_pvtx_map_dummy = 0;
 
-static void SyncToRenderMesh(SSyncToRenderMeshContext* ctx, volatile int* updateState)
+void SyncToRenderMesh(SSyncToRenderMeshContext* ctx, volatile int* updateState)
 {
 	IGeometry* pPhysGeom = ctx->pObj->GetPhysGeom() ? ctx->pObj->GetPhysGeom()->pGeom : 0;
 	if (pPhysGeom)
@@ -1465,6 +1469,10 @@ static void SyncToRenderMesh(SSyncToRenderMeshContext* ctx, volatile int* update
 			if (updateState)
 				CryInterlockedDecrement(updateState);
 			pPhysGeom->Unlock(0);
+
+			if (ctx->pObj->m_hasClothTangentsData && ctx->pObj->m_pClothTangentsData)
+				ctx->mesh->UnlockStream(VSF_TANGENTS);
+			ctx->mesh->UnlockStream(VSF_GENERAL);
 			return;
 		}
 	}
@@ -1524,6 +1532,10 @@ static void SyncToRenderMesh(SSyncToRenderMeshContext* ctx, volatile int* update
 		CryInterlockedDecrement(updateState);
 	if (pPhysGeom)
 		pPhysGeom->Unlock(0);
+
+	if (ctx->pObj->m_hasClothTangentsData && ctx->pObj->m_pClothTangentsData)
+		ctx->mesh->UnlockStream(VSF_TANGENTS);
+	ctx->mesh->UnlockStream(VSF_GENERAL);
 }
 
 DECLARE_JOB(
@@ -1531,7 +1543,7 @@ DECLARE_JOB(
   , TStatObj_SyncToRenderMesh
   , SyncToRenderMesh);
 
-static void SkinVertices(SSyncToRenderMeshContext* ctx, volatile int* ready)
+void SkinVertices(SSyncToRenderMeshContext* ctx, volatile int* ready)
 {
 	ctx->pObj->SkinVertices(ctx->pVtx, Matrix34(IDENTITY), ready);
 }
@@ -1622,6 +1634,7 @@ IStatObj* CStatObj::UpdateVertices(strided_pointer<Vec3> pVtx, strided_pointer<V
 				pObj->m_hasClothTangentsData = 1;
 			}
 			pObj->SetFlags(pObj->GetFlags() & ~STATIC_OBJECT_CANT_BREAK);
+			m_pRenderMesh->UnlockStream(VSF_TANGENTS);
 			m_pRenderMesh->UnLockForThreadAccess();
 		}
 
@@ -1629,6 +1642,7 @@ IStatObj* CStatObj::UpdateVertices(strided_pointer<Vec3> pVtx, strided_pointer<V
 		{
 			pObj = (CStatObj*)Clone(true, true, false);
 			pObj->m_pRenderMesh->KeepSysMesh(true);
+			DisableStreaming();
 			pObj->m_pLattice = m_pLattice;
 			m_pLattice = 0;
 		}
@@ -1675,7 +1689,7 @@ IStatObj* CStatObj::UpdateVertices(strided_pointer<Vec3> pVtx, strided_pointer<V
 		}
 
 		m_pAsyncUpdateContext->Set(&pObj->m_AABB.min, &pObj->m_AABB.max, iVtx0, nVtx, pVtx, pVtxMap, mask, rscale
-		                           , m_pClothTangentsData, pMeshVtx, pTangents, pNormals, pObj);
+		                           , m_pClothTangentsData, pMeshVtx, pTangents, pNormals, pObj, mesh);
 
 		if (GetCVars()->e_RenderMeshUpdateAsync)
 		{
@@ -1686,9 +1700,6 @@ IStatObj* CStatObj::UpdateVertices(strided_pointer<Vec3> pVtx, strided_pointer<V
 		else
 		{
 			SyncToRenderMesh(m_pAsyncUpdateContext, NULL);
-			if (m_hasClothTangentsData && m_pClothTangentsData)
-				mesh->UnlockStream(VSF_TANGENTS);
-			mesh->UnlockStream(VSF_GENERAL);
 		}
 
 		mesh->UnLockForThreadAccess();
@@ -1812,6 +1823,7 @@ IStatObj* CStatObj::SkinVertices(strided_pointer<Vec3> pSkelVtx, const Matrix34&
 	{
 		pObj = (CStatObj*)Clone(true, true, false);
 		pObj->m_pRenderMesh->KeepSysMesh(true);
+		DisableStreaming();
 	}
 	if (!pObj->m_pClonedSourceObject || !pObj->m_pClonedSourceObject->m_pRenderMesh)
 		return pObj;
@@ -1856,7 +1868,7 @@ IStatObj* CStatObj::SkinVertices(strided_pointer<Vec3> pSkelVtx, const Matrix34&
 			{
 				SMeshTangents tb(pTangents0[i]);
 
-				tb.RotateBy(M);
+				tb.RotateSafelyBy(M);
 				tb.ExportTo(pTangents[i]);
 			}
 			pVtx[i] = v3;
@@ -1885,7 +1897,8 @@ int CStatObj::Physicalize(IPhysicalEntity* pent, pe_geomparams* pgp, int id, con
 	if (GetFlags() & STATIC_OBJECT_COMPOUND)
 	{
 		Matrix34 mtxId(IDENTITY);
-		res = PhysicalizeSubobjects(pent, pgp->pMtx3x4 ? pgp->pMtx3x4 : &mtxId, pgp->mass, pgp->density, id, 0, szPropsOverride);
+		res = PhysicalizeSubobjects(pent, pgp->pMtx3x4 ? pgp->pMtx3x4 : &mtxId, pgp->mass, pgp->density, id, 0, szPropsOverride, 
+			pgp->type == pe_articgeomparams::type_id ? ((pe_articgeomparams*)pgp)->idbody : -1);
 	}
 	else
 	{
@@ -1900,17 +1913,18 @@ int CStatObj::Physicalize(IPhysicalEntity* pent, pe_geomparams* pgp, int id, con
 				iNoColl = i, ++nNoColl;
 		int flags0 = pgp->flags;
 		ISurfaceTypeManager* pSurfaceMan = Get3DEngine()->GetMaterialManager()->GetSurfaceTypeManager();
-		if (phys_geometry* pSolid = m_arrPhysGeomInfo[PHYS_GEOM_TYPE_DEFAULT])
-			if (pSolid->surface_idx < pSolid->nMats)
-				if (ISurfaceType* pMat = pSurfaceMan->GetSurfaceType(pSolid->pMatMapping[pSolid->surface_idx]))
-					if (pMat->GetPhyscalParams().collType >= 0)
-						(pgp->flags &= ~(geom_collides | geom_floats)) |= pMat->GetPhyscalParams().collType;
 		if (pgp->mass > pgp->density && V > 0.0f) // mass is set instead of density and V is valid
 			pgp->density = pgp->mass / V, pgp->mass = -1.0f;
 		(pgp->flags &= ~geom_colltype_explosion) |= geom_colltype_explosion & ~-(int)m_bDontOccludeExplosions;
 		(pgp->flags &= ~geom_manually_breakable) |= geom_manually_breakable &  - (int)m_bBreakableByGame;
 		if (m_nFlags & STATIC_OBJECT_NO_PLAYER_COLLIDE)
 			pgp->flags &= ~geom_colltype_player;
+		int flags1 = pgp->flags;
+		if (phys_geometry* pSolid = m_arrPhysGeomInfo[PHYS_GEOM_TYPE_DEFAULT])
+			if (pSolid->surface_idx < pSolid->nMats)
+				if (ISurfaceType* pMat = pSurfaceMan->GetSurfaceType(pSolid->pMatMapping[pSolid->surface_idx]))
+					if (pMat->GetPhyscalParams().collType >= 0)
+						(pgp->flags &= ~(geom_collides | geom_floats)) |= pMat->GetPhyscalParams().collType;
 		pgp->flagsCollider |= geom_allow_id_duplicates;
 		if (m_nSpines && m_arrPhysGeomInfo.GetGeomCount() - nNoColl <= 1 &&
 		    (nNoColl == 1 || nNoColl == 2 && m_arrPhysGeomInfo[PHYS_GEOM_TYPE_NO_COLLIDE] && m_arrPhysGeomInfo[PHYS_GEOM_TYPE_OBSTRUCT]))
@@ -1958,7 +1972,7 @@ int CStatObj::Physicalize(IPhysicalEntity* pent, pe_geomparams* pgp, int id, con
 					pent->SetParams(&psj);
 			}
 		}
-		else if (nNoColl == 1 && m_arrPhysGeomInfo.GetGeomCount() == 2)
+		else if (nNoColl == 1 && m_arrPhysGeomInfo.GetGeomCount() == 2 && m_pParentObject)
 		{
 			// one solid, one obstruct or nocoll proxy -> use single part with ray proxy
 			res = pent->AddGeometry(m_arrPhysGeomInfo[iNoColl], pgp, id);
@@ -1971,7 +1985,14 @@ int CStatObj::Physicalize(IPhysicalEntity* pent, pe_geomparams* pgp, int id, con
 			// add all solid and non-colliding geoms as individual parts
 			for (i = 0; i < m_arrPhysGeomInfo.GetGeomCount(); i++)
 				if (m_arrPhysGeomInfo.GetGeomType(i) == PHYS_GEOM_TYPE_DEFAULT)
+				{
+					pgp->flags = flags1;
+					if (m_arrPhysGeomInfo[i]->surface_idx < m_arrPhysGeomInfo[i]->nMats)
+						if (ISurfaceType* pMat = pSurfaceMan->GetSurfaceType(m_arrPhysGeomInfo[i]->pMatMapping[m_arrPhysGeomInfo[i]->surface_idx]))
+							if (pMat->GetPhyscalParams().collType >= 0)
+								(pgp->flags &= ~(geom_collides | geom_floats)) |= pMat->GetPhyscalParams().collType;
 					res = pent->AddGeometry(m_arrPhysGeomInfo[i], pgp, id);
+				}
 			pgp->idmatBreakable = -1;
 			for (i = 0; i < m_arrPhysGeomInfo.GetGeomCount(); i++)
 				if (m_arrPhysGeomInfo.GetGeomType(i) == PHYS_GEOM_TYPE_NO_COLLIDE)
@@ -1995,7 +2016,7 @@ int CStatObj::Physicalize(IPhysicalEntity* pent, pe_geomparams* pgp, int id, con
 #define isalpha(c) isalpha((unsigned char)c)
 #define isdigit(c) isdigit((unsigned char)c)
 
-int CStatObj::PhysicalizeSubobjects(IPhysicalEntity* pent, const Matrix34* pMtx, float mass, float density, int id0, strided_pointer<int> pJointsIdMap, const char* szPropsOverride)
+int CStatObj::PhysicalizeSubobjects(IPhysicalEntity* pent, const Matrix34* pMtx, float mass, float density, int id0, strided_pointer<int> pJointsIdMap, const char* szPropsOverride, int idbodyArtic)
 {
 	int i, j, i0, i1, len = 0, len1, nObj = GetSubObjectCount(), ipart[2], nparts, bHasPlayerOnlyGeoms = 0, nGeoms = 0, id, idNext = 0;
 	float V[2], M, scale3, jointsz;
@@ -2026,7 +2047,7 @@ int CStatObj::PhysicalizeSubobjects(IPhysicalEntity* pent, const Matrix34* pMtx,
 	for (i = j = 0; i < nObj; i++)
 		if (pSubObj = GetSubObject(i))
 			j += pSubObj->pStatObj && pSubObj->pStatObj->GetPhysGeom(0) != 0;
-	id0 = id0 < 0 ? 0 : AllocPartIdRange(id0, j);
+	id0 = id0 < 0 ? 0 : EntityPhysicsUtils::AllocPartIdRange(id0, j);
 
 	for (i = 0; i < nObj; i++)
 		if ((pSubObj = GetSubObject(i))->nType == STATIC_SUB_OBJECT_MESH && pSubObj->pStatObj && pSubObj->pStatObj->GetPhysGeom() &&
@@ -2089,7 +2110,7 @@ int CStatObj::PhysicalizeSubobjects(IPhysicalEntity* pent, const Matrix34* pMtx,
 		{
 			if (pJointsIdMap)
 				continue;
-			partpos.idbody = i + id0;
+			partpos.idbody = idbodyArtic + (i + id0 - idbodyArtic & idbodyArtic >> 31);
 			partpos.pMtx3x4 = pMtx ? &(mtxLoc = *pMtx * pSubObj->tm) : &pSubObj->tm;
 
 			float mi = 0, di = 0;
@@ -3643,7 +3664,9 @@ int CStatObj::PhysicalizeFoliage(IPhysicalEntity* pTrunk, const Matrix34& mtxWor
 						if (w1 == 0) b1 = 0;
 						if (w2 == 0) b2 = 0;
 						if (w3 == 0) b3 = 0;
+#if defined(USE_CRY_ASSERT)
 						static const int maxBoneIdx = 255;
+#endif
 						assert(b0 <= maxBoneIdx);
 						assert(b1 <= maxBoneIdx);
 						assert(b2 <= maxBoneIdx);
@@ -3671,481 +3694,4 @@ int CStatObj::PhysicalizeFoliage(IPhysicalEntity* pTrunk, const Matrix34& mtxWor
 	return m_nSpines;
 }
 
-////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////// CStatObjFoliage /////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////
-
-CStatObjFoliage::~CStatObjFoliage()
-{
-	if (m_pRopes)
-	{
-		for (int i = 0; i < m_nRopes; i++)
-			if (m_pRopes[i])
-				gEnv->pPhysicalWorld->DestroyPhysicalEntity(m_pRopes[i]);
-		delete[] m_pRopes;
-		delete[] m_pRopesActiveTime;
-	}
-	delete[] m_pSkinningTransformations[0];
-	delete[] m_pSkinningTransformations[1];
-	m_next->m_prev = m_prev;
-	m_prev->m_next = m_next;
-	if (m_pStatObj)
-		m_pStatObj->Release();
-	if (!m_bDelete)
-	{
-		if (*m_ppThis == this)
-			*m_ppThis = 0;
-		if (m_pRenderObject)
-		{
-			m_pRenderObject->m_ObjFlags &= ~(FOB_SKINNED);
-			threadID nThreadID = 0;
-			gEnv->pRenderer->EF_Query(EFQ_MainThreadList, nThreadID);
-			if (SRenderObjData* pOD = m_pRenderObject->GetObjData())
-				pOD->m_pSkinningData = NULL;
-		}
-	}
-}
-
-uint32 CStatObjFoliage::ComputeSkinningTransformationsCount()
-{
-	uint32 count = 1;
-	uint32 spineCount = uint32(m_pStatObj->m_nSpines);
-	for (uint32 i = 0; i < spineCount; ++i)
-		count += uint32(m_pStatObj->m_pSpines[i].nVtx - 1);
-	return count;
-}
-
-void CStatObjFoliage::ComputeSkinningTransformations(uint32 nList)
-{
-	uint32 jointCount = ComputeSkinningTransformationsCount();
-	if (!m_pSkinningTransformations[0])
-	{
-		m_pSkinningTransformations[0] = new QuatTS[jointCount];
-		m_pSkinningTransformations[1] = new QuatTS[jointCount];
-		memset(m_pSkinningTransformations[0], 0, jointCount * sizeof(QuatTS));
-		memset(m_pSkinningTransformations[1], 0, jointCount * sizeof(QuatTS));
-	}
-
-	QuatTS* pPose = m_pSkinningTransformations[nList];
-
-	pe_status_rope sr;
-	Vec3 point0, point1;
-	uint32 jointIndex = 1;
-	uint32 spineCount = uint32(m_pStatObj->m_nSpines);
-	for (uint32 i = 0; i < spineCount; ++i)
-	{
-		if (!m_pRopes[i])
-		{
-			jointIndex += uint32(m_pStatObj->m_pSpines[i].nVtx - 1);
-			continue;
-		}
-
-		sr.pPoints = NULL;
-		m_pRopes[i]->GetStatus(&sr);
-		if (sr.timeLastActive > m_pRopesActiveTime[i])
-		{
-			m_pRopesActiveTime[i] = sr.timeLastActive;
-
-			// We use the scalar component of the first joint for this section
-			// to mark the NEED for further computation.
-			assert(jointIndex < jointCount);
-			PREFAST_ASSUME(jointIndex < jointCount);
-			pPose[jointIndex].s = 1.0f;
-
-			sr.pPoints = m_pStatObj->m_pSpines[i].pVtxCur;
-			m_pRopes[i]->GetStatus(&sr);
-			point0 = sr.pPoints[0];
-			uint32 spineVertexCount = m_pStatObj->m_pSpines[i].nVtx - 1;
-			for (uint32 j = 0; j < spineVertexCount; ++j)
-			{
-				assert(jointIndex < jointCount);
-				PREFAST_ASSUME(jointIndex < jointCount);
-
-				point1 = sr.pPoints[j + 1];
-
-				Vec3& p0 = pPose[jointIndex].t;
-				Vec3& p1 = *(Vec3*)&pPose[jointIndex].q;
-
-				p0 = point0;
-				p1 = point1;
-
-				point0 = point1;
-				jointIndex++;
-			}
-		}
-		else
-		{
-			uint32 count = m_pStatObj->m_pSpines[i].nVtx - 1;
-			memcpy(&pPose[jointIndex], &m_pSkinningTransformations[(nList + 1) & 1][jointIndex], count * sizeof(QuatTS));
-
-			// SF: no need to do this! Causes a bug, where unprocessed data can be
-			// copied from the other list and then marked as not needing processing!
-			// pPose[jointIndex].s = 0.0f;
-
-			jointIndex += count;
-		}
-	}
-}
-
-SSkinningData* CStatObjFoliage::GetSkinningData(const Matrix34& RenderMat34, const SRenderingPassInfo& passInfo)
-{
-	int nList = passInfo.ThreadID();
-	QuatTS* pPose = m_pSkinningTransformations[nList];
-	if (pPose == 0)
-		return NULL;
-
-	if (m_pStatObj && m_pStatObj->m_pRenderMesh)
-		m_pStatObj->m_pRenderMesh->NextDrawSkinned();
-
-	int nNumBones = ComputeSkinningTransformationsCount();
-
-	// get data to fill
-	int nSkinningFrameID = gEnv->pRenderer->EF_GetSkinningPoolID();
-	int nSkinningList = nSkinningFrameID % 3;
-	int nPrevSkinningList = (nSkinningFrameID - 1) % 3;
-
-	//int nCurrentFrameID = passInfo.GetFrameID();
-
-	// before allocating new skinning date, check if we already have for this frame
-	if (arrSkinningRendererData[nSkinningList].nFrameID == nSkinningFrameID && arrSkinningRendererData[nSkinningList].pSkinningData)
-		return arrSkinningRendererData[nSkinningList].pSkinningData;
-
-	//m_nFrameID = nCurrentFrameID;
-
-	Matrix34 transformation = RenderMat34.GetInverted();
-
-	pPose[0].q.SetIdentity();
-	;
-	pPose[0].t.x = 0.0f;
-	pPose[0].t.y = 0.0f;
-	pPose[0].t.z = 0.0f;
-	pPose[0].s = 0.0f;
-
-	assert(m_pStatObj);
-	uint32 jointIndex = 1;
-	uint32 spineCount = uint32(m_pStatObj->m_nSpines);
-	for (uint32 i = 0; i < spineCount; ++i)
-	{
-		if (!m_pRopes[i])
-		{
-			uint32 spineVertexCount = m_pStatObj->m_pSpines[i].nVtx - 1;
-			for (uint32 j = 0; j < spineVertexCount; ++j)
-			{
-				pPose[jointIndex].q.SetIdentity();
-				pPose[jointIndex].t.x = 0.0f;
-				pPose[jointIndex].t.y = 0.0f;
-				pPose[jointIndex].t.z = 0.0f;
-				pPose[jointIndex].s = 0.0f;
-
-				jointIndex++;
-			}
-			continue;
-		}
-
-		// If the scalar component is not set no further computation is needed.
-		if (pPose[jointIndex].s < 1.0f)
-		{
-			jointIndex += uint32(m_pStatObj->m_pSpines[i].nVtx - 1);
-			continue;
-		}
-
-		uint32 spineVertexCount = m_pStatObj->m_pSpines[i].nVtx - 1;
-		for (uint32 j = 0; j < spineVertexCount; ++j)
-		{
-			Vec3& p0 = pPose[jointIndex].t;
-			Vec3& p1 = *(Vec3*)&pPose[jointIndex].q;
-
-			p0 = transformation * p0;
-			p1 = transformation * p1;
-
-			pPose[jointIndex].q = Quat::CreateRotationV0V1(
-			  (m_pStatObj->m_pSpines[i].pVtx[j + 1] - m_pStatObj->m_pSpines[i].pVtx[j]).normalized(),
-			  (p1 - p0).normalized());
-			pPose[jointIndex].t = p0 - pPose[jointIndex].q * m_pStatObj->m_pSpines[i].pVtx[j];
-
-			*(DualQuat*)&m_pSkinningTransformations[nList ^ 1][jointIndex] =
-			  *(DualQuat*)&pPose[jointIndex] = DualQuat(pPose[jointIndex].q, pPose[jointIndex].t);
-
-			jointIndex++;
-		}
-	}
-
-	// get data to fill
-	assert(jointIndex == nNumBones);
-
-	SSkinningData* pSkinningData = gEnv->pRenderer->EF_CreateSkinningData(jointIndex, false);
-	assert(pSkinningData);
-	PREFAST_ASSUME(pSkinningData);
-	memcpy(pSkinningData->pBoneQuatsS, pPose, jointIndex * sizeof(DualQuat));
-	arrSkinningRendererData[nSkinningList].pSkinningData = pSkinningData;
-	arrSkinningRendererData[nSkinningList].nFrameID = nSkinningFrameID;
-
-	// set data for motion blur
-	if (arrSkinningRendererData[nPrevSkinningList].nFrameID == (nSkinningFrameID - 1) && arrSkinningRendererData[nPrevSkinningList].pSkinningData)
-	{
-		pSkinningData->nHWSkinningFlags |= eHWS_MotionBlured;
-		pSkinningData->pPreviousSkinningRenderData = arrSkinningRendererData[nPrevSkinningList].pSkinningData;
-	}
-	else
-	{
-		// if we don't have motion blur data, use the some as for the current frame
-		pSkinningData->pPreviousSkinningRenderData = pSkinningData;
-	}
-
-	return pSkinningData;
-}
-
-void CStatObjFoliage::Update(float dt, const CCamera& rCamera)
-{
-	if (!*m_ppThis && !m_bDelete)
-		m_bDelete = 2;
-	if (m_bDelete)
-	{
-		if (--m_bDelete <= 0)
-			delete this;
-		return;
-	}
-	FUNCTION_PROFILER_3DENGINE;
-
-	int i, j, nContactEnts = 0, nColl;
-	//int nContacts[4]={0,0,0,0};
-	pe_status_rope sr;
-	pe_params_bbox pbb;
-	pe_status_dynamics sd;
-	bool bHasBrokenRopes = false;
-	IPhysicalEntity* pContactEnt, * pContactEnts[4];
-	//	IPhysicalEntity *pMultiContactEnt=0;
-	AABB bbox;
-	bbox.Reset();
-
-	for (i = nColl = 0; i < m_nRopes; i++)
-		if (m_pRopes[i] && m_pRopes[i]->GetStatus(&sr))
-		{
-			pContactEnt = sr.pContactEnts[0];
-			if (m_pVegInst && pContactEnt && pContactEnt->GetType() != PE_STATIC)
-			{
-				for (j = 0; j < nContactEnts && pContactEnts[j] != pContactEnt; j++)
-					;
-				if (j < nContactEnts)
-				{
-					//				if (++nContacts[j]*2>=m_pStatObj->m_nSpines)
-					//					pMultiContactEnt = pContactEnt;
-				}
-				else if (nContactEnts < 4)
-					pContactEnts[nContactEnts++] = pContactEnt;
-			}
-			nColl += sr.nCollDyn;
-			if (m_flags & FLAG_FROZEN && sr.nCollStat + sr.nCollDyn)
-				BreakBranch(i), bHasBrokenRopes = true;
-			else
-			{
-				m_pRopes[i]->GetParams(&pbb);
-				bbox.Add(pbb.BBox[0]);
-				bbox.Add(pbb.BBox[1]);
-			}
-		}
-		else
-			bHasBrokenRopes = true;
-
-	// disables destruction of non-frozen vegetation
-	/*if (pMultiContactEnt && !(m_flags & FLAG_FROZEN) && pMultiContactEnt->GetStatus(&sd) && sd.mass>500 && (sd.v.len2()>25 || sd.w.len()>0.5))
-	   {	// destroy the vegetation object, spawn particle effect
-	   Vec3 sz = m_pVegInst->GetBBox().GetSize();
-	   IParticleEffect *pDisappearEffect = m_pStatObj->GetSurfaceBreakageEffect( SURFACE_BREAKAGE_TYPE("destroy") );
-	   if (pDisappearEffect)
-	    pDisappearEffect->Spawn(true, IParticleEffect::ParticleLoc(m_pVegInst->GetBBox().GetCenter(),Vec3(0,0,1),(sz.x+sz.y+sz.z)*0.3f));
-	   m_pStatObj->Get3DEngine()->m_pObjectsTree[nSID]->DeleteObject(m_pVegInst);
-	   m_pVegInst->Dephysicalize();
-	   return;
-	   }*/
-
-	float clipDist = GetCVars()->e_CullVegActivation;
-	int bVisible = rCamera.IsAABBVisible_E(bbox);
-	int bEnable = bVisible & isneg(((rCamera.GetPosition() - bbox.GetCenter()).len2() - sqr(clipDist)) * clipDist - 0.0001f);
-	if (!bEnable)
-	{
-		if (inrange(m_timeInvisible += dt, 6.0f, 8.0f))
-			bEnable = 1;
-		else if (m_pTrunk && bVisible)
-		{
-			pe_status_awake psa;
-			bEnable = m_pTrunk->GetStatus(&psa); // Is the trunk awake?
-		}
-
-	}
-	else
-		m_timeInvisible = 0;
-	if (m_bEnabled != bEnable)
-	{
-		pe_params_flags pf;
-		pf.flagsAND = ~pef_disabled;
-		pf.flagsOR = pef_disabled & ~-bEnable;
-
-		for (i = 0; i < m_nRopes; i++)
-			if (m_pRopes[i])
-				m_pRopes[i]->SetParams(&pf);
-		m_bEnabled = bEnable;
-	}
-
-	pe_simulation_params sp;
-	sp.minEnergy = sqr(nColl && bVisible ? 0.1f : 0.005f);
-	if (sp.minEnergy != m_minEnergy)
-		for (i = 0, m_minEnergy = sp.minEnergy; i < m_nRopes; i++)
-			if (m_pRopes[i])
-				m_pRopes[i]->SetParams(&sp);
-
-	if (nColl && (m_iActivationSource & 2 || bVisible))
-		m_timeIdle = 0;
-	if (!bHasBrokenRopes && m_lifeTime > 0 && (m_timeIdle += dt) > m_lifeTime)
-	{
-		*m_ppThis = 0;
-		m_bDelete = 2;
-	}
-	threadID nThreadID = 0;
-	gEnv->pRenderer->EF_Query(EFQ_MainThreadList, nThreadID);
-	ComputeSkinningTransformations(nThreadID);
-}
-
-void CStatObjFoliage::SetFlags(int flags)
-{
-	if (flags != m_flags)
-	{
-		pe_params_rope pr;
-		if (flags & FLAG_FROZEN)
-		{
-			pr.collDist = 0.1f;
-			pr.stiffnessAnim = 0;
-		}
-		else
-		{
-			pr.collDist = 0.03f;
-			pr.stiffnessAnim = m_stiffness;
-		}
-		for (int i = 0; i < m_pStatObj->m_nSpines; i++)
-			if (m_pRopes[i])
-				m_pRopes[i]->SetParams(&pr);
-		m_flags = flags;
-	}
-}
-
-void CStatObjFoliage::OnHit(struct EventPhysCollision* pHit)
-{
-	if (m_flags & FLAG_FROZEN)
-	{
-		pe_params_foreign_data pfd;
-		pHit->pEntity[1]->GetParams(&pfd);
-		BreakBranch(pfd.iForeignFlags);
-	}
-}
-
-void CStatObjFoliage::BreakBranch(int idx)
-{
-	if (m_pRopes[idx])
-	{
-		int i, nActiveRopes;
-
-		IParticleEffect* pBranchBreakEffect = m_pStatObj->GetSurfaceBreakageEffect(SURFACE_BREAKAGE_TYPE("freeze_shatter"));
-		if (pBranchBreakEffect)
-		{
-			float t, maxt, kb, kc, dim;
-			float effStep = max(0.1f, m_pStatObj->m_pSpines[idx].len * 0.1f);
-			Vec3 pos, dir;
-			pe_status_rope sr;
-
-			sr.pPoints = m_pStatObj->m_pSpines[idx].pVtxCur;
-			m_pRopes[idx]->GetStatus(&sr);
-			pos = sr.pPoints[0];
-			i = 0;
-			t = 0;
-			dir = sr.pPoints[1] - sr.pPoints[0];
-			dir /= (maxt = dir.len());
-			do
-			{
-				pos = sr.pPoints[i] + dir * t;
-				dim = max(fabs_tpl(m_pStatObj->m_pSpines[idx].pSegDim[i].y - m_pStatObj->m_pSpines[idx].pSegDim[i].x),
-				          fabs_tpl(m_pStatObj->m_pSpines[idx].pSegDim[i].w - m_pStatObj->m_pSpines[idx].pSegDim[i].z));
-				dim = max(0.05f, min(1.5f, dim));
-				if ((t += effStep) > maxt)
-				{
-					if (++i >= sr.nSegments)
-						break;
-					dir = sr.pPoints[i + 1] - sr.pPoints[i];
-					dir /= (maxt = dir.len());
-					kb = dir * (sr.pPoints[i] - pos);
-					kc = (sr.pPoints[i] - pos).len2() - sqr(effStep);
-					pos = sr.pPoints[i] + dir * (t = kb + sqrt_tpl(max(1e-5f, kb * kb - kc)));
-				}
-				pBranchBreakEffect->Spawn(true, IParticleEffect::ParticleLoc(pos, (Vec3(0, 0, 1) - dir * dir.z).GetNormalized(), dim));
-			}
-			while (true);
-		}
-
-		if (!m_bGeomRemoved)
-		{
-			for (i = nActiveRopes = 0; i < m_pStatObj->m_nSpines; i++)
-				nActiveRopes += m_pRopes[i] != 0;
-			if (nActiveRopes * 3 < m_pStatObj->m_nSpines * 2)
-			{
-				pe_params_rope pr;
-				pe_params_part pp;
-				m_pRopes[idx]->GetParams(&pr);
-				pp.flagsCond = geom_squashy;
-				pp.flagsAND = 0;
-				pp.flagsColliderAND = 0;
-				pp.mass = 0;
-				if (pr.pEntTiedTo[0])
-					pr.pEntTiedTo[0]->SetParams(&pp);
-				m_bGeomRemoved = 1;
-			}
-		}
-		m_pStatObj->GetPhysicalWorld()->DestroyPhysicalEntity(m_pRopes[idx]);
-		m_pRopes[idx] = 0;
-		if (m_pStatObj->GetFlags() & (STATIC_OBJECT_CLONE))
-			m_pStatObj->m_pSpines[idx].bActive = false;
-
-		for (i = 0; i < m_pStatObj->m_nSpines; i++)
-			if (m_pStatObj->m_pSpines[i].iAttachSpine == idx)
-				BreakBranch(i);
-	}
-}
-
-int CStatObjFoliage::Serialize(TSerialize ser)
-{
-	int i, nRopes = m_nRopes;
-	bool bVal;
-	ser.Value("nropes", nRopes);
-
-	if (!ser.IsReading())
-	{
-		for (i = 0; i < m_nRopes; i++)
-		{
-			ser.BeginGroup("rope");
-			if (m_pRopes[i])
-			{
-				ser.Value("active", bVal = true);
-				m_pRopes[i]->GetStateSnapshot(ser);
-			}
-			else
-				ser.Value("active", bVal = false);
-			ser.EndGroup();
-		}
-	}
-	else
-	{
-		if (m_nRopes != nRopes)
-			return 0;
-		for (i = 0; i < m_nRopes; i++)
-		{
-			ser.BeginGroup("rope");
-			ser.Value("active", bVal);
-			if (m_pRopes[i] && !bVal)
-				m_pStatObj->GetPhysicalWorld()->DestroyPhysicalEntity(m_pRopes[i]), m_pRopes[i] = 0;
-			else if (m_pRopes[i])
-				m_pRopes[i]->SetStateFromSnapshot(ser);
-			m_pRopesActiveTime[i] = -1;
-			ser.EndGroup();
-		}
-	}
-
-	return 1;
-}
+#pragma warning(pop)

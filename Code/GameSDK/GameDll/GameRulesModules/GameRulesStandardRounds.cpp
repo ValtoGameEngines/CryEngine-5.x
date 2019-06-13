@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -37,6 +37,8 @@
 #include "RecordingSystem.h"
 
 #include "Utility/CryWatch.h"
+#include <CryGame/GameUtils.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 static TKeyValuePair<EGameOverReason,const char*>
 g_gameOverReasons[] = {
@@ -540,10 +542,11 @@ bool CGameRulesStandardRounds::NetSerialize( TSerialize ser, EEntityAspects aspe
 
 				if( (oldState == eGRRS_Restarting) && (m_bShownLoadout == false) )
 				{
-					const float  serverTime = pGameRules->GetServerTime();
 					m_missedLoadout ++;
-
+#if !defined(EXCLUDE_NORMAL_LOG)
+					const float  serverTime = pGameRules->GetServerTime();
 					CryLog("Rounds: Set state to In Progress but shown Loadout was false, current server time %.2f, happened %d times", serverTime, m_missedLoadout );
+#endif
 					
 					NewRoundTransition();
 				}
@@ -587,9 +590,11 @@ void CGameRulesStandardRounds::ClDisplayEndOfRoundMessage()
 	EntityId localActorId = g_pGame->GetIGameFramework()->GetClientActorId();
 	CGameRules *pGameRules = g_pGame->GetGameRules();
 	int localTeam = pGameRules->GetTeam(localActorId);
-	int primaryTeam = GetPrimaryTeam();
 
+#ifndef _RELEASE
+	int primaryTeam = GetPrimaryTeam();
 	LOG_PRIMARY_ROUND("LOG_PRIMARY_ROUND: ClDisplayEndOfRoundMessage: primary team = %d, local team = %d", primaryTeam, localTeam);
+#endif
 
 	SOnEndRoundStrings &strings = m_endOfRoundStringsDefault;
 
@@ -605,8 +610,7 @@ void CGameRulesStandardRounds::ClDisplayEndOfRoundMessage()
 	const char* victoryDescMessage = "";
 	int winner = 0;
 	EAnnouncementID announcement = INVALID_ANNOUNCEMENT_ID;
-	CGameAudio* pGameAudio = g_pGame->GetGameAudio();
-	CAnnouncer* pAnnouncer = CAnnouncer::GetInstance();
+	CRY_ASSERT(CAnnouncer::GetInstance() != nullptr);
 	bool clientScoreIsTop = false;
 	const bool bIndividualScore = pGameRules->IndividualScore();
 	const bool bShowRoundsAsDraw = pGameRules->ShowRoundsAsDraw();
@@ -629,7 +633,7 @@ void CGameRulesStandardRounds::ClDisplayEndOfRoundMessage()
 			{
 				victoryDescMessage = CHUDUtils::LocalizeString(strings.m_roundWinMessage.c_str(), strWinTeamName.c_str(), NULL);
 			}
-			announcement = pAnnouncer->NameToID("RoundWin");
+			announcement = CAnnouncer::NameToID("RoundWin");
 		}
 		else
 		{
@@ -640,7 +644,7 @@ void CGameRulesStandardRounds::ClDisplayEndOfRoundMessage()
 			{
 				victoryDescMessage = CHUDUtils::LocalizeString(strings.m_roundLoseMessage.c_str(), strWinTeamName.c_str(), NULL);
 			}
-			announcement = pAnnouncer->NameToID("RoundLose");
+			announcement = CAnnouncer::NameToID("RoundLose");
 		}
 	}
 	else if (!bShowRoundsAsDraw && m_previousRoundWinnerEntityId)
@@ -659,7 +663,7 @@ void CGameRulesStandardRounds::ClDisplayEndOfRoundMessage()
 			{
 				victoryDescMessage = CHUDUtils::LocalizeString( strings.m_roundWinMessage.c_str(), pPlayer ? pPlayer->GetName() : "" );
 			}
-			announcement = pAnnouncer->NameToID("RoundWon");
+			announcement = CAnnouncer::NameToID("RoundWon");
 		}
 		else
 		{
@@ -670,7 +674,7 @@ void CGameRulesStandardRounds::ClDisplayEndOfRoundMessage()
 			{
 				victoryDescMessage = CHUDUtils::LocalizeString( strings.m_roundLoseMessage.c_str(), pPlayer ? pPlayer->GetName() : "" );
 			}
-			announcement = pAnnouncer->NameToID("RoundLose");
+			announcement = CAnnouncer::NameToID("RoundLose");
 		}
 	}
 	else
@@ -717,17 +721,17 @@ void CGameRulesStandardRounds::ClDisplayEndOfRoundMessage()
 
 		if (pGameRules->GetGameMode() != eGM_Gladiator)
 		{
-			announcement = pAnnouncer->NameToID("RoundDraw");
+			announcement = CAnnouncer::NameToID("RoundDraw");
 		}
 		else
 		{
 			if (localTeam == m_previousRoundWinnerTeamId)
 			{
-				announcement = pAnnouncer->NameToID((localTeam == 1) ? "Marine_RoundWin" : "Hunter_WinRound");
+				announcement = CAnnouncer::NameToID((localTeam == 1) ? "Marine_RoundWin" : "Hunter_WinRound");
 			}
 			else
 			{
-				announcement = pAnnouncer->NameToID((localTeam == 1) ? "Marine_RoundLose" : "Hunter_LoseRound");
+				announcement = CAnnouncer::NameToID((localTeam == 1) ? "Marine_RoundLose" : "Hunter_LoseRound");
 			}
 		}
 	}
@@ -1056,7 +1060,7 @@ int CGameRulesStandardRounds::GetRoundNumber() // Starts at 0
 //-------------------------------------------------------------------------
 int CGameRulesStandardRounds::GetRoundsRemaining() const // Returns 0 if currently on last round
 {
-	return (m_treatCurrentRoundAsFinalRound ? 0 : MAX(0, (g_pGame->GetGameRules()->GetRoundLimit() - m_roundNumber - 1)));
+	return (m_treatCurrentRoundAsFinalRound ? 0 : std::max(0, (g_pGame->GetGameRules()->GetRoundLimit() - m_roundNumber - 1)));
 }
 
 //-------------------------------------------------------------------------
@@ -1313,8 +1317,6 @@ void CGameRulesStandardRounds::SetupEntities()
 //-------------------------------------------------------------------------
 void CGameRulesStandardRounds::SetTeamEntities( TEntityDetailsVec &classesVec, int teamId)
 {
-	CGameRules *pGameRules = g_pGame->GetGameRules();
-
 	IEntityItPtr pIt = gEnv->pEntitySystem->GetEntityIterator();
 	IEntity *pEntity = 0;
 

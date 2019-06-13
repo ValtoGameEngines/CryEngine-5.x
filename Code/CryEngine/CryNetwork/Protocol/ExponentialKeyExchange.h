@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -9,9 +9,6 @@
    History:
    - 13/03/2007   : Created by Lin Luo
 *************************************************************************/
-
-#ifndef __EXPONENTIALKEYEXCHANGE_H__
-#define __EXPONENTIALKEYEXCHANGE_H__
 
 #pragma once
 
@@ -52,4 +49,3 @@ private:
 	KEY_TYPE m_k;
 };
 
-#endif

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -143,7 +143,7 @@ struct IActor : public IGameObjectExtension
 	virtual const char*               GetEntityClassName() const = 0;
 
 	virtual void                      SerializeLevelToLevel(TSerialize& ser) = 0;
-	virtual void                      ProcessEvent(SEntityEvent& event) = 0;
+	virtual void                      ProcessEvent(const SEntityEvent& event) = 0;
 
 	virtual IAnimatedCharacter*       GetAnimatedCharacter() = 0;
 	virtual const IAnimatedCharacter* GetAnimatedCharacter() const = 0;
@@ -198,6 +198,8 @@ struct IActor : public IGameObjectExtension
 
 	// IVehicle
 	virtual IVehicle* GetLinkedVehicle() const = 0;
+	virtual bool      GetValidPositionNearby(const Vec3& proposedPosition, Vec3& adjustedPosition) const = 0;
+	virtual void      SetExpectedPhysicsPos(const Vec3& expectedPosition) = 0;
 
 	virtual void      OnAIProxyEnabled(bool enabled) = 0;
 	virtual void      OnReturnedToPool() = 0;

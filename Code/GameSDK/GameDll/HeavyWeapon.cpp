@@ -1,10 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "ItemSharedParams.h"
 #include "HeavyWeapon.h"
 #include "FireMode.h"
 #include "Actor.h"
+#include "GameCVars.h"
 #include "GameRules.h"
 #include "Player.h"
 #include "PersistantStats.h"

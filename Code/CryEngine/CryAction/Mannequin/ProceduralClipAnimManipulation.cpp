@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 //
 ////////////////////////////////////////////////////////////////////////////
@@ -214,9 +214,8 @@ public:
 	virtual void OnEnter(float blendTime, float duration, const SProceduralClipLayerManualUpdateParams& params)
 	{
 		m_dataStringCRC = CCrc32::ComputeLowercase(params.paramName.c_str());
-		uint32 layer = params.layer;
 
-		CRY_ASSERT_MESSAGE(layer >= 0 && layer < m_scope->GetTotalLayers(), string().Format("CProceduralClipLayerManualUpdate::OnEnter -> Invalid layer passed in: '%d'", layer));
+		CRY_ASSERT_MESSAGE(params.layer >= 0 && params.layer < m_scope->GetTotalLayers(), string().Format("CProceduralClipLayerManualUpdate::OnEnter -> Invalid layer passed in: '%d'", params.layer));
 
 		CAnimation* pAnimation = NULL;
 		ISkeletonAnim* pSkeletonAnim = NULL;
@@ -486,7 +485,7 @@ public:
 		if (jointID >= 0)
 		{
 			m_jointID = jointID;
-			CryCreateClassInstance("AnimationPoseModifier_OperatorQueue", m_pPoseModifier);
+			CryCreateClassInstanceForInterface(cryiidof<IAnimationOperatorQueue>(), m_pPoseModifier);
 		}
 		else
 		{

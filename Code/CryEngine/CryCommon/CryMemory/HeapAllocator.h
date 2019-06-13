@@ -1,13 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// Created by: Scott Peter
-//---------------------------------------------------------------------------
-
-#ifndef _HEAP_ALLOCATOR_H
-#define _HEAP_ALLOCATOR_H
+#pragma once
 
 #include <CryThreading/Synchronization.h>
 #include <CryParticleSystem/Options.h>
+#include "CrySizer.h"
 
 //---------------------------------------------------------------------------
 #define bMEM_ACCESS_CHECK 0
@@ -19,30 +16,15 @@ class HeapSysAllocator
 {
 public:
 #if bMEM_ACCESS_CHECK
-	static void* SysAlloc(size_t nSize)
-	{ return VirtualAlloc(0, nSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE); }
-	static void  SysDealloc(void* ptr)
-	{ VirtualFree(ptr, 0, MEM_DECOMMIT); }
+	static void* SysAlloc(size_t nSize) { return VirtualAlloc(0, nSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE); }
+	static void  SysDealloc(void* ptr)  { VirtualFree(ptr, 0, MEM_DECOMMIT); }
 #else
-	static void* SysAlloc(size_t nSize)
-	{ return malloc(nSize); }
-	static void  SysDealloc(void* ptr)
-	{ free(ptr); }
+	static void* SysAlloc(size_t nSize) { return malloc(nSize); }
+	static void  SysDealloc(void* ptr)  { free(ptr); }
 #endif
 };
 
-class GlobalHeapSysAllocator
-{
-public:
-	static void* SysAlloc(size_t nSize)
-	{
-		return malloc(nSize);
-	}
-	static void SysDealloc(void* ptr)
-	{
-		free(ptr);
-	}
-};
+using GlobalHeapSysAllocator = HeapSysAllocator;
 
 //! Round up to next multiple of nAlign. Handles any positive integer.
 inline size_t RoundUpTo(size_t nSize, size_t nAlign)
@@ -108,8 +90,7 @@ struct FHeap
 	OPT_VAR_INIT(size_t, PageSize, 0x1000); //!< Pages allocated at this size, or multiple thereof if needed
 	OPT_VAR(bool, SinglePage)               //!< Only 1 page allowed (fixed alloc)
 	OPT_VAR(bool, FreeWhenEmpty)            //!< Release all memory when no longer used
-	OPT_VAR(bool, StackDealloc)             //!< Support reverse-order deallocation and memory re-use
-	OPT_VAR(size_t, StackAlignment)         //!< Alignment to use for stack-based allocation
+	OPT_VAR(bool, StackAlloc)               //!< Support reverse-order deallocation and memory re-use
 };
 
 template<typename L = PSyncMultiThread, typename A = HeapSysAllocator>
@@ -121,84 +102,104 @@ public:
 
 private:
 
+	typedef uint TSize;
+	typedef uint8 TAlign;
+
 	struct PageNode
 	{
 		PageNode* pNext;
-		char*     pEndAlloc;
-		char*     pEndUsed;
-		size_t    nUsed;
-
-		char*     StartUsed() const
-		{
-			return (char*)(this + 1);
-		}
+		TSize     nEndAlloc;
+		TSize     nEndUsed;
+		TSize     nUsed;
+		TSize     nGaps;
 
 		PageNode(size_t nAlloc)
 		{
 			pNext = 0;
-			pEndAlloc = (char*)this + nAlloc;
-			pEndUsed = StartUsed();
+			nEndAlloc = nAlloc;
+			nEndUsed = nStart();
 			nUsed = 0;
+			nGaps = 0;
 		}
 
-		ILINE void* Allocate(size_t nSize, size_t nAlign)
+		TSize nStart() const      { return sizeof(*this); }
+		char* pStart() const      { return (char*)this + nStart(); }
+		char* pEndUsed() const    { return (char*)this + nEndUsed; }
+		char* pEndAlloc() const   { return (char*)this + nEndAlloc; }
+		char* pEndUsable() const  { return (char*)pGapStack(); }
+		TAlign* pGapStack() const { return (TAlign*)pEndAlloc() - nGaps; }
+
+		void* Allocate(size_t nSize, size_t nAlign, bool bStackAlloc)
 		{
 			// Align current mem.
-			char* pNew = Align(pEndUsed, nAlign);
-			if (pNew + nSize > pEndAlloc)
-				return 0;
-			pEndUsed = pNew + nSize;
+			char* pNew = Align(pEndUsed(), nAlign);
+			if (bStackAlloc && (nGaps || (nUsed > 0 && pNew > pEndUsed())))
+			{
+				// Alignment gap
+				if (pNew + nSize > pEndUsable() - sizeof(TAlign))
+					return 0;
+				nGaps++;
+				*pGapStack() = check_cast<TAlign>(pNew - pEndUsed());
+			}
+			else
+			{
+				if (pNew + nSize > pEndAlloc())
+					return 0;
+			}
+			nEndUsed = (pNew + nSize) - (char*)this;
 			nUsed += nSize;
+			Validate();
 			return pNew;
 		}
 
-		ILINE bool Reallocate(void* ptr, size_t nOldSize, size_t nNewSize, size_t nAlign)
+		bool CanReallocate(void* ptr, size_t nOldSize, size_t nNewSize)
 		{
+			// Check that it's the last allocation chunk
 			char* cptr = (char*)ptr;
-			if (cptr + nOldSize <= pEndUsed && Align(cptr + nOldSize, nAlign) >= pEndUsed && cptr + nNewSize <= pEndAlloc)
+			return cptr + nOldSize == pEndUsed() && cptr + nNewSize <= pEndUsable();
+		}
+
+		bool Reallocate(void* ptr, size_t nOldSize, size_t nNewSize)
+		{
+			if (!CanReallocate(ptr, nOldSize, nNewSize))
+				return false;
+			nEndUsed += nNewSize - nOldSize;
+			nUsed += nNewSize - nOldSize;
+			Validate();
+			return true;
+		}
+
+		bool Deallocate(void* ptr, size_t nOldSize)
+		{
+			if (!Reallocate(ptr, nOldSize, 0))
+				return false;
+			if (!nUsed)
 			{
-				// Last allocation chunk, can re-use
-				assert(cptr >= StartUsed());
-				pEndUsed = cptr + nNewSize;
-				nUsed += nNewSize - nOldSize;
-				return true;
+				nEndUsed = nStart();
 			}
-			return false;
+			else if (nGaps)
+			{
+				nEndUsed -= *pGapStack();
+				nGaps--;
+			}
+			Validate();
+			return true;
 		}
 
-		void Reset()
-		{
-			pEndUsed = StartUsed();
-		}
-
-		size_t GetMemoryAlloc() const
-		{
-			return pEndAlloc - (char*)this;
-		}
-		size_t GetMemoryUsed() const
-		{
-			assert(StartUsed() + nUsed <= pEndUsed);
-			return nUsed;
-		}
-		size_t GetMemoryFree(size_t nAlign = 1) const
-		{
-			return pEndAlloc - Align(pEndUsed, nAlign);
-		}
-		SMemoryUsage GetMemoryUsage() const
-		{
-			return SMemoryUsage(GetMemoryAlloc(), GetMemoryUsed());
-		}
+		size_t GetMemoryAlloc() const                 { return nEndAlloc; }
+		size_t GetMemoryUsed() const                  { return nUsed; }
+		size_t GetMemoryFree(size_t nAlign = 1) const { return pEndUsable() - Align(pEndUsed(), nAlign); }
+		SMemoryUsage GetMemoryUsage() const           { return SMemoryUsage(GetMemoryAlloc(), GetMemoryUsed()); }
 
 		void Validate() const
 		{
-			assert(pEndAlloc >= (char*)this);
-			assert(pEndUsed >= StartUsed() && pEndUsed <= pEndAlloc);
-			assert(StartUsed() + nUsed <= pEndUsed);
+			assert(pEndUsed() <= pEndUsable());
+			assert(nUsed <= nEndUsed - nStart());
 		}
 
 		bool CheckPtr(void* ptr, size_t nSize) const
 		{
-			return (char*)ptr >= StartUsed() && (char*)ptr + nSize <= pEndUsed;
+			return (char*)ptr >= pStart() && (char*)ptr + nSize <= pEndUsed();
 		}
 	};
 
@@ -216,36 +217,30 @@ public:
 		Clear();
 	}
 
-	void SupportStackDealloc(size_t nAlign)
-	{
-		StackDealloc(true);
-		StackAlignment(std::max(StackAlignment(), nAlign));
-	}
-
 	// Raw memory allocation.
 
-	void* Allocate(const Lock& lock, size_t nSize, size_t nAlign)
+	void* Allocate(const Lock& lock, size_t nSize, size_t nAlign = 1)
 	{
 		for (;; )
 		{
 			// Try allocating from head page first.
 			if (_pPageList)
 			{
-				if (void* ptr = _pPageList->Allocate(nSize, nAlign))
+				if (void* ptr = _pPageList->Allocate(nSize, nAlign, StackAlloc()))
 				{
 					_TotalMem.nUsed += nSize;
 					Validate(lock);
 					return ptr;
 				}
 
-				if (!StackDealloc() && _pPageList->pNext && _pPageList->pNext->GetMemoryFree() > _pPageList->GetMemoryFree())
+				if (!StackAlloc() && _pPageList->pNext && _pPageList->pNext->GetMemoryFree(nAlign) > _pPageList->GetMemoryFree(nAlign))
 				{
 					SortPage(lock, _pPageList);
 					Validate(lock);
 
 					// Try allocating from new head, which has the most free memory.
 					// If this fails, we know no further pages will succeed.
-					if (void* ptr = _pPageList->Allocate(nSize, nAlign))
+					if (void* ptr = _pPageList->Allocate(nSize, nAlign, false))
 					{
 						_TotalMem.nUsed += nSize;
 						return ptr;
@@ -260,7 +255,7 @@ public:
 			// Find first free page that can allocate mem
 			for (PageNode** ppFree = &_pFreeList; *ppFree; ppFree = &(*ppFree)->pNext)
 			{
-				if ((*ppFree)->GetMemoryFree() >= nSize)
+				if ((*ppFree)->GetMemoryFree(nAlign) >= nSize)
 				{
 					pPageNode = *ppFree;
 					*ppFree = (*ppFree)->pNext;
@@ -280,11 +275,7 @@ public:
 				_TotalMem.nAlloc += nAllocSize;
 			}
 
-			if (_pPageList && _pPageList->GetMemoryUsed() == 0)
-			{
-				// Move unused empty page to free list
-				RecyclePage();
-			}
+			FreeEmptyPage();
 
 			// Insert at head of list.
 			pPageNode->pNext = _pPageList;
@@ -292,12 +283,9 @@ public:
 		}
 	}
 
-	bool Reallocate(const Lock& lock, void* ptr, size_t nOldSize, size_t nNewSize, size_t nAlign)
+	bool Reallocate(const Lock& lock, void* ptr, size_t nOldSize, size_t nNewSize, size_t nAlign = 1)
 	{
-		// Reallocate only if last allocated block in last page
-		assert(ptr && nOldSize);
-		assert(_pPageList);
-		if (_pPageList->Reallocate(ptr, nOldSize, nNewSize, nAlign))
+		if (_pPageList && _pPageList->Reallocate(ptr, nOldSize, nNewSize))
 		{
 			assert(_TotalMem.nUsed + nNewSize >= nOldSize);
 			_TotalMem.nUsed += nNewSize - nOldSize;
@@ -307,47 +295,26 @@ public:
 		return false;
 	}
 
-	bool Deallocate(const Lock& lock, void* ptr, size_t nSize, size_t nAlign)
+	bool Deallocate(const Lock& lock, void* ptr, size_t nSize, size_t nAlign = 1)
 	{
-		assert(CheckPtr(lock, ptr, nSize));
-		if (StackDealloc())
+		if (StackAlloc() && ptr)
 		{
-			if (ptr && _pPageList)
-			{
-				if (!_pPageList->Reallocate(ptr, nSize, 0, nAlign))
-					return false;
-				if (_pPageList->GetMemoryUsed() == 0)
-				{
-					_pPageList->pEndUsed = _pPageList->StartUsed();
-					RecyclePage();
-				}
-			}
+			if (!_pPageList || !_pPageList->Deallocate(ptr, nSize))
+				return false;
+			FreeEmptyPage();
 		}
-
+		else
+		{
+			assert(CheckPtr(lock, ptr, nSize));
+		}
 		assert(_TotalMem.nUsed >= nSize);
 		_TotalMem.nUsed -= nSize;
 		Validate(lock);
 		return true;
 	}
 
-	// Templated type allocation.
-
-	template<typename T>
-	T* New(size_t nAlign = 0)
-	{
-		void* pMemory = Allocate(Lock(*this), sizeof(T), nAlign ? nAlign : alignof(T));
-		return pMemory ? new(pMemory) T : 0;
-	}
-
-	template<typename T>
-	T* NewArray(size_t nCount, size_t nAlign = 0)
-	{
-		void* pMemory = Allocate(Lock(*this), sizeof(T) * nCount, nAlign ? nAlign : alignof(T));
-		return pMemory ? new(pMemory) T[nCount] : 0;
-	}
-
 	//! Storage base for DynArray, providing stack-based allocation and reallocation.
-	template<int nALIGN>
+	template<uint nALIGN>
 	struct HeapAlloc
 	{
 		HeapAllocator* _pHeap;
@@ -358,21 +325,21 @@ public:
 		void SetHeap(HeapAllocator& heap)
 		{
 			_pHeap = &heap;
-			heap.SupportStackDealloc(nALIGN);
+			heap.StackAlloc(true);
 		}
 
-		NAlloc::AllocArray alloc(NAlloc::AllocArray a, size_t new_size, size_t align = 1, bool allow_slack = false)
+		NAlloc::AllocArray alloc(NAlloc::AllocArray a, size_t new_size, size_t align, bool allow_slack = false)
 		{
-			align = std::max(align, _pHeap->StackAlignment());
+			align = max(align, (size_t)nALIGN);
 			if (new_size)
 			{
-				new_size = Align(new_size, _pHeap->StackAlignment());
+				new_size = Align(new_size, align);
 				if (a.size)
 				{
 					if (new_size != a.size)
 					{
 						// Attempt to realloc existing array
-						if (_pHeap->Reallocate(Lock(*_pHeap), a.data, a.size, new_size, align))
+						if (_pHeap->Reallocate(Lock(*_pHeap), a.data, Align(a.size, align), new_size, align))
 							a.size = new_size;
 						else
 							assert(!"HeapAllocator array reallocation failed");
@@ -388,7 +355,7 @@ public:
 			else
 			{
 				// Dealloc
-				if (!_pHeap->Deallocate(Lock(*_pHeap), a.data, a.size, align))
+				if (!_pHeap->Deallocate(Lock(*_pHeap), a.data, Align(a.size, align), align))
 					assert(!"HeapAllocator array deallocation failed");
 				a = NAlloc::AllocArray();
 			}
@@ -396,7 +363,7 @@ public:
 		}
 	};
 
-	template<typename T, typename I = int, int nALIGN = alignof(T)>
+	template<typename T, typename I = int, uint nALIGN = alignof(T)>
 	struct Array : FastDynArray<T, I, HeapAlloc<nALIGN>>
 	{
 		Array(HeapAllocator& heap, I size = 0)
@@ -443,47 +410,45 @@ public:
 		}
 	};
 
+	// Free all memory held by this heap
 	void Clear(FreeMemLock& lock)
 	{
-		// Remove the pages from the object.
 		Validate(lock);
-		lock._pPageList = _pPageList;
+		FreeEmptyPages(lock);
+
+		if (_pPageList)
+		{ // concat lists
+			auto pListEnd = _pPageList;
+			while (pListEnd->pNext)
+				pListEnd = pListEnd->pNext;
+
+			pListEnd->pNext = lock._pPageList;
+			lock._pPageList = _pPageList;
+		}
+
 		_pPageList = 0;
 		_TotalMem.Clear();
 	}
-
 	void Clear()
 	{
 		FreeMemLock lock(*this);
 		Clear(lock);
 	}
 
-	void Reset(const Lock& lock)
+	void FreeEmptyPages(FreeMemLock& lock)
 	{
-		// Reset all pages, allowing memory re-use.
+		// Remove free pages from the object.
 		Validate(lock);
-		size_t nPrevSize = ~0;
-		for (PageNode** ppPage = &_pPageList; *ppPage; )
-		{
-			(*ppPage)->Reset();
-			if ((*ppPage)->GetMemoryAlloc() > nPrevSize)
-			{
-				// Move page to sorted location near beginning.
-				SortPage(lock, *ppPage);
-
-				// ppPage is now next page, so continue loop.
-				continue;
-			}
-			nPrevSize = (*ppPage)->GetMemoryAlloc();
-			ppPage = &(*ppPage)->pNext;
-		}
-		_TotalMem.nUsed = 0;
-		Validate(lock);
+		CRY_ASSERT(lock._pPageList == nullptr);
+		lock._pPageList = _pFreeList;
+		for (PageNode* pPage = _pFreeList; pPage; pPage = pPage->pNext)
+			_TotalMem.nAlloc -= pPage->GetMemoryAlloc();
+		_pFreeList = 0;
 	}
-
-	void Reset()
+	void FreeEmptyPages()
 	{
-		Reset(Lock(*this));
+		FreeMemLock lock(*this);
+		FreeEmptyPages(lock);
 	}
 
 	// Validation.
@@ -511,7 +476,7 @@ public:
 		{
 			pPage->Validate();
 			MemCheck += pPage->GetMemoryUsage();
-			if (StackDealloc())
+			if (StackAlloc())
 			{
 				if (pPage != _pPageList)
 					assert(pPage->GetMemoryUsed() > 0);
@@ -554,13 +519,24 @@ public:
 
 private:
 
-	void RecyclePage()
+	void FreeEmptyPage()
 	{
-		// Recycle empty page
-		PageNode* pFree = _pPageList;
-		_pPageList = _pPageList->pNext;
-		pFree->pNext = _pFreeList;
-		_pFreeList = pFree;
+		if (_pPageList && _pPageList->GetMemoryUsed() == 0)
+		{
+			PageNode* pFree = _pPageList;
+			_pPageList = _pPageList->pNext;
+			if (FreeWhenEmpty())
+			{
+				// Free empty page
+				A::SysDealloc(pFree);
+			}
+			else
+			{
+				// Recycle empty page
+				pFree->pNext = _pFreeList;
+				_pFreeList = pFree;
+			}
+		}
 	}
 
 	void SortPage(const Lock&, PageNode*& rpPage)
@@ -585,4 +561,3 @@ private:
 };
 }
 
-#endif //_HEAP_ALLOCATOR_H

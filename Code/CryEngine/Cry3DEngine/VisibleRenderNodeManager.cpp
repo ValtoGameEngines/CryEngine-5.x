@@ -1,47 +1,102 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "3dEngine.h"
 
+#include <CryEntitySystem/IEntity.h>
+
 //////////////////////////////////////////////////////////////////////////
 void SRenderNodeTempData::Free()
 {
-	FreeRenderObjects();
+	DBG_LOCK_TO_THREAD(userData.pOwnerNode);
+
+	if (hasValidRenderObjects)
+	{
+		FreeRenderObjects();
+	}
+
+	for (int lod = 0; lod < MAX_STATOBJ_LODS_NUM; ++lod)
+		CRY_ASSERT(!userData.arrPermanentRenderObjects[lod]);
 
 	if (userData.m_pFoliage)
 	{
 		userData.m_pFoliage->Release();
-		userData.m_pFoliage = NULL;
+		userData.m_pFoliage = nullptr;
 	}
 
 	userData.pOwnerNode = nullptr;
-	userData.bToDelete = true;
 }
 
 //////////////////////////////////////////////////////////////////////////
+CRenderObject* SRenderNodeTempData::GetRenderObject(int lod)
+{
+	DBG_LOCK_TO_THREAD(userData.pOwnerNode);
+
+	CRY_ASSERT(!invalidRenderObjects);
+
+	// Do we have to create a new permanent render object?
+	if (userData.arrPermanentRenderObjects[lod] == nullptr)
+	{
+		userData.arrPermanentRenderObjects[lod] = gEnv->pRenderer->EF_GetObject();
+		hasValidRenderObjects = true;
+	}
+
+	return userData.arrPermanentRenderObjects[lod];
+}
+
 void SRenderNodeTempData::FreeRenderObjects()
 {
+	if (!hasValidRenderObjects)
+		return;
+
+	DBG_LOCK_TO_THREAD(userData.pOwnerNode);
+
 	// Release permanent CRenderObject(s)
 	for (int lod = 0; lod < MAX_STATOBJ_LODS_NUM; ++lod)
 	{
 		if (userData.arrPermanentRenderObjects[lod])
 		{
 			gEnv->pRenderer->EF_FreeObject(userData.arrPermanentRenderObjects[lod]);
-			userData.arrPermanentRenderObjects[lod] = 0;
+			userData.arrPermanentRenderObjects[lod] = nullptr;
 		}
 	}
+
+	hasValidRenderObjects = false;
+	invalidRenderObjects = false;
 }
 
 void SRenderNodeTempData::InvalidateRenderObjectsInstanceData()
 {
-	// Release permanent CRenderObject(s)
+	DBG_LOCK_TO_THREAD(userData.pOwnerNode);
+
+	if (!hasValidRenderObjects)
+		return;
+
+	// Invalidate permanent CRenderObject(s) instance-data
 	for (int lod = 0; lod < MAX_STATOBJ_LODS_NUM; ++lod)
 	{
 		if (userData.arrPermanentRenderObjects[lod])
 		{
-			userData.arrPermanentRenderObjects[lod]->m_bInstanceDataDirty = true;
+			userData.arrPermanentRenderObjects[lod]->SetInstanceDataDirty();
 		}
 	}
+}
+
+void SRenderNodeTempData::SetClipVolume(IClipVolume* pClipVolume, const Vec3& pos)
+{
+	DBG_LOCK_TO_THREAD(userData.pOwnerNode);
+
+	userData.m_pClipVolume = pClipVolume;
+	userData.lastClipVolumePosition = pos;
+	userData.bClipVolumeAssigned = true;
+}
+
+void SRenderNodeTempData::ResetClipVolume()
+{
+	DBG_LOCK_TO_THREAD(userData.pOwnerNode);
+
+	userData.m_pClipVolume = nullptr;
+	userData.bClipVolumeAssigned = false;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -49,21 +104,24 @@ CVisibleRenderNodesManager::CVisibleRenderNodesManager()
 	: m_lastStartUpdateNode(0)
 	, m_currentNodesToDelete(0)
 	, m_lastUpdateFrame(0)
-{
-
-}
+	, m_firstAddedNode(-1)
+{}
 
 CVisibleRenderNodesManager::~CVisibleRenderNodesManager()
 {
 	ClearAll();
 }
 
-SRenderNodeTempData* CVisibleRenderNodesManager::AllocateTempData(int lastSeenFrame)
+SRenderNodeTempData* CVisibleRenderNodesManager::AllocateTempData(int lastSeenFrame) //threadsafe
 {
 	SRenderNodeTempData* pData = m_pool.New();
 
+	pData->userData.objMat.SetIdentity();
+
 	{
 		CryAutoCriticalSectionNoRecursive lock(m_accessLock);
+		if (m_firstAddedNode < 0)
+			m_firstAddedNode = m_visibleNodes.size();
 		m_visibleNodes.push_back(pData);
 	}
 	return pData;
@@ -81,11 +139,18 @@ bool CVisibleRenderNodesManager::SetLastSeenFrame(SRenderNodeTempData* pTempData
 	}
 	else
 	{
+		// It is valid to call SetLastSeenFrame multiple times, for example for objects visible through several portals
+		// Second call will return false and skip object rendering
+		// In case of rendering into multiple cube-map sides multiple full passes with increased frame id must be executed
+		// TODO: support multiple general passes in single scene graph traverse (similar to multi-frustum shadow generation)
+		// TODO: support omni-directional rendering for single-traverse 360 rendering
+
 		int recursion = passInfo.IsRecursivePass() ? 1 : 0;
 		// Only return true if last seen frame is different form the current
 		bCanRenderThisFrame = pTempData->userData.lastSeenFrame[recursion] != frame;
 		pTempData->userData.lastSeenFrame[recursion] = frame;
 	}
+
 	return bCanRenderThisFrame;
 }
 
@@ -104,78 +169,97 @@ void CVisibleRenderNodesManager::UpdateVisibleNodes(int currentFrame, int maxNod
 	m_currentNodesToDelete = (m_currentNodesToDelete) % MAX_DELETE_BUFFERS; // Always cycle delete buffers.
 	for (auto* node : m_toDeleteNodes[m_currentNodesToDelete])
 	{
+		DBG_LOCK_TO_THREAD(node->userData.pOwnerNode);
 		m_pool.Delete(node);
 	}
+
 	m_toDeleteNodes[m_currentNodesToDelete].clear();
 
 	{
 		// LOCK START
 		CryAutoCriticalSectionNoRecursive lock(m_accessLock);
 
-		int numNodes = m_visibleNodes.size();
-		int start = m_lastStartUpdateNode;
-		if (start >= numNodes)
+		// Process on new node visible events
+		if (m_firstAddedNode >= 0)
 		{
-			start = 0;
+			for (size_t i = m_firstAddedNode, num = m_visibleNodes.size(); i < num; ++i)
+			{
+				SRenderNodeTempData* pTempData = m_visibleNodes[i];
+
+				if (IRenderNode* pOwnerNode = pTempData->userData.pOwnerNode)
+				{
+					DBG_LOCK_TO_THREAD(pOwnerNode);
+					OnRenderNodeVisibilityChange(pOwnerNode, true);
+				}
+			}
+			m_firstAddedNode = -1;
+		}
+
+		auto b = m_visibleNodes.begin() + m_lastStartUpdateNode;
+		if (b >= m_visibleNodes.end())
+		{
+			b = m_visibleNodes.begin();
 			m_lastStartUpdateNode = 0;
 		}
-		int end = start + maxNodesToCheck;
-		if (end > numNodes)
-			end = numNodes;
 
-		int lastNode = numNodes - 1;
-
-		int maxFrames = (uint32)C3DEngine::GetCVars()->e_RNTmpDataPoolMaxFrames;
-		int numItemsToDelete = 0;
-		for (int i = start; i < end && i <= lastNode; ++i)
+		const auto maxFrames = (uint32)C3DEngine::GetCVars()->e_RNTmpDataPoolMaxFrames;
+		for (int i=0; i<maxNodesToCheck && b!=m_visibleNodes.end(); ++i)
 		{
-			SRenderNodeTempData* RESTRICT_POINTER pTempData = m_visibleNodes[i];
+			auto pTempData = *b;
 
-			int lastSeenFrame = std::max(pTempData->userData.lastSeenFrame[0], pTempData->userData.lastSeenFrame[1]);
+			auto lastSeenFrame = std::max(pTempData->userData.lastSeenFrame[0], pTempData->userData.lastSeenFrame[1]);
 			lastSeenFrame = std::max(lastSeenFrame, pTempData->userData.lastSeenShadowFrame);
-			int diff = std::abs(currentFrame - lastSeenFrame);
-			if (diff > maxFrames || pTempData->userData.bToDelete)
+			auto diff = (uint32)std::abs(currentFrame - lastSeenFrame);
+			if (diff > maxFrames || !pTempData->userData.pOwnerNode)
 			{
-				if (pTempData->userData.pOwnerNode)
+				if (IRenderNode* pOwnerNode = pTempData->userData.pOwnerNode)
 				{
-					pTempData->userData.pOwnerNode->OnRenderNodeBecomeInvisible();
-					pTempData->userData.pOwnerNode->m_pTempData = nullptr; // clear reference to use from owning render node.
+					DBG_LOCK_TO_THREAD(pOwnerNode);
+
+					// clear reference to use from owning render node.
+					OnRenderNodeVisibilityChange(pOwnerNode, false);
+
+					pOwnerNode->m_pTempData = nullptr;
+					pTempData->userData.pOwnerNode = nullptr;
 				}
-				m_visibleNodes[i]->Free();
-				m_toDeleteNodes[m_currentNodesToDelete].push_back(m_visibleNodes[i]);
-				if (i < lastNode)
+
+				m_toDeleteNodes[m_currentNodesToDelete].push_back(pTempData);
+
+				// Swap and erase
+				auto penultimate = std::prev(m_visibleNodes.end());
+				if (b == penultimate)
 				{
-					// move item from the end of the array to this spot, and repeat check on same index.
-					m_visibleNodes[i] = m_visibleNodes[lastNode];
-					lastNode--;
-					i--;
+					b = m_visibleNodes.erase(penultimate);
 				}
-				numItemsToDelete++;
+				else
+				{
+					*b = *penultimate;
+					m_visibleNodes.erase(penultimate);
+				}
 			}
-			m_lastStartUpdateNode = i + 1;
+			else
+				++b;
 		}
-		// delete not relevant items at the end.
-		if (numItemsToDelete > 0)
-		{
-			m_visibleNodes.resize(m_visibleNodes.size() - numItemsToDelete);
-		}
+		m_lastStartUpdateNode = (int)std::distance(m_visibleNodes.begin(), b);
 		// LOCK END
 	}
-	return;
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CVisibleRenderNodesManager::InvalidateAll()
 {
+	// LOCK START
+	CryAutoCriticalSectionNoRecursive lock(m_accessLock);
+
+	for (auto* pNode : m_visibleNodes)
 	{
-		// LOCK START
-		CryAutoCriticalSectionNoRecursive lock(m_accessLock);
-		for (auto* node : m_visibleNodes)
+		if (IRenderNode* pOwnerNode = pNode->userData.pOwnerNode)
 		{
-			node->userData.bToDelete = true;
+			pNode->MarkForAutoDelete();
+			pOwnerNode->m_pTempData = nullptr;
 		}
-		// LOCK END
 	}
+	// LOCK END
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -185,11 +269,6 @@ void CVisibleRenderNodesManager::ClearAll()
 
 	for (auto* node : m_visibleNodes)
 	{
-		if (node->userData.pOwnerNode)
-		{
-			node->userData.pOwnerNode->OnRenderNodeBecomeInvisible();
-			node->userData.pOwnerNode->m_pTempData = nullptr; // clear reference to use from owning render node.
-		}
 		m_pool.Delete(node);
 	}
 	m_visibleNodes.clear();
@@ -200,8 +279,15 @@ void CVisibleRenderNodesManager::ClearAll()
 		{
 			m_pool.Delete(node);
 		}
+
 		nodes.clear();
 	}
+}
+
+//////////////////////////////////////////////////////////////////////////
+void CVisibleRenderNodesManager::OnRenderNodeVisibilityChange(IRenderNode* pRenderNode, bool bVisible)
+{
+	pRenderNode->OnRenderNodeAndEntityVisibilityChanged(bVisible);
 }
 
 CVisibleRenderNodesManager::Statistics CVisibleRenderNodesManager::GetStatistics() const
@@ -210,4 +296,32 @@ CVisibleRenderNodesManager::Statistics CVisibleRenderNodesManager::GetStatistics
 	stats.numFree = 0;
 	stats.numUsed = m_visibleNodes.size();
 	return stats;
+}
+
+void CVisibleRenderNodesManager::OnRenderNodeDeleted(IRenderNode* pRenderNode)
+{
+	SRenderNodeTempData* pNodeTempData = pRenderNode->m_pTempData;
+
+	if (pNodeTempData)
+	{
+		CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
+
+		CryAutoCriticalSectionNoRecursive lock(m_accessLock);
+
+		auto iter = std::find(m_visibleNodes.begin(), m_visibleNodes.end(), pNodeTempData);
+		if (iter != m_visibleNodes.end())
+		{
+			// Erase by swapping with back
+			auto penultimate = std::prev(m_visibleNodes.end());
+			*iter = *penultimate;
+			m_visibleNodes.erase(penultimate);
+
+			m_toDeleteNodes[m_currentNodesToDelete].push_back(pNodeTempData);
+		}
+
+		if (pNodeTempData->userData.pOwnerNode == pRenderNode)
+			pNodeTempData->userData.pOwnerNode = nullptr;
+	}
+
+	pRenderNode->m_pTempData = nullptr;
 }

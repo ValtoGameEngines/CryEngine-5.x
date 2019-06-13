@@ -1,21 +1,18 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   CameraProxy.h
-//  Version:     v1.00
-//  Created:     5/12/2005 by Timur.
-//  Compilers:   Visual Studio.NET 2003
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "CameraProxy.h"
 #include <CryNetwork/ISerialize.h>
+#include <Cry3DEngine/IMaterial.h>
 
 CRYREGISTER_CLASS(CEntityComponentCamera);
+
+//////////////////////////////////////////////////////////////////////////
+CEntityComponentCamera::CEntityComponentCamera()
+{
+	m_componentFlags.Add(EEntityComponentFlags::Legacy);
+	m_componentFlags.Add(EEntityComponentFlags::NoSave);
+}
 
 //////////////////////////////////////////////////////////////////////////
 void CEntityComponentCamera::Initialize()
@@ -24,7 +21,7 @@ void CEntityComponentCamera::Initialize()
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntityComponentCamera::ProcessEvent(SEntityEvent& event)
+void CEntityComponentCamera::ProcessEvent(const SEntityEvent& event)
 {
 	switch (event.event)
 	{
@@ -38,9 +35,9 @@ void CEntityComponentCamera::ProcessEvent(SEntityEvent& event)
 }
 
 //////////////////////////////////////////////////////////////////////////
-uint64 CEntityComponentCamera::GetEventMask() const
+Cry::Entity::EventFlags CEntityComponentCamera::GetEventMask() const
 {
-	return BIT64(ENTITY_EVENT_XFORM) | BIT64(ENTITY_EVENT_INIT);
+	return ENTITY_EVENT_XFORM | ENTITY_EVENT_INIT;
 }
 
 //////////////////////////////////////////////////////////////////////////

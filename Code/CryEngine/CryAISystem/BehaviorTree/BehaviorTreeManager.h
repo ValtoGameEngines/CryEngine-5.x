@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -9,9 +9,9 @@
 namespace BehaviorTree
 {
 class MetaExtensionFactory;
-#ifdef USING_BEHAVIOR_TREE_EXECUTION_STACKS_FILE_LOG
+#ifdef DEBUG_MODULAR_BEHAVIOR_TREE
 class ExecutionStackFileLogger;
-#endif
+#endif // DEBUG_MODULAR_BEHAVIOR_TREE
 
 #if defined(DEBUG_MODULAR_BEHAVIOR_TREE)
 	#define DEBUG_MODULAR_BEHAVIOR_TREE_WEB
@@ -28,6 +28,7 @@ public:
 	virtual ~BehaviorTreeManager();
 
 	// IBehaviorTreeManager
+	virtual void                                Update(const CTimeValue frameStartTime, const float frameDeltaTime) override;
 	virtual IMetaExtensionFactory&              GetMetaExtensionFactory() override;
 	virtual INodeFactory&                       GetNodeFactory() override;
 #ifdef USING_BEHAVIOR_TREE_SERIALIZATION
@@ -39,6 +40,9 @@ public:
 	virtual void                                StopModularBehaviorTree(const EntityId entityId) override;
 
 	virtual void                                HandleEvent(const EntityId entityId, Event& event) override;
+
+	// Returns blackboard corresponding to behavior tree assigned to Entity with specified entityID.
+	virtual BehaviorTree::Blackboard*           GetBehaviorTreeBlackboard(const EntityId entityId) override;
 
 	virtual Variables::Collection*              GetBehaviorVariableCollection_Deprecated(const EntityId entityId) const override;
 	virtual const Variables::Declarations*      GetBehaviorVariableDeclarations_Deprecated(const EntityId entityId) const override;
@@ -52,7 +56,6 @@ public:
 #endif
 
 	void                    Reset();
-	void                    Update();
 
 	size_t                  GetTreeInstanceCount() const;
 	EntityId                GetTreeInstanceEntityIdByIndex(const size_t index) const;
@@ -68,24 +71,24 @@ private:
 	BehaviorTreeInstancePtr LoadFromCache(const char* behaviorTreeName);
 	bool                    StartBehaviorInstance(const EntityId entityId, BehaviorTreeInstancePtr instance, const char* treeName);
 	void                    StopAllBehaviorTreeInstances();
+	BehaviorTreeInstance*   GetBehaviorTree(const EntityId entityId) const;
 
 	bool                    LoadBehaviorTreeTemplate(const char* behaviorTreeName, XmlNodeRef behaviorTreeXmlNode, BehaviorTreeTemplate& behaviorTreeTemplate);
 
-	BehaviorTreeInstance*   GetBehaviorTree(const EntityId entityId) const;
+	void                    RegisterGameEventsInSignalManager(BehaviorTreeInstancePtr pInstance);
+	void                    DeregisterGameEventsInSignalManager();
 
 #if defined(DEBUG_MODULAR_BEHAVIOR_TREE)
 	void UpdateDebugVisualization(UpdateContext updateContext, const EntityId entityId, DebugTree debugTree, BehaviorTreeInstance& instance, IEntity* agentEntity);
-#endif // DEBUG_MODULAR_BEHAVIOR_TREE
-
-#ifdef USING_BEHAVIOR_TREE_EXECUTION_STACKS_FILE_LOG
 	void UpdateExecutionStackLogging(UpdateContext updateContext, const EntityId entityId, DebugTree debugTree, BehaviorTreeInstance& instance);
-#endif
+#endif // DEBUG_MODULAR_BEHAVIOR_TREE
 
 	std::unique_ptr<NodeFactory>          m_nodeFactory;
 	std::unique_ptr<MetaExtensionFactory> m_metaExtensionFactory;
 
 #if defined(DEBUG_MODULAR_BEHAVIOR_TREE_WEB)
-	void UpdateWebDebugChannel(const EntityId entityId, UpdateContext& updateContext, DebugTree& debugTree, BehaviorTreeInstance& instance, const bool bExecutionError);
+	bool DoesEntityWantToDoWebDebugging(const EntityId entityIdToCheckForWebDebugging, TGameWebDebugClientId* pOutClientId) const;
+	void UpdateWebDebugChannel(const TGameWebDebugClientId clientId, UpdateContext& updateContext, DebugTree& debugTree, BehaviorTreeInstance& instance, const bool bExecutionError);
 #endif
 
 	typedef string                                                                                                              BehaviorTreeName;
@@ -106,10 +109,16 @@ private:
 	bool           m_bRegisteredAsDebugChannel;
 #endif
 
-#ifdef USING_BEHAVIOR_TREE_EXECUTION_STACKS_FILE_LOG
+#ifdef DEBUG_MODULAR_BEHAVIOR_TREE
 	typedef std::shared_ptr<ExecutionStackFileLogger>        ExecutionStackFileLoggerPtr;
 	typedef VectorMap<EntityId, ExecutionStackFileLoggerPtr> ExecutionStackFileLoggerInstances;
 	ExecutionStackFileLoggerInstances m_executionStackFileLoggerInstances;
-#endif
+#endif // DEBUG_MODULAR_BEHAVIOR_TREE
+
+	typedef std::unordered_set<const AISignals::ISignalDescription*> SignalDescriptions;
+	SignalDescriptions m_gameSignalDescriptionsSet;
+
+	CTimeValue m_frameStartTime;
+	float      m_frameDeltaTime;
 };
 }

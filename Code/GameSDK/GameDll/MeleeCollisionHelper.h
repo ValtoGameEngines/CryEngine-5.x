@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -16,6 +16,9 @@ History:
 #ifndef _MELEE_COLLISION_HELPER_H_
 #define _MELEE_COLLISION_HELPER_H_
 
+#include <CryEntitySystem/IEntityBasicTypes.h>
+#include <CryPhysics/RayCastQueue.h>
+struct ray_hit;
 
 struct SCollisionTestParams
 {	

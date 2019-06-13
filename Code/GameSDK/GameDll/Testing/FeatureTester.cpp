@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "Testing/FeatureTester.h"
@@ -13,6 +13,7 @@
 #include "Testing/AutoTester.h"
 #include "IWorldQuery.h"
 #include "Weapon.h"
+#include <CrySystem/ConsoleRegistration.h>
 
 #if ENABLE_FEATURE_TESTER
 
@@ -1781,7 +1782,7 @@ void CFeatureTester::DisplayCaption(const SFeatureTest * test)
 			paramString.append(">");
 		}
 
-		int height = renderer->GetHeight();
+		int height = renderer->GetOverlayHeight();
 		IRenderAuxText::Draw2dLabel(30.f, height - 80.f, 3.f, m_currentTest ? s_colour_testName_Active : s_colour_testName_CannotStart, false, "%s%s", test->m_testName, paramString.c_str());
 		IRenderAuxText::Draw2dLabel(30.f, height - 45.f, 2.f, s_colour_testDescription, false, "%s", test->m_testDescription);
 
@@ -2408,7 +2409,7 @@ const char * CFeatureTester::GetActorInfoString(IActor * iActor, CryFixedStringT
 			pEntity->GetPhysics() ? "" : ", NO PHYSICS",
 			gameObject->ShouldUpdate() ? "" : ", NOT UPDATING",
 			pEntity->IsHidden() ? ", hidden" : "",
-			pEntity->IsActive() ? "" : ", inactive",
+			pEntity->IsActivatedForUpdates() ? "" : ", inactive",
 			pEntity->IsInvisible() ? ", invisible" : "",
 			itemInfo.c_str(),
 			targetInfo.c_str(),
@@ -2528,7 +2529,7 @@ void CFeatureTester::SubmitResultToAutoTester(const SFeatureTest * test, float t
 							teamNum, teamNum ? gameRules->GetTeamName(teamNum) : "none",
 							pEntity->GetPhysics() ? ", has physics" : ", no physics",							
 							pEntity->IsHidden() ? ", hidden" : "",
-							pEntity->IsActive() ? "" : ", inactive",
+							pEntity->IsActivatedForUpdates() ? "" : ", inactive",
 							pEntity->IsInvisible() ? ", invisible" : "",
 							pos.x, pos.y, pos.z, dir.x, dir.y, dir.z);
 
@@ -2905,7 +2906,7 @@ string CFeatureTester::GetListOfCheckpointsExpected()
 
 	assert (countFound == m_waitUntilCCCPointHit_numStillToHit);
 
-	return reply.empty() ? "none" : reply;
+	return reply.empty() ? string("none") : reply;
 }
 
 #if ENABLE_GAME_CODE_COVERAGE

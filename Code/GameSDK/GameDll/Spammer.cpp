@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "Spammer.h"
@@ -7,6 +7,7 @@
 #include "PlayerVisTable.h"
 #include <IVehicleSystem.h>
 #include <IViewSystem.h>
+#include <IGameplayRecorder.h>
 #include "GameActions.h"
 
 

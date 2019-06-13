@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -14,7 +14,7 @@ public:
 	CAbstractVariablesModelItem(CAbstractVariablesModel& model)
 		: m_model(model)
 	{}
-	~CAbstractVariablesModelItem() {}
+	virtual ~CAbstractVariablesModelItem() {}
 
 	CAbstractVariablesModel& GetModel() const { return m_model; }
 

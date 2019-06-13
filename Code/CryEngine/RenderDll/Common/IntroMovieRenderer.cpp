@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -29,19 +29,8 @@ static const size_t g_subtitleMappingCount = (CRY_ARRAY_COUNT(g_subtitleMapping)
 
 //////////////////////////////////////////////////////////////////////////
 
-CIntroMovieRenderer::CIntroMovieRenderer() : m_pFlashPlayer(0)
-{
-}
-
-CIntroMovieRenderer::~CIntroMovieRenderer()
-{
-	SAFE_RELEASE(m_pFlashPlayer);
-}
-
 bool CIntroMovieRenderer::Initialize()
 {
-	SAFE_RELEASE(m_pFlashPlayer);
-
 	m_pFlashPlayer = gEnv->pScaleformHelper ? gEnv->pScaleformHelper->CreateFlashPlayerInstance() : nullptr;
 
 	if (m_pFlashPlayer)
@@ -100,7 +89,7 @@ void CIntroMovieRenderer::WaitForCompletion()
 			break;
 		}
 		gEnv->pLog->UpdateLoadingScreen(0);
-		Sleep(1);
+		CrySleep(1);
 	}
 }
 
@@ -128,68 +117,40 @@ int CIntroMovieRenderer::GetSubtitleChannelForSystemLanguage()
 
 void CIntroMovieRenderer::LoadtimeUpdate(float deltaTime)
 {
-	if (m_pFlashPlayer)
+	auto pPlayer = m_pFlashPlayer;
+	if (pPlayer)
 	{
 		UpdateViewport();
-		m_pFlashPlayer->Advance(deltaTime);
+		pPlayer->Advance(deltaTime);
 	}
 }
 
 void CIntroMovieRenderer::LoadtimeRender()
 {
-	if (m_pFlashPlayer)
-		m_pFlashPlayer->Render(true);
+	auto pPlayer = m_pFlashPlayer;
+	if (pPlayer)
+		pPlayer->Render();
 }
 
 void CIntroMovieRenderer::UpdateViewport()
 {
-	if (!m_pFlashPlayer)
+	auto pPlayer = m_pFlashPlayer;
+	if (!pPlayer)
 		return;
 
-	int videoWidth(m_pFlashPlayer->GetWidth());
-	int videoHeight(m_pFlashPlayer->GetHeight());
+	int videoWidth (pPlayer->GetWidth());
+	int videoHeight(pPlayer->GetHeight());
 
-	const int screenWidth(gEnv->pRenderer->GetOverlayWidth());
+	const int screenWidth (gEnv->pRenderer->GetOverlayWidth ());
 	const int screenHeight(gEnv->pRenderer->GetOverlayHeight());
 
-	const float pixelAR = gEnv->pRenderer->GetPixelAspectRatio();
+	videoWidth = screenWidth;
+	videoHeight = screenHeight;
 
-	const float scaleX((float)screenWidth / (float)videoWidth);
-	const float scaleY((float)screenHeight / (float)videoHeight);
+	int x(screenWidth / 2);
+	int y(screenHeight / 2);
 
-	float scale(scaleY);
-
-	/*
-	   if(flags&eVideoFlag_KeepAspectRatio)
-	   {
-	   if (flags&eVideoFlag_CoverFullScreen)
-	   {
-	    float videoRatio((float)videoWidth / (float)videoHeight);
-	    float screenRatio((float)screenWidth / (float)screenHeight);
-
-	    if (videoRatio < screenRatio)
-	      scale = scaleX;
-	   }
-	   else
-	   {
-	    if (scaleY * videoWidth > screenWidth)
-	      scale = scaleX;
-	   }
-	   }
-	   else
-	 */
-	{
-		scale = 1.0f;
-		videoWidth = screenWidth;
-		videoHeight = screenHeight;
-	}
-
-	int w(int_round(videoWidth * scale));
-	int h(int_round(videoHeight * scale));
-	int x((screenWidth - w) / 2);
-	int y((screenHeight - h) / 2);
-
-	SetViewportIfChanged(x, y, w, h, 1.0f);
+	SetViewportIfChanged(x, y, videoWidth, videoHeight, 1.0f);
 }
 
 void CIntroMovieRenderer::SetViewportIfChanged(const int x, const int y, const int width, const int height, const float pixelAR)

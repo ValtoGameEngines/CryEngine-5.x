@@ -33,10 +33,10 @@
 			"description"    : "Control number of processes spawned by Incredibuild"
 		},
 		{
-			"long_form"      : "--run-ib-as-service",
-			"attribute"      : "run_ib_as_service",
+			"long_form"      : "--incredibuild-use_experimental-pipeline",
+			"attribute"      : "incredibuild_use_experimental_pipeline",
 			"default_value"  : "False",
-			"description"    : "(Experimental) Emulates IB multicore licence"
+			"description"    : "(Experimental) Use local host cores as well as network agent cores"
 		}
 	],
 
@@ -189,6 +189,12 @@
 			"attribute"      : "out_folder_android",
 			"default_value"  : "bin/android_arm",
 			"description"    : "Absolute or relative Android build output path"
+		},
+		{
+			"long_form"      : "--output-folder-android64",
+			"attribute"      : "out_folder_android64",
+			"default_value"  : "bin/android_arm64",
+			"description"    : "Absolute or relative Android64 build output path"
 		}
 	],
 	"Misc Options" :
@@ -223,7 +229,7 @@
 		{
 			"long_form"      : "--specs-to-include-in-project-generation",
 			"attribute"      : "specs_to_include_in_project_generation",
-			"default_value"  : "gamezero,gamezero_and_tools",
+			"default_value"  : "gamehunt",
 			"description"    : "List of specs to include in solution generation"
 		}
 	],

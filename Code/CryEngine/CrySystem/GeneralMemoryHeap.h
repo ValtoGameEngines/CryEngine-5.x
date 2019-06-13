@@ -1,9 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef GENERALMEMORYHEAP_H
 #define GENERALMEMORYHEAP_H
 
 #include <CryMemory/IMemory.h>
+#include <CryThreading/CryThread.h>
 #include <CryCore/Platform/CryDLMalloc.h>
 
 class CPageMappingHeap;

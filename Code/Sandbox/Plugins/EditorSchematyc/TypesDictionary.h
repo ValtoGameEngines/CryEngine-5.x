@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -9,7 +9,7 @@
 #include <QString>
 #include <QIcon>
 
-#include <Schematyc/FundamentalTypes.h>
+#include <CrySchematyc/FundamentalTypes.h>
 
 namespace Schematyc {
 
@@ -63,10 +63,11 @@ public:
 	virtual ~CTypesDictionary();
 
 	// CAbstractDictionary
+	virtual void                            ResetEntries() override;
 	virtual int32                           GetNumEntries() const override { return m_types.size(); }
 	virtual const CAbstractDictionaryEntry* GetEntry(int32 index) const override;
 
-	virtual int32                           GetNumColumns() const override { return Column_COUNT; };
+	virtual int32                           GetNumColumns() const override { return Column_COUNT; }
 	virtual QString                         GetColumnName(int32 index) const override;
 
 	virtual int32                           GetDefaultFilterColumn() const override { return Column_Name; }
@@ -75,6 +76,7 @@ public:
 	void Load(const Schematyc::IScriptElement* pScriptScope);
 
 private:
+	const Schematyc::IScriptElement*  m_pScriptScope;
 	std::vector<CTypeDictionaryEntry> m_types;
 };
 

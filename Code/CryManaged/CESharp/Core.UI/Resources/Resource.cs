@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 using System.Collections.Generic;
 
@@ -14,9 +14,9 @@ namespace CryEngine.Resources
 		/// <summary>
 		/// Called to instantiate the Singleton class or to get the current instance.
 		/// </summary>
-		public static ResourceManager Instance { get { return _instance == null ? _instance = new ResourceManager() : _instance; } }
+		public static ResourceManager Instance { get { return _instance ?? (_instance = new ResourceManager()); } }
 
-		Dictionary<string, ImageSource> _imageSources = new Dictionary<string, ImageSource>();
+		readonly Dictionary<string, ImageSource> _imageSources = new Dictionary<string, ImageSource>();
 
 		/// <summary>
 		/// Creates an ImageSource if not yet existing, hands out the existing one otherwise.

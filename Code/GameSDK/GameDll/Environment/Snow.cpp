@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -14,6 +14,8 @@ History:
 #include "StdAfx.h"
 #include "Snow.h"
 #include "Game.h"
+#include <CryMath/Cry_Camera.h>
+#include <Cry3DEngine/I3DEngine.h>
 
 CSnow::CSnow()
 	: m_bEnabled(false)
@@ -95,9 +97,6 @@ void CSnow::Update(SEntityUpdateContext &ctx, int updateSlot)
 	const IActor * pClient = g_pGame->GetIGameFramework()->GetClientActor();
 	if (pClient && Reset())
 	{
-		const Vec3 vCamPos = gEnv->pRenderer->GetCamera().GetPosition();
-		Vec3 vR = (GetEntity()->GetWorldPos() - vCamPos) / max(m_fRadius, 1e-3f);
-
 		// todo: only update when things have changed.
 		gEnv->p3DEngine->SetSnowSurfaceParams(GetEntity()->GetWorldPos(), m_fRadius, m_fSnowAmount, m_fFrostAmount, m_fSurfaceFreezing);
 		gEnv->p3DEngine->SetSnowFallParams(m_nSnowFlakeCount, m_fSnowFlakeSize, m_fSnowFallBrightness, m_fSnowFallGravityScale, m_fSnowFallWindScale, m_fSnowFallTurbulence, m_fSnowFallTurbulenceFreq);
@@ -109,8 +108,13 @@ void CSnow::HandleEvent(const SGameObjectEvent &event)
 {
 }
 
+Cry::Entity::EventFlags CSnow::GetEventMask() const
+{
+	return ENTITY_EVENT_RESET | ENTITY_EVENT_HIDE | ENTITY_EVENT_DONE;
+}
+
 //------------------------------------------------------------------------
-void CSnow::ProcessEvent(SEntityEvent &event)
+void CSnow::ProcessEvent(const SEntityEvent& event)
 {
 	switch (event.event)
 	{
@@ -127,11 +131,6 @@ void CSnow::ProcessEvent(SEntityEvent &event)
 		}
 		break;
 	}
-}
-
-//------------------------------------------------------------------------
-void CSnow::SetAuthority(bool auth)
-{
 }
 
 //------------------------------------------------------------------------

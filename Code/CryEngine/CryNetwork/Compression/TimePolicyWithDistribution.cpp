@@ -1,3 +1,5 @@
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
 #include "StdAfx.h"
 
 #include "TimePolicyWithDistribution.h"
@@ -85,9 +87,7 @@ bool CTimePolicyWithDistribution::WriteValue(CCommOutputStream& out, CTimeValue 
 
 	if (errorToBig)
 	{
-		dist->GetWriteDistribution()->WriteOutOfRange(&out);
-		dist->GetWriteDistribution()->WriteBitOutOfRange(&out);
-		writeBits = false;
+		dist->GetWriteDistribution()->WriteValueOutOfRange(&out, false);
 	}
 	else if (dist->GetWriteDistribution()->WriteValue((int32)error, &out, false))
 		writeBits = false;

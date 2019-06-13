@@ -1,10 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "PersistantDebug.h"
 #include "CryAction.h"
 #include <CryRenderer/IRenderAuxGeom.h>
 #include <IUIDraw.h>
+#include <CryFont/IFont.h>
 
 const char* CPersistantDebug::entityTagsContext = "PersistantDebugEntities";
 const float CPersistantDebug::kUnlimitedTime = -1.0f;
@@ -54,13 +55,6 @@ void CPersistantDebug::AddEntityTag(const SEntityTagParams& params, const char* 
 		if (ent)
 		{
 			CryLog("[Entity Tag] %s added tag: %s", ent->GetName(), params.text.c_str());
-
-			if (m_pETLog->GetIVal() > 1)
-			{
-				char text[256];
-				cry_sprintf(text, "[Entity Tag] %s", params.text.c_str());
-				gEnv->pAISystem->Record(ent->GetAI(), IAIRecordable::E_NONE, text);
-			}
 		}
 	}
 }
@@ -148,7 +142,6 @@ void CPersistantDebug::UpdateTags(float frameTime, SObj& obj, bool doFirstPass)
 		if (iterList->vScreenPos.IsZero())
 			continue;
 
-		float tagMaxDist = iterList->params.viewDistance;
 		float fontSize = iterList->params.size * m_pETFontSizeMultiplier->GetFVal();
 
 		// Calculate size of text on screen (so we can place it properly)
@@ -165,8 +158,8 @@ void CPersistantDebug::UpdateTags(float frameTime, SObj& obj, bool doFirstPass)
 			// Determine position
 			SColumn& column = obj.columns[iterList->params.column - 1];
 			Vec3 screenPos(iterList->vScreenPos);
-			screenPos.x = screenPos.x * 0.01f * gEnv->pRenderer->GetWidth();
-			screenPos.y = screenPos.y * 0.01f * gEnv->pRenderer->GetHeight() - textBoxSize.y - column.height;
+			screenPos.x = screenPos.x * 0.01f * gEnv->pRenderer->GetOverlayWidth();
+			screenPos.y = screenPos.y * 0.01f * gEnv->pRenderer->GetOverlayHeight() - textBoxSize.y - column.height;
 			column.height += textBoxSize.y;
 
 			// Adjust X value for multi-columns
@@ -212,7 +205,7 @@ void CPersistantDebug::PostUpdateTags(float frameTime, SObj& obj)
 		return;
 
 	// Check if entity is outside of global distance maximum or behind camera
-	CCamera& cam = GetISystem()->GetViewCamera();
+	const CCamera& cam = GetISystem()->GetViewCamera();
 	float distFromCam = (cam.GetPosition() - baseCenterPos).GetLength();
 	float maxDist = m_pETMaxDisplayDistance->GetFVal();
 	bool isOutOfRange(maxDist >= 0.f && distFromCam > maxDist);

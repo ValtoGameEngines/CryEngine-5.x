@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 //
 //	File:Cry_Math.h
@@ -19,7 +19,8 @@
 //========================================================================================
 
 #include <CryCore/Platform/platform.h>
-#include "Cry_ValidNumber.h"
+#include <CryCore/BitFiddling.h>
+#include <cstdlib>
 #include <cfloat>
 #include <cmath>
 
@@ -41,27 +42,47 @@ template<typename D> ILINE D             convert()      { return D(0); }
 template<typename D, typename S> ILINE D convert(S val) { return D(val); }
 
 // Definitions
-const f32 gf_PI = f32(3.14159265358979323846264338327950288419716939937510);
-const f64 g_PI = 3.14159265358979323846264338327950288419716939937510;       //!< pi
+constexpr f32 gf_PI = f32(3.14159265358979323846264338327950288419716939937510);
+constexpr f64 g_PI = 3.14159265358979323846264338327950288419716939937510;       //!< pi
 
-const f32 gf_PI2 = f32(3.14159265358979323846264338327950288419716939937510 * 2.0);
-const f64 g_PI2 = 3.14159265358979323846264338327950288419716939937510 * 2.0; //!< 2*pi
-
-const f32 gf_ln2 = 0.69314718055994530941723212145818f;       //!< ln(2)
-
-const f64 sqrt2 = 1.4142135623730950488016887242097;
-const f64 sqrt3 = 1.7320508075688772935274463415059;
-
-#define DEG2RAD(a) ((a) * (gf_PI / 180.0f))
-#define RAD2DEG(a) ((a) * (180.0f / gf_PI))
-
-// MIN and MAX macros are sometimes needed for constant definitions
-#ifndef MAX
-	#define MAX(a, b) (((a) > (b)) ? (a) : (b))
+// Workaround for MSVC 140 bug where constexpr expression did not evaluate
+#if !defined(_MSC_VER) || _MSC_VER >= 1910
+constexpr f32 gf_PI2 = gf_PI * 2.f;
+constexpr f64 g_PI2 = g_PI * 2.0; //!< 2*pi
+#else
+constexpr f32 gf_PI2 = f32(6.2831853071795864769252867665590057683943387987502); 
+constexpr f64 g_PI2 = 6.2831853071795864769252867665590057683943387987502; //!< 2*pi
 #endif
-#ifndef MIN
-	#define MIN(a, b) (((a) < (b)) ? (a) : (b))
+
+constexpr f32 gf_ln2 = 0.69314718055994530941723212145818f;       //!< ln(2)
+
+constexpr f64 sqrt2 = 1.4142135623730950488016887242097;
+constexpr f64 sqrt3 = 1.7320508075688772935274463415059;
+
+#if !defined(SWIG)
+template<typename T>
+constexpr auto DEG2RAD(T&& deg) -> decltype(deg * 1.f)
+{
+	return deg * (gf_PI / 180.0f);
+}
+
+constexpr f64 DEG2RAD(f64 deg)
+{
+	return deg * (g_PI / 180.0);
+}
+
+template<typename T>
+constexpr auto RAD2DEG(T&& rad) -> decltype(rad * 1.f)
+{
+	return rad * (180.0f / gf_PI);
+}
+
+constexpr f64 RAD2DEG(f64 rad)
+{
+	return rad * (180.0 / g_PI);
+}
 #endif
+
 
 // Define min and max as proper template
 #ifdef min
@@ -146,8 +167,9 @@ using std::floor;
 using std::ceil;
 using std::trunc;
 
-template<typename T> ILINE T clamp(T val, T lo, T hi) { return min(max(val, lo), hi); }
-template<typename T> ILINE T saturate(T val)          { return clamp(val, convert<T>(0.0f), convert<T>(1.0f)); }
+template<typename T>             ILINE T clamp   (T val, T lo, T hi) { return min(max(val, lo), hi); }
+template<typename R, typename T> ILINE R clamp_to(T val, T lo, T hi) { return R(clamp(val, lo, hi)); }
+template<typename T>             ILINE T saturate(T val)             { return clamp(val, convert<T>(0.0f), convert<T>(1.0f)); }
 
 //
 // Mathematical functions
@@ -269,6 +291,21 @@ ILINE f32   sign(f32 op)
 }
 ILINE f64 sign(f64 op) { return if_else_zero(op, signnz(op)); }
 
+// Horizontal operating functions; can be specialized for SIMD types
+template<typename T> ILINE T hsum(T v) { return v; }
+template<typename T> ILINE T hmin(T v) { return v; }
+template<typename T> ILINE T hmax(T v) { return v; }
+
+// Name it so in order to avoid conflicts with cmath.h's "isfinite" function.
+template<typename T> ILINE bool valueisfinite(T val)
+{
+#if CRY_PLATFORM_ANDROID
+	return !std::isinf(val) && !std::isnan(val);   // Android NDK r16b/clang does not provide std::isfinite.
+#else
+	return std::isfinite(val);
+#endif
+}
+
 } // namespace crymath
 
 template<typename F> ILINE F sqr(const F& op)         { return op * op; }
@@ -276,6 +313,7 @@ template<typename F> ILINE F square(const F& op)      { return op * op; }  //!< 
 template<typename F> ILINE F sqr_signed(const F& op)  { return op * crymath::abs(op); }
 template<typename F> ILINE F cube(const F& op)        { return op * op * op; }
 
+#include "Cry_ValidNumber.h"
 #include "Cry_Math_SSE.h"
 
 namespace crymath
@@ -299,7 +337,7 @@ template<typename T> ILINE T wrap(T f, T lo, T hi)
 }
 
 template<typename T>
-int solve_quadratic(T a, T b, T c, T x[2])
+ILINE int solve_quadratic(T a, T b, T c, T x[2])
 {
 	if (!a)
 	{
@@ -308,32 +346,47 @@ int solve_quadratic(T a, T b, T c, T x[2])
 			x[0] = -c / b;
 			return 1;
 		}
-		if (c)
-			return 0;
-		return -1;
+		if (!c)
+		{
+			x[0] = T(0);
+			return 1;
+		}
 	}
 	else
 	{
-		b *= T(-0.5);
-		T d = b * b - a * c;
+		T bh = b * T(-0.5);
+		T d = bh * bh - a * c;
 
 		if (d > T(0))
 		{
-			T s = sqrt(d);
-			T ia = T(1) / a;
+			T s = bh + signnz(bh) * sqrt(d);
 
-			x[0] = (b + s) * ia;
-			x[1] = (b - s) * ia;
+			x[0] = c / s;
+			x[1] = s / a;
 			return 2;
 		}
 		if (!d)
 		{
-			x[0] = b / a;
+			x[0] = bh / a;
 			return 1;
 		}
-		return 0;
 	}
+	return 0;
 }
+
+template<typename T>
+float solve_quadratic_in_range(T a, T b, T c, T lo, T hi)
+{
+	T t[2];
+	for (int n = solve_quadratic(a, b, c, t); --n >= 0; )
+	{
+		if (t[n] >= lo && t[n] <= hi)
+			hi = t[n];
+	}
+	return hi;
+}
+
+
 
 } // namespace crymath
 
@@ -478,17 +531,18 @@ ILINE int32 iszero(f64 x)
 	return -((u.i >> 31) ^ (u.i - 1) >> 31);
 }
 ILINE int32 iszero(int32 x)   { return -(x >> 31 ^ (x - 1) >> 31); }
-#if CRY_PLATFORM_64BIT && !defined(__clang__)
+#if !CRY_COMPILER_CLANG
 ILINE int64 iszero(__int64 x) { return -(x >> 63 ^ (x - 1) >> 63); }
 #endif
-#if CRY_PLATFORM_64BIT && defined(__clang__) && !CRY_PLATFORM_LINUX && !CRY_PLATFORM_ANDROID
+#if CRY_COMPILER_CLANG && !CRY_PLATFORM_LINUX && !CRY_PLATFORM_ANDROID
 ILINE int64 iszero(int64_t x) { return -(x >> 63 ^ (x - 1) >> 63); }
 #endif
-#if CRY_PLATFORM_64BIT && (CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID || CRY_PLATFORM_APPLE)
+#if (CRY_PLATFORM_LINUX || CRY_PLATFORM_ANDROID || CRY_PLATFORM_APPLE)
 ILINE int64 iszero(long int x) { return -(x >> 63 ^ (x - 1) >> 63); }
 #endif
 
-template<typename F> ILINE int32 inrange(F x, F end1, F end2) { return isneg(abs(end1 + end2 - x * (F)2) - abs(end1 - end2)); }
+//! Check if x is within an open interval
+template<typename F> ILINE int32 inrange(F x, F end1, F end2) { return isneg(abs(end1 + end2 - x - x) - abs(end1 - end2)); }
 
 template<typename F> ILINE int32 idxmax3(const F* pdata)
 {
@@ -511,21 +565,7 @@ ILINE float approxOneExp(float x) { return x * crymath::rcp_fast(1.f + x); }
 //! \return i if x==1<<i (i=0..63)
 ILINE int ilog2(uint64 x)
 {
-#if CRY_PLATFORM_X64 && CRY_COMPILER_MSVC
-	unsigned long i;
-	_BitScanReverse64(&i, x);
-	return i;
-#elif CRY_COMPILER_CLANG || CRY_COMPILER_GCC
-	return __builtin_clzll(x);
-#else
-	union
-	{
-		float f;
-		uint  i;
-	} u;
-	u.f = (float)x;
-	return (u.i >> 23) - 127;
-#endif
+	return (int)IntegerLog2(x);
 }
 
 const int32 inc_mod3[] = { 1, 2, 0 }, dec_mod3[] = { 2, 0, 1 };
@@ -600,7 +640,7 @@ template<typename T> ILINE void SmoothCD(
 	else
 	{
 		val = to;
-		valRate -= valRate; // zero it...
+		valRate = (T)(valRate - valRate); // zero it...
 	}
 }
 
@@ -640,7 +680,7 @@ template<typename T> ILINE void SmoothCDWithMaxRate(
 	else
 	{
 		val = to;
-		valRate -= valRate; // zero it...
+		valRate = (T)(valRate - valRate); // zero it...
 	}
 }
 #pragma warning(pop)
@@ -650,12 +690,6 @@ inline f32 SmoothBlendValue(const f32 fBlend)
 {
 	const f32 fBlendAdj = fBlend - 0.5f;
 	return __fsel(-fBlend, 0.f, __fsel(fBlend - 1.f, 1.f, 0.5f - 2.f * (fBlendAdj * fBlendAdj * fBlendAdj) + 1.5f * fBlendAdj));
-}
-
-// Default approximate comparison function
-template<typename F> ILINE bool IsEquivalent(const F& a, const F& b, float epsilon = FLT_EPSILON)
-{
-	return sqr(a - b) <= sqr(epsilon);
 }
 
 // Legacy math function names
@@ -708,6 +742,7 @@ enum type_min { VMIN };
 enum type_max { VMAX };
 enum type_identity { IDENTITY };
 
+#include "NumberVector.h"
 #include "Cry_Vector2.h"
 #include "Cry_Vector3.h"
 #include "Cry_Vector4.h"

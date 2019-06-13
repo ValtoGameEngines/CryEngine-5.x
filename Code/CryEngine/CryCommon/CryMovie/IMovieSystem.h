@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -30,6 +30,7 @@ typedef IMovieSystem* (* PFNCREATEMOVIESYSTEM)(struct ISystem*);
 typedef std::vector<IAnimSequence*> AnimSequences;
 typedef std::vector<string>         TrackEvents;
 
+//! \cond INTERNAL
 //! Node-Types.
 //! You need to register new types in Movie.cpp/RegisterNodeTypes for serialization.
 //! \note Enums are serialized by string now, there is no need for specific IDs anymore for new parameters. Values are for backward compatibility.
@@ -62,10 +63,10 @@ enum EAnimNodeType
 };
 
 //! Flags that can be set on animation node.
-enum EAnimNodeFlags
+enum EAnimNodeFlags : uint32
 {
-	eAnimNodeFlags_CanChangeName = BIT(2),  //!< Set if this node allow changing of its name.
-	eAnimNodeFlags_Disabled      = BIT(3),  //!< Disable this node.
+	eAnimNodeFlags_CanChangeName = BIT32(2),  //!< Set if this node allow changing of its name.
+	eAnimNodeFlags_Disabled      = BIT32(3),  //!< Disable this node.
 };
 
 enum ENodeExportType
@@ -80,7 +81,7 @@ enum ENodeExportType
 //! For named params see eAnimParamType_ByString & CAnimParamType.
 //! \see eAnimParamType_ByString, CAnimParamType
 //! \note Enums are serialized by string now, there is no need for specific IDs anymore for new parameters. Values are for backward compatibility.
-enum EAnimParamType
+enum EAnimParamType : uint32
 {
 	//! Parameter is specified by string. See CAnimParamType.
 	eAnimParamType_ByString            = 8,
@@ -95,7 +96,6 @@ enum EAnimParamType
 	eAnimParamType_Animation           = 7,
 	eAnimParamType_AudioSwitch         = 9,
 	eAnimParamType_AudioTrigger        = 10,
-	eAnimParamType_AudioFile           = 11,
 	eAnimParamType_AudioParameter      = 12,
 	eAnimParamType_Sequence            = 13,
 	eAnimParamType_Expression          = 14,
@@ -293,7 +293,7 @@ private:
 //! Attention: This should only be expanded if you add a completely new value type that tracks can control!
 //! If you just want to control a new parameter of an entity etc. extend EParamType.
 //! \note If the param type of a track is known and valid these can be derived from the node. These are serialized in case the parameter got invalid (for example for material nodes).
-enum EAnimValue
+enum EAnimValue : uint32
 {
 	eAnimValue_Float         = 0,
 	eAnimValue_Vector        = 1,
@@ -398,12 +398,12 @@ typedef CryVariant<
 
 enum EMovieTrackDataTypes
 {
-	eTDT_Void  = detail::get_index<SMovieSystemVoid, TMovieSystemValue>::value,
-	eTDT_Float = detail::get_index<float, TMovieSystemValue>::value,
-	eTDT_Vec3  = detail::get_index<Vec3, TMovieSystemValue>::value,
-	eTDT_Vec4  = detail::get_index<Vec4, TMovieSystemValue>::value,
-	eTDT_Quat  = detail::get_index<Quat, TMovieSystemValue>::value,
-	eTDT_Bool  = detail::get_index<bool, TMovieSystemValue>::value,
+	eTDT_Void  = cry_variant::get_index<SMovieSystemVoid, TMovieSystemValue>::value,
+	eTDT_Float = cry_variant::get_index<float, TMovieSystemValue>::value,
+	eTDT_Vec3  = cry_variant::get_index<Vec3, TMovieSystemValue>::value,
+	eTDT_Vec4  = cry_variant::get_index<Vec4, TMovieSystemValue>::value,
+	eTDT_Quat  = cry_variant::get_index<Quat, TMovieSystemValue>::value,
+	eTDT_Bool  = cry_variant::get_index<bool, TMovieSystemValue>::value,
 };
 
 //! Interface for movie-system implemented by user for advanced function-support
@@ -428,24 +428,26 @@ struct IMovieUser
 //! Callback-class.
 struct IMovieCallback
 {
-
+	virtual ~IMovieCallback() {}
 	//! Called by movie system.
 	virtual void OnSetCamera(const SCameraParams& Params) = 0;
 };
+
+using AnimTrackKeysIndices = std::vector<size_t>;
 
 /**	Interface of Animation Track.
  */
 struct IAnimTrack : public _i_reference_target_t
 {
 	//! Flags that can be set on animation track.
-	enum EAnimTrackFlags
+	enum EAnimTrackFlags : uint32
 	{
-		eAnimTrackFlags_Linear   = BIT(1), //!< Use only linear interpolation between keys.
-		eAnimTrackFlags_Disabled = BIT(4), //!< Disable this track.
+		eAnimTrackFlags_Linear   = BIT32(1), //!< Use only linear interpolation between keys.
+		eAnimTrackFlags_Disabled = BIT32(4), //!< Disable this track.
 
 		// Used by editor.
-		eAnimTrackFlags_Hidden = BIT(5),   //!< Set when track is hidden in track view.
-		eAnimTrackFlags_Muted  = BIT(8),   //!< Mute this sound track. This only affects the playback in editor.
+		eAnimTrackFlags_Hidden = BIT32(5),   //!< Set when track is hidden in track view.
+		eAnimTrackFlags_Muted  = BIT32(8),   //!< Mute this sound track. This only affects the playback in editor.
 	};
 
 	// <interfuscator:shuffle>
@@ -460,7 +462,7 @@ struct IAnimTrack : public _i_reference_target_t
 	//! Get count of sub tracks.
 	virtual int GetSubTrackCount() const = 0;
 
-	//! Retrieve pointer the specfied sub track.
+	//! Retrieve pointer the specified sub track.
 	virtual IAnimTrack* GetSubTrack(int nIndex) const = 0;
 	virtual const char* GetSubTrackName(int nIndex) const = 0;
 	virtual void        SetSubTrackName(int nIndex, const char* name) = 0;
@@ -542,10 +544,10 @@ struct IAnimTrack : public _i_reference_target_t
 	virtual bool Serialize(XmlNodeRef& xmlNode, bool bLoading, bool bLoadEmptyTracks = true) = 0;
 
 	//! Serialize the keys on this track to XML
-	virtual bool SerializeKeys(XmlNodeRef& xmlNode, bool bLoading, std::vector<SAnimTime>& keys, const SAnimTime time = SAnimTime(0)) = 0;
+	virtual bool SerializeKeys(XmlNodeRef& xmlNode, bool bLoading, AnimTrackKeysIndices& keysIndices, const SAnimTime time = SAnimTime(0)) = 0;
 
 	//! For custom track animate parameters.
-	virtual void Animate(SAnimContext& animContext) {};
+	virtual void Animate(SAnimContext& animContext) {}
 
 	//! Return the index of the key which lies right after the given key in time.
 	//! In the case of sorted keys, it's just 'key+1', but if not sorted, it can be another value.
@@ -561,7 +563,7 @@ struct IAnimTrack : public _i_reference_target_t
 
 	// </interfuscator:shuffle>
 protected:
-	virtual ~IAnimTrack() {};
+	virtual ~IAnimTrack() {}
 };
 
 //! Callback called by animation node when its animated.
@@ -571,7 +573,7 @@ struct IAnimNodeOwner
 	virtual ~IAnimNodeOwner() {}
 	virtual void OnNodeAnimated(IAnimNode* pNode) = 0;
 	virtual void OnNodeVisibilityChanged(IAnimNode* pNode, const bool bHidden) = 0;
-	virtual void OnNodeReset(IAnimNode* pNode) {}
+	virtual bool OnNodeReset(IAnimNode* pNode) { return true; }
 	// </interfuscator:shuffle>
 };
 
@@ -625,9 +627,9 @@ struct IAnimNode : virtual public _i_reference_target_t
 {
 public:
 	//! Supported params.
-	enum ESupportedParamFlags
+	enum ESupportedParamFlags : uint32
 	{
-		eSupportedParamFlags_MultipleTracks = BIT(0), // Set if parameter can be assigned multiple tracks.
+		eSupportedParamFlags_MultipleTracks = BIT32(0), // Set if parameter can be assigned multiple tracks.
 	};
 
 public:
@@ -751,7 +753,7 @@ public:
 	// </interfuscator:shuffle>
 
 protected:
-	virtual ~IAnimNode() {};
+	virtual ~IAnimNode() {}
 };
 
 //! Track event listener.
@@ -786,22 +788,22 @@ struct IAnimSequence : public _i_reference_target_t
 	static const int kSequenceVersion = 4;
 
 	//! Flags used for SetFlags(),GetFlags(),SetParentFlags(),GetParentFlags() methods.
-	enum EAnimSequenceFlags
+	enum EAnimSequenceFlags : uint32
 	{
-		eSeqFlags_PlayOnReset        = BIT(0),  //!< Start playing this sequence immediately after reset of movie system(Level load).
-		eSeqFlags_OutOfRangeConstant = BIT(1),  //!< Constant Out-Of-Range,time continues normally past sequence time range.
-		eSeqFlags_OutOfRangeLoop     = BIT(2),  //!< Loop Out-Of-Range,time wraps back to the start of range when reaching end of range.
-		eSeqFlags_CutScene           = BIT(3),  //!< Cut scene sequence.
-		eSeqFlags_NoUI               = BIT(4),  //!< Don`t display any UI
-		eSeqFlags_NoPlayer           = BIT(5),  //!< Disable input and drawing of player
-		eSeqFlags_NoSeek             = BIT(10), //!< Cannot seek in sequence.
-		eSeqFlags_NoAbort            = BIT(11), //!< Cutscene can not be aborted
-		eSeqFlags_NoSpeed            = BIT(13), //!< Cannot modify sequence speed - TODO: add interface control if required
-		eSeqFlags_CanWarpInFixedTime = BIT(14), //!< Timewarping will work with a fixed time step.
-		eSeqFlags_EarlyMovieUpdate   = BIT(15), //!< Turn the 'sys_earlyMovieUpdate' on during the sequence.
-		eSeqFlags_LightAnimationSet  = BIT(16), //!< A special unique sequence for light animations
-		eSeqFlags_NoMPSyncingNeeded  = BIT(17), //!< this sequence doesn't require MP net syncing
-		eSeqFlags_Capture            = BIT(18), //!< this sequence is currently in capture mode
+		eSeqFlags_PlayOnReset        = BIT32(0),  //!< Start playing this sequence immediately after reset of movie system(Level load).
+		eSeqFlags_OutOfRangeConstant = BIT32(1),  //!< Constant Out-Of-Range,time continues normally past sequence time range.
+		eSeqFlags_OutOfRangeLoop     = BIT32(2),  //!< Loop Out-Of-Range,time wraps back to the start of range when reaching end of range.
+		eSeqFlags_CutScene           = BIT32(3),  //!< Cut scene sequence.
+		eSeqFlags_NoUI               = BIT32(4),  //!< Don`t display any UI
+		eSeqFlags_NoPlayer           = BIT32(5),  //!< Disable input and drawing of player
+		eSeqFlags_NoSeek             = BIT32(10), //!< Cannot seek in sequence.
+		eSeqFlags_NoAbort            = BIT32(11), //!< Cutscene can not be aborted
+		eSeqFlags_NoSpeed            = BIT32(13), //!< Cannot modify sequence speed - TODO: add interface control if required
+		eSeqFlags_CanWarpInFixedTime = BIT32(14), //!< Timewarping will work with a fixed time step.
+		eSeqFlags_EarlyMovieUpdate   = BIT32(15), //!< Turn the 'sys_earlyMovieUpdate' on during the sequence.
+		eSeqFlags_LightAnimationSet  = BIT32(16), //!< A special unique sequence for light animations
+		eSeqFlags_NoMPSyncingNeeded  = BIT32(17), //!< this sequence doesn't require MP net syncing
+		eSeqFlags_Capture            = BIT32(18), //!< this sequence is currently in capture mode
 	};
 
 	//! Set the name of this sequence. (e.g. "Intro" in the same case as above).
@@ -967,7 +969,13 @@ struct IMovieListener
 	// </interfuscator:shuffle>
 };
 
-//! Movie System interface.
+struct IMovieEngineModule : public Cry::IDefaultModule
+{
+	CRYINTERFACE_DECLARE_GUID(IMovieEngineModule, "271a9f97-7e6d-4cfa-b3ae-2a5c3227d302"_cry_guid);
+};
+//! \endcond
+
+//! Movie System (TrackView) interface.
 //! Main entrance point to engine movie capability.
 //! Enumerate available movies, update all movies, create animation nodes and tracks.
 struct IMovieSystem
@@ -1178,6 +1186,7 @@ struct IMovieSystem
 	// </interfuscator:shuffle>
 };
 
+//! \cond INTERNAL
 inline void SAnimContext::Serialize(XmlNodeRef& xmlNode, bool bLoading)
 {
 	if (bLoading)
@@ -1232,17 +1241,17 @@ inline void SSequenceAudioTrigger::Serialize(XmlNodeRef xmlNode, bool bLoading)
 		if (xmlNode->getAttr("onStopAudioTrigger"))
 		{
 			m_onStopTriggerName = xmlNode->getAttr("onStopAudioTrigger");
-			gEnv->pAudioSystem->GetAudioTriggerId(m_onStopTriggerName.c_str(), m_onStopTrigger);
+			m_onStopTrigger = CryAudio::StringToId(m_onStopTriggerName.c_str());
 		}
 		if (xmlNode->getAttr("onPauseAudioTrigger"))
 		{
 			m_onPauseTriggerName = xmlNode->getAttr("onPauseAudioTrigger");
-			gEnv->pAudioSystem->GetAudioTriggerId(m_onPauseTriggerName.c_str(), m_onPauseTrigger);
+			m_onPauseTrigger = CryAudio::StringToId(m_onPauseTriggerName.c_str());
 		}
 		if (xmlNode->getAttr("onResumeAudioTrigger"))
 		{
 			m_onResumeTriggerName = xmlNode->getAttr("onResumeAudioTrigger");
-			gEnv->pAudioSystem->GetAudioTriggerId(m_onResumeTriggerName.c_str(), m_onResumeTrigger);
+			m_onResumeTrigger = CryAudio::StringToId(m_onResumeTriggerName.c_str());
 		}
 
 	}
@@ -1271,21 +1280,21 @@ inline void SSequenceAudioTrigger::Serialize(Serialization::IArchive& ar)
 		ar(Serialization::AudioTrigger<string>(stopTriggerName), "onStopAudioTrigger", "onStop");
 		if (!stopTriggerName.empty())
 		{
-			gEnv->pAudioSystem->GetAudioTriggerId(stopTriggerName.c_str(), m_onStopTrigger);
+			m_onStopTrigger = CryAudio::StringToId(stopTriggerName.c_str());
 		}
 
 		string pauseTriggerName;
 		ar(Serialization::AudioTrigger<string>(pauseTriggerName), "onPauseAudioTrigger", "onPause");
 		if (!pauseTriggerName.empty())
 		{
-			gEnv->pAudioSystem->GetAudioTriggerId(pauseTriggerName.c_str(), m_onPauseTrigger);
+			m_onPauseTrigger = CryAudio::StringToId(pauseTriggerName.c_str());
 		}
 
 		string resumeTriggerName;
 		ar(Serialization::AudioTrigger<string>(resumeTriggerName), "onResumeAudioTrigger", "onResume");
 		if (!resumeTriggerName.empty())
 		{
-			gEnv->pAudioSystem->GetAudioTriggerId(resumeTriggerName.c_str(), m_onResumeTrigger);
+			m_onResumeTrigger = CryAudio::StringToId(resumeTriggerName.c_str());
 		}
 	}
 	else
@@ -1300,3 +1309,5 @@ void CAnimParamType::Serialize(XmlNodeRef& xmlNode, bool bLoading, const uint ve
 {
 	gEnv->pMovieSystem->SerializeParamType(*this, xmlNode, bLoading, version);
 }
+
+//! \endcond

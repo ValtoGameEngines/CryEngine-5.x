@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   Material.cpp
@@ -15,6 +15,7 @@
 #include "MatMan.h"
 #include <CryRenderer/IRenderer.h>
 #include "VisAreas.h"
+#include <CrySystem/ConsoleRegistration.h>
 
 DEFINE_INTRUSIVE_LINKED_LIST(CMatInfo)
 
@@ -71,7 +72,7 @@ size_t CMaterialLayer::GetResourceMemoryUsage(ICrySizer* pSizer)
 					if (piTexture)
 					{
 						SIZER_COMPONENT_NAME(pSizer, "MemoryTexture");
-						size_t nCurrentResourceMemoryUsage = piTexture->GetDataSize();
+						uint32 nCurrentResourceMemoryUsage = piTexture->GetDataSize();
 						nResourceMemory += nCurrentResourceMemoryUsage;
 						pSizer->AddObject(piTexture, nCurrentResourceMemoryUsage);
 
@@ -92,8 +93,9 @@ size_t CMaterialLayer::GetResourceMemoryUsage(ICrySizer* pSizer)
 //////////////////////////////////////////////////////////////////////////
 CMatInfo::CMatInfo()
 	: m_bDeleted(false)
+	, m_bDeletePending(false)
 {
-	m_nRefCount = 1; // having a pointer to CMatInfo with ref count zero, results in CMatInfo being deleted from render thread
+	m_nRefCount = 0;
 	m_Flags = 0;
 	m_nModificationId = 0;
 
@@ -104,11 +106,6 @@ CMatInfo::CMatInfo()
 	m_ucDefautMappingAxis = 0;
 	m_fDefautMappingScale = 1.f;
 
-#ifdef SUPPORT_MATERIAL_SKETCH
-	m_pPreSketchShader = 0;
-	m_nPreSketchTechnique = 0;
-#endif
-
 #ifdef SUPPORT_MATERIAL_EDITING
 	m_pUserData = NULL;
 #endif
@@ -116,10 +113,6 @@ CMatInfo::CMatInfo()
 	m_pActiveLayer = NULL;
 
 	ZeroStruct(m_streamZoneInfo);
-
-#ifdef TRACE_MATERIAL_LEAKS
-	m_sLoadingCallstack = GetSystem()->GetLoadingProfilerCallstack();
-#endif
 
 #if defined(ENABLE_CONSOLE_MTL_VIZ)
 	m_pConsoleMtl = 0;
@@ -134,6 +127,7 @@ CMatInfo::~CMatInfo()
 
 void CMatInfo::AddRef()
 {
+	CRY_ASSERT(!m_bDeletePending);
 	CryInterlockedIncrement(&m_nRefCount);
 }
 
@@ -142,10 +136,8 @@ void CMatInfo::Release()
 {
 	if (CryInterlockedDecrement(&m_nRefCount) == 0)
 	{
-		if (!(m_Flags & MTL_FLAG_DELETE_PENDING) && GetMatMan())
+		if (GetMatMan())
 		{
-			m_Flags |= MTL_FLAG_DELETE_PENDING;
-			((CMatMan*)GetMatMan())->Unregister(this);
 			((CMatMan*)GetMatMan())->DelayedDelete(this);
 		}
 		else
@@ -156,6 +148,12 @@ void CMatInfo::Release()
 }
 
 //////////////////////////////////////////////////////////////////////////
+
+bool CMatInfo::IsValid() const
+{
+	return !m_bDeletePending && !m_bDeleted;
+}
+
 void CMatInfo::ShutDown()
 {
 	if (!m_bDeleted)
@@ -171,11 +169,9 @@ void CMatInfo::ShutDown()
 		SAFE_RELEASE(m_shaderItem.m_pShader);
 		SAFE_RELEASE(m_shaderItem.m_pShaderResources);
 
-		if (GetMatMan() && !(m_Flags & MTL_FLAG_DELETE_PENDING))
-			((CMatMan*)GetMatMan())->Unregister(this);
-
 		m_subMtls.clear();
 	}
+
 	m_bDeleted = true;
 }
 
@@ -228,7 +224,7 @@ void CMatInfo::SetName(const char* sName)
 }
 
 //////////////////////////////////////////////////////////////////////////
-bool CMatInfo::IsDefault()
+bool CMatInfo::IsDefault() const
 {
 	return this == GetMatMan()->GetDefaultMaterial();
 }
@@ -245,6 +241,7 @@ void CMatInfo::UpdateMaterialFlags()
 		const bool bAlphaBlended = (m_shaderItem.m_pShader->GetFlags() & (EF_NODRAW | EF_DECAL)) || (pRendShaderResources && pRendShaderResources->IsTransparent());
 		const bool bIsHair = (m_shaderItem.m_pShader->GetFlags2() & EF2_HAIR) != 0;
 		const bool bIsGlass = m_shaderItem.m_pShader->GetShaderType() == eST_Glass;
+		const bool bIsTerrain = m_shaderItem.m_pShader->GetShaderType() == eST_Terrain;
 
 		if (bAlphaBlended && !(m_shaderItem.m_pShader->GetFlags2() & EF2_NODRAW) && !(m_shaderItem.m_pShader->GetFlags() & EF_DECAL))
 		{
@@ -263,14 +260,18 @@ void CMatInfo::UpdateMaterialFlags()
 			m_Flags |= MTL_FLAG_REQUIRE_NEAREST_CUBEMAP;
 		}
 
-		// Make sure to refresh sectors
+		// Make sure to refresh sectors on terrain material changes
 		static int nLastUpdateFrameId = 0;
-		if (gEnv->IsEditing() && GetTerrain() && GetVisAreaManager() && nLastUpdateFrameId != GetRenderer()->GetFrameID())
+		if (gEnv->IsEditing() && GetTerrain() && GetVisAreaManager() && 
+			bIsTerrain && nLastUpdateFrameId != GetRenderer()->GetFrameID())
 		{
-			GetTerrain()->MarkAllSectorsAsUncompiled(0);
+			GetTerrain()->MarkAllSectorsAsUncompiled();
 			GetVisAreaManager()->MarkAllSectorsAsUncompiled();
 			nLastUpdateFrameId = GetRenderer()->GetFrameID();
 		}
+
+		if (m_shaderItem.m_pShader && !!(m_shaderItem.m_pShader->GetFlags() & (EF_REFRACTIVE | EF_FORCEREFRACTIONUPDATE)))
+			SetFlags(GetFlags() | MTL_FLAG_REFRACTIVE);
 	}
 }
 
@@ -293,10 +294,6 @@ void CMatInfo::SetShaderItem(const SShaderItem& _ShaderItem)
 	IncrementModificationId();
 
 	UpdateMaterialFlags();
-
-	int sketchMode = m_pMatMan->GetSketchMode();
-	if (sketchMode)
-		SetSketchMode(sketchMode);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -473,6 +470,14 @@ void CMatInfo::SetSubMtl(int nSlot, IMaterial* pMtl)
 {
 	assert(nSlot >= 0 && nSlot < (int)m_subMtls.size());
 	m_subMtls[nSlot] = (CMatInfo*)pMtl;
+
+	if (pMtl)
+	{
+		const auto& shaderItem = pMtl->GetShaderItem();
+		CRY_ASSERT(shaderItem.m_pShader);
+		if (shaderItem.m_pShader && !!(shaderItem.m_pShader->GetFlags() & (EF_REFRACTIVE | EF_FORCEREFRACTIONUPDATE)))
+			SetFlags(GetFlags() | MTL_FLAG_REFRACTIVE);
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -761,6 +766,8 @@ void CMatInfo::SetTexture(int textureId, int textureSlot)
 		ITexture*& pTex = m_shaderItem.m_pShaderResources->GetTexture(textureSlot)->m_Sampler.m_pITex;
 		SAFE_RELEASE(pTex);
 		pTex = pTexture;
+
+		gEnv->pRenderer->ForceUpdateShaderItem(&m_shaderItem, this);
 	}
 }
 
@@ -793,165 +800,6 @@ void CMatInfo::SetCamera(CCamera& cam)
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CMatInfo::SetSketchMode(int mode)
-{
-#ifdef SUPPORT_MATERIAL_SKETCH
-	if (mode == 0)
-	{
-		if (m_pPreSketchShader)
-		{
-			m_shaderItem.m_pShader = m_pPreSketchShader;
-			m_shaderItem.m_nTechnique = m_nPreSketchTechnique;
-			m_pPreSketchShader = 0;
-			m_nPreSketchTechnique = 0;
-		}
-	}
-	else
-	{
-		if (m_shaderItem.m_pShader && m_shaderItem.m_pShader != m_pPreSketchShader)
-		{
-			EShaderType shaderType = m_shaderItem.m_pShader->GetShaderType();
-
-			//      nGenerationMask = (uint32)m_shaderItem.m_pShader->GetGenerationMask();
-
-			// Do not replace this shader types.
-			switch (shaderType)
-			{
-			case eST_Terrain:
-			case eST_Shadow:
-			case eST_Water:
-			case eST_FX:
-			case eST_PostProcess:
-			case eST_HDR:
-			case eST_Sky:
-			case eST_Particle:
-				// For this shaders do not replace them.
-				return;
-			case eST_Vegetation:
-				{
-					// in low spec mode also skip vegetation - we have low spec vegetation shader
-					if (mode == 3)
-						return;
-				}
-			}
-		}
-
-		if (!m_pPreSketchShader)
-		{
-			m_pPreSketchShader = m_shaderItem.m_pShader;
-			m_nPreSketchTechnique = m_shaderItem.m_nTechnique;
-		}
-
-		//m_shaderItem.m_pShader = ((CMatMan*)GetMatMan())->GetDefaultHelperMaterial()->GetShaderItem().m_pShader;
-		if (mode == 1)
-		{
-			m_shaderItem.m_pShader = gEnv->pRenderer->EF_LoadShader("Sketch");
-			m_shaderItem.m_nTechnique = 0;
-		}
-		else if (mode == 2)
-		{
-			m_shaderItem.m_pShader = gEnv->pRenderer->EF_LoadShader("Sketch.Fast");
-			m_shaderItem.m_nTechnique = 0;
-		}
-		else if (mode == 4)
-		{
-			SShaderItem tmp = gEnv->pRenderer->EF_LoadShaderItem("Sketch.TexelsPerMeter", false);
-			m_shaderItem.m_pShader = tmp.m_pShader;
-			m_shaderItem.m_nTechnique = tmp.m_nTechnique;
-		}
-
-		if (m_shaderItem.m_pShader)
-			m_shaderItem.m_pShader->AddRef();
-	}
-	for (int i = 0; i < (int)m_subMtls.size(); i++)
-	{
-		if (m_subMtls[i])
-		{
-			m_subMtls[i]->SetSketchMode(mode);
-		}
-	}
-#endif
-}
-
-void CMatInfo::SetTexelDensityDebug(int mode)
-{
-#ifdef SUPPORT_MATERIAL_SKETCH
-	if (m_shaderItem.m_pShader)
-	{
-		EShaderType shaderType = m_pPreSketchShader ? m_pPreSketchShader->GetShaderType() : m_shaderItem.m_pShader->GetShaderType();
-
-		switch (shaderType)
-		{
-		case eST_Terrain:
-			if (mode == 3 || mode == 4)
-			{
-				if (m_nSurfaceTypeId == 0)
-				{
-					mode = 0;
-				}
-
-				break;
-			}
-		case eST_Shadow:
-		case eST_Water:
-		case eST_FX:
-		case eST_PostProcess:
-		case eST_HDR:
-		case eST_Sky:
-		case eST_Particle:
-			// For this shaders do not replace them.
-			mode = 0;
-			break;
-		default:
-			if (mode == 1 || mode == 2)
-			{
-				break;
-			}
-			mode = 0;
-			break;
-		}
-
-		if (mode == 0)
-		{
-			if (m_pPreSketchShader)
-			{
-				m_shaderItem.m_pShader = m_pPreSketchShader;
-				m_shaderItem.m_nTechnique = m_nPreSketchTechnique;
-				m_pPreSketchShader = 0;
-				m_nPreSketchTechnique = 0;
-			}
-		}
-		else
-		{
-			if (!m_pPreSketchShader)
-			{
-				m_pPreSketchShader = m_shaderItem.m_pShader;
-				m_nPreSketchTechnique = m_shaderItem.m_nTechnique;
-			}
-
-			SShaderItem tmp;
-			if (mode == 3 || mode == 4)
-			{
-				tmp = gEnv->pRenderer->EF_LoadShaderItem("SketchTerrain.TexelDensityTerrainLayer", false);
-			}
-			else
-			{
-				tmp = gEnv->pRenderer->EF_LoadShaderItem("Sketch.TexelDensity", false);
-			}
-			m_shaderItem.m_pShader = tmp.m_pShader;
-			m_shaderItem.m_nTechnique = tmp.m_nTechnique;
-		}
-	}
-
-	for (int i = 0; i < (int)m_subMtls.size(); i++)
-	{
-		if (m_subMtls[i])
-		{
-			m_subMtls[i]->SetTexelDensityDebug(mode);
-		}
-	}
-#endif
-}
 
 const char* CMatInfo::GetLoadingCallstack()
 {
@@ -965,7 +813,7 @@ const char* CMatInfo::GetLoadingCallstack()
 void CMatInfo::PrecacheMaterial(const float _fEntDistance, IRenderMesh* pRenderMesh, bool bFullUpdate, bool bDrawNear)
 {
 	//	FUNCTION_PROFILER_3DENGINE;
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	int nFlags = 0;
 	float fEntDistance;
@@ -1041,12 +889,12 @@ void CMatInfo::PrecacheTextures(const float fMipFactor, const int nFlags, bool b
 			if (rZone.nRoundId == (nRoundId - 1))
 			{
 				nCurrentFlags |= rZone.bHighPriority ? FPR_HIGHPRIORITY : 0;
-				GetRenderer()->EF_PrecacheResource(&rSI, rZone.fMinMipFactor, 0, nCurrentFlags, nRoundId, 1); // accumulated value is valid
+				GetRenderer()->EF_PrecacheResource(&rSI, rZone.fMinMipFactor, 0, nCurrentFlags, nRoundId); // accumulated value is valid
 			}
 			else
 			{
 				nCurrentFlags |= (nFlags & FPR_HIGHPRIORITY);
-				GetRenderer()->EF_PrecacheResource(&rSI, fMipFactor, 0, nCurrentFlags, nRoundId, 1); // accumulated value is not valid, pass current value
+				GetRenderer()->EF_PrecacheResource(&rSI, fMipFactor, 0, nCurrentFlags, nRoundId); // accumulated value is not valid, pass current value
 			}
 		}
 
@@ -1071,7 +919,7 @@ void CMatInfo::PrecacheTextures(const int iScreenTexels, const int nFlags, bool 
 		{
 			{
 				nCurrentFlags |= (nFlags & FPR_HIGHPRIORITY);
-				GetRenderer()->EF_PrecacheResource(&rSI, iScreenTexels, 0, nCurrentFlags, nRoundId, 1); // accumulated value is not valid, pass current value
+				GetRenderer()->EF_PrecacheResource(&rSI, iScreenTexels, 0, nCurrentFlags, nRoundId); // accumulated value is not valid, pass current value
 			}
 		}
 	}
@@ -1163,7 +1011,7 @@ int CMatInfo::GetTextureMemoryUsage(ICrySizer* pSizer, int nSubMtlSlot)
 				continue;
 			used.insert(pTexture);
 
-			int nTexSize = pTexture->GetDataSize();
+			uint32 nTexSize = pTexture->GetDataSize();
 			textureSize += nTexSize;
 
 			if (pSizer)

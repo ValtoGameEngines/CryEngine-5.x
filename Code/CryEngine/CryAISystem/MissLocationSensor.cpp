@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /********************************************************************
    -------------------------------------------------------------------------
@@ -93,10 +93,10 @@ void CMissLocationSensor::Update(float timeLimit)
 
 void CMissLocationSensor::Collect(int types)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
-	const float boxHalfSize = gAIEnv.CVars.CoolMissesBoxSize * 0.5f;
-	const float boxHeight = gAIEnv.CVars.CoolMissesBoxHeight;
+	const float boxHalfSize = gAIEnv.CVars.legacyFiring.CoolMissesBoxSize * 0.5f;
+	const float boxHeight = gAIEnv.CVars.legacyFiring.CoolMissesBoxHeight;
 
 	const Vec3& feet = m_owner->GetPhysicsPos();
 	const Vec3& dir = m_owner->GetViewDir();
@@ -140,7 +140,7 @@ bool CMissLocationSensor::Filter(float timeLimit)
 	CTimeValue start = now;
 	CTimeValue endTime = now + CTimeValue(timeLimit);
 
-	float MaxMass = gAIEnv.CVars.CoolMissesMaxLightweightEntityMass;
+	float MaxMass = gAIEnv.CVars.legacyFiring.CoolMissesMaxLightweightEntityMass;
 
 	pe_params_part pp;
 	pe_status_dynamics dyn;
@@ -330,7 +330,7 @@ bool CMissLocationSensor::Filter(float timeLimit)
 
 bool CMissLocationSensor::GetLocation(CAIObject* target, const Vec3& shootPos, const Vec3& shootDir, float maxAngle, Vec3& pos)
 {
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (m_locations.empty())
 		return false;
@@ -432,7 +432,7 @@ bool CMissLocationSensor::GetLocation(CAIObject* target, const Vec3& shootPos, c
 	const MissLocation& location = m_goodies[cry_random((size_t)0, goodiesCount - 1)];
 
 #ifdef CRYAISYSTEM_DEBUG
-	if (gAIEnv.CVars.DebugDrawCoolMisses)
+	if (gAIEnv.CVars.legacyDebugDraw.DebugDrawCoolMisses)
 	{
 		GetAISystem()->AddDebugCone(location.position + Vec3(0.0f, 0.0f, 0.75f), Vec3(0.0f, 0.0f, -1.0f), 0.225f, 0.35f,
 		                            Col_Green, 0.5f);
@@ -447,7 +447,7 @@ bool CMissLocationSensor::GetLocation(CAIObject* target, const Vec3& shootPos, c
 void CMissLocationSensor::DebugDraw()
 {
 #ifdef CRYAISYSTEM_DEBUG
-	if (gAIEnv.CVars.DebugDrawCoolMisses)
+	if (gAIEnv.CVars.legacyDebugDraw.DebugDrawCoolMisses)
 	{
 		CDebugDrawContext dc;
 

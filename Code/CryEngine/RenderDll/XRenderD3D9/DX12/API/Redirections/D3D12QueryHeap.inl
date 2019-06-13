@@ -1,13 +1,13 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include <array>
 #include <d3d12.h>
 
-template<const int numTargets>
+template<int numTargets>
 class BroadcastableD3D12QueryHeap : public ID3D12QueryHeap
 {
-	template<const int numTargets> friend class BroadcastableD3D12CommandQueue;
-	template<const int numTargets> friend class BroadcastableD3D12GraphicsCommandList;
+	template<int numTargets> friend class BroadcastableD3D12CommandQueue;
+	template<int numTargets> friend class BroadcastableD3D12GraphicsCommandList;
 
 	int m_RefCount;
 	std::array<ID3D12QueryHeap*, numTargets> m_Targets;
@@ -28,15 +28,14 @@ public:
 			m_Targets[i] = nullptr;
 			if (Desc.NodeMask = (pDesc->NodeMask & (1 << i)))
 			{
-#if CRY_USE_DX12_MULTIADAPTER_SIMULATION
+#if DX12_LINKEDADAPTER_SIMULATION
 				// Always create on the first GPU, if running simulation
 				if (CRenderer::CV_r_StereoEnableMgpu < 0)
 					Desc.NodeMask = 1;
 #endif
 
-				HRESULT ret = pDevice->CreateQueryHeap(
-				  &Desc, riid, (void**)&m_Targets[i]);
-				DX12_ASSERT(ret == S_OK, "Failed to create query heap!");
+				if (pDevice->CreateQueryHeap(&Desc, riid, (void**)&m_Targets[i]) != S_OK)
+					DX12_ERROR("Failed to create query heap!");
 			}
 		}
 	}

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
  -------------------------------------------------------------------------
@@ -15,6 +15,9 @@
 #include "StdAfx.h"
 #include "PrefabManager.h"
 #include "RuntimePrefab.h"
+#include <Cry3DEngine/I3DEngine.h>
+#include <Cry3DEngine/IRenderNode.h>
+#include <Cry3DEngine/IStatObj.h>
 
 using namespace CryGame;
 
@@ -59,7 +62,7 @@ void CRuntimePrefab::Clear()
 		if (pNode)
 		{
 			IStatObj *pStatObj = pNode->GetEntityStatObj();
-			pNode->SetEntityStatObj(0,0,0);
+			pNode->SetEntityStatObj(0,0);
 			if (pStatObj)
 				pStatObj->Release();		
 			gEnv->p3DEngine->DeleteRenderNode(pNode);
@@ -200,7 +203,7 @@ void CRuntimePrefab::SpawnBrushes(CPrefab &pRef, const Matrix34 &matSource,AABB 
 			if (pObj)
 			{	
 				pObj->AddRef();	
-				pNode->SetEntityStatObj(0,pObj,0);		
+				pNode->SetEntityStatObj(pObj,0);		
 
 				// calc bbox for the editor because we spawn separate brushes	
 				AABB box2=pObj->GetAABB();
@@ -235,9 +238,7 @@ void	CRuntimePrefab::Spawn(IEntity *pEntity,CPrefab &pRef, const Matrix34 &matOf
 	IScriptTable *pScriptTable(pEntity->GetScriptTable());
 	if (pScriptTable)
 	{		
-		ScriptAnyValue value;
-		value.type = ANY_TSTRING;
-		value.str = pRef.m_szName;
+		ScriptAnyValue value(pRef.m_szName);
 		pScriptTable->SetValueAny( "PrefabSourceName", value );
 	}	
 
@@ -326,7 +327,7 @@ void	CRuntimePrefab::Move(const Matrix34 &matOff)
 		if (!pParam.bIsDecal)			
 		{
 			IStatObj *pStatObj=pNode->GetEntityStatObj(0,0,0);		
-			pNode->SetEntityStatObj(0,pStatObj,0);				
+			pNode->SetEntityStatObj(pStatObj,0);				
 		}
 
 		Matrix34 mat=matOff*pParam.mat;		
@@ -359,34 +360,30 @@ void	CRuntimePrefab::Move()
 }
 
 //////////////////////////////////////////////////////////////////////////
-void	CRuntimePrefab::HideComponents(bool bHide)
+void CRuntimePrefab::HideComponents(bool bHide)
 {
 	// entities
-	int nPrefabRef=0;
-	for (std::vector<EntityId>::iterator i=m_lstIDs.begin();i!=m_lstIDs.end();++i)			
+	for (std::vector<EntityId>::iterator i=m_lstIDs.begin();i!=m_lstIDs.end();++i)
 	{
-		EntityId id=(*i);		
+		EntityId id=(*i);
 
-		IEntity	*pEntity = gEnv->pEntitySystem->GetEntity(id);		
-		if (pEntity)		
+		IEntity* pEntity = gEnv->pEntitySystem->GetEntity(id);
+		if (pEntity)
 			pEntity->Hide(bHide);
 	}
 
 	// brushes and decals
-	for (std::vector<IRenderNode*>::iterator i=m_lstNodes.begin();i!=m_lstNodes.end();++i)			
+	for (std::vector<IRenderNode*>::iterator i=m_lstNodes.begin();i!=m_lstNodes.end();++i)
 	{
-		IRenderNode *pNode=(*i);				
+		IRenderNode* pNode=(*i);
 		if (pNode)
-			pNode->Hide(bHide);
-	}	
+			pNode->SetRndFlags(ERF_HIDDEN, bHide);
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////
 void	CRuntimePrefab::Hide(bool bHide)
 {
-	IEntity* pEntity = gEnv->pEntitySystem->GetEntity( m_id );	
-	assert(pEntity);
-
 	for (std::vector<CRuntimePrefab*>::iterator i=m_lstPrefabs.begin();i!=m_lstPrefabs.end();++i)
 	{
 		CRuntimePrefab *pPrefab=(*i);

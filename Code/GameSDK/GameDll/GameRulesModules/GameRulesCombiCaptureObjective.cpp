@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -27,6 +27,7 @@
 #include "StdAfx.h"
 #include "GameRulesCombiCaptureObjective.h"
 #include <CrySystem/XML/IXml.h>
+#include "GameCVars.h"
 #include "GameRules.h"
 #include "Player.h"
 #include "Utility/CryWatch.h"
@@ -247,7 +248,7 @@ void CGameRulesCombiCaptureObjective::Init( XmlNodeRef xml )
 	if (xml->getAttr("goalCombiCaptureTime", m_goalCombiCaptureTime))
 	{
 		CryLog("CGameRulesCombiCaptureObjective::Init, goal combi capture time set to %f", m_goalCombiCaptureTime);
-		m_goalCombiCaptureTime = MAX(0.01f, m_goalCombiCaptureTime);
+		m_goalCombiCaptureTime = std::max(0.01f, m_goalCombiCaptureTime);
 	}
 
 	if (xml->getAttr("progressBankingIntervalSecs", fscratch))
@@ -404,7 +405,6 @@ void CGameRulesCombiCaptureObjective::Update( float frameTime )
 {
 	BaseType::Update(frameTime);
 
-	const bool  updatedCombiProgressLastFrame = m_updatedCombiProgressThisFrame;
 	m_updatedCombiProgressThisFrame = false;
 
 	EntityId  localClientId = g_pGame->GetIGameFramework()->GetClientActorId();
@@ -698,7 +698,7 @@ void CGameRulesCombiCaptureObjective::SvUpdateCaptureScorers()
 						for(int k=0; k<count; k++)
 						{
 							const EntityId  eid = pDetails->m_insideEntities[m_attackingTeamId - 1].at(k);
-							if (IEntity* pEnt=gEnv->pEntitySystem->GetEntity(eid))
+							if (gEnv->pEntitySystem->GetEntity(eid) != nullptr)
 							{
 								if (SSvCaptureScorer* pScorer=m_svCaptureScorers.FindByEntityId(eid))
 								{
@@ -945,9 +945,10 @@ void CGameRulesCombiCaptureObjective::SvDoEndOfRoundPlayerScoring(const int winn
 	CRY_ASSERT((winningTeam == 1) || (winningTeam == 2));
 
 	CGameRules *pGameRules = g_pGame->GetGameRules();
-
+#if defined(USE_CRY_ASSERT)
 	IGameRulesStateModule *pStateModule = pGameRules->GetStateModule();
 	CRY_ASSERT(pStateModule && (pStateModule->GetGameState() != IGameRulesStateModule::EGRS_PostGame));
+#endif
 
 	if (IGameRulesScoringModule* pScoringModule=pGameRules->GetScoringModule())
 	{
@@ -981,7 +982,7 @@ void CGameRulesCombiCaptureObjective::SvDoEndOfRoundPlayerScoring(const int winn
 
 						if (timeRange > 0.f)
 						{
-							const float  ratio = MAX(0.f, MIN(1.f, (1.f - ((curTime - m_defWin_timeRemainBonus_minTime) / timeRange)) ));
+							const float  ratio = std::max(0.f, std::min(1.f, (1.f - ((curTime - m_defWin_timeRemainBonus_minTime) / timeRange)) ));
 
 							if (ratio > 0.f)
 							{
@@ -1007,7 +1008,7 @@ void CGameRulesCombiCaptureObjective::SvDoEndOfRoundPlayerScoring(const int winn
 				const float  maxScore = pScoringModule->GetPlayerPointsByType(type);
 				if (maxScore >= 1.f)
 				{
-					const float  ratio = MAX(0.f, MIN(1.f, (1.f - m_combiProgressBanked) ));
+					const float  ratio = std::max(0.f, std::min(1.f, (1.f - m_combiProgressBanked) ));
 					const TGameRulesScoreInt  score = (TGameRulesScoreInt) floorf( maxScore * ratio );
 					SGameRulesScoreInfo  scoreInfo (type, score);
 					pScoringModule->OnPlayerScoringEventToAllTeamWithInfo(defendingTeamId, &scoreInfo);
@@ -1020,7 +1021,7 @@ void CGameRulesCombiCaptureObjective::SvDoEndOfRoundPlayerScoring(const int winn
 				const float  maxScore = pScoringModule->GetPlayerPointsByType(type);
 				if (maxScore >= 1.f)
 				{
-					const float  ratio = MAX(0.f, MIN(1.f, (m_combiProgressBanked) ));
+					const float  ratio = std::max(0.f, std::min(1.f, (m_combiProgressBanked) ));
 					const TGameRulesScoreInt  score = (TGameRulesScoreInt) floorf( maxScore * ratio );
 					SGameRulesScoreInfo  scoreInfo (type, score);
 					pScoringModule->OnPlayerScoringEventToAllTeamWithInfo(m_attackingTeamId, &scoreInfo);
@@ -1145,7 +1146,6 @@ void CGameRulesCombiCaptureObjective::OnChangedTeam( EntityId entityId, int oldT
 	if ((g_pGame->GetIGameFramework()->GetClientActorId() == entityId) && newTeamId)
 	{
 		// Local player has changed teams, reset icons
-		int currActiveIndex = -1;
 		for (int i = 0; i < HOLD_OBJECTIVE_MAX_ENTITIES; ++ i)
 		{
 			SHoldEntityDetails *pDetails = &m_entities[i];
@@ -1265,7 +1265,6 @@ EGameRulesMissionObjectives CGameRulesCombiCaptureObjective::GetIcon(SHoldEntity
 		{
 			CGameRules *pGameRules = g_pGame->GetGameRules();
 			int localTeamId = pGameRules->GetTeam(g_pGame->GetIGameFramework()->GetClientActorId());
-			float serverTime = pGameRules->GetServerTime();
 
 			if (pCaptureEntity->m_capturing)
 			{
@@ -1423,7 +1422,6 @@ void CGameRulesCombiCaptureObjective::OnEntityKilled( const HitInfo &hitInfo )
 				if ((pIShooter != NULL && pIShooter->IsPlayer()) && (pITarget != NULL && pITarget->IsPlayer()))
 				{
 					CPlayer*  pShooter = (CPlayer*) pIShooter;
-					CPlayer*  pTarget = (CPlayer*) pITarget;
 
 					const int  shooterTeam = g_pGame->GetGameRules()->GetTeam(hitInfo.shooterId);
 					const int  targetTeam = g_pGame->GetGameRules()->GetTeam(hitInfo.targetId);
@@ -1620,7 +1618,7 @@ int CGameRulesCombiCaptureObjective::GetNumDesiredEnabledCaptureEnts()
 		const int  t1count = pGameRules->GetTeamPlayerCountWithStatFlags(1, flagsNeeded, false);
 		const int  t2count = pGameRules->GetTeamPlayerCountWithStatFlags(2, flagsNeeded, false);
 
-		const int  biggestTeam = MAX(t1count, t2count);
+		const int  biggestTeam = std::max(t1count, t2count);
 
 		const int  idealNumDesired = (biggestTeam + AMOUNT_OF_DESIRED_CAP_ENTS_MORE_THAN_PLAYERS);
 

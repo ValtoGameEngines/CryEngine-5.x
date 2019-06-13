@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "GpuParticleManager.h"
@@ -13,44 +13,26 @@ namespace gpu_pfx2
 static const int kMaxRuntimes = 4096;
 
 CManager::CManager()
-	: m_state(EState::Uninitialized)
-	, m_readback(kMaxRuntimes)
-	, m_counter(kMaxRuntimes)
+	: m_counter(kMaxRuntimes)
 	, m_scratch(kMaxRuntimes)
+	, m_readback(kMaxRuntimes)
 	, m_numRuntimesReadback(0)
 {
 }
 
-void CManager::Initialize()
-{
-	m_state = EState::Ready;
-}
-
-void CManager::BeginFrame()
+IParticleComponentRuntime* CManager::CreateParticleContainer(const SComponentParams& params, TConstArray<IParticleFeature*> features)
 {
 	CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
-
-	if (m_state == EState::Uninitialized)
-		Initialize();
-}
-
-_smart_ptr<IParticleComponentRuntime>
-CManager::CreateParticleComponentRuntime(
-  pfx2::IParticleComponent* pComponent,
-  const pfx2::SRuntimeInitializationParameters& params)
-{
-	FUNCTION_PROFILER(GetISystem(), PROFILE_PARTICLE);
 	CryAutoLock<CryCriticalSection> lock(m_cs);
 
-	CParticleComponentRuntime* pRuntime = new CParticleComponentRuntime(pComponent, params);
-	_smart_ptr<IParticleComponentRuntime> result(pRuntime);
+	auto* pRuntime = new CParticleComponentRuntime(params, features);
 	GetWriteRuntimes().push_back(pRuntime);
-	return result;
+	return pRuntime;
 }
 
-void CManager::RenderThreadUpdate()
+void CManager::RenderThreadUpdate(CRenderView* pRenderView)
 {
-	const bool bAsynchronousCompute = CRenderer::CV_r_D3D12AsynchronousCompute & BIT((eStage_GpuParticles - eStage_FIRST_ASYNC_COMPUTE)) ? true : false;
+	const bool bAsynchronousCompute = CRenderer::CV_r_D3D12AsynchronousCompute& BIT((eStage_ComputeParticles - eStage_FIRST_ASYNC_COMPUTE)) ? true : false;
 	const bool bReadbackBoundingBox = CRenderer::CV_r_GpuParticlesConstantRadiusBoundingBoxes ? false : true;
 
 	if (!CRenderer::CV_r_GpuParticles)
@@ -65,11 +47,13 @@ void CManager::RenderThreadUpdate()
 		m_counter.CreateDeviceBuffer();
 		m_scratch.CreateDeviceBuffer();
 
-		// Full clear
-		UINT nulls[4] = { 0 };
+		{
+			// Full clear
+			const ColorI nulls = { 0, 0, 0, 0 };
 
-		CCryDeviceWrapper::GetObjectFactory().GetCoreCommandList()->GetComputeInterface()->ClearUAV(m_counter.GetBuffer().GetDeviceUAV(), nulls, 0, nullptr);
-		CCryDeviceWrapper::GetObjectFactory().GetCoreCommandList()->GetComputeInterface()->ClearUAV(m_scratch.GetBuffer().GetDeviceUAV(), nulls, 0, nullptr);
+			CClearSurfacePass::Execute(&m_counter.GetBuffer(), nulls);
+			CClearSurfacePass::Execute(&m_scratch.GetBuffer(), nulls);
+		}
 
 		// initialize readback staging buffer
 		m_counter.Readback(kMaxRuntimes);
@@ -82,16 +66,15 @@ void CManager::RenderThreadUpdate()
 	if (uint32 numRuntimes = uint32(GetReadRuntimes().size()))
 	{
 		gpu_pfx2::SUpdateContext context;
+		context.pRenderView = pRenderView;
 		context.pCounterBuffer = &m_counter.GetBuffer();
 		context.pScratchBuffer = &m_scratch.GetBuffer();
 		context.pReadbackBuffer = &m_readback.GetBuffer();
-		context.deltaTime = gEnv->pTimer->GetFrameTime();
 
 		{
 			for (auto& pRuntime : GetReadRuntimes())
 			{
-				if (pRuntime->GetState() == CParticleComponentRuntime::EState::Uninitialized)
-					pRuntime->Initialize();
+				pRuntime->Initialize(pRenderView->GetGraphicsPipeline().get());
 			}
 		}
 
@@ -107,6 +90,7 @@ void CManager::RenderThreadUpdate()
 			for (uint32 i = 0; i < numRuntimes; ++i)
 			{
 				// TODO: convert to array of command-lists pattern
+				// TODO: profile single command list vs. multiple command lists
 				SScopedComputeCommandList pComputeInterface(bAsynchronousCompute);
 
 				auto& pRuntime = GetReadRuntimes()[i];
@@ -117,7 +101,7 @@ void CManager::RenderThreadUpdate()
 
 				pRuntime->SetCounterFromManager(pCounter);
 				pRuntime->SetManagerSlot(i);
-				pRuntime->AddRemoveNewBornsParticles(context, pComputeInterface);
+				pRuntime->AddRemoveParticles(context, pComputeInterface);
 				pRuntime->UpdateParticles(context, pComputeInterface);
 				pRuntime->CalculateBounds(context, pComputeInterface);
 			}
@@ -138,41 +122,56 @@ void CManager::RenderThreadUpdate()
 	}
 }
 
-void CManager::RenderThreadPostUpdate()
+void CManager::RenderThreadPreUpdate(CRenderView* pRenderView)
 {
 	if (uint32 numRuntimes = uint32(GetReadRuntimes().size()))
 	{
-		{
-			std::vector<CGpuBuffer*> UAVs;
+		std::vector<CDeviceBuffer*> UAVs;
 
-			UAVs.reserve(numRuntimes);
-			for (auto& pRuntime : GetReadRuntimes())
-				UAVs.emplace_back(&pRuntime->PrepareForUse());
+		UAVs.reserve(numRuntimes);
+		for (auto& pRuntime : GetReadRuntimes())
+			UAVs.emplace_back(pRuntime->PrepareForUse().GetDevBuffer());
 
-			// Prepare particle buffers which have been used in the vertex shader for compute use
-			CCryDeviceWrapper::GetObjectFactory().GetCoreCommandList()->GetGraphicsInterface()->PrepareUAVsForUse(numRuntimes, &UAVs[0]);
-		}
+		// Prepare particle buffers which have been used in the compute shader for vertex use
+		GetDeviceObjectFactory().GetCoreCommandList().GetGraphicsInterface()->PrepareUAVsForUse(numRuntimes, &UAVs[0], false);
+	}
+}
+
+void CManager::RenderThreadPostUpdate(CRenderView* pRenderView)
+{
+	if (uint32 numRuntimes = uint32(GetReadRuntimes().size()))
+	{
+		std::vector<CDeviceBuffer*> UAVs;
+
+		UAVs.reserve(numRuntimes);
+		for (auto& pRuntime : GetReadRuntimes())
+			UAVs.emplace_back(pRuntime->PrepareForUse().GetDevBuffer());
+
+		// Prepare particle buffers which have been used in the vertex shader for compute use
+		GetDeviceObjectFactory().GetCoreCommandList().GetGraphicsInterface()->PrepareUAVsForUse(numRuntimes, &UAVs[0], true);
 
 		{
 			// Minimal clear
-			UINT nulls[4] = { 0 };
-#if defined(DEVICE_SUPPORTS_D3D11_1) && !CRY_PLATFORM_ORBIS
+			const ColorI nulls = { 0, 0, 0, 0 };
+
+#if (CRY_RENDERER_DIRECT3D >= 111)
 			const UINT numRanges = 1;
-			const D3D11_RECT uavRange = { 0, 0, numRuntimes, 0 };
-			CCryDeviceWrapper::GetObjectFactory().GetCoreCommandList()->GetComputeInterface()->ClearUAV(m_counter.GetBuffer().GetDeviceUAV(), nulls, numRanges, &uavRange);
-			CCryDeviceWrapper::GetObjectFactory().GetCoreCommandList()->GetComputeInterface()->ClearUAV(m_scratch.GetBuffer().GetDeviceUAV(), nulls, numRanges, &uavRange);
+			const D3D11_RECT uavRange = { 0, 0, numRuntimes, 1 };
+
+			m_clearRegionPass->Execute(&m_counter.GetBuffer(), nulls, numRanges, &uavRange);
+			m_clearRegionPass->Execute(&m_scratch.GetBuffer(), nulls, numRanges, &uavRange);
 #else
-			CCryDeviceWrapper::GetObjectFactory().GetCoreCommandList()->GetComputeInterface()->ClearUAV(m_counter.GetBuffer().GetDeviceUAV(), nulls, 0, nullptr);
-			CCryDeviceWrapper::GetObjectFactory().GetCoreCommandList()->GetComputeInterface()->ClearUAV(m_scratch.GetBuffer().GetDeviceUAV(), nulls, 0, nullptr);
+			CClearSurfacePass::Execute(&m_counter.GetBuffer(), nulls);
+			CClearSurfacePass::Execute(&m_scratch.GetBuffer(), nulls);
 #endif
 		}
 	}
 }
 
-gpu::CBitonicSort* CManager::GetBitonicSort()
+gpu::CBitonicSort* CManager::GetBitonicSort(CGraphicsPipeline* pGraphicsPipeline)
 {
 	if (!m_pBitonicSort)
-		m_pBitonicSort = std::unique_ptr<gpu::CBitonicSort>(new gpu::CBitonicSort());
+		m_pBitonicSort = std::unique_ptr<gpu::CBitonicSort>(new gpu::CBitonicSort(pGraphicsPipeline));
 	return m_pBitonicSort.get();
 }
 
@@ -213,15 +212,13 @@ void CManager::ProcessResources()
 	m_particleFeatureGpuInterfacesInitialization.resize(0);
 }
 
-_smart_ptr<IParticleFeatureGpuInterface>
-CManager::CreateParticleFeatureGpuInterface(EGpuFeatureType feature)
+IParticleFeature* CManager::CreateParticleFeature(EGpuFeatureType feature)
 {
 	CRY_PROFILE_FUNCTION(PROFILE_PARTICLE);
 	CryAutoLock<CryCriticalSection> lock(m_cs);
 
-	_smart_ptr<CFeature> result =
-	  m_gpuInterfaceFactory.CreateInstance(feature);
-	if (result != nullptr)
+	CFeature* result = m_gpuInterfaceFactory.CreateInstance(feature);
+	if (result)
 	{
 		m_particleFeatureGpuInterfaces.push_back(result);
 		m_particleFeatureGpuInterfacesInitialization.push_back(result);
@@ -231,8 +228,7 @@ CManager::CreateParticleFeatureGpuInterface(EGpuFeatureType feature)
 
 void CManager::CleanupResources()
 {
-	for (auto& runtime : GetWriteRuntimes())
-		runtime->PrepareRelease();
+	GetWriteRuntimes().clear();
 	ProcessResources();
 
 	if (m_readback.IsDeviceBufferAllocated())
@@ -240,8 +236,7 @@ void CManager::CleanupResources()
 		m_readback.FreeDeviceBuffer();
 		m_counter.FreeDeviceBuffer();
 	}
-
-	GetReadRuntimes().clear();
+		
 	if (GetWriteRuntimes().size() > 0)
 		CryFatalError("There are still GPU runtimes living past the render thread.");
 }

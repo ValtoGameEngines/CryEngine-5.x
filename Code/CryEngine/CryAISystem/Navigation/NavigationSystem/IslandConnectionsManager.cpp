@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "IslandConnectionsManager.h"
@@ -17,17 +17,9 @@ MNM::IslandConnections& IslandConnectionsManager::GetIslandConnections()
 	return m_globalIslandConnections;
 }
 
-void IslandConnectionsManager::SetOneWayConnectionBetweenIsland(const MNM::GlobalIslandID fromIsland, const MNM::IslandConnections::Link& link)
+bool IslandConnectionsManager::AreIslandsConnected(const IEntity* pEntityToTestOffGridLinks, const MNM::GlobalIslandID startIsland, const MNM::GlobalIslandID endIsland, const INavMeshQueryFilter* pFilter) const
 {
-	m_globalIslandConnections.SetOneWayConnectionBetweenIsland(fromIsland, link);
-}
-
-bool IslandConnectionsManager::AreIslandsConnected(const IEntity* pEntityToTestOffGridLinks, const MNM::GlobalIslandID startIsland, const MNM::GlobalIslandID endIsland) const
-{
-	FUNCTION_PROFILER(gEnv->pSystem, PROFILE_AI);
-
-	MNM::IslandConnections::TIslandsWay way;
-	return m_globalIslandConnections.CanNavigateBetweenIslands(pEntityToTestOffGridLinks, startIsland, endIsland, way);
+	return m_globalIslandConnections.CanNavigateBetweenIslands(pEntityToTestOffGridLinks, startIsland, endIsland, pFilter);
 }
 
 #ifdef CRYAISYSTEM_DEBUG

@@ -1,26 +1,26 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-/*=============================================================================
-   Shader.h : Shaders declarations.
-
-   Revision history:
-* Created by Honich Andrey
-
-   =============================================================================*/
-
-#ifndef __SHADER_H__
-#define __SHADER_H__
+#pragma once
 
 #include "../Defs.h"
 
 #include <CryString/CryName.h>
 #include <CryRenderer/IShader.h>
-#include "ShaderResources.h"
+#include "../CommonRender.h" // CBaseResource
+#include "ShaderComponents.h"
+
+#include <CryCore/smartptr.h>
+#include <CryCore/CryVariant.h>
+
+#include "../ResFile.h"
+
+#include <memory>
+#include <string>
 
 // bump this value up if you want to invalidate shader cache (e.g. changed some code or .ext file)
 // #### VIP NOTE ####: DON'T USE MORE THAN ONE DECIMAL PLACE!!!! else it doesn't work...
-#define FX_CACHE_VER     9.8
-#define FX_SER_CACHE_VER 1.0    // Shader serialization version (FX_CACHE_VER + FX_SER_CACHE_VER)
+#define FX_CACHE_VER     1.0
+#define FX_SER_CACHE_VER 1.2    // Shader serialization version (FX_CACHE_VER + FX_SER_CACHE_VER)
 
 // Maximum 1 digit here
 // The version determines the parse logic in the shader cache gen, these values cannot overlap
@@ -31,12 +31,9 @@
 
 #define SHADERS_SERIALIZING 1 // Enables shaders serializing (Export/Import) to/from .fxb files
 
-#define CB_PER_BATCH        0
-#define CB_PER_INSTANCE     1
-#define CB_PER_MATERIAL     3
-#define CB_SKIN_DATA        6
-#define CB_INSTANCE_DATA    7
-#define CB_NUM              8
+#define CB_PER_DRAW         eConstantBufferShaderSlot_PerDraw           // Non-Scene-Pass only
+#define CB_PER_MATERIAL     eConstantBufferShaderSlot_PerMaterial       // Scene-Pass only
+#define CB_NUM              2
 
 //====================================================================
 // Fixed Per-Material constants
@@ -66,12 +63,13 @@ struct SParserFrame;
 struct SPreprocessTree;
 struct SEmptyCombination;
 struct SShaderCombination;
-struct SShaderCache;
-struct SShaderDevCache;
 struct SCGParam;
 struct SSFXParam;
 struct SSFXSampler;
 struct SSFXTexture;
+class CShaderResources;
+struct SShaderCombIdent;
+struct SCacheCombination;
 
 enum eCompareFunc
 {
@@ -110,10 +108,10 @@ struct SFXSampler
 	CCryNameR           m_Values;      // Parameter values (after '=')
 	byte                m_eType;       // ESamplerType
 	short               m_nRegister[eHWSC_Num];
-	int                 m_nTexState;
+	SamplerStateHandle  m_nTexState;
 	SFXSampler()
 	{
-		m_nTexState = -1;
+		m_nTexState = EDefaultSamplerStates::Unspecified;
 		m_nArray = 0;
 		m_nFlags = 0;
 		for (int i = 0; i < eHWSC_Num; i++)
@@ -126,7 +124,6 @@ struct SFXSampler
 	}
 	uint32 GetFlags() { return m_nFlags; }
 	void   PostLoad(class CParserBin& Parser, SParserFrame& Name, SParserFrame& Annotations, SParserFrame& Values, SParserFrame& Assign);
-	void   PostLoad();
 	bool   Export(SShaderSerializeContext& SC);
 	bool   Import(SShaderSerializeContext& SC, SSFXSampler* pPR);
 	uint32 Size()
@@ -165,6 +162,7 @@ struct SFXTexture
 	CCryNameR           m_Semantic;    // Parameter semantic type (after ':')
 	CCryNameR           m_Values;      // Parameter values (after '=')
 	string              m_szTexture;   // Texture source name
+	SHRenderTarget*     m_pTarget = nullptr;
 	string              m_szUIName;    // UI name
 	string              m_szUIDesc;    // UI description
 	bool                m_bSRGBLookup; // Lookup
@@ -189,7 +187,6 @@ struct SFXTexture
 	uint32 GetFlags()    { return m_nFlags; }
 	uint32 GetTexFlags() { return m_nTexFlags; }
 	void   PostLoad(class CParserBin& Parser, SParserFrame& Name, SParserFrame& Annotations, SParserFrame& Values, SParserFrame& Assign);
-	void   PostLoad();
 	bool   Export(SShaderSerializeContext& SC);
 	bool   Import(SShaderSerializeContext& SC, SSFXTexture* pPR);
 	uint32 Size()
@@ -244,10 +241,7 @@ struct SFXParam
 		m_nRegister[4] = 10000;
 		m_nRegister[5] = 10000;
 	}
-	~SFXParam()
-	{
-		int nnn = 0;
-	}
+	~SFXParam() = default;
 	uint32 GetComponent(EHWShaderClass eSHClass);
 	void   GetParamComp(uint32 nOffset, CryFixedStringT<128>& param);
 	uint32 GetParamFlags() { return m_nFlags; }
@@ -312,12 +306,12 @@ enum ETexFilter
 
 //=============================================================================
 
-#if CRY_PLATFORM_WINDOWS && CRY_PLATFORM_64BIT
+#if CRY_PLATFORM_WINDOWS
 	#pragma warning( push )               //AMD Port
 	#pragma warning( disable : 4267 )
 #endif
 
-#if CRY_PLATFORM_WINDOWS && CRY_PLATFORM_64BIT
+#if CRY_PLATFORM_WINDOWS
 	#pragma warning( pop )                //AMD Port
 #endif
 
@@ -393,7 +387,8 @@ enum ERenderOrder
 {
 	eRO_PreProcess,
 	eRO_PostProcess,
-	eRO_PreDraw
+	eRO_PreDraw,
+	eRO_Managed
 };
 
 enum ERTUpdate
@@ -414,7 +409,7 @@ struct SHRenderTarget : public IRenderTarget
 	ETEX_Format  m_eTF;
 	int          m_nIDInPool;
 	ERTUpdate    m_eUpdateType;
-	CTexture*    m_pTarget[2];
+	CTexture*    m_pTarget;
 	bool         m_bTempDepth;
 	ColorF       m_ClearColor;
 	float        m_fClearDepth;
@@ -426,8 +421,7 @@ struct SHRenderTarget : public IRenderTarget
 	{
 		m_nRefCount = 1;
 		m_eOrder = eRO_PreProcess;
-		m_pTarget[0] = NULL;
-		m_pTarget[1] = NULL;
+		m_pTarget = nullptr;
 		m_bTempDepth = true;
 		m_ClearColor = Col_Black;
 		m_fClearDepth = 1.f;
@@ -468,17 +462,14 @@ struct SHRenderTarget : public IRenderTarget
 
 struct SShaderCacheHeaderItem
 {
-	byte   m_nVertexFormat;
-	byte   m_Class;
-	byte   m_nInstBinds;
-	byte   m_StreamMask_Stream;
-	uint32 m_CRC32;
-	uint16 m_StreamMask_Decl;
-	int16  m_nInstructions;
-	SShaderCacheHeaderItem()
-	{
-		memset(this, 0, sizeof(SShaderCacheHeaderItem));
-	}
+	byte   m_nVertexFormat = 0;
+	byte   m_Class = 0;
+	byte   m_nInstBinds = 0;
+	byte   m_StreamMask_Stream = 0;
+	uint32 m_CRC32 = 0;
+	uint16 m_StreamMask_Decl = 0;
+	int16  m_nInstructions = 0;
+
 	AUTO_STRUCT_INFO;
 };
 
@@ -521,11 +512,11 @@ struct SCompressedData
 	}
 };
 
-typedef std::map<int, struct SD3DShader*> FXDeviceShader;
-typedef FXDeviceShader::iterator          FXDeviceShaderItor;
-
-#define CACHE_READONLY 0
-#define CACHE_USER     1
+enum class cacheSource : std::uint8_t
+{
+	readonly = 0,       // Shader cache from readonly paks
+	user = 1,           // Writeable shader cache
+};
 
 struct SOptimiseStats
 {
@@ -533,7 +524,6 @@ struct SOptimiseStats
 	int nUniqueEntries;
 	int nSizeUncompressed;
 	int nSizeCompressed;
-	int nTokenDataSize;
 	int nDirDataSize;
 	SOptimiseStats()
 	{
@@ -541,19 +531,9 @@ struct SOptimiseStats
 		nUniqueEntries = 0;
 		nSizeUncompressed = 0;
 		nSizeCompressed = 0;
-		nTokenDataSize = 0;
 		nDirDataSize = 0;
 	}
 };
-
-typedef std::map<CCryNameR, SShaderCache*>    FXShaderCache;
-typedef FXShaderCache::iterator               FXShaderCacheItor;
-
-typedef std::map<CCryNameR, SShaderDevCache*> FXShaderDevCache;
-typedef FXShaderDevCache::iterator            FXShaderDevCacheItor;
-
-typedef std::map<string, uint32>              FXShaderCacheNames;
-typedef FXShaderCacheNames::iterator          FXShaderCacheNamesItor;
 
 //====================================================================
 // HWShader run-time flags
@@ -563,8 +543,6 @@ enum EHWSRMaskBit
 {
 	HWSR_FOG = 0,
 
-	HWSR_AMBIENT,
-
 	HWSR_ALPHATEST,
 	HWSR_ALPHABLEND,
 
@@ -572,10 +550,7 @@ enum EHWSRMaskBit
 	HWSR_MSAA_QUALITY1,
 	HWSR_MSAA_SAMPLEFREQ_PASS,
 
-	HWSR_HDR_MODE,      // deprecated: this flag is redundant and can be dropped, since rendering always HDR since CE3
-	HWSR_HDR_ENCODE,
-
-	HWSR_INSTANCING_ATTR,
+	HWSR_SECONDARY_VIEW,
 
 	HWSR_VERTEX_VELOCITY,
 	HWSR_SKELETON_SSD,
@@ -583,12 +558,9 @@ enum EHWSRMaskBit
 	HWSR_COMPUTE_SKINNING,
 
 	HWSR_OBJ_IDENTITY,
-	HWSR_DETAIL_OVERLAY,
 	HWSR_NEAREST,
-	HWSR_NOZPASS,
 	HWSR_DISSOLVE,
 	HWSR_NO_TESSELLATION,
-	HWSR_PER_INSTANCE_CB_TEMP,
 
 	HWSR_QUALITY,
 	HWSR_QUALITY1,
@@ -599,6 +571,7 @@ enum EHWSRMaskBit
 	HWSR_SAMPLE3,
 	HWSR_SAMPLE4,
 	HWSR_SAMPLE5,
+	HWSR_SAMPLE6,
 
 	HWSR_DEBUG0,
 	HWSR_DEBUG1,
@@ -609,7 +582,7 @@ enum EHWSRMaskBit
 
 	HWSR_DECAL_TEXGEN_2D,
 
-	HWSR_SHADOW_MIXED_MAP_G16R16,
+	HWSR_SHADOW_DEPTH_OUTPUT_LINEAR,
 	HWSR_HW_PCF_COMPARE,
 	HWSR_SHADOW_JITTERING,
 	HWSR_POINT_LIGHT,
@@ -621,7 +594,6 @@ enum EHWSRMaskBit
 	HWSR_PARTICLE_SHADOW,
 	HWSR_SOFT_PARTICLE,
 	HWSR_OCEAN_PARTICLE,
-	HWSR_GLOBAL_ILLUMINATION_, // unused
 	HWSR_ANIM_BLEND,
 	HWSR_ENVIRONMENT_CUBEMAP,
 	HWSR_MOTION_BLUR,
@@ -658,7 +630,6 @@ extern uint64 g_HWSR_MaskBit[HWSR_MAX];
 #define HWSG_DEFAULTPOS           0x4000
 #define HWSG_PROJECTED            0x8000
 #define HWSG_NOISE                0x10000
-#define HWSG_PRECACHEPHASE        0x20000
 #define HWSG_FP_EMULATION         0x40000
 #define HWSG_GS_MULTIRES          0x80000
 
@@ -691,22 +662,98 @@ extern uint64 g_HWSR_MaskBit[HWSR_MAX];
 #define HWSF_STORECOMBINATION     0x400
 #define HWSF_STOREDATA            0x800
 
+class CHWShader;
+struct SDiskShaderCache
+{
+	struct recreateUserCacheTag {};
+
+	SDiskShaderCache(const char* name, cacheSource cacheType);
+	SDiskShaderCache(recreateUserCacheTag, const char* name, std::uint32_t CRC32, float cacheVer);
+	~SDiskShaderCache() noexcept;
+
+	CResFile* m_pRes = nullptr;
+
+	std::pair<std::unique_ptr<byte[]>, uint32> DecompressResource(CResFileOpenScope &scope, size_t offset, size_t size) const;
+
+	void GetMemoryUsage(ICrySizer* pSizer) const;
+	cacheSource GetType() const { return cacheType; }
+
+#if CRY_PLATFORM_DESKTOP
+	bool mfOptimiseCacheFile(SOptimiseStats* Stats);
+#endif
+
+private:
+	const cacheSource cacheType = cacheSource::readonly;
+
+	bool OpenCacheFileImpl(cacheSource cacheType, CResFile* pRF);
+	bool OpenCacheFile(const char* szName, cacheSource src);
+};
+
+struct SDeviceShaderEntry
+{
+	SShaderCacheHeaderItem header;
+	std::vector<SCGBind> bindVars;
+
+	std::unique_ptr<byte[]> m_pVertexShaderBinary;
+	std::size_t             m_VertexShaderBinarySize;
+#if CRY_RENDERER_VULKAN
+	std::vector<SVertexInputStream>  m_VSInputStreams;
+#endif
+
+	_smart_ptr<class SD3DShader> shader;
+
+	operator bool() const noexcept { return !!shader; }
+	void GetMemoryUsage(ICrySizer* pSizer) const
+	{
+		pSizer->AddObject(bindVars.data(), bindVars.size() * sizeof(SCGBind));
+		pSizer->AddObject(m_pVertexShaderBinary.get(), m_VertexShaderBinarySize * sizeof(byte));
+#if CRY_RENDERER_VULKAN
+		pSizer->AddObject(m_VSInputStreams.data(), m_VSInputStreams.size() * sizeof(SVertexInputStream));
+#endif
+		pSizer->AddObject(shader.get());
+	}
+};
+
+struct SHWShaderCache : CBaseResource
+{
+private:
+	string m_Name;
+
+public:
+	using deviceShaderCacheKey = std::uint32_t;
+	// Value might be an entry or a duplicate, in which case it is a pointer to duplicated entry.
+	using deviceShaderCacheValue = CryVariant<const SDeviceShaderEntry*, SDeviceShaderEntry>;
+	using shaderCache = std::unordered_map<deviceShaderCacheKey, deviceShaderCacheValue>;
+
+	shaderCache                       m_shaders;
+	std::unique_ptr<SDiskShaderCache> m_pDiskShaderCache[2];
+
+	SHWShaderCache(string name) noexcept : m_Name(name) {}
+
+	SDiskShaderCache* AcquireDiskCache(cacheSource src)
+	{
+		auto &cache = m_pDiskShaderCache[static_cast<int>(src)];
+		if (cache)
+			return cache.get();
+
+		return (cache = stl::make_unique<SDiskShaderCache>(m_Name.c_str(), src)).get();
+	}
+
+	const string& GetName() const { return m_Name; }
+	virtual void GetMemoryUsage(ICrySizer* pSizer) const override;
+	void Reset()
+	{
+		m_shaders.clear();
+		m_pDiskShaderCache[0] = nullptr;
+		m_pDiskShaderCache[1] = nullptr;
+	}
+};
+
 class CHWShader : public CBaseResource
 {
-	static CCryNameTSCRC s_sClassNameVS;
-	static CCryNameTSCRC s_sClassNamePS;
-
 public:
 	EHWShaderClass            m_eSHClass;
 	//EHWSProfile m_eHWProfile;
-	SShaderCache*             m_pGlobalCache;
-
-	static struct SD3DShader* s_pCurPS;
-	static struct SD3DShader* s_pCurVS;
-	static struct SD3DShader* s_pCurGS;
-	static struct SD3DShader* s_pCurDS;
-	static struct SD3DShader* s_pCurHS;
-	static struct SD3DShader* s_pCurCS;
 
 	static class CHWShader* s_pCurHWVS;
 	static char *s_GS_MultiRes_NV;
@@ -727,6 +774,10 @@ public:
 	uint32                    m_CRC32;
 	uint32                    m_dwShaderType;
 
+protected:
+	std::string               m_CachedTokens;
+	SHWShaderCache*           m_pCache = nullptr;
+
 public:
 	CHWShader()
 	{
@@ -740,13 +791,30 @@ public:
 		m_nMaskGenFX = 0;
 		m_nMaskSetFX = 0;
 		m_eSHClass = eHWSC_Vertex;
-		m_pGlobalCache = NULL;
 	}
-	virtual ~CHWShader() {}
+	~CHWShader() noexcept;
+
+	void InvalidateCache(cacheSource src) { m_pCache->m_pDiskShaderCache[static_cast<int>(src)] = nullptr; }
+	void InvalidateCaches()
+	{
+		m_pCache->Reset();
+	}
+	SDiskShaderCache* QueryDiskCache(cacheSource src) const
+	{
+		if (m_pCache->m_pDiskShaderCache[static_cast<int>(src)] && m_pCache->m_pDiskShaderCache[static_cast<int>(src)]->m_pRes)
+			return m_pCache->m_pDiskShaderCache[static_cast<int>(src)].get();
+		return nullptr;
+	}
+	SDiskShaderCache* AcquireDiskCache(cacheSource src) { return m_pCache->AcquireDiskCache(src); }
+	SHWShaderCache::shaderCache& GetDevCache() { return m_pCache->m_shaders; }
+	const SHWShaderCache::shaderCache& GetDevCache() const { return m_pCache->m_shaders; }
 
 	//EHWSProfile mfGetHWProfile(uint32 nFlags);
 
-	static CHWShader*  mfForName(const char* name, const char* nameSource, uint32 CRC32, const char* szEntryFunc, EHWShaderClass eClass, TArray<uint32>& SHData, FXShaderToken* pTable, uint32 dwType, CShader* pFX, uint64 nMaskGen = 0, uint64 nMaskGenFX = 0);
+	static CCryNameTSCRC mfGetClassName(EHWShaderClass eClass);
+	static CCryNameTSCRC mfGetCacheClassName(EHWShaderClass eClass);
+
+	static CHWShader*  mfForName(const char* name, const char* nameSource, uint32 CRC32, const char* szEntryFunc, EHWShaderClass eClass, const TArray<uint32>& SHData, const FXShaderToken& Table, uint32 dwType, CShader* pFX, uint64 nMaskGen = 0, uint64 nMaskGenFX = 0);
 
 	static void        mfReloadScript(const char* szPath, const char* szName, int nFlags, uint64 nMaskGen);
 	static void        mfFlushPendedShadersWait(int nMaxAllowed);
@@ -756,21 +824,23 @@ public:
 	}
 	virtual int         Size() = 0;
 	virtual void        GetMemoryUsage(ICrySizer* Sizer) const = 0;
-	virtual void        mfReset(uint32 CRC32) {}
-	virtual bool        mfSetV(int nFlags = 0) = 0;
-	virtual bool        mfAddEmptyCombination(CShader* pSH, uint64 nRT, uint64 nGL, uint32 nLT) = 0;
+	virtual void        mfReset() = 0;
+
+	virtual bool        mfAddEmptyCombination(uint64 nRT, uint64 nGL, uint32 nLT, const SCacheCombination& cmbSaved) = 0;
 	virtual bool        mfStoreEmptyCombination(SEmptyCombination& Comb) = 0;
 	virtual const char* mfGetCurScript() { return NULL; }
 	virtual const char* mfGetEntryName() = 0;
 	virtual void        mfUpdatePreprocessFlags(SShaderTechnique* pTech) = 0;
 	virtual bool        mfFlushCacheFile() = 0;
-	virtual bool        mfPrecache(SShaderCombination& cmb, bool bForce, bool bFallback, CShader* pSH, CShaderResources* pRes) = 0;
 
-	virtual bool        Export(SShaderSerializeContext& SC) = 0;
+	// Used to precache shader combination during shader cache generation.
+	virtual bool        PrecacheShader(CShader* pSH, const SShaderCombIdent &cacheIdent,uint32 nFlags) = 0;
+
+	virtual bool        Export(CShader *pSH, SShaderSerializeContext& SC) = 0;
 	static CHWShader*   Import(SShaderSerializeContext& SC, int nOffs, uint32 CRC32, CShader* pSH);
 
 	// Vertex shader specific functions
-	virtual EVertexFormat mfVertexFormat(bool& bUseTangents, bool& bUseLM, bool& bUseHWSkin) = 0;
+	virtual InputLayoutHandle mfVertexFormat(bool& bUseTangents, bool& bUseLM, bool& bUseHWSkin) = 0;
 
 	virtual const char*   mfGetActivatedCombinations(bool bForLevel) = 0;
 
@@ -779,33 +849,17 @@ public:
 	static EHWShaderClass mfStringProfile(const char* profile);
 	static EHWShaderClass mfStringClass(const char* szClass);
 	static void           mfGenName(uint64 GLMask, uint64 RTMask, uint32 LightMask, uint32 MDMask, uint32 MDVMask, uint64 PSS, EHWShaderClass eClass, char* dstname, int nSize, byte bType);
+	static void           mfGenMasksFromName(char* srcName, uint64& GLMask, uint64 RTMask, uint32 LightMask, uint32 MDMask, uint32 MDVMask, uint64 PSS, EHWShaderClass eClass, int nSize, byte bType);
 
 	static void           mfLazyUnload();
 	static void           mfCleanupCache();
 
-	static CCryNameTSCRC  mfGetClassName(EHWShaderClass eClass)
-	{
-		if (eClass == eHWSC_Vertex)
-			return s_sClassNameVS;
-		else
-			return s_sClassNamePS;
-	}
-
-	static const char*      GetCurrentShaderCombinations(bool bForLevel);
+	static const char*      GetCurrentShaderCombinations(bool bForLevel) threadsafe;
 
 	static byte*            mfIgnoreRemapsFromCache(int nRemaps, byte* pP);
 	static byte*            mfIgnoreBindsFromCache(int nParams, byte* pP);
-#if CRY_PLATFORM_DESKTOP
-	static bool             mfOptimiseCacheFile(SShaderCache* pCache, bool bForce, SOptimiseStats* Stats);
-#endif
-	static SShaderDevCache* mfInitDevCache(const char* name, CHWShader* pSH);
-	static SShaderCache*    mfInitCache(const char* name, CHWShader* pSH, bool bCheckValid, uint32 CRC32, bool bReadOnly, bool bAsync = false);
-	static bool             _OpenCacheFile(float fVersion, SShaderCache* pCache, CHWShader* pSH, bool bCheckValid, uint32 CRC32, int nCache, CResFile* pRF, bool bReadOnly);
-	static bool             mfOpenCacheFile(const char* szName, float fVersion, SShaderCache* pCache, CHWShader* pSH, bool bCheckValid, uint32 CRC32, bool bReadOnly);
-	static void             mfValidateTokenData(CResFile* pRF);
-	static FXShaderCacheNames m_ShaderCacheList;
-	static FXShaderCache      m_ShaderCache;
-	static FXShaderDevCache   m_ShaderDevCache;
+
+	static void             mfValidateDirEntries(CResFile* pRF);
 
 	// Import/Export
 	static bool ImportSamplers(SShaderSerializeContext& SC, struct SCHWShader* pSHW, byte*& pData, std::vector<STexSamplerRT>& Samplers);
@@ -895,8 +949,8 @@ public:
 
 	CLightStyle() : m_Color(Col_White),
 		m_vPosOffset(ZERO),
-		m_LastTime(0.0f),
 		m_TimeIncr(60.0f),
+		m_LastTime(0.0f),
 		m_bRandColor(0),
 		m_bRandIntensity(0),
 		m_bRandPosOffset(0),
@@ -966,8 +1020,8 @@ struct SShaderPass
 	CHWShader*  m_VShader;        // Pointer to the vertex shader for the current pass
 	CHWShader*  m_PShader;        // Pointer to fragment shader
 	CHWShader*  m_GShader;        // Pointer to the geometry shader for the current pass
-	CHWShader*  m_HShader;        // Pointer to the hull shader for the current pass
 	CHWShader*  m_DShader;        // Pointer to the domain shader for the current pass
+	CHWShader*  m_HShader;        // Pointer to the hull shader for the current pass
 	CHWShader*  m_CShader;        // Pointer to the compute shader for the current pass
 	SShaderPass();
 
@@ -1029,7 +1083,6 @@ private:
 #define FHF_PUBLIC              0x400
 #define FHF_NOLIGHTS            0x800
 #define FHF_POSITION_INVARIANT  0x1000
-#define FHF_RE_CLOUD            0x20000
 #define FHF_TRANSPARENT         0x40000
 #define FHF_WASZWRITE           0x80000
 #define FHF_USE_GEOMETRY_SHADER 0x100000
@@ -1149,7 +1202,8 @@ enum EShaderDrawType
 	eSHDT_Fur,
 	eSHDT_NoDraw,
 	eSHDT_CustomDraw,
-	eSHDT_Sky
+	eSHDT_Sky,
+	eSHDT_DebugHelper,
 };
 
 // General Shader structure
@@ -1159,14 +1213,14 @@ class CShader : public IShader, public CBaseResource
 public:
 	string                    m_NameFile; // } FIXME: This fields order is very important
 	string                    m_NameShader;
+	uint32                    m_NameShaderICRC;
 	EShaderDrawType           m_eSHDType; // } Check CShader::operator = in ShaderCore.cpp for more info
 
 	uint32                    m_Flags;  // Different flags EF_  (see IShader.h)
 	uint32                    m_Flags2; // Different flags EF2_ (see IShader.h)
-	uint32                    m_nMDV;   // Vertex modificator flags
-	uint32                    m_NameShaderICRC;
+	EVertexModifier           m_nMDV;   // Vertex modificator flags
 
-	EVertexFormat             m_eVertexFormat; // Base vertex format for the shader (see VertexFormats.h)
+	InputLayoutHandle         m_eVertexFormat; // Base vertex format for the shader (see VertexFormats.h)
 	ECull                     m_eCull;         // Global culling type
 
 	TArray<SShaderTechnique*> m_HWTechniques;    // Hardware techniques
@@ -1185,18 +1239,21 @@ public:
 	uint32                    m_SourceCRC32;
 	uint32                    m_CRC32;
 
+	//! Minimal known distance to the object using this shader
+	float                     m_fMinVisibleDistance;
+
 	//============================================================================
 
 	inline int mfGetID() { return CBaseResource::GetID(); }
 
 	void       mfFree();
 	CShader()
-		: m_eSHDType(eSHDT_General)
+		: m_NameShaderICRC(0)
+		, m_eSHDType(eSHDT_General)
 		, m_Flags(0)
 		, m_Flags2(0)
-		, m_nMDV(0)
-		, m_NameShaderICRC(0)
-		, m_eVertexFormat(eVF_P3F_C4B_T2F)
+		, m_nMDV(MDV_NONE)
+		, m_eVertexFormat(EDefaultInputLayouts::P3F_C4B_T2F)
 		, m_eCull((ECull) - 1)
 		, m_nMaskCB(0)
 		, m_eShaderType(eST_General)
@@ -1207,6 +1264,7 @@ public:
 		, m_nRefreshFrame(0)
 		, m_SourceCRC32(0)
 		, m_CRC32(0)
+		, m_fMinVisibleDistance(FLT_MAX)
 	{
 		memset(m_ShaderTexSlots, 0, sizeof(m_ShaderTexSlots));
 	}
@@ -1244,18 +1302,6 @@ public:
 	virtual const char* GetName()             { return m_NameShader.c_str(); }
 	virtual const char* GetName() const       { return m_NameShader.c_str(); }
 
-	// D3D Effects interface
-	bool         FXSetTechnique(const CCryNameTSCRC& Name);
-	bool         FXSetPSFloat(const CCryNameR& NameParam, const Vec4 fParams[], int nParams);
-	bool         FXSetCSFloat(const CCryNameR& NameParam, const Vec4 fParams[], int nParams);
-	bool         FXSetVSFloat(const CCryNameR& NameParam, const Vec4 fParams[], int nParams);
-	bool         FXSetGSFloat(const CCryNameR& NameParam, const Vec4 fParams[], int nParams);
-	bool         FXBegin(uint32* uiPassCount, uint32 nFlags);
-	bool         FXBeginPass(uint32 uiPass);
-	bool         FXCommit(const uint32 nFlags);
-	bool         FXEndPass();
-	bool         FXEnd();
-
 	virtual int  GetFlags() const       { return m_Flags; }
 	virtual int  GetFlags2() const      { return m_Flags2; }
 	virtual void SetFlags2(int Flags)   { m_Flags2 |= Flags; }
@@ -1290,7 +1336,7 @@ public:
 	}
 	virtual int           GetTexId();
 	virtual unsigned int  GetUsedTextureTypes(void);
-	virtual EVertexFormat GetVertexFormat(void) { return m_eVertexFormat; }
+	virtual InputLayoutHandle GetVertexFormat(void) { return m_eVertexFormat; }
 	virtual uint64        GetGenerationMask()   { return m_nMaskGenFX; }
 	virtual ECull         GetCull(void)
 	{
@@ -1315,11 +1361,7 @@ public:
 	virtual DynArrayRef<SShaderParam>& GetPublicParams();
 	virtual void                       CopyPublicParamsTo(SInputShaderResources& copyToResource);
 	virtual EShaderType                GetShaderType()        { return m_eShaderType; }
-	virtual uint32                     GetVertexModificator() { return m_nMDV; }
-
-	//=======================================================================================
-
-	bool              mfPrecache(SShaderCombination& cmb, bool bForce, CShaderResources* pRes);
+	virtual EVertexModifier            GetVertexModificator() { return m_nMDV; }
 
 	SShaderTechnique* mfFindTechnique(const CCryNameTSCRC& name)
 	{
@@ -1332,7 +1374,6 @@ public:
 		}
 		return NULL;
 	}
-	SShaderTechnique* mfGetStartTechnique(int nTechnique);
 
 	SShaderTechnique* GetTechnique(int nStartTechnique, int nRequestedTechnique, bool bSilent = false);
 
@@ -1360,11 +1401,18 @@ public:
 	{
 		return s_sClassName;
 	}
+
+	void UpdateMinVisibleDistance(float fMinDistance)
+	{
+		if (fMinDistance < m_fMinVisibleDistance)
+		{
+			m_fMinVisibleDistance = fMinDistance;
+		}
+	}
 };
 
 inline SShaderTechnique* SShaderItem::GetTechnique() const
 {
-	SShaderTechnique* pTech = NULL;
 	int nTech = m_nTechnique;
 	if (nTech < 0)
 		nTech = 0;
@@ -1380,7 +1428,3 @@ inline SShaderTechnique* SShaderItem::GetTechnique() const
 	}
 	return NULL;
 }
-
-//////////////////////////////////////////////////////////////////////////
-
-#endif

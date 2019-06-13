@@ -1,5 +1,4 @@
-// CRYENGINE Source Code File
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #define VS_NO_SKINNING_DATA
 
@@ -28,12 +27,6 @@ float Script : STANDARDSGLOBAL
 
 //////////////////////////////////////////////////////////////////////////
 // TODO: remove after old graphics pipeline is removed.
-
-// getting a warning here
-float4x4 mReflProj : PI_TexMatrix
-<
-  string 'Sampler' (ReflectionSampler)
->;
 
 // Fog parameters
 // For ocean comes from render element
@@ -245,8 +238,7 @@ half RipplesNormalsScale
 
 TextureCube envCubeTex : register(t3) = TM_Env;
 
-// TODO: remove after old graphics pipeline is removed.
-sampler2D ReflectionSampler : register(s0)
+Texture2D ReflectionSampler : register(t0)
 <
   string Script =
       "RenderOrder=PreProcess;"
@@ -261,34 +253,32 @@ sampler2D ReflectionSampler : register(s0)
       "ClearSetDepth=1;"
       "ClearTarget=Color;"
       "ClearTarget=Depth;";
->
-{
-  Texture = $RT_2D;
-  MinFilter = LINEAR;
-  MagFilter = LINEAR;
-  MipFilter = NONE;
-  AddressU = Clamp;
-  AddressV = Clamp;
-};
+>;
 
 //////////////////////////////////////////////////////////////////////////
-// Per instance constant buffer for water ocean.
+// Per draw constant buffer for water ocean.
 
 struct SWaterParams
 {
 	float4x4 mReflProj;
+
+	// ocean related parameters
 	float4   OceanParams0;
 	float4   OceanParams1;
+
 	float4   cOceanFogColorDensity;
 };
 
-cbuffer CBWater : register(b12)
+cbuffer CBWater : register(b0)
 {
 	struct
 	{
 		float4x4 mReflProj;
+
+		// ocean related parameters
 		float4   OceanParams0;
 		float4   OceanParams1;
+
 		float4   cOceanFogColorDensity;
 	} cbWater;
 };
@@ -297,17 +287,10 @@ SWaterParams GetWaterParams()
 {
 	SWaterParams params;
 
-#if %_RT_COMPUTE_SKINNING
 	params.mReflProj = cbWater.mReflProj;
 	params.OceanParams0 = cbWater.OceanParams0;
 	params.OceanParams1 = cbWater.OceanParams1;
 	params.cOceanFogColorDensity = cbWater.cOceanFogColorDensity;
-#else
-	params.mReflProj = mReflProj;
-	params.OceanParams0 = OceanParams0;
-	params.OceanParams1 = OceanParams1;
-	params.cOceanFogColorDensity = cOceanFogColorDensity;
-#endif
 
 	return params;
 }
@@ -325,7 +308,7 @@ struct a2v
 struct v2f
 {
 #if !%WATER_TESSELLATION_DX11 || %_RT_NO_TESSELLATION
-	float4 Position		: POSITION; 
+	float4 Position		: SV_POSITION; 
 #endif
 
 	half4  vView  	  : TEXCOORDN;
@@ -354,7 +337,7 @@ struct v2f
 
 struct v2f_hs
 {
-	float4 Position		: POSITION;
+	float4 Position		: SV_POSITION;
 
 	half4  vView  	  : TEXCOORDN;
 
@@ -453,8 +436,7 @@ void GetGridVertexPos( inout float4 vPos )
 		// Set a 45 degree rotation to the grid
 		vPos.xy = 0.707f * vPos.xy + 0.707f * float2( - vPos.y, vPos.x);
 
-		float3 cameraRightVector = cross(CV_CameraUpVector.xyz, CV_CameraFrontVector.xyz);
-		float3x3 mCam = float3x3( cameraRightVector.xyz, CV_CameraUpVector.xyz, CV_CameraFrontVector.xyz);
+		float3x3 mCam = float3x3( CV_CameraRightVector.xyz, CV_CameraUpVector.xyz, CV_CameraFrontVector.xyz);
 
 		// select better projection axis if front angle too steep
 		const float fFrontThreshold = 0.75f;
@@ -570,8 +552,8 @@ void ApplyVertexDisplacement( inout float4 vPos, inout v2f OUT)
 	float4 ripplesTC = GetWaterRipplesUvs( vPos, perPassParams );
 
 	#if !%_RT_QUALITY && %_RT_QUALITY1
-		vtxDispl = WaterDynRipplesTex.SampleLevel(ssMaterialTrilinear, ripplesTC.xy, 0.0f);
-		vPos.z -= ( vtxDispl.z ) * ripplesTC.w;
+		float fRipplesDisp = WaterDynRipplesTex.SampleLevel(ssMaterialTrilinear, ripplesTC.xy, 0.0f).z;
+		vPos.z -= fRipplesDisp * ripplesTC.w;
 	#endif
 
 #if !%_RT_SAMPLE3
@@ -663,11 +645,11 @@ v2f WaterVS(a2v IN)
 
 	// Output texture coordinates for water - don't touch texture scales
 	OUT.baseTC.xywz = vTex.xyxy * float4(1, 1, 2, 2) * Tilling + vTranslation.xyxy * float4(1, 1, 2, 2);
-
+	float localDetailTiling =  DetailTilling;
 #if %WATER_TESSELLATION_DX11 && !%_RT_NO_TESSELLATION
-	DetailTilling = max(2, DetailTilling);
+	localDetailTiling = max(2, DetailTilling);
 #endif
-	OUT.baseTC.wz *= DetailTilling;
+	OUT.baseTC.wz *= localDetailTiling;
 #endif
   
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -690,12 +672,6 @@ v2f WaterVS(a2v IN)
 
 HS_CONSTANT_DATA_OUTPUT WaterConstantsHS(InputPatch<v2f, 3> p, uint PatchID : SV_PrimitiveID )
 {
-#if (D3DX_SDK_VERSION == 43)
-	// Workaround for the optimization rule problem of DXSDKJune10's HLSL Compiler (9.29.952.3111)
-	// See: http://support.microsoft.com/kb/2448404	
-	#pragma ruledisable 0x0802405f  ;
-#endif
-
 	HS_CONSTANT_DATA_OUTPUT OUT = (HS_CONSTANT_DATA_OUTPUT)0;
 
 	// map inputs
@@ -855,8 +831,8 @@ v2f_hs WaterDS(HS_CONSTANT_DATA_OUTPUT IN,float3 BarycentricCoords : SV_DomainLo
 #if %_RT_SAMPLE4
 	SPerPassWaterParams perPassParams = GetPerPassWaterParams();
 	float4 ripplesTC = GetWaterRipplesUvs( vWorldPos, perPassParams );
-	float fRipplesDisp = 0.5f * GetTexture2DLod(WaterDynRipplesTex, ssMaterialTrilinearClamp, float4(ripplesTC.xy, 0.0f, 0.0f)).z;
-	vtxDispl -= fRipplesDisp * ripplesTC.w ;
+	float fRipplesDisp = GetTexture2DLod(WaterDynRipplesTex, ssMaterialTrilinearClamp, float4(ripplesTC.xy, 0.0f, 0.0f)).z;
+	vtxDispl -= fRipplesDisp * ripplesTC.w;
 
 #if !%_RT_SAMPLE3
 	OUT.ripplesTC = ripplesTC;
@@ -911,7 +887,7 @@ half3 BumpGen( in v2f_hs IN, float2 vParalaxOffset )
 	
 #if %_RT_SAMPLE4
 	// dynamic ripples
-	half2 cRipples = EXPAND(GetTexture2D(WaterDynRipplesTex, ssMaterialTrilinearClamp, IN.ripplesTC.xy).xy);
+	half2 cRipples = GetTexture2D(WaterDynRipplesTex, ssMaterialTrilinearClamp, IN.ripplesTC.xy).xy;
 	bumpNormal.xy += cRipples * IN.ripplesTC.w;
 #endif
 
@@ -977,7 +953,7 @@ float2 GetParalaxOffset(in v2f_hs IN, half3 vView)
 #if %_RT_SAMPLE4
 	// Finally add water ripples to paralax offset
 	half fSimSize = WATER_RIPPLES_SIM_GRID_SIZE;
-	half4 cRipples = EXPAND(GetTexture2D(WaterDynRipplesTex, ssMaterialTrilinearClamp, IN.ripplesTC.xy + vParalax / fSimSize));
+	half4 cRipples = GetTexture2D(WaterDynRipplesTex, ssMaterialTrilinearClamp, IN.ripplesTC.xy + vParalax / fSimSize);
 
 	cRipples.xy = lGradientScale * cRipples.xy;
 	cRipples.z  = lHeightScale   * cRipples.z;
@@ -1070,19 +1046,11 @@ pixout WaterPS(v2f_hs IN)
 #if %ENVIRONMENT_MAP
 	half3 lerpedNormal = lerp(half3(0,0,1), vNormal, ReflectionBumpScale);
 	half3 R = reflect(-vView, lerpedNormal);
-	half4 cReflCM = GetEnvironmentCMap(envCubeTex, R, fGloss);
+	half4 cReflCM = GetEnvironmentCMap(envCubeTex, ssMaterialTrilinearClamp, R, fGloss);
 	half3 cSpecularAcc = DecodeHDRCubemap(cReflCM) * ReflectionScale;
-
 #else
-
 	half2 reflNewst = (IN.envTC.xy / IN.envTC.w) + vNormal.xy * ReflectionBumpScale;
-#if %_RT_COMPUTE_SKINNING
 	half3 cSpecularAcc = oceanReflectionTex.Sample(ssMaterialTrilinearClamp, reflNewst.xy) / PS_HDR_RANGE_ADAPT_MAX;
-#else
-	// TODO: remove after old graphics pipeline is removed.
-	half3 cSpecularAcc = tex2D(ReflectionSampler, reflNewst) / PS_HDR_RANGE_ADAPT_MAX;
-#endif
-
 #endif
 
 
@@ -1181,7 +1149,7 @@ pixout WaterPS(v2f_hs IN)
 	half EdotL = saturate( dot( -CV_SunLightDir.xyz, vView ) );
 	float waveHeightFactor = IN.vPosWS.w * 0.5 + saturate(fNdotE) * (1 - saturate( vNormal.z ));
 #if %ENVIRONMENT_MAP
-	refractColor += surfaceSSSColor * GetEnvironmentCMap( envCubeTex, -vView.xyz, clamp( waveHeightFactor, 0.2, 0.7 ) ) * waveHeightFactor * fA;
+	refractColor += surfaceSSSColor * GetEnvironmentCMap( envCubeTex, ssMaterialTrilinearClamp, -vView.xyz, clamp( waveHeightFactor, 0.2, 0.7 ) ) * waveHeightFactor * fA;
 #endif
 	refractColor += surfaceSSSColor * (EdotL * EdotL) * (params.cOceanFogColorDensity.xyz * CV_SunColor.xyz) * waveHeightFactor * fA;
 #endif

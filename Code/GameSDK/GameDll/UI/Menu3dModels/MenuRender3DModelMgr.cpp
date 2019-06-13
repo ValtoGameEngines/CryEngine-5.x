@@ -1,9 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // Rendering of 3d models in menus.
 
 // Includes
 #include "StdAfx.h"
+#include <CryRenderer/IRenderer.h>
 #include "MenuRender3DModelMgr.h"
 #include "FrontEndModelCache.h"
 #include "Graphics/2DRenderUtils.h"
@@ -11,6 +12,7 @@
 #include <CryString/StringUtils.h>
 #include "GameCVars.h"
 #include "UI/UIManager.h"
+#include <CryAnimation/IAttachment.h>
 
 // Defines
 #if MP_FE_CACHE_LOG_FILE_ACCESSES
@@ -723,10 +725,6 @@ bool CMenuRender3DModelMgr::HasEntityStreamedIn(SRenderSingleEntityData& rd, IEn
 void CMenuRender3DModelMgr::PreCacheMaterial(SRenderSingleEntityData& rd, IEntity* pEntity,bool bIsCharacter) 
 {
 	// Precache material -> This forces the material to have a high streaming priority
-	const float distance = 0.0f;
-	IRenderMesh* pRenderMesh = NULL;
-	const bool bFullUpdate = true;
-	const bool bDrawNear = true;
 
 	IEntityRender* pIEntityRender = pEntity->GetRenderInterface();
 	if (pIEntityRender && pIEntityRender->GetRenderNode())
@@ -889,7 +887,6 @@ void CMenuRender3DModelMgr::UpdateModel(TAddedModelIndex modelIndex,const char* 
 					const int slotIndex = 0;
 					float animNormalizedTime = 0.0f;
 					const bool bHasNewModel = (pFilename && pFilename[0]) ? true : false;
-					const bool bIsOldModelCharacter = (renderEntityData.flags & eRSE_IsCharacter) ? true : false;
 
 					// If previous model wasn't streamed in, then it can't rely on previous model pos
 					if(!(renderEntityData.flags & eRSE_StreamedIn) && !(renderEntityData.flags & eRSE_Attached))
@@ -1383,7 +1380,7 @@ void CMenuRender3DModelMgr::UpdateLight(int lightIndex,float frameTime)
 
 		if(lightData.pLightSource)
 		{
-			CDLight menuLight;
+			SRenderLight menuLight;
 
 			const Vec3 lightPos = lightData.pos;
 			Vec3 lightDataColor = lightData.color;
@@ -1394,12 +1391,11 @@ void CMenuRender3DModelMgr::UpdateLight(int lightIndex,float frameTime)
 
 			ColorF menuLightColor(lightDataColor,0.0);
 
-			menuLight.SetPosition( lightPos );
+			menuLight.m_Flags |= DLF_POINT|DLF_POST_3D_RENDERER;
+			menuLight.SetPosition(lightPos);
 			menuLight.SetLightColor(menuLightColor);
 			menuLight.SetSpecularMult(lightData.specular);
-
-			menuLight.m_fRadius = lightData.radius;
-			menuLight.m_Flags |= DLF_POINT|DLF_POST_3D_RENDERER;
+			menuLight.SetRadius(lightData.radius);
 
 			char uniqueLightName[16];
 			cry_sprintf(uniqueLightName,sizeof(uniqueLightName),"Menu light %d",lightIndex);
@@ -1554,7 +1550,7 @@ void CMenuRender3DModelMgr::UpdateEntities()
 		{
 			{
 				// Set silhouettes
-				const Vec3& silhouetteColor = renderEntityData.silhouetteColor;
+				//const Vec3& silhouetteColor = renderEntityData.silhouetteColor;
 				//pIEntityRender->SetHUDSilhouettesParams(silhouetteColor.x,silhouetteColor.y,silhouetteColor.z,0.0f);
 			
 				// Update alpha
@@ -1608,7 +1604,6 @@ void CMenuRender3DModelMgr::OnPreRender()
 		UpdateStreaming();
 		UpdateEntities();
 
-		const bool bForceValue = true;
 		gEnv->p3DEngine->SetPostEffectParam("Post3DRenderer_EdgeFadeScale", m_sceneSettings.flashEdgeFadeScale, true);
 	}
 }//-------------------------------------------------------------------------------------------------
@@ -1720,9 +1715,9 @@ void CMenuRender3DModelMgr::DebugDraw()
 			else
 				tex =	gEnv->pRenderer->EF_GetTextureByName("$BackBuffer");
 
-			gEnv->pRenderer->Draw2dImage(0, 0, 800*scale, 600*scale, -1, 0.0f,0.0f,1.0f,1.0f,	0.f,
+			IRenderAuxImage::Draw2dImage(0, 0, 800*scale, 600*scale, -1, 0.0f,0.0f,1.0f,1.0f,	0.f,
 				0.0f, 0.0f, 0.0f, 1.0f, 0.f);
-			gEnv->pRenderer->Draw2dImage(0.0f,0.0f, 800*scale, 600*scale, tex->GetTextureID(), 0.0f, 1.0f, 1.0f, 0.0f);
+			IRenderAuxImage::Draw2dImage(0.0f,0.0f, 800*scale, 600*scale, tex->GetTextureID(), 0.0f, 1.0f, 1.0f, 0.0f);
 
 			pAuxRenderer->DrawLine(Vec3(0,0,0), ColorB(255,255,255),Vec3(0,1*scale,0), ColorB(255,255,255), 1.0f);
 			pAuxRenderer->DrawLine(Vec3(0,0,0), ColorB(255,255,255),Vec3(1*scale,0,0), ColorB(255,255,255), 1.0f);

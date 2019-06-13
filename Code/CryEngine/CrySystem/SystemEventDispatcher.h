@@ -1,10 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __SYSTEMEVENTDISPATCHER_H__
 #define __SYSTEMEVENTDISPATCHER_H__
 
 #include <CrySystem/ISystem.h>
 #include <CryCore/Containers/CryListenerSet.h>
+#include <CryThreading/MultiThread_Containers.h>
 
 class CSystemEventDispatcher : public ISystemEventDispatcher
 {
@@ -13,7 +14,7 @@ public:
 	virtual ~CSystemEventDispatcher(){}
 
 	// ISystemEventDispatcher
-	virtual bool RegisterListener(ISystemEventListener* pListener);
+	virtual bool RegisterListener(ISystemEventListener* pListener, const char* szName);
 	virtual bool RemoveListener(ISystemEventListener* pListener);
 
 	virtual void OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_PTR lparam, bool force_queue = false);
@@ -21,8 +22,6 @@ public:
 
 	// ~ISystemEventDispatcher
 private:
-	void OnSystemEventAnyThread(ESystemEvent event, UINT_PTR wparam, UINT_PTR lparam);
-
 	typedef CListenerSet<ISystemEventListener*> TSystemEventListeners;
 	TSystemEventListeners m_listeners;
 

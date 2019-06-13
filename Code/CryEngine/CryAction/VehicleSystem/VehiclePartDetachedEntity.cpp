@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -20,7 +20,6 @@
 #include <CryAnimation/ICryAnimation.h>
 #include <IActorSystem.h>
 #include <CryNetwork/ISerialize.h>
-#include <CryAISystem/IAgent.h>
 
 #include "CryAction.h"
 #include "Vehicle.h"
@@ -113,12 +112,17 @@ void CVehiclePartDetachedEntity::Update(SEntityUpdateContext& ctx, int slot)
 }
 
 //------------------------------------------------------------------------
-void CVehiclePartDetachedEntity::ProcessEvent(SEntityEvent& event)
+void CVehiclePartDetachedEntity::ProcessEvent(const SEntityEvent& event)
 {
 	if (event.event == ENTITY_EVENT_RESET)
 	{
 		gEnv->pEntitySystem->RemoveEntity(GetEntity()->GetId());
 	}
+}
+
+Cry::Entity::EventFlags CVehiclePartDetachedEntity::GetEventMask() const
+{
+	return ENTITY_EVENT_RESET;
 }
 
 //------------------------------------------------------------------------

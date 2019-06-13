@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "PlayerProfile.h"
@@ -291,7 +291,7 @@ bool CPlayerProfile::SerializeXML(CPlayerProfileManager::IProfileXMLSerializer* 
 			int requiredVersion = 0;
 			if (IsDefault() == false && pDefaultProfile)
 				requiredVersion = pDefaultProfile->m_attributesVersion;
-			bool ok = LoadAttributes(attributesNode, requiredVersion);
+			LoadAttributes(attributesNode, requiredVersion);
 		}
 		else
 		{

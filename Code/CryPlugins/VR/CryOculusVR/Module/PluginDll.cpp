@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "PluginDll.h"
@@ -8,6 +8,8 @@
 
 // Included only once per DLL module.
 #include <CryCore/Platform/platform_impl.inl>
+#include <CrySystem/VR/IHMDManager.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 namespace CryVR
 {
@@ -20,12 +22,9 @@ namespace Oculus {
 	int CPlugin_OculusVR::s_hmd_projection = 0;
 	int CPlugin_OculusVR::s_hmd_perf_hud = 0;
 	float CPlugin_OculusVR::s_hmd_projection_screen_dist = 1.0f;
-	int CPlugin_OculusVR::s_hmd_post_inject_camera = 0;
 
 CPlugin_OculusVR::~CPlugin_OculusVR()
 {
-	CryVR::Oculus::Resources::Shutdown();
-
 	if (IConsole* const pConsole = gEnv->pConsole)
 	{
 		pConsole->UnregisterVariable("hmd_low_persistence");
@@ -42,7 +41,7 @@ CPlugin_OculusVR::~CPlugin_OculusVR()
 
 bool CPlugin_OculusVR::Initialize(SSystemGlobalEnvironment& env, const SSystemInitParams& initParams)
 {
-	GetISystem()->GetISystemEventDispatcher()->RegisterListener(this);
+	GetISystem()->GetISystemEventDispatcher()->RegisterListener(this, "CPlugin_OculusVR");
 
 	REGISTER_CVAR2("hmd_low_persistence", &s_hmd_low_persistence, s_hmd_low_persistence,
 		VF_NULL, "Enables low persistence mode.");
@@ -76,12 +75,6 @@ bool CPlugin_OculusVR::Initialize(SSystemGlobalEnvironment& env, const SSystemIn
 		"5 - Version Info\n"
 	);
 
-	REGISTER_CVAR2("hmd_post_inject_camera", &s_hmd_post_inject_camera, s_hmd_post_inject_camera,
-		VF_NULL, "Reduce latency by injecting updated updated camera at render thread as late as possible before submitting draw calls to GPU\n"
-		"0 - Disable\n"
-		"1 - Enable\n"
-	);
-
 	return true;
 }
 
@@ -98,6 +91,14 @@ void CPlugin_OculusVR::OnSystemEvent(ESystemEvent event, UINT_PTR wparam, UINT_P
 			{
 				gEnv->pSystem->GetHmdManager()->RegisterDevice(GetName(), *pDevice);
 			}
+		}
+		break;
+	case ESYSTEM_EVENT_FAST_SHUTDOWN:
+	case ESYSTEM_EVENT_FULL_SHUTDOWN:
+		{
+			gEnv->pSystem->GetHmdManager()->UnregisterDevice(GetName());
+
+			CryVR::Oculus::Resources::Shutdown();
 		}
 		break;
 	}

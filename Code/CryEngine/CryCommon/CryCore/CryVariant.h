@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -10,7 +10,7 @@
 template<class...>
 class CryVariant;
 
-namespace detail
+namespace cry_variant
 {
 template<class, class...>
 struct get_index;
@@ -59,7 +59,7 @@ constexpr size_t variant_npos = -1;
 template<class T, class... Types>
 bool holds_alternative(const CryVariant<Types...>& variant)
 {
-	return variant.index() == detail::get_index<typename std::remove_cv<T>::type, CryVariant<Types...>>::value;
+	return variant.index() == cry_variant::get_index<typename std::remove_cv<T>::type, CryVariant<Types...>>::value;
 }
 
 template<class T, class... Types>
@@ -79,7 +79,7 @@ const T& get(const CryVariant<Types...>& variant)
 template<size_t I, class... Types>
 typename stl::variant_alternative<I, CryVariant<Types...>>::type& get(CryVariant<Types...>& variant)
 {
-	static_assert(I < variant_size<CryVariant<Types...>>::value, "I is to big to be part of Types...");
+	static_assert(I < variant_size<CryVariant<Types...>>::value, "I is too big to be part of Types...");
 	return get<typename stl::variant_alternative<I, CryVariant<Types...>>::type>(variant);
 }
 
@@ -194,7 +194,7 @@ public:
 		helper_type::destroy_value(*this);
 
 		new (&m_data) type(std::forward<Args>(args)...);
-		m_index = detail::get_index<type, CryVariant>::value;
+		m_index = cry_variant::get_index<type, CryVariant>::value;
 	}
 
 	template<size_t I, class... Args>

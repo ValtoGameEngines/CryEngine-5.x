@@ -1,19 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-// -------------------------------------------------------------------------
-//  File name:   EntityCVars.h
-//  Version:     v1.00
-//  Created:     18/5/2004 by Timur.
-//  Compilers:   Visual Studio.NET 2003
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
-
-#ifndef __EntityCVars_h__
-#define __EntityCVars_h__
 #pragma once
+#include <CrySystem/IConsole.h>
+
+class CEntity;
+struct ICVar;
+struct IConsoleCmdArgs;
 
 //////////////////////////////////////////////////////////////////////////
 // Console variables local to EntitySystem.
@@ -28,79 +20,75 @@ struct SEntityWithCharacterInstanceAutoComplete : public IConsoleArgumentAutoCom
 
 struct CVar
 {
-	static ICVar* pDebug;
-	static ICVar* pCharacterIK;
-	static ICVar* pProfileEntities;
-	//	static ICVar *pUpdateInvisibleCharacter;
-	//	static ICVar *pUpdateBonePositions;
-	static ICVar*   pUpdateScript;
-	static ICVar*   pUpdateTimer;
-	static ICVar*   pUpdateCamera;
-	static ICVar*   pUpdatePhysics;
-	static ICVar*   pUpdateAI;
-	static ICVar*   pUpdateEntities;
-	static ICVar*   pUpdateCollision;
-	static ICVar*   pUpdateCollisionScript;
-	static ICVar*   pUpdateContainer;
-	static ICVar*   pUpdateCoocooEgg;
-	static ICVar*   pPiercingCamera;
-	static ICVar*   pVisCheckForUpdate;
-	static ICVar*   pEntityBBoxes;
-	static ICVar*   pEntityHelpers;
-	static ICVar*   pMinImpulseVel;
-	static ICVar*   pImpulseScale;
-	static ICVar*   pMaxImpulseAdjMass;
-	static ICVar*   pDebrisLifetimeScale;
-	static ICVar*   pSplashThreshold;
-	static ICVar*   pSplashTimeout;
-	static ICVar*   pHitCharacters;
-	static ICVar*   pHitDeadBodies;
-	static ICVar*   pCharZOffsetSpeed;
-	static ICVar*   pLogCollisions;
-	static ICVar*   pNotSeenTimeout;
-	static ICVar*   pDebugNotSeenTimeout;
-	static ICVar*   pDrawAreas;
-	static ICVar*   pDrawAreaGrid;
-	static ICVar*   pDrawAreaDebug;
-	static ICVar*   pDrawAudioProxyZRay;
-	static ICVar*   pMotionBlur;
-	static ICVar*   pSysSpecLight;
+	enum class EEntityDebugDrawType
+	{
+		Off,
+		BoundingBoxWithName,
+		BoundingBoxWithPositionPhysics,
+		BoundingBoxWithEntityId,
+		Hierarchies,
+		Links,
+		Components
+	};
 
-	static Matrix34 audioListenerOffset;
+	// General entity CVars
+	static ICVar*      pUpdateScript;
+	static ICVar*      pUpdateEntities;
+	static ICVar*      pEntityBBoxes;
 
-	static int      es_UsePhysVisibilityChecks;
-	static float    es_MaxPhysDist;
-	static float    es_MaxPhysDistInvisible;
-	static float    es_MaxPhysDistCloth;
-	static float    es_FarPhysTimeout;
-	static int      es_SortUpdatesByClass;
+	static ICVar*      pFlowgraphComponents;
 
-	// debug only
-	static ICVar*      pEnableFullScriptSave;
+	static EEntityDebugDrawType es_EntityDebugDraw;
 
-	static int         es_DebugTimers;
 	static int         es_DebugFindEntity;
-	static int         es_DebugEvents;
 	static int         es_debugEntityLifetime;
-	static int         es_DisableTriggers;
-	static int         es_DrawProximityTriggers;
-
 	static int         es_DebugEntityUsage;
 	static const char* es_DebugEntityUsageFilter;
+	static int         es_DebugEntityUsageSortMode;
+	static int         es_debugDrawEntityIDs;
 
-	// Entity pool usage
-	static int    es_LayerSaveLoadSerialization;
-	static int    es_SaveLoadUseLUANoSaveFlag;
-	static int    es_LayerDebugInfo;
+	static int         es_LayerSaveLoadSerialization;
+	static int         es_SaveLoadUseLUANoSaveFlag;
+	static int         es_LayerDebugInfo;
 
-	static float  es_EntityUpdatePosDelta;
+	static int         es_profileComponentUpdates;
 
-	static int    es_debugDrawEntityIDs;
+	// Physics CVars
+	static ICVar* pMinImpulseVel;
+	static ICVar* pImpulseScale;
+	static ICVar* pMaxImpulseAdjMass;
+	static ICVar* pDebrisLifetimeScale;
+	static ICVar* pHitCharacters;
+	static ICVar* pHitDeadBodies;
+	static ICVar* pLogCollisions;
+
+	static int    es_UsePhysVisibilityChecks;
+
+	static float  es_MaxPhysDist;
+	static float  es_MaxPhysDistInvisible;
+	static float  es_MaxPhysDistCloth;
+	static float  es_FarPhysTimeout;
 
 	static int    es_MaxJointFx;
 
+	// Area manager CVars
+	static ICVar* pDrawAreas;
+	static ICVar* pDrawAreaGrid;
+	static ICVar* pDrawAreaGridCells;
+	static ICVar* pDrawAreaDebug;
+	static ICVar* pLogAreaDebug;
+	static ICVar* pUpdateAreas;
+
+	static float  es_EntityUpdatePosDelta;
+
+	static int    es_UseProximityTriggerSystem;
+
+	// Script CVars
+	static ICVar* pEnableFullScriptSave;
+	static ICVar* pSysSpecLight;
+
 	// Initialize console variables.
-	static void Init(struct IConsole* pConsole);
+	static void Init();
 
 	// Dump Entities
 	static void DumpEntities(IConsoleCmdArgs*);
@@ -110,9 +98,12 @@ struct CVar
 	static void CompileAreaGrid(IConsoleCmdArgs*);
 
 	static void EnableDebugAnimText(IConsoleCmdArgs* args);
-	static void SetDebugAnimText(IEntity* entity, const bool enable);
+	static void SetDebugAnimText(CEntity* entity, const bool enable);
 
-	static void SetAudioListenerOffsets(IConsoleCmdArgs* pArgs);
+	// Console commands to enable/disable layers
+	static void ConsoleCommandToggleLayer(IConsoleCmdArgs* pArgs);
+
+	// Legacy CVar mapping
+	static void MapEntityBBoxesCVar(ICVar* pBBoxCVar);
+	static void MapDrawEntityIDCVar(ICVar* pIDCVar);
 };
-
-#endif // __EntityCVars_h__

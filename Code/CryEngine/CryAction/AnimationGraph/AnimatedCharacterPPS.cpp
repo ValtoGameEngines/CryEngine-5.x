@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include <CryExtension/CryCreateClassInstance.h>
@@ -7,6 +7,8 @@
 #include "AnimationGraphCVars.h"
 #include "PersistantDebug.h"
 #include <CryAnimation/IFacialAnimation.h>
+#include <CryRenderer/IRenderAuxGeom.h>
+#include <CryPhysics/IPhysics.h>
 #include "AnimatedCharacterEventProxies.h"
 
 #include "CryActionCVars.h"
@@ -14,7 +16,6 @@
 #include "DebugHistory.h"
 
 #include <IViewSystem.h>
-#include <CryAISystem/IAIObject.h>
 
 #include "../Animation/PoseAligner/PoseAligner.h"
 
@@ -278,8 +279,8 @@ void CAnimatedCharacter::AcquireRequestedBehaviourMovement()
 		Ang3 requestedEntityRot(m_requestedEntityMovement.q);
 		const ColorF cWhite = ColorF(1, 1, 1, 1);
 		IRenderAuxText::Draw2dLabel(350, 50, 2.0f, (float*)&cWhite, false, "Req Movement[%.2f, %.2f, %.2f | %.2f, %.2f, %.2f]",
-		                             m_requestedEntityMovement.t.x / m_curFrameTime, m_requestedEntityMovement.t.y / m_curFrameTime, m_requestedEntityMovement.t.z / m_curFrameTime,
-		                             RAD2DEG(requestedEntityRot.x), RAD2DEG(requestedEntityRot.y), RAD2DEG(requestedEntityRot.z));
+		                            m_requestedEntityMovement.t.x / m_curFrameTime, m_requestedEntityMovement.t.y / m_curFrameTime, m_requestedEntityMovement.t.z / m_curFrameTime,
+		                            RAD2DEG(requestedEntityRot.x), RAD2DEG(requestedEntityRot.y), RAD2DEG(requestedEntityRot.z));
 	}
 #endif
 
@@ -356,7 +357,7 @@ void CAnimatedCharacter::PostProcessingUpdate()
 	bool fallen = false;
 	bool isFirstPerson = false;
 	bool allowLandBob = false;
-	bool isMultiplayer = gEnv->bMultiplayer;
+
 	if (IActor* pActor = CCryAction::GetCryAction()->GetIActorSystem()->GetActor(pEntity->GetId()))
 	{
 		fallen = pActor->IsFallen();
@@ -388,7 +389,7 @@ void CAnimatedCharacter::PostProcessingUpdate()
 
 	if (!m_pPoseAligner)
 		return;
-	if (!m_pPoseAligner->Initialize(*pEntity))
+	if (!m_pPoseAligner->Initialize(*pEntity, m_pCharacter))
 		return;
 
 	float poseBlendWeight = clamp_tpl(1.0f - m_fJumpSmooth, 0.0f, 1.0f);
@@ -493,7 +494,7 @@ void CAnimatedCharacter::PostProcessingUpdate()
 
 	m_pPoseAligner->SetRootOffsetEnable(m_groundAlignmentParams.IsFlag(eGA_PoseAlignerUseRootOffset));
 	m_pPoseAligner->SetBlendWeight(poseBlendWeight);
-	m_pPoseAligner->Update(m_entLocation, (float)m_curFrameTime);
+	m_pPoseAligner->Update(m_pCharacter, m_entLocation, (float)m_curFrameTime);
 }
 
 //--------------------------------------------------------------------------------
@@ -501,10 +502,6 @@ void CAnimatedCharacter::PostProcessingUpdate()
 QuatT CAnimatedCharacter::CalculateDesiredAnimMovement() const
 {
 	ANIMCHAR_PROFILE_DETAILED;
-
-	IEntity* pEntity = GetEntity();
-	CRY_ASSERT(pEntity);
-	IEntity* pParent = pEntity->GetParent();
 
 	QuatT desiredAnimMovement(IDENTITY);
 
@@ -548,7 +545,7 @@ QuatT CAnimatedCharacter::CalculateDesiredAnimMovement() const
 		desiredAnimMovement = assetAnimMovement;
 
 		/*{
-		   IRenderAuxGeom*	pAuxGeom	= gEnv->pRenderer->GetIRenderAuxGeom();
+		   IRenderAuxGeom*	pAuxGeom	= gEnv->pAuxGeomRenderer;
 		   pAuxGeom->SetRenderFlags( e_Def3DPublicRenderflags );
 		   pAuxGeom->DrawLine( desiredAnimMovement.t,RGBA8(0x00,0xff,0x00,0x00),desiredAnimMovement.t+Vec3(0,0,+20),RGBA8(0xff,0xff,0xff,0x00) );
 		   }*/
@@ -664,7 +661,7 @@ QuatT CAnimatedCharacter::CalculateWantedEntityMovement(const QuatT& desiredAnim
 	{
 		EMovementControlMethod mcmh = GetMCMH();
 		EMovementControlMethod mcmv = GetMCMV();
-		char* szMcmH = "???";
+		const char* szMcmH = "???";
 		switch (mcmh)
 		{
 		case eMCM_Entity:
@@ -686,7 +683,7 @@ QuatT CAnimatedCharacter::CalculateWantedEntityMovement(const QuatT& desiredAnim
 			szMcmH = "ANM_HC";
 			break;
 		}
-		char* szMcmV = "???";
+		const char* szMcmV = "???";
 		switch (mcmv)
 		{
 		case eMCM_Entity:
@@ -921,16 +918,19 @@ void CAnimatedCharacter::RequestPhysicalEntityMovement(const QuatT& wantedEntMov
 			{
 				m_entLocation.q = newRotation;
 
-				pEntity->SetRotation(newRotation, ENTITY_XFORM_USER | ENTITY_XFORM_NOT_REREGISTER);
+				// don't call SetRotation() no change required since this call dirties eEA_Physics network aspect and produces unneeded spikes in network traffic
+				if (pEntity->GetRotation() != newRotation)
+				{
+					pEntity->SetRotation(newRotation, { ENTITY_XFORM_USER, ENTITY_XFORM_NOT_REREGISTER });
+				}
 			}
 		}
 
 		// Send expected location to AI so pathfollowing which runs in parallel with physics becomes more accurate
 		{
-			IAIObject* pAIObject = GetEntity()->GetAI();
-			if (pAIObject)
+			if (IActor* pActor = CCryAction::GetCryAction()->GetIActorSystem()->GetActor(pEntity->GetId()))
 			{
-				pAIObject->SetExpectedPhysicsPos(m_entLocation.t + m_expectedEntMovement);
+				pActor->SetExpectedPhysicsPos(m_entLocation.t + m_expectedEntMovement);
 			}
 		}
 	}
@@ -1020,7 +1020,6 @@ void CAnimatedCharacter::UpdatePhysicalColliderMode()
 	}
 
 	m_forcedRefreshColliderMode = false;
-	EColliderMode prevColliderMode = m_colliderMode;
 	m_colliderMode = newColliderMode;
 
 	CRY_ASSERT(m_colliderMode != eColliderMode_Undefined);
@@ -1308,8 +1307,6 @@ void CAnimatedCharacter::GetCurrentEntityLocation()
 	m_actualEntSpeed = speed;
 
 	const float speed2D = Vec2(velocity).GetLength();
-
-	const float prevSpeed2D = m_actualEntSpeedHorizontal;
 	m_actualEntSpeedHorizontal = speed2D;
 
 	m_actualEntMovementDirHorizontal.x = (float)__fsel(-(speed2D - FLT_MIN), 0.0f, velocity.x / (speed2D + FLT_MIN));// approximates: (speed2D > FLT_MIN) ? (velocity2D / speed2D) : Vec2Constants<float>::fVec2_Zero;

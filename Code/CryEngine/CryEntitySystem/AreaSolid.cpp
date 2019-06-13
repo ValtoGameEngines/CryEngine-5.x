@@ -1,13 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   AreaSolid.cpp
-//  Version:     v1.00
-//  Created:     21/Nov/2011 by Jaesik.
-//  Compilers:   Visual Studio 2010
-//  Description:
-//	The AreaSolid has most general functions for an area object.
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "AreaSolid.h"
@@ -25,22 +16,17 @@ public:
 		m_numberOfPoints = numberOfVertices;
 		m_Type = segmentType;
 
-		m_Points = new Vec2[m_numberOfPoints];
+		m_Points.resize(m_numberOfPoints);
 		for (int i = 0; i < m_numberOfPoints; ++i)
 			m_Points[i] = plane.WorldToPlane(verticesOfConvexHull[i]);
 
-		m_Lines = new AreaUtil::CLine[m_numberOfPoints];
+		m_Lines.resize(m_numberOfPoints);
 		for (int i = 0; i < m_numberOfPoints; ++i)
 		{
 			int nexti = (i + 1) % m_numberOfPoints;
 			PREFAST_ASSUME(nexti >= 0 && nexti < m_numberOfPoints);
 			m_Lines[i] = AreaUtil::CLine(m_Points[i], m_Points[nexti]);
 		}
-	}
-	~CSegment()
-	{
-		delete[] m_Points;
-		delete[] m_Lines;
 	}
 	bool IsValid() const
 	{
@@ -113,7 +99,7 @@ public:
 
 	void Draw(const AreaUtil::CPlane& plane, const Matrix34& worldTM, const ColorB& color0, const ColorB& color1) const
 	{
-		IRenderAuxGeom* pRC = gEnv->pRenderer->GetIRenderAuxGeom();
+		IRenderAuxGeom* pRC = gEnv->pAuxGeomRenderer;
 
 		Vec3 worldV0 = worldTM.TransformPoint(plane.PlaneToWorld(m_Points[0]));
 		Vec3 worldV1 = worldTM.TransformPoint(plane.PlaneToWorld(m_Points[1]));
@@ -129,12 +115,13 @@ public:
 	void GetMemoryUsage(ICrySizer* pSizer) const
 	{
 		SIZER_COMPONENT_NAME(pSizer, "CSegment");
-		pSizer->Add(m_Points, m_numberOfPoints);
+		pSizer->AddContainer(m_Points);
+		pSizer->AddContainer(m_Lines);
 		pSizer->AddObject(this, sizeof(*this));
 	}
 
 	int         GetNumberOfPoints() const { return m_numberOfPoints;  }
-	const Vec2* GetPoints() const         { return m_Points;  }
+	const Vec2* GetPoints() const         { return m_Points.data();  }
 
 private:
 
@@ -170,22 +157,27 @@ private:
 
 private:
 
-	int                      m_numberOfPoints;
-	Vec2*                    m_Points;
+	int                          m_numberOfPoints;
+	std::vector<Vec2>            m_Points;
 
-	AreaUtil::CLine*         m_Lines;
-	CAreaSolid::ESegmentType m_Type;
+	std::vector<AreaUtil::CLine> m_Lines;
+	CAreaSolid::ESegmentType     m_Type;
 };
 
 // CSegmentSet is to manage coplanar segments. It makes it possible to go up the search speed.
 class CSegmentSet
 {
 public:
-	CSegmentSet(){}
+
+	CSegmentSet() = default;
+
 	~CSegmentSet()
 	{
-		for (int i = 0, iSegmentSize(m_Segments.size()); i < iSegmentSize; ++i)
-			delete m_Segments[i];
+		for (auto const pSegment : m_Segments)
+		{
+			delete pSegment;
+		}
+
 		m_Segments.clear();
 	}
 	void AddSegment(CSegment* pSegment)
@@ -212,8 +204,11 @@ public:
 	{
 		SIZER_COMPONENT_NAME(pSizer, "CSegmentSet");
 		pSizer->AddObject(this, sizeof(*this));
-		for (int i = 0, iSegmentSize(m_Segments.size()); i < iSegmentSize; ++i)
-			m_Segments[i]->GetMemoryUsage(pSizer);
+
+		for (auto const pSegment : m_Segments)
+		{
+			pSegment->GetMemoryUsage(pSizer);
+		}
 	}
 
 private:
@@ -223,20 +218,23 @@ private:
 
 CAreaSolid::CAreaSolid() : m_nRefCount(0)
 {
-	m_BSPTree = NULL;
+	m_BSPTree = nullptr;
 	m_BoundBox.Reset();
 }
 
 void CAreaSolid::Clear()
 {
-	for (int i = 0, iSegmentHullSize(m_SegmentSets.size()); i < iSegmentHullSize; ++i)
-		delete m_SegmentSets[i];
+	for (auto const pSegmentSet : m_SegmentSets)
+	{
+		delete pSegmentSet;
+	}
+
 	m_SegmentSets.clear();
 	m_BoundBox.Reset();
 	if (m_BSPTree)
 	{
 		delete m_BSPTree;
-		m_BSPTree = NULL;
+		m_BSPTree = nullptr;
 	}
 }
 
@@ -248,9 +246,9 @@ void CAreaSolid::AddSegment(const Vec3* verticesOfConvexhull, bool bObstruction,
 	if (pSegment->IsValid())
 	{
 		bool bExistSet(false);
-		for (int i = 0, iSegmentSetSize(m_SegmentSets.size()); i < iSegmentSetSize; ++i)
+
+		for (auto const pSegmentSet : m_SegmentSets)
 		{
-			CSegmentSet* pSegmentSet(m_SegmentSets[i]);
 			if (pSegmentSet->GetPlane().IsEquivalent(plane))
 			{
 				pSegmentSet->AddSegment(pSegment);
@@ -258,6 +256,7 @@ void CAreaSolid::AddSegment(const Vec3* verticesOfConvexhull, bool bObstruction,
 				break;
 			}
 		}
+
 		if (!bExistSet)
 		{
 			CSegmentSet* pSegmentSet = new CSegmentSet;
@@ -281,9 +280,8 @@ bool CAreaSolid::QueryNearest(const Vec3& vPos, int queryFlag, Vec3& outNearestP
 
 	outNearestDistance = fEnoughBigNumber;
 
-	for (int i = 0, iSegmentSetSize(m_SegmentSets.size()); i < iSegmentSetSize; ++i)
+	for (auto const pSegmentSet : m_SegmentSets)
 	{
-		const CSegmentSet* pSegmentSet(m_SegmentSets[i]);
 		const AreaUtil::CPlane& plane(pSegmentSet->GetPlane());
 		float fDistanceToPlane(plane.Distance(vPos));
 		Vec2 vPlanePos = plane.WorldToPlane(vPos);
@@ -316,7 +314,7 @@ bool CAreaSolid::QueryNearest(const Vec3& vPos, int queryFlag, Vec3& outNearestP
 
 bool CAreaSolid::IsInside(const Vec3& vPos) const
 {
-	if (m_BSPTree == NULL)
+	if (m_BSPTree == nullptr)
 		return false;
 
 	if (!m_BoundBox.IsContainPoint(vPos))
@@ -330,9 +328,8 @@ bool CAreaSolid::IsInside(const Vec3& vPos) const
 
 void CAreaSolid::Draw(const Matrix34& worldTM, const ColorB& color0, const ColorB& color1) const
 {
-	for (int i = 0, iSegmentSetSize(m_SegmentSets.size()); i < iSegmentSetSize; ++i)
+	for (auto const pSegmentSet : m_SegmentSets)
 	{
-		const CSegmentSet* pSegmentSet = m_SegmentSets[i];
 		for (int k = 0, iSegmentSize(pSegmentSet->GetSegmentSize()); k < iSegmentSize; ++k)
 		{
 			const CSegment* pSegment = pSegmentSet->GetSegment(k);
@@ -346,13 +343,13 @@ void CAreaSolid::BuildBSP()
 	if (m_BSPTree)
 	{
 		delete m_BSPTree;
-		m_BSPTree = NULL;
+		m_BSPTree = nullptr;
 	}
 
 	IBSPTree3D::FaceList faceList;
-	for (int i = 0, iSegmentSetSize(m_SegmentSets.size()); i < iSegmentSetSize; ++i)
+
+	for (auto const pSegmentSet : m_SegmentSets)
 	{
-		CSegmentSet* pSegmentSet = m_SegmentSets[i];
 		const AreaUtil::CPlane& plane = pSegmentSet->GetPlane();
 
 		for (int k = 0, iSegmentSize(pSegmentSet->GetSegmentSize()); k < iSegmentSize; ++k)
@@ -375,9 +372,16 @@ void CAreaSolid::BuildBSP()
 void CAreaSolid::GetMemoryUsage(ICrySizer* pSizer) const
 {
 	SIZER_COMPONENT_NAME(pSizer, "CAreaSolid");
+
 	if (m_BSPTree)
+	{
 		m_BSPTree->GetMemoryUsage(pSizer);
-	for (int i = 0, iSegmentSetSize(m_SegmentSets.size()); i < iSegmentSetSize; ++i)
-		m_SegmentSets[i]->GetMemoryUsage(pSizer);
+	}
+
+	for (auto const pSegmentSet : m_SegmentSets)
+	{
+		pSegmentSet->GetMemoryUsage(pSizer);
+	}
+
 	pSizer->AddObject(this, sizeof(*this));
 }

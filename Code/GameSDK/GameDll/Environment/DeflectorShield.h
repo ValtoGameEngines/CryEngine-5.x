@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __DEFLECTOR_SHIELD_H__
 #define __DEFLECTOR_SHIELD_H__
@@ -7,9 +7,11 @@
 # pragma once
 #endif
 
+#include "IGameObject.h"
 
 
 class CProjectile;
+struct EventPhysCollision;
 
 
 class CDeflectorShield : public CGameObjectExtensionHelper<CDeflectorShield, IGameObjectExtension>
@@ -54,9 +56,9 @@ public:
 	virtual ISerializableInfoPtr GetSpawnInfo();
 	virtual void Update(SEntityUpdateContext& ctx, int updateSlot);
 	virtual void HandleEvent(const SGameObjectEvent& event);
-	virtual void ProcessEvent(SEntityEvent& event);	
+	virtual void ProcessEvent(const SEntityEvent& event);	
+	virtual Cry::Entity::EventFlags GetEventMask() const { return Cry::Entity::EventFlags(); }
 	virtual void SetChannelId(uint16 id);
-	virtual void SetAuthority(bool auth );
 	virtual const void * GetRMIBase() const;
 	virtual void PostUpdate(float frameTime);
 	virtual void PostRemoteSpawn();

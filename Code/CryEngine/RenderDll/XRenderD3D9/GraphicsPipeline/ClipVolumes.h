@@ -1,4 +1,4 @@
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -10,58 +10,77 @@
 class CClipVolumesStage : public CGraphicsPipelineStage
 {
 public:
-	static const uint32 MaxDeferredClipVolumes = 64;
-	static const uint32 VisAreasOutdoorStencilOffset = 2; // Note: 2 stencil values reserved for stencil+outdoor fragments
+	static const EGraphicsPipelineStage StageID = eStage_ClipVolumes;
+	static const uint32                 MaxDeferredClipVolumes = BIT_STENCIL_INSIDE_CLIPVOLUME - 1; // Keep in sync with MAX_CLIPVOLUMES in DeferredShading.cfx / ShadowBlur.cfx
 
 public:
-	CClipVolumesStage();
+	CClipVolumesStage(CGraphicsPipeline& graphicsPipeline);
 	virtual ~CClipVolumesStage();
 
-	void Init();
-	void Prepare(CRenderView* pRenderView) final;
-	void Execute();
+	CGpuBuffer* GetClipVolumeInfoBuffer()                 { return &m_clipVolumeInfoBuf; }
+	CTexture*   GetClipVolumeStencilVolumeTexture() const { return m_pClipVolumeStencilVolumeTex; }
+	uint32      GetClipVolumeShaderParams(const Vec4*& shaderParams) const;
 
-	void GetClipVolumeShaderParams(const Vec4*& pParams, uint32& paramCount)
+	bool        IsOutdoorVisible() const                  { CRY_ASSERT(m_bClipVolumesValid); return m_bOutdoorVisible; }
+
+	void        Init();
+	void        Resize(int renderWidth, int renderHeight) final;
+	void        OnCVarsChanged(const CCVarUpdateRecorder& cvarUpdater) final;
+	void        Update() final;
+
+	bool        IsStageActive(EShaderRenderingFlags flags) const final
 	{
-		CRY_ASSERT(m_bClipVolumesValid);
-		pParams = m_clipVolumeShaderParams;
-		paramCount = m_nShaderParamCount;
+		if (flags & EShaderRenderingFlags::SHDF_FORWARD_MINIMAL)
+			return false;
+
+		return true;
 	}
 
-	bool      IsOutdoorVisible() { CRY_ASSERT(m_bClipVolumesValid); return m_bOutdoorVisible; }
+	void Prepare();
+	void Execute();
 
-	CTexture* GetClipVolumeStencilVolumeTexture() const;
+public:
+	struct SClipVolumeInfo
+	{
+		float data;
+	};
+
+	void GenerateClipVolumeInfo();
 
 private:
-	void PrepareVolumetricFog();
+	void Rescale(int resolutionScale, int depthScale);
+	void ResizeResource(int volumeWidth, int volumeHeight, int volumeDepth);
+	void FillVolumetricFogDepth();
 	void ExecuteVolumetricFog();
 
 private:
-	CPrimitiveRenderPass m_stencilPass;
-	CPrimitiveRenderPass m_blendValuesPass;
-	CFullscreenPass      m_stencilResolvePass;
+	CPrimitiveRenderPass                               m_stencilPass;
+	CPrimitiveRenderPass                               m_blendValuesPass;
+	CFullscreenPass                                    m_stencilResolvePass;
 
-	CPrimitiveRenderPass m_volumetricStencilPass;
-	CFullscreenPass      m_passWriteJitteredDepth;
+	CPrimitiveRenderPass                               m_volumetricStencilPass;
+	std::vector<std::unique_ptr<CFullscreenPass>>      m_jitteredDepthPassArray;
 
-	CRenderPrimitive     m_stencilPrimitives[MaxDeferredClipVolumes * 2];
-	CRenderPrimitive     m_blendPrimitives[MaxDeferredClipVolumes];
+	CRenderPrimitive                                   m_stencilPrimitives[MaxDeferredClipVolumes * 2];
+	CRenderPrimitive                                   m_blendPrimitives[MaxDeferredClipVolumes];
+	CRenderPrimitive                                   m_stencilPrimitivesVolFog[MaxDeferredClipVolumes * 2];
+	
+	CRY_ALIGN(16) Vec4                                 m_clipVolumeShaderParams[MaxDeferredClipVolumes];
+	uint32                                             m_nShaderParamCount;
 
-	CRY_ALIGN(16) Vec4 m_clipVolumeShaderParams[MaxDeferredClipVolumes];
-	uint32                     m_nShaderParamCount;
+	CGpuBuffer                                         m_clipVolumeInfoBuf;
 
-	CTexture*                  m_pBlendValuesRT;
-	SDepthTexture*             m_pDepthTarget;
+	CTexture*                                          m_pBlendValuesRT;
+	CTexture*                                          m_pDepthTarget;
 
-	CTexture*                  m_pClipVolumeStencilVolumeTex;
-	SDepthTexture              m_depthTargetVolFog;
-	std::vector<SDepthTexture> m_depthTargetArrayVolFog;
+	CTexture*                                          m_pClipVolumeStencilVolumeTex;
+	CTexture*                                          m_depthTargetVolFog;
+	std::vector<ResourceViewHandle>                    m_depthTargetArrayVolFog;
 
-	int32                      m_cleared;
-	float                      m_nearDepth;
-	float                      m_raymarchDistance;
+	int32                                              m_filledVolumetricFogDepth;
+	float                                              m_raymarchDistance;
 
-	bool                       m_bClipVolumesValid;
-	bool                       m_bBlendPassReady;
-	bool                       m_bOutdoorVisible;
+	bool                                               m_bClipVolumesValid;
+	bool                                               m_clearedBlendValuesRT;
+	bool                                               m_bOutdoorVisible;
 };

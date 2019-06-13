@@ -1,10 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "MuzzleEffect.h"
 #include "Weapon.h"
 #include "FireMode.h"
 #include "FireModeParams.h"
+#include "GameCVars.h"
 
 
 namespace
@@ -80,7 +81,7 @@ void CMuzzleEffect::Shoot(CFireMode* pFireMode, Vec3 potentialTarget, int barrel
 
 void CMuzzleEffect::MuzzleFlashEffect(CFireMode* pFireMode, int barrel)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CWeapon* pWeapon = pFireMode->GetWeapon();
 	const SEffectParams& muzzleFlash = GetMuzzleFlashParams(pFireMode);
@@ -169,14 +170,14 @@ bool CMuzzleEffect::GetMuzzleFireLocation(const CFireMode* pFireMode, QuatTS* lo
 
 void CMuzzleEffect::MuzzleBeamEffect(bool attach, CFireMode* pFireMode)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CWeapon* pWeapon = pFireMode->GetWeapon();
 	const SEffectParams& muzzleBeam = GetMuzzleBeamParams(pFireMode);
 
 	if (attach)
 	{
-		FRAME_PROFILER("CMuzzleEffect::MuzzleBeamEffect() Attach Effect", GetISystem(), PROFILE_AI);
+		CRY_PROFILE_SECTION(PROFILE_GAME, "CMuzzleEffect::MuzzleBeamEffect() Attach Effect");
 
 		const CItem::SStats &stats = pWeapon->GetStats();
 
@@ -205,7 +206,7 @@ void CMuzzleEffect::MuzzleBeamEffect(bool attach, CFireMode* pFireMode)
 	}
 	else
 	{
-		FRAME_PROFILER("CMuzzleEffect::MuzzleBeamEffect() Detach Effect", GetISystem(), PROFILE_AI);
+		CRY_PROFILE_SECTION(PROFILE_GAME, "CMuzzleEffect::MuzzleBeamEffect() Detach Effect");
 		pWeapon->DetachEffect(m_beamFxId[0]);
 		pWeapon->DetachEffect(m_beamFxId[1]);
 		m_beamFxId[0] = m_beamFxId[1] = 0;
@@ -216,11 +217,10 @@ void CMuzzleEffect::MuzzleBeamEffect(bool attach, CFireMode* pFireMode)
 
 void CMuzzleEffect::AttachEmitters(CFireMode* pFireMode, int barrel)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CWeapon* pWeapon = pFireMode->GetWeapon();
 	const SEffectParams& muzzleFlash = GetMuzzleFlashParams(pFireMode);
-	const SEffectParams& muzzleBeam = GetMuzzleBeamParams(pFireMode);
 
 	if (m_mfIds.empty())
 		return;
@@ -246,7 +246,7 @@ void CMuzzleEffect::AttachEmitters(CFireMode* pFireMode, int barrel)
 
 void CMuzzleEffect::DetachEmitters(CFireMode* pFireMode, int barrel)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CWeapon* pWeapon = pFireMode->GetWeapon();
 

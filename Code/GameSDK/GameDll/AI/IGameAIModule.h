@@ -1,9 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 #ifndef IGameAIModule_h
 #define IGameAIModule_h
+
+#include <CryEntitySystem/IEntityBasicTypes.h>
+#include <CryNetwork/ISerialize.h>
 
 // For an overview of the GameAISystem take a look in GameAISystem.cpp
 

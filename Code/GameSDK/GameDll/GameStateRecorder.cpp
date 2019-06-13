@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   GameStateRecorder.cpp
@@ -25,6 +25,7 @@
 #include "Inventory.h"
 #include "Game.h"
 #include <CryAISystem/IAIObjectManager.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 // avoid fake mistakes when health is raising progressively 
 // there can be small mismatches due to time-dependent health regeneration

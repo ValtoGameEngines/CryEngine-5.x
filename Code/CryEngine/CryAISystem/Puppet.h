@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef PUPPET_H
 #define PUPPET_H
@@ -9,7 +9,7 @@
 
 #include "PipeUser.h"
 #include "PathObstacles.h"
-#include "ValueHistory.h"
+#include <CryAISystem/ValueHistory.h>
 #include <CryAISystem/IPerceptionHandler.h>
 #include <CryAISystem/IVisionMap.h>
 #include "PostureManager.h"
@@ -18,19 +18,6 @@
 class CPersonalInterestManager;
 class CFireCommandGrenade;
 struct PendingDeathReaction;
-
-//	Path finder blockers types.
-enum ENavigationBlockers
-{
-	PFB_NONE,
-	PFB_ATT_TARGET,
-	PFB_REF_POINT,
-	PFB_BEACON,
-	PFB_DEAD_BODIES,
-	PFB_EXPLOSIVES,
-	PFB_PLAYER,
-	PFB_BETWEEN_NAV_TARGET,
-};
 
 // Quick prototype of a signal/state container
 class CSignalState
@@ -52,8 +39,6 @@ struct CSpeedControl
 	float      fPrevDistance;
 	CTimeValue fLastTime;
 	Vec3       vLastPos;
-	//	CAIPIDController PIDController;
-	//	static const float	m_CMaxDist;
 
 	CSpeedControl() : vLastPos(0.0f, 0.0f, 0.0f), fPrevDistance(0.0f){}
 	void Reset(const Vec3 vPos, CTimeValue fTime)
@@ -64,7 +49,6 @@ struct CSpeedControl
 	}
 };
 
-typedef std::multimap<float, SHideSpot>                    MultimapRangeHideSpots;
 typedef std::map<CWeakRef<CAIObject>, float>               DevaluedMap;
 typedef std::map<CWeakRef<CAIObject>, CWeakRef<CAIObject>> ObjectObjectMap;
 
@@ -99,14 +83,6 @@ struct SSoundPerceptionDescriptor
 		fLinStepMin = _fLinStepMin;
 		fLinStepMax = _fLinStepMax;
 	}
-};
-
-struct SSortedHideSpot
-{
-	SSortedHideSpot(float weight, SHideSpot* pHideSpot) : weight(weight), pHideSpot(pHideSpot) {}
-	inline bool operator<(const SSortedHideSpot& rhs) const { return weight > rhs.weight; } // highest weight first.
-	float      weight;
-	SHideSpot* pHideSpot;
 };
 
 class CPuppet
@@ -203,8 +179,8 @@ public:
 	virtual Vec3 ChooseMissPoint_Deprecated(const Vec3& targetPos) const;
 
 	// Inherited from IPipeUser
-	virtual void Update(EObjectUpdate type);
-	virtual void UpdateProxy(EObjectUpdate type);
+	virtual void Update(EUpdateType type);
+	virtual void UpdateProxy(EUpdateType type);
 	virtual void Devalue(IAIObject* pObject, bool bDevaluePuppets, float fAmount = 20.f);
 	virtual bool IsDevalued(IAIObject* pObject);
 	virtual void ClearDevalued();
@@ -216,12 +192,10 @@ public:
 	virtual bool CreateFormation(const char* szName, Vec3 vTargetPos);
 	virtual void Serialize(TSerialize ser);
 	virtual void PostSerialize();
-	virtual void SetPFBlockerRadius(int blockerType, float radius);
 
 	// Inherited from CAIObject
 	virtual void OnObjectRemoved(CAIObject* pObject);
 	virtual void Reset(EObjectResetType type);
-	virtual void GetPathAgentNavigationBlockers(NavigationBlockers& navigationBlockers, const struct PathfindRequest* pRequest);
 
 	// <title GetDistanceAlongPath>
 	// Description: returns the distance of a point along the puppet's path
@@ -282,15 +256,13 @@ public:
 	// Returns the current alertness level of the puppet.
 	inline int                       GetAlertness() const { return m_Alertness; }
 
-	virtual void                     CheckCloseContact(IAIObject* pTarget, float fDistSq);
-
 	virtual float                    AdjustTargetVisibleRange(const CAIActor& observer, float fVisibleRange) const;
 
 	inline EPuppetUpdatePriority     GetUpdatePriority() const                    { return m_updatePriority; }
 	inline void                      SetUpdatePriority(EPuppetUpdatePriority pri) { m_updatePriority = pri; }
 
 	const AIWeaponDescriptor&        QueryCurrentWeaponDescriptor(bool bIsSecondaryFire = false, ERequestedGrenadeType prefGrenadeType = eRGT_ANY);
-	inline const AIWeaponDescriptor& GetCurrentWeaponDescriptor() const { return m_CurrentWeaponDescriptor; }
+	virtual const AIWeaponDescriptor& GetCurrentWeaponDescriptor() const { return m_CurrentWeaponDescriptor; }
 
 	// Returns true if it is possible to aim at the target without colliding with a wall etc in front of the puppet.
 	bool         CanAimWithoutObstruction(const Vec3& vTargetPos);
@@ -386,13 +358,8 @@ protected:
 
 	bool CheckTargetInRange(Vec3& vTargetPos);
 
-	/// Selects the best hide points from a list that should just contain accessible hidespots
-	Vec3 GetHidePoint(MultimapRangeHideSpots& hidespots, float fSearchDistance, const Vec3& hideFrom, int nMethod, bool bSameOk, float fMinDistance);
-
 	// Evaluates whether the chosen navigation point will expose us too much to the target
 	bool Compromising(const Vec3& pos, const Vec3& dir, const Vec3& hideFrom, const Vec3& objectPos, const Vec3& searchPos, bool bIndoor, bool bCheckVisibility) const;
-
-	void RegisterTargetAwareness(float amount);
 
 	void UpdateTargetMovementState();
 
@@ -402,8 +369,6 @@ protected:
 
 	// Returns true if it pActor is obstructing aim.
 	bool                      ActorObstructingAim(const CAIActor* pActor, const Vec3& firePos, const Vec3& dir, const Ray& fireRay) const;
-
-	void                      CreatePendingDeathReaction(int groupID, PendingDeathReaction* pPendingDeathReaction) const;
 
 	CPersonalInterestManager* GetPersonalInterestManager();
 
@@ -441,10 +406,6 @@ protected:
 	float                m_fForcedNavigationSpeed;
 
 	EntityId             m_vehicleStickTarget;
-
-	// map blocker_type-radius
-	typedef std::map<int, float> TMapBlockers;
-	TMapBlockers m_PFBlockers;
 
 	// Current actor weapon descriptor
 	EntityId           m_currentWeaponId;
@@ -773,7 +734,7 @@ public:
 		int              m_queries;
 	};
 
-	inline void SetAlarmed()
+	virtual void SetAlarmed()
 	{
 		AgentPerceptionParameters& perceptionParameters = m_Parameters.m_PerceptionParams;
 		m_alarmedTime = perceptionParameters.forgetfulnessTarget + perceptionParameters.forgetfulnessMemory;
@@ -800,10 +761,6 @@ public:
 
 	static std::vector<Vec3>                     s_projectedPoints;
 	static std::vector<std::pair<float, size_t>> s_weights;
-	static std::vector<CAIActor*>                s_enemies;
-	static std::vector<SSortedHideSpot>          s_sortedHideSpots;
-	static MultimapRangeHideSpots                s_hidespots;
-	static MapConstNodesDistance                 s_traversedNodes;
 };
 
 ILINE const CPuppet* CastToCPuppetSafe(const IAIObject* pAI) { return pAI ? pAI->CastToCPuppet() : 0; }

@@ -1,42 +1,41 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  File name:   TriggerProxy.h
-//  Version:     v1.00
-//  Created:     5/12/2005 by Timur.
-//  Compilers:   Visual Studio.NET 2003
-//  Description:
-// -------------------------------------------------------------------------
-//  History:
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "TriggerProxy.h"
-#include <CryNetwork/ISerialize.h>
 #include "ProximityTriggerSystem.h"
+
+#include <CryNetwork/ISerialize.h>
 
 CRYREGISTER_CLASS(CEntityComponentTriggerBounds)
 
 //////////////////////////////////////////////////////////////////////////
 CEntityComponentTriggerBounds::CEntityComponentTriggerBounds()
 	: m_forwardingEntity(0)
-	, m_pProximityTrigger(NULL)
+	, m_pProximityTrigger(nullptr)
 	, m_aabb(AABB::RESET)
 {
+	m_componentFlags.Add(EEntityComponentFlags::NoSave);
 }
 
 //////////////////////////////////////////////////////////////////////////
 CEntityComponentTriggerBounds::~CEntityComponentTriggerBounds()
 {
-	GetTriggerSystem()->RemoveTrigger(m_pProximityTrigger);
+	if (CVar::es_UseProximityTriggerSystem)
+	{
+		GetTriggerSystem()->RemoveTrigger(m_pProximityTrigger);
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CEntityComponentTriggerBounds::Initialize()
 {
-	m_pProximityTrigger = GetTriggerSystem()->CreateTrigger();
-	m_pProximityTrigger->id = m_pEntity->GetId();
+	if (CVar::es_UseProximityTriggerSystem)
+	{
+		m_pProximityTrigger = GetTriggerSystem()->CreateTrigger();
+		m_pProximityTrigger->id = m_pEntity->GetId();
+	}
+
+	m_pEntity->SetFlags(m_pEntity->GetFlags() | ENTITY_FLAG_NO_PROXIMITY);
 
 	Reset();
 }
@@ -46,7 +45,6 @@ void CEntityComponentTriggerBounds::Reset()
 {
 	auto* pCEntity = static_cast<CEntity*>(m_pEntity);
 
-	pCEntity->m_bTrigger = true;
 	m_forwardingEntity = 0;
 
 	// Release existing proximity entity if present, triggers should not trigger themself.
@@ -58,7 +56,7 @@ void CEntityComponentTriggerBounds::Reset()
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CEntityComponentTriggerBounds::ProcessEvent(SEntityEvent& event)
+void CEntityComponentTriggerBounds::ProcessEvent(const SEntityEvent& event)
 {
 	switch (event.event)
 	{
@@ -69,7 +67,7 @@ void CEntityComponentTriggerBounds::ProcessEvent(SEntityEvent& event)
 	case ENTITY_EVENT_LEAVEAREA:
 		if (m_forwardingEntity)
 		{
-			IEntity* pEntity = gEnv->pEntitySystem->GetEntity(m_forwardingEntity);
+			CEntity* pEntity = g_pIEntitySystem->GetEntityFromID(m_forwardingEntity);
 			if (pEntity && (pEntity != this->GetEntity()))
 			{
 				pEntity->SendEvent(event);
@@ -109,7 +107,10 @@ void CEntityComponentTriggerBounds::OnMove(bool invalidateAABB)
 	AABB box = m_aabb;
 	box.min += pos;
 	box.max += pos;
-	GetTriggerSystem()->MoveTrigger(m_pProximityTrigger, box, invalidateAABB);
+	if (CVar::es_UseProximityTriggerSystem)
+	{
+		GetTriggerSystem()->MoveTrigger(m_pProximityTrigger, box, invalidateAABB);
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////

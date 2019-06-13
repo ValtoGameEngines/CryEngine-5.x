@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "WeaponLookOffset.h"
@@ -40,7 +40,6 @@ QuatT CLookOffset::Compute(float frameTime)
 		static const float POW_VERT   = 1.0f;
 		static const float POW_HORIZ  = 2.0f;
 		static const float HORIZ_VEL_SCALE = 0.2f;
-		static const float runEaseFactor = 0.2f;
 
 		float rotationFactor = 1.0f;
 		float vertFactor = 1.0f;

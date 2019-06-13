@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "FunctionHandler.h"
@@ -91,11 +91,13 @@ bool CFunctionHandler::GetParamAny(int nIdx, ScriptAnyValue& any)
 	bool bRes = m_pSS->ToAny(any, nRealIdx);
 	if (!bRes)
 	{
+#if !defined(_RELEASE)
 		ScriptVarType paramType = GetParamType(nIdx);
 		const char* sParamType = ScriptVarTypeAsCStr(paramType);
-		const char* sType = ScriptAnyTypeToString(any.type);
+		const char* sType = ScriptAnyTypeToString(any.GetType());
 		// Report wrong param.
 		ScriptWarning("[Script Error] Wrong parameter type. Function %s expect parameter %d of type %s (Provided type %s)", m_sFuncName, nIdx, sType, sParamType);
+#endif
 		m_pSS->LogStackTrace();
 	}
 	return bRes;
@@ -105,7 +107,7 @@ bool CFunctionHandler::GetParamAny(int nIdx, ScriptAnyValue& any)
 int CFunctionHandler::EndFunctionAny(const ScriptAnyValue& any)
 {
 	m_pSS->PushAny(any);
-	return (any.type == ANY_TNIL || any.type == ANY_ANY) ? 0 : 1;
+	return (any.GetType() == EScriptAnyType::Nil || any.GetType() == EScriptAnyType::Any) ? 0 : 1;
 }
 
 //////////////////////////////////////////////////////////////////////////

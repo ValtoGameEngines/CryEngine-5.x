@@ -1,13 +1,14 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
+
+// Included only once per DLL module.
+#include <CryCore/Platform/platform_impl.inl>
+
 #include "PluginDll.h"
 
 #include "OsvrResources.h"
 #include "OsvrDevice.h"
-
-// Included only once per DLL module.
-#include <CryCore/Platform/platform_impl.inl>
 
 #include <CrySystem/VR/IHMDManager.h>
 
@@ -24,7 +25,7 @@ CPlugin_Osvr::~CPlugin_Osvr()
 
 bool CPlugin_Osvr::Initialize(SSystemGlobalEnvironment& env, const SSystemInitParams& initParams)
 {
-	GetISystem()->GetISystemEventDispatcher()->RegisterListener(this);
+	GetISystem()->GetISystemEventDispatcher()->RegisterListener(this, "CPlugin_Osvr");
 
 	return true;
 }

@@ -29,6 +29,14 @@ Property
 
 Property
 {
+  Name = %PBR
+  Mask = 0x200
+  Property    (Use PBR-BRDF)
+  Description (Use physically-based Illumination)
+}
+
+Property
+{
   Name = %FLOW
   Mask = 0x2
   Property    (Water flow)
@@ -92,9 +100,6 @@ Property
   Mask = 0x80
   Property    (Decal map)
   Description (Use tilling decal map as separate texture)
-  DependencySet = $TEX_Custom
-  DependencyReset = $TEX_Custom
-  Hidden
 }
 
 Property

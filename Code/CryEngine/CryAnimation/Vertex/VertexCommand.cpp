@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
 #include "VertexCommand.h"
@@ -7,8 +7,9 @@
 #include "../ModelMesh.h"
 #include "VertexData.h"
 
-#pragma warning(disable:4700)
-#pragma warning(disable:6326)
+#pragma warning(push)
+#pragma warning(disable:4700) // uninitialized local variable
+#pragma warning(disable:6326) // potential comparison of a constant with another constant
 
 #if CRY_PLATFORM_WINDOWS || CRY_PLATFORM_DURANGO || CRY_PLATFORM_ORBIS
 	#define USE_VERTEXCOMMAND_SSE
@@ -31,7 +32,7 @@ ILINE __m128 _mm_dp_ps_emu(const __m128& a, const __m128& b)
 
 void VertexCommandTangents::Execute(VertexCommandTangents& command, CVertexData& vertexData)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ANIMATION);
+	CRY_PROFILE_FUNCTION(PROFILE_ANIMATION);
 
 	strided_pointer<Vec3> pPositions = vertexData.GetPositions();
 	strided_pointer<SPipTangents> pTangents = vertexData.GetTangents();
@@ -40,8 +41,6 @@ void VertexCommandTangents::Execute(VertexCommandTangents& command, CVertexData&
 
 	for (uint i = 0; i < command.tangetUpdateDataCount; ++i)
 	{
-		const uint base = i * 3;
-
 		const STangentUpdateTriangles& data = command.pTangentUpdateData[i];
 
 		const vtx_idx idx1 = data.idx1;
@@ -178,15 +177,13 @@ void VertexCommandTangents::Execute(VertexCommandTangents& command, CVertexData&
 
 void VertexCommandTangents::Execute(VertexCommandTangents& command, CVertexData& vertexData)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ANIMATION);
+	CRY_PROFILE_FUNCTION(PROFILE_ANIMATION);
 
 	strided_pointer<Vec3> pPositions = vertexData.GetPositions();
 	strided_pointer<SPipTangents> pTangents = vertexData.GetTangents();
 
 	for (uint i = 0; i < command.tangetUpdateDataCount; ++i)
 	{
-		const uint base = i * 3;
-
 		const STangentUpdateTriangles& data = command.pTangentUpdateData[i];
 
 		const vtx_idx idx1 = data.idx1;
@@ -273,7 +270,7 @@ void VertexCommandTangents::Execute(VertexCommandTangents& command, CVertexData&
 
 void VertexCommandAdd::Execute(VertexCommandAdd& command, CVertexData& vertexData)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ANIMATION);
+	CRY_PROFILE_FUNCTION(PROFILE_ANIMATION);
 
 	strided_pointer<Vec3> pPositions = vertexData.GetPositions();
 	const float weight = command.weight;
@@ -296,7 +293,7 @@ void VertexCommandAdd::Execute(VertexCommandAdd& command, CVertexData& vertexDat
  */
 void VertexCommandCopy::Execute(VertexCommandCopy& command, CVertexData& vertexData)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ANIMATION);
+	CRY_PROFILE_FUNCTION(PROFILE_ANIMATION);
 
 	const uint vertexCount = vertexData.GetVertexCount();
 	strided_pointer<Vec3> pPositions = vertexData.GetPositions();
@@ -347,7 +344,7 @@ void VertexCommandSkin::Execute(VertexCommandSkin& command, CVertexData& vertexD
 template<uint32 TEMPLATE_FLAGS>
 void VertexCommandSkin::ExecuteInternal(VertexCommandSkin& command, CVertexData& vertexData)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ANIMATION);
+	CRY_PROFILE_FUNCTION(PROFILE_ANIMATION);
 	PREFAST_SUPPRESS_WARNING(6255)
 	DualQuat * pTransformations = (DualQuat*)alloca(command.transformationCount * sizeof(DualQuat));
 	for (uint i = 0; i < command.transformationCount; ++i)
@@ -371,8 +368,6 @@ void VertexCommandSkin::ExecuteInternal(VertexCommandSkin& command, CVertexData&
 	Quat qtangent;
 	float flip;
 	Vec3 newPos;
-
-	const uint vertexTransformCount = command.vertexTransformCount;
 
 	for (uint i = 0; i < vertexCount; ++i)
 	{
@@ -540,7 +535,7 @@ template<uint32 TEMPLATE_FLAGS>
 PREFAST_SUPPRESS_WARNING(6262)
 void VertexCommandSkin::ExecuteInternal(VertexCommandSkin& command, CVertexData& vertexData)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ANIMATION);
+	CRY_PROFILE_FUNCTION(PROFILE_ANIMATION);
 	PREFAST_SUPPRESS_WARNING(6255)
 	__m128 pTransformations[MAX_JOINT_AMOUNT * 2];
 	for (uint i = 0; i < command.transformationCount; ++i)
@@ -725,7 +720,7 @@ void VertexCommandSkin::ExecuteInternal(VertexCommandSkin& command, CVertexData&
 
 void VertexCommandAdd::Execute(VertexCommandAdd& command, CVertexData& vertexData)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_ANIMATION);
+	CRY_PROFILE_FUNCTION(PROFILE_ANIMATION);
 
 	strided_pointer<Vec3> pPositions = vertexData.GetPositions();
 	const float weight = command.weight;
@@ -734,7 +729,10 @@ void VertexCommandAdd::Execute(VertexCommandAdd& command, CVertexData& vertexDat
 	__m128 _offset;
 
 	const __m128 _xyzMask = _mm_castsi128_ps(_mm_set_epi32(0, 0xffffffff, 0xffffffff, 0xffffffff));
+
+#ifndef USE_VERTEXCOMMAND_SSE4
 	const __m128 _wMask = _mm_castsi128_ps(_mm_set_epi32(0xffffffff, 0, 0, 0));
+#endif
 
 	const uint count = command.count;
 	for (uint i = 0; i < count; ++i)
@@ -763,3 +761,5 @@ void VertexCommandAdd::Execute(VertexCommandAdd& command, CVertexData& vertexDat
 }
 
 #endif
+
+#pragma warning(pop)

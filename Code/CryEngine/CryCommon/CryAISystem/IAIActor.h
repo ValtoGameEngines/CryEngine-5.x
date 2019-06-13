@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef IAIActor_h
 #define IAIActor_h
@@ -46,12 +46,15 @@ struct IAIActor : public IAIPathAgent
 
 	// <interfuscator:shuffle>
 	virtual ~IAIActor() {}
+	
+	virtual const IAIObject*            CastToIAIObject() const = 0;
+	virtual IAIObject*                  CastToIAIObject() = 0;
 
 	virtual SOBJECTSTATE&               GetState() = 0;
 	virtual const SOBJECTSTATE&         GetState() const = 0;
 	virtual IAIActorProxy*              GetProxy() const = 0;
-	virtual void                        SetSignal(int nSignalID, const char* szText, IEntity* pSender = 0, IAISignalExtraData* pData = NULL, uint32 crcCode = 0) = 0;
-	virtual void                        OnAIHandlerSentSignal(const char* szText, uint32 crcCode) = 0;
+	virtual void                        SetSignal(const AISignals::SignalSharedPtr& pSignal) = 0;
+	virtual void                        OnAIHandlerSentSignal(const AISignals::SignalSharedPtr& pSignal) = 0;
 	virtual const AgentParameters&      GetParameters() const = 0;
 	virtual void                        SetParameters(const AgentParameters& pParams) = 0;
 	virtual const AgentMovementAbility& GetMovementAbility() const = 0;
@@ -68,9 +71,6 @@ struct IAIActor : public IAIPathAgent
 
 	//! \return the maximum visible range to the target.
 	virtual float           GetMaxTargetVisibleRange(const IAIObject* pTarget, bool bCheckCloak = true) const = 0;
-
-	virtual void            EnablePerception(bool enable) = 0;
-	virtual bool            IsPerceptionEnabled() const = 0;
 
 	virtual void            RegisterBehaviorListener(IActorBehaviorListener* listener) = 0;
 	virtual void            UnregisterBehaviorListener(IActorBehaviorListener* listener) = 0;
@@ -118,6 +118,8 @@ struct IAIActor : public IAIPathAgent
 	virtual const char* GetWaveName() const = 0;
 	virtual bool        IsPointInsideTerritoryShape(const Vec3& vPos, bool bCheckHeight) const = 0;
 	virtual bool        ConstrainInsideTerritoryShape(Vec3& vPos, bool bCheckHeight) const = 0;
+
+	virtual bool        HasThrown(EntityId entity) const = 0;
 
 	//! Populates list of physics entities to skip for raycasting.
 	virtual void                  GetPhysicalSkipEntities(PhysSkipList& skipList) const {}

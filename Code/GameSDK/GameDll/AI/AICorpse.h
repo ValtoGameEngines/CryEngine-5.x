@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -7,6 +7,8 @@
 
 #include <IGameObject.h>
 #include <CryCore/CryFlags.h>
+#include <CryCore/Containers/CryFixedArray.h>
+#include "Game.h"
 
 #define AI_CORPSES_ENABLE_SERIALIZE 0
 
@@ -61,9 +63,9 @@ public:
 	virtual ISerializableInfoPtr GetSpawnInfo() {return 0;}
 	virtual void Update( SEntityUpdateContext& ctx, int slot ) {};
 	virtual void HandleEvent( const SGameObjectEvent& gameObjectEvent );
-	virtual void ProcessEvent( SEntityEvent& entityEvent ) {};
+	virtual void ProcessEvent( const SEntityEvent& entityEvent ) {};
+	virtual Cry::Entity::EventFlags GetEventMask() const { return Cry::Entity::EventFlags(); }
 	virtual void SetChannelId( uint16 id ) {};
-	virtual void SetAuthority( bool auth ) {};
 	virtual void PostUpdate( float frameTime ) { CRY_ASSERT(false); }
 	virtual void PostRemoteSpawn() {};
 	virtual void GetMemoryUsage( ICrySizer *pSizer ) const;

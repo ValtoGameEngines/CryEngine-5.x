@@ -1,7 +1,8 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __CREMESH_H__
 #define __CREMESH_H__
+#include "RendElement.h"
 
 class CREMesh : public CRenderElement
 {

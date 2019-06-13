@@ -1,32 +1,13 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-/*=============================================================================
-   D3DCGPShader.h : Direct3D9 CG pixel shaders interface declaration.
+#pragma once
 
-   Revision history:
-* Created by Honitch Andrey
-
-   =============================================================================*/
-
-#ifndef __D3DHWSHADER_H__
-#define __D3DHWSHADER_H__
+#include "Common/Shaders/ShaderComponents.h"
+#include "DeviceManager/D3D11/DeviceSubmissionQueue_D3D11.h"
 
 #if CRY_PLATFORM_ORBIS && defined(USE_SCUE)
 //#define USE_PER_FRAME_CONSTANT_BUFFER_UPDATES // TODO: Restore this
 #endif
-
-#define MERGE_SHADER_PARAMETERS 1
-
-// Streams redefinitions (TEXCOORD#)
-#define VSTR_COLOR1       4   //Base Stream
-#define VSTR_NORMAL1      5   //Base Stream
-#define VSTR_PSIZE        6   //Base particles stream
-//#define VSTR_MORPHTARGETDELTA 7 // MorphTarget stream (VSF_HWSKIN_MORPHTARGET_INFO)
-#define VSTR_TANGENT      8   // Tangents stream (VSF_TANGENTS)
-#define VSTR_BITANGENT    9   // Tangents stream (VSF_TANGENTS) -> unused, remove
-#define VSTR_BLENDWEIGHTS 10  // HWSkin stream (VSF_HWSKIN_INFO)
-#define VSTR_BLENDINDICES 11  // HWSkin stream (VSF_HWSKIN_INFO)
-#define VSTR_BONESPACE    12  // HWSkin stream (VSF_HWSKIN_INFO)
 
 #define MAX_CONSTANTS_PS  512
 #define MAX_CONSTANTS_VS  512
@@ -37,49 +18,31 @@
 
 #define INST_PARAM_SIZE   sizeof(Vec4)
 
-#if CRY_PLATFORM_SSE2
-typedef __m128 VECTOR_TYPE;
-	#define VECTOR_CONST(x, y, z, w) { x, y, z, w }  //{ w, z, y, x }
-	#define VECTOR_ZERO()            _mm_setzero_ps()
-	#define VECTOR_XOR(a, b)         _mm_xor_ps(a, b)
-#else
-union USoftVector
-{
-	struct
-	{
-		float x, y, z, w;
-	};
-	uint32 u[4];
-};
-typedef CRY_ALIGN (16) USoftVector VECTOR_TYPE;
-	#define VECTOR_CONST(x, y, z, w) { \
-	  { x, y, z, w }                   \
-}
-const VECTOR_TYPE g_VectorZero = VECTOR_CONST(0.f, 0.f, 0.f, 0.f);
-	#define VECTOR_ZERO()            (g_VectorZero)
-inline VECTOR_TYPE VECTOR_XOR(const VECTOR_TYPE& a, const VECTOR_TYPE& b)
-{
-	VECTOR_TYPE r;
-	r.u[0] = a.u[0] ^ b.u[0];
-	r.u[1] = a.u[1] ^ b.u[1];
-	r.u[2] = a.u[2] ^ b.u[2];
-	r.u[3] = a.u[3] ^ b.u[3];
-	return r;
-}
-#endif
-
-union UFloat4
+union CRY_ALIGN (16) UFloat4
 {
 	float       f[4];
 	uint        ui[4];
-	VECTOR_TYPE m128;
+#ifdef CRY_TYPE_SIMD4
+	f32v4       v;
+
+	ILINE void Load(const float* src)
+	{
+		v = *(f32v4*)src;
+	}
+#else
+	ILINE void Load(const float* src)
+	{
+		f[0] = src[0];
+		f[1] = src[1];
+		f[2] = src[2];
+		f[3] = src[3];
+	}
+#endif
 };
 
 class CConstantBuffer;
 
 //==============================================================================
-
-int D3DXGetSHParamHandle(void* pSH, SCGBind* pParam);
 
 struct SParamsGroup
 {
@@ -172,50 +135,61 @@ public:
 
 //=========================================================================================
 
-struct SD3DShader
+#ifdef CRY_PLATFORM_DURANGO
+using d3dShaderHandleType = IGraphicsUnknown;
+#else
+using d3dShaderHandleType = IUnknown;
+#endif
+
+class SD3DShader
 {
-	int   m_nRef;
-	void* m_pHandle;
-	bool  m_bBound;
-	bool  m_bDisabled;
+	friend struct SD3DShaderHandle;
 
-	SD3DShader()
-	{
-		m_nRef = 1;
-		m_pHandle = NULL;
-		m_bBound = false;
-		m_bDisabled = false;
-	}
-	int AddRef()
-	{
-		return m_nRef++;
-	}
-	int  Release(EHWShaderClass eSHClass, int nSize);
+	d3dShaderHandleType* m_pHandle = nullptr;
+	EHWShaderClass m_eSHClass;
+	std::size_t    m_nSize;
 
-	void GetMemoryUsage(ICrySizer* pSizer) const
+	std::size_t    m_refCount = 0;
+
+	SD3DShader(d3dShaderHandleType* handle, EHWShaderClass eSHClass, std::size_t size) : m_pHandle(handle), m_eSHClass(eSHClass), m_nSize(size) {}
+
+public:
+	~SD3DShader() noexcept;
+	SD3DShader(const SD3DShader&) = delete;
+	SD3DShader& operator=(const SD3DShader&) = delete;
+
+	void*       GetHandle() const                       { return m_pHandle; }
+	void        GetMemoryUsage(ICrySizer* pSizer) const { pSizer->AddObject(this, sizeof(*this)); }
+
+	void        AddRef()                                { ++m_refCount; }
+	std::size_t Release()
 	{
-		pSizer->AddObject(this, sizeof(*this));
+		const auto referencesLeft = --m_refCount;
+		if (referencesLeft == 0)
+			delete this;
+
+		return referencesLeft;
 	}
+
+	bool m_bDisabled = false;
 };
 
 struct SD3DShaderHandle
 {
-	SD3DShader* m_pShader;
-	byte*       m_pData;
-	int         m_nData;
-	byte        m_bStatus;
-	SD3DShaderHandle()
-	{
-		m_pShader = NULL;
-		m_bStatus = 0;
-		m_nData = 0;
-		m_pData = NULL;
-	}
-	void SetShader(SD3DShader* pShader)
-	{
-		m_bStatus = 0;
-		m_pShader = pShader;
-	}
+	_smart_ptr<SD3DShader> m_pShader;
+
+	byte*       m_pData = nullptr;
+	int         m_nData = 0;
+	byte        m_bStatus = 0;
+
+	SD3DShaderHandle() = default;
+	SD3DShaderHandle(_smart_ptr<SD3DShader>&& handle) noexcept : m_pShader(std::move(handle)) {}
+	SD3DShaderHandle(d3dShaderHandleType* handle, EHWShaderClass eSHClass, std::size_t size) noexcept : m_pShader(new SD3DShader(handle, eSHClass, size)) {}
+	SD3DShaderHandle(const SD3DShaderHandle&) = default;
+	SD3DShaderHandle(SD3DShaderHandle&&) noexcept = default;
+	SD3DShaderHandle& operator=(const SD3DShaderHandle&) = default;
+	SD3DShaderHandle& operator=(SD3DShaderHandle&&) noexcept = default;
+
 	void SetFake()
 	{
 		m_bStatus = 2;
@@ -223,18 +197,6 @@ struct SD3DShaderHandle
 	void SetNonCompilable()
 	{
 		m_bStatus = 1;
-	}
-	int AddRef()
-	{
-		if (!m_pShader)
-			return 0;
-		return m_pShader->AddRef();
-	}
-	int Release(EHWShaderClass eSHClass, int nSize)
-	{
-		if (!m_pShader)
-			return 0;
-		return m_pShader->Release(eSHClass, nSize);
 	}
 
 	void GetMemoryUsage(ICrySizer* pSizer) const
@@ -266,9 +228,9 @@ struct SShaderAsyncInfo
 	}
 	static void FlushPendingShaders();
 
-#if CRY_PLATFORM_DURANGO //|| defined(OPENGL)
-	#define LPD3DXBUFFER    D3DBlob *
-	#define ID3DXBuffer     D3DBlob
+#if CRY_PLATFORM_DURANGO //|| CRY_RENDERER_OPENGL
+	#define LPD3DXBUFFER D3DBlob*
+	#define ID3DXBuffer  D3DBlob
 #endif
 
 	int                  m_nHashInstance;
@@ -281,8 +243,8 @@ struct SShaderAsyncInfo
 	class CHWShader_D3D* m_pShader;
 	CShader*             m_pFXShader;
 
-	LPD3D10BLOB          m_pDevShader;
-	LPD3D10BLOB          m_pErrors;
+	D3DBlob*             m_pDevShader;
+	D3DBlob*             m_pErrors;
 	void*                m_pConstants;
 	string               m_Name;
 	string               m_Text;
@@ -418,6 +380,7 @@ private:
 
 class CHWShader_D3D : public CHWShader
 {
+	// TODO: remove all of these friends (via public access)
 	friend class CCompiledRenderObject;
 	friend class CD3D9Renderer;
 	friend class CAsyncShaderTask;
@@ -433,8 +396,10 @@ class CHWShader_D3D : public CHWShader
 	friend class CDeviceGraphicsPSO;
 	friend class CDeviceGraphicsPSO_DX11;
 	friend class CDeviceGraphicsPSO_DX12;
-
-	SShaderDevCache* m_pDevCache;
+	friend class CGnmGraphicsPipelineState;
+	friend class CDeviceObjectFactory;
+	friend struct SInputLayout;
+	friend class CDeviceGraphicsPSO_Vulkan;
 
 #if CRY_PLATFORM_DESKTOP
 	SPreprocessTree* m_pTree;
@@ -445,11 +410,15 @@ class CHWShader_D3D : public CHWShader
 	{
 		friend struct SShaderAsyncInfo;
 
+		SShaderBlob                m_Shader;
+
 		SShaderCombIdent           m_Ident;
 
 		SD3DShaderHandle           m_Handle;
 		EHWShaderClass             m_eClass;
 
+		std::vector<const SFXTexture*> m_pFXTextures;
+		
 		int                        m_nParams[2]; // 0: Instance independent; 1: Instance depended
 		std::vector<STexSamplerRT> m_pSamplers;
 		std::vector<SCGSampler>    m_Samplers;
@@ -460,32 +429,28 @@ class CHWShader_D3D : public CHWShader
 		int                        m_nUsed;
 		int                        m_nUsedFrame;
 		int                        m_nFrameSubmit;
-		void*                      m_pShaderData;
-		int                        m_nMaxVecs[3];
+		int                        m_nMaxVecs[CB_NUM];
 		short                      m_nInstMatrixID;
 		short                      m_nInstIndex;
 		short                      m_nInstructions;
 		short                      m_nTempRegs;
-		uint16                     m_VStreamMask_Stream;
-		uint16                     m_VStreamMask_Decl;
-		short                      m_nCache;
+		EStreamMasks               m_VStreamMask_Stream;
+		EStreamMasks               m_VStreamMask_Decl;
 		short                      m_nParent;
 		byte                       m_bDeleted         : 1;
 		byte                       m_bHasPMParams     : 1;
 		byte                       m_bFallback        : 1;
 		byte                       m_bAsyncActivating : 1;
 		byte                       m_bHasSendRequest  : 1;
-		byte                       m_nVertexFormat;
+		InputLayoutHandle          m_nVertexFormat;
 		byte                       m_nNumInstAttributes;
 
-		int                        m_nDataSize;
 		int                        m_DeviceObjectID;
-#if defined(FEATURE_PER_SHADER_INPUT_LAYOUT_CACHE)
-		enum { NUM_CACHE = 2 };
-		ID3D11InputLayout* m_pInputLayout[NUM_CACHE];
-		uint32             m_cacheID[NUM_CACHE];
-#endif
 		SShaderAsyncInfo*  m_pAsync;
+
+#if CRY_RENDERER_VULKAN
+		std::vector<SVertexInputStream>  m_VSInputStreams;
+#endif
 
 		SHWSInstance()
 			: m_Ident()
@@ -496,23 +461,20 @@ class CHWShader_D3D : public CHWShader
 			, m_nUsed(0)
 			, m_nUsedFrame(0)
 			, m_nFrameSubmit(0)
-			, m_pShaderData(nullptr)
 			, m_nInstMatrixID(1)
 			, m_nInstIndex(-1)
 			, m_nInstructions(0)
 			, m_nTempRegs(0)
-			, m_VStreamMask_Stream(0)
-			, m_VStreamMask_Decl(0)
-			, m_nCache(-1)
+			, m_VStreamMask_Stream(VSM_NONE)
+			, m_VStreamMask_Decl(VSM_NONE)
 			, m_nParent(-1)
 			, m_bDeleted(false)
 			, m_bHasPMParams(false)
 			, m_bFallback(false)
 			, m_bAsyncActivating(false)
 			, m_bHasSendRequest(false)
-			, m_nVertexFormat(1)
+			, m_nVertexFormat(EDefaultInputLayouts::P3F_C4B_T2F)
 			, m_nNumInstAttributes(0)
-			, m_nDataSize(0)
 			, m_DeviceObjectID(-1)
 			, m_pAsync(nullptr)
 		{
@@ -520,65 +482,13 @@ class CHWShader_D3D : public CHWShader
 			m_nParams[1] = -1;
 			m_nMaxVecs[0] = 0;
 			m_nMaxVecs[1] = 0;
-			m_nMaxVecs[2] = 0;
 
-#if defined(FEATURE_PER_SHADER_INPUT_LAYOUT_CACHE)
-			for (int i = 0; i < NUM_CACHE; ++i)
-			{
-				m_pInputLayout[i] = nullptr;
-				m_cacheID[i] = 0;
-			}
-#endif
+			m_Shader.m_nDataSize = 0;
+			m_Shader.m_pShaderData = nullptr;
 		}
 
-#if defined(FEATURE_PER_SHADER_INPUT_LAYOUT_CACHE)
-		~SHWSInstance()
-		{
-			for (uint i = 0; i < NUM_CACHE; ++i)
-			{
-				SAFE_RELEASE(m_pInputLayout[i]);
-			}
-		}
-		ID3D11InputLayout* GetCachedInputLayout(uint32 cacheID)
-		{
-			for (uint i = 0; i < NUM_CACHE; ++i)
-			{
-				if (cacheID == m_cacheID[i])
-				{
-					return m_pInputLayout[i];
-				}
-			}
-			return NULL;
-		}
-		void SetCachedInputLayout(ID3D11InputLayout* pInputLayout, uint32 cacheID)
-		{
-			// First try empy slot
-			for (uint i = 0; i < NUM_CACHE; ++i)
-			{
-				if (m_pInputLayout[i] == NULL)
-				{
-					m_pInputLayout[i] = pInputLayout;
-					m_cacheID[i] = cacheID;
-					return;
-				}
-			}
-			// Cache is full - look for matching InputLayout
-			for (uint i = 0; i < NUM_CACHE; ++i)
-			{
-				if (m_pInputLayout[i] == pInputLayout)
-				{
-					m_cacheID[i] = cacheID;
-					return;
-				}
-			}
-			// Replace first entry (cache is thrashing)
-			SAFE_RELEASE(m_pInputLayout[0]);
-			m_pInputLayout[0] = pInputLayout;
-			m_cacheID[0] = cacheID;
-		}
-#endif
-		void Release(SShaderDevCache* pCache = NULL, bool bReleaseData = true);
-		void GetInstancingAttribInfo(uint8 Attributes[32], int32 & nUsedAttr, int& nInstAttrMask);
+		void Release();
+		void GetInstancingAttribInfo(uint8 Attributes[32], int32& nUsedAttr, int& nInstAttrMask);
 
 		int  Size()
 		{
@@ -594,7 +504,7 @@ class CHWShader_D3D : public CHWShader
 			pSizer->AddObject(m_Handle);
 			pSizer->AddObject(m_pSamplers);
 			pSizer->AddObject(m_pBindVars);
-			pSizer->AddObject(m_pShaderData, m_nDataSize);
+			pSizer->AddObject(m_Shader.m_pShaderData, m_Shader.m_nDataSize);
 		}
 
 		bool IsAsyncCompiling()
@@ -617,15 +527,13 @@ public:
 	static int    m_FrameObj;
 
 	// FX support
-	//std::vector<STexSamplerFX> m_Samplers;
-	//std::vector<SFXParam> m_Params;
 	int m_nCurInstFrame;
 
 	// Bin FX support
 	FXShaderToken  m_TokenTable;
 	TArray<uint32> m_TokenData;
 
-	virtual int Size()
+	virtual int Size() override
 	{
 		int nSize = sizeof(*this);
 		nSize += sizeOfVP(m_Insts);
@@ -636,16 +544,17 @@ public:
 		return nSize;
 	}
 
-	virtual void GetMemoryUsage(ICrySizer* pSizer) const
+	virtual void GetMemoryUsage(ICrySizer* pSizer) const override
 	{
 		pSizer->AddObject(this, sizeof(*this));
 		//pSizer->AddObject(m_pCurInst); // crahes.., looks like somewhere this ptr is not set back to NULL
-		pSizer->AddObject(m_pGlobalCache);
-		pSizer->AddObject(m_pDevCache);
 		pSizer->AddObject(m_Insts);
 		//pSizer->AddObject( m_LookupMap );
 		pSizer->AddObject(m_TokenData);
 		pSizer->AddObject(m_TokenTable);
+
+		pSizer->AddObject(m_CachedTokens.data(), m_CachedTokens.size());
+		pSizer->AddObject(m_pCache);
 	}
 	CHWShader_D3D()
 	{
@@ -655,26 +564,11 @@ public:
 #endif
 		mfConstruct();
 	}
-	static void InitialiseContainers();
+
 	static void mfInit();
-	void        mfConstruct()
-	{
-		if (s_bInitShaders)
-		{
-			memset(s_CurPSParams, 0, sizeof(Vec4) * MAX_CONSTANTS_PS);
-			memset(s_CurVSParams, 0, sizeof(Vec4) * MAX_CONSTANTS_VS);
-			InitialiseContainers();
-			s_bInitShaders = false;
-		}
+	void        mfConstruct();
 
-		m_pCurInst = NULL;
-		m_pDevCache = NULL;
-		m_nCurInstFrame = 0;
-
-		m_dwShaderType = 0;
-	}
-
-	void mfFree(uint32 CRC32)
+	void        mfFree()
 	{
 #if CRY_PLATFORM_DESKTOP
 		SAFE_DELETE(m_pTree);
@@ -682,27 +576,19 @@ public:
 #endif
 
 		m_Flags = 0;
-		mfReset(CRC32);
+		mfReset();
 	}
 
 	//============================================================================
 	// Binary cache support
-	SShaderCacheHeaderItem* mfGetCacheItem(uint32& nFlags, int32& nSize);
-	static bool             mfAddCacheItem(SShaderCache* pCache, SShaderCacheHeaderItem* pItem, const byte* pData, int nLen, bool bFlush, CCryNameTSCRC Name);
+	SDeviceShaderEntry mfGetCacheItem(CShader* pFX, const char* name, SDiskShaderCache* cache, uint32& nFlags);
+	bool               mfAddCacheItem(SDiskShaderCache* pCache, SShaderCacheHeaderItem* pItem, const byte* pData, int nLen, bool bFlush, CCryNameTSCRC Name);
 
-	bool                    mfCloseCacheFile()
-	{
-		SAFE_RELEASE(m_pDevCache);
-		SAFE_RELEASE(m_pGlobalCache);
+	static byte*       mfBindsToCache(SHWSInstance* pInst, std::vector<SCGBind>* Binds, int nParams, byte* pP);
+	const byte*        mfBindsFromCache(std::vector<SCGBind>& Binds, int nParams, const byte* pP);
 
-		return true;
-	}
-
-	static byte* mfBindsToCache(SHWSInstance* pInst, std::vector<SCGBind>* Binds, int nParams, byte* pP);
-	byte*        mfBindsFromCache(std::vector<SCGBind>*& Binds, int nParams, byte* pP);
-
-	bool         mfActivateCacheItem(CShader* pSH, SShaderCacheHeaderItem* pItem, uint32 nSize, uint32 nFlags);
-	static bool  mfCreateCacheItem(SHWSInstance* pInst, std::vector<SCGBind>& InstBinds, byte* pData, int nLen, CHWShader_D3D* pSH, bool bShaderThread);
+	bool               mfActivateCacheItem(CShader* pSH, const SDeviceShaderEntry* cacheEntry, uint32 nFlags);
+	bool               mfCreateCacheItem(SHWSInstance* pInst, CShader* ef, std::vector<SCGBind>& InstBinds, byte* pData, int nLen, bool bShaderThread);
 
 	//============================================================================
 
@@ -717,17 +603,17 @@ public:
 
 	void        mfSaveCGFile(const char* scr, const char* path);
 	void        mfOutputCompilerError(string& strErr, const char* szSrc);
-	static bool mfCreateShaderEnv(int nThread, SHWSInstance* pInst, LPD3D10BLOB pShader, void* pConstantTable, LPD3D10BLOB pErrorMsgs, std::vector<SCGBind>& InstBindVars, CHWShader_D3D* pSH, bool bShaderThread, CShader* pFXShader, int nCombination, const char* src = NULL);
+	static bool mfCreateShaderEnv(int nThread, SHWSInstance* pInst, D3DBlob* pShader, void*& pConstantTable, D3DBlob*& pErrorMsgs, std::vector<SCGBind>& InstBindVars, CHWShader_D3D* pSH, bool bShaderThread, CShader* pFXShader, int nCombination, const char* src = NULL);
 	void        mfPrintCompileInfo(SHWSInstance* pInst);
-	bool        mfCompileHLSL_Int(CShader* pSH, char* prog_text, LPD3D10BLOB* ppShader, void** ppConstantTable, LPD3D10BLOB* ppErrorMsgs, string& strErr, std::vector<SCGBind>& InstBindVars);
+	bool        mfCompileHLSL_Int(CShader* pSH, char* prog_text, D3DBlob** ppShader, void** ppConstantTable, D3DBlob** ppErrorMsgs, string& strErr, std::vector<SCGBind>& InstBindVars);
 
 	int         mfAsyncCompileReady(SHWSInstance* pInst);
 	bool        mfRequestAsync(CShader* pSH, SHWSInstance* pInst, std::vector<SCGBind>& InstBindVars, const char* prog_text, const char* szProfile, const char* szEntry);
 
 	void        mfSubmitRequestLine(SHWSInstance* pInst, string* pRequestLine = NULL);
-	LPD3D10BLOB mfCompileHLSL(CShader* pSH, char* prog_text, void** ppConstantTable, LPD3D10BLOB* ppErrorMsgs, uint32 nFlags, std::vector<SCGBind>& InstBindVars);
-	bool        mfUploadHW(SHWSInstance* pInst, byte* pBuf, uint32 nSize, CShader* pSH, uint32 nFlags);
-	bool        mfUploadHW(LPD3D10BLOB pShader, SHWSInstance* pInst, CShader* pSH, uint32 nFlags);
+	D3DBlob*    mfCompileHLSL(CShader* pSH, char* prog_text, void** ppConstantTable, D3DBlob** ppErrorMsgs, uint32 nFlags, std::vector<SCGBind>& InstBindVars);
+	bool        mfUploadHW(SHWSInstance* pInst, const byte* pBuf, uint32 nSize, CShader* pSH, uint32 nFlags);
+	bool        mfUploadHW(D3DBlob* pShader, SHWSInstance* pInst, CShader* pSH, uint32 nFlags);
 
 	ED3DShError mfIsValid_Int(SHWSInstance*& pInst, bool bFinalise);
 
@@ -748,522 +634,7 @@ public:
 	void        mfLogShaderCacheMiss(SHWSInstance* pInst);
 	void        mfLogShaderRequest(SHWSInstance* pInst);
 
-	void        mfBindInstance(SHWSInstance* pInst, EHWShaderClass eHWSC)
-	{
-		m_pCurInst = pInst;
-		if (eHWSC == eHWSC_Vertex)
-		{
-			s_pCurInstVS = pInst;
-			if (s_pCurVS != pInst->m_Handle.m_pShader)
-			{
-				s_pCurVS = pInst->m_Handle.m_pShader;
-#ifndef _RELEASE
-				gRenDev->m_RP.m_PS[gRenDev->m_RP.m_nProcessThreadID].m_NumVShadChanges++;
-#endif
-				mfBind();
-			}
-		}
-		else if (eHWSC == eHWSC_Pixel)
-		{
-			s_pCurInstPS = pInst;
-			if (s_pCurPS != pInst->m_Handle.m_pShader)
-			{
-				s_pCurPS = pInst->m_Handle.m_pShader;
-#ifndef _RELEASE
-				gRenDev->m_RP.m_PS[gRenDev->m_RP.m_nProcessThreadID].m_NumPShadChanges++;
-#endif
-				mfBind();
-			}
-		}
-	}
-
-	void mfBind()
-	{
-		HRESULT hr = S_OK;
-		if (mfIsValid(m_pCurInst, true) == ED3DShError_Ok)
-		{
-			{
-				if (gRenDev->m_nFrameSwapID != m_pCurInst->m_nUsedFrame)
-				{
-					m_pCurInst->m_nUsedFrame = gRenDev->m_nFrameSwapID;
-					m_pCurInst->m_nUsed++;
-				}
-				if (m_eSHClass == eHWSC_Pixel)
-					gcpRendD3D->m_DevMan.BindShader(CDeviceManager::TYPE_PS, (D3DResource*)m_pCurInst->m_Handle.m_pShader->m_pHandle);
-				else if (m_eSHClass == eHWSC_Vertex)
-					gcpRendD3D->m_DevMan.BindShader(CDeviceManager::TYPE_VS, (D3DResource*)m_pCurInst->m_Handle.m_pShader->m_pHandle);
-				else if (m_eSHClass == eHWSC_Geometry)
-					gcpRendD3D->m_DevMan.BindShader(CDeviceManager::TYPE_GS, (D3DResource*)m_pCurInst->m_Handle.m_pShader->m_pHandle);
-				else if (m_eSHClass == eHWSC_Hull)
-					gcpRendD3D->m_DevMan.BindShader(CDeviceManager::TYPE_HS, (D3DResource*)m_pCurInst->m_Handle.m_pShader->m_pHandle);
-				else if (m_eSHClass == eHWSC_Domain)
-					gcpRendD3D->m_DevMan.BindShader(CDeviceManager::TYPE_GS, (D3DResource*)m_pCurInst->m_Handle.m_pShader->m_pHandle);
-				else if (m_eSHClass == eHWSC_Compute)
-					gcpRendD3D->m_DevMan.BindShader(CDeviceManager::TYPE_CS, (D3DResource*)m_pCurInst->m_Handle.m_pShader->m_pHandle);
-			}
-		}
-		assert(SUCCEEDED(hr));
-	}
-
-	static void        mfCommitParamsMaterial();
-	static void        mfCommitParamsGlobal();
-	static void        mfCommitParams();
-
-	static inline void mfBindGS(SD3DShader* pShader, void* pHandle)
-	{
-		if (s_pCurGS != pShader)
-		{
-			s_pCurGS = pShader;
-#if !defined(_RELEASE) || defined(ENABLE_STATOSCOPE_RELEASE)
-			gcpRendD3D->m_RP.m_PS[gcpRendD3D->m_RP.m_nProcessThreadID].m_NumGShadChanges++;
-#endif
-			gcpRendD3D->GetDeviceContext().GSSetShader((ID3D11GeometryShader*)pHandle, NULL, 0);
-		}
-		if (!s_pCurGS)
-		{
-			s_pCurInstGS = NULL;
-			s_nActivationFailMask &= ~(1 << eHWSC_Geometry);
-		}
-	}
-	static inline void mfBindDS(SD3DShader* pShader, void* pHandle)
-	{
-		if (s_pCurDS != pShader)
-		{
-			s_pCurDS = pShader;
-#if !defined(_RELEASE) || defined(ENABLE_STATOSCOPE_RELEASE)
-			gcpRendD3D->m_RP.m_PS[gcpRendD3D->m_RP.m_nProcessThreadID].m_NumDShadChanges++;
-#endif
-			gcpRendD3D->GetDeviceContext().DSSetShader((ID3D11DomainShader*)pHandle, NULL, 0);
-		}
-		if (!s_pCurDS)
-		{
-			s_pCurInstDS = NULL;
-			s_nActivationFailMask &= ~(1 << eHWSC_Domain);
-		}
-	}
-	static inline void mfBindHS(SD3DShader* pShader, void* pHandle)
-	{
-		if (s_pCurHS != pShader)
-		{
-			s_pCurHS = pShader;
-#if !defined(_RELEASE) || defined(ENABLE_STATOSCOPE_RELEASE)
-			gcpRendD3D->m_RP.m_PS[gcpRendD3D->m_RP.m_nProcessThreadID].m_NumHShadChanges++;
-#endif
-			gcpRendD3D->GetDeviceContext().HSSetShader((ID3D11HullShader*)pHandle, NULL, 0);
-		}
-		if (!s_pCurHS)
-		{
-			s_pCurInstHS = NULL;
-			s_nActivationFailMask &= ~(1 << eHWSC_Hull);
-		}
-	}
-	static inline void mfBindCS(SD3DShader* pShader, void* pHandle)
-	{
-		if (s_pCurCS != pShader)
-		{
-			s_pCurCS = pShader;
-#if !defined(_RELEASE) || defined(ENABLE_STATOSCOPE_RELEASE)
-			gcpRendD3D->m_RP.m_PS[gcpRendD3D->m_RP.m_nProcessThreadID].m_NumCShadChanges++;
-#endif
-			gcpRendD3D->GetDeviceContext().CSSetShader((ID3D11ComputeShader*)pHandle, NULL, 0);
-		}
-		if (!s_pCurCS)
-		{
-			s_pCurInstCS = NULL;
-			s_nActivationFailMask &= ~(1 << eHWSC_Compute);
-		}
-	}
-
-#ifdef USE_PER_FRAME_CONSTANT_BUFFER_UPDATES
-	static inline void mfSetCB(int eClass, int nSlot, D3DBuffer* pBuffer)
-	{
-		FUNCTION_PROFILER(gEnv->pSystem, PROFILE_RENDERER);
-
-	#ifndef _RELEASE
-		if (nSlot >= CB_NUM)
-			__debugbreak();
-	#endif
-
-		s_pCurDevCB[eClass][nSlot] = reinterpret_cast<uint64>(pBuffer);
-
-		switch (eClass)
-		{
-		case eHWSC_Vertex:
-			gcpRendD3D->m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_VS, pBuffer, nSlot);
-			break;
-		case eHWSC_Pixel:
-			gcpRendD3D->m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_PS, pBuffer, nSlot);
-			break;
-		case eHWSC_Geometry:
-			gcpRendD3D->m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_GS, pBuffer, nSlot);
-			break;
-		case eHWSC_Domain:
-			gcpRendD3D->m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_DS, pBuffer, nSlot);
-			break;
-		case eHWSC_Hull:
-			gcpRendD3D->m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_HS, pBuffer, nSlot);
-			break;
-		case eHWSC_Compute:
-			gcpRendD3D->m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_CS, pBuffer, nSlot);
-			break;
-		}
-	}
-#endif
-
-	static inline void mfSetCB(int eClass, int nSlot, CConstantBuffer* pBuffer)
-	{
-		FUNCTION_PROFILER(gEnv->pSystem, PROFILE_RENDERER);
-
-		uint64 code = (pBuffer) ? pBuffer->GetCode() : 0;
-#if !CRY_PLATFORM_ORBIS // having this check breaks rendering on orbis, should be correctly fixed as this is a large optimization
-		if (s_pCurDevCB[eClass][nSlot] != code)
-#endif
-		{
-			s_pCurDevCB[eClass][nSlot] = code;
-
-			switch (eClass)
-			{
-			case eHWSC_Vertex:
-				gcpRendD3D->m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_VS, pBuffer, nSlot);
-				break;
-			case eHWSC_Pixel:
-				gcpRendD3D->m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_PS, pBuffer, nSlot);
-				break;
-			case eHWSC_Geometry:
-				gcpRendD3D->m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_GS, pBuffer, nSlot);
-				break;
-			case eHWSC_Domain:
-				gcpRendD3D->m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_DS, pBuffer, nSlot);
-				break;
-			case eHWSC_Hull:
-				gcpRendD3D->m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_HS, pBuffer, nSlot);
-				break;
-			case eHWSC_Compute:
-				gcpRendD3D->m_DevMan.BindConstantBuffer(CDeviceManager::TYPE_CS, pBuffer, nSlot);
-				break;
-			}
-		}
-	}
-
-	static inline void mfClearCB()
-	{
-		for (int i = 0; i < (int)eHWSC_Num; ++i)
-			for (int j = 0; j < (int)CB_NUM; ++j)
-				mfSetCB(i, j, (CConstantBuffer*)NULL);
-		gcpRendD3D->m_DevMan.CommitDeviceStates();
-	}
-
-	static inline void mfUnbindCB(CConstantBuffer* pCB)
-	{
-		uint64 code = (pCB) ? pCB->GetCode() : 0;
-		bool changed = false;
-		if (pCB)
-		{
-			for (int i = 0; i < (int)eHWSC_Num; ++i)
-			{
-				for (int j = 0; j < (int)CB_NUM; ++j)
-				{
-					if (s_pCurDevCB[i][j] == code)
-					{
-						mfSetCB(i, j, (CConstantBuffer*)NULL);
-						changed = true;
-					}
-				}
-			}
-		}
-		if (changed)
-			gcpRendD3D->m_DevMan.CommitDeviceStates();
-	}
-
-	static inline void mfFreeCB(int nCBufSlot, EHWShaderClass eSHData)
-	{
-		if (!s_pDataCB[eSHData][nCBufSlot])
-			return;
-
-		assert(s_pCurReqCB[eSHData][nCBufSlot]);
-
-		if ((TRUNCATE_PTR)s_pDataCB[eSHData][nCBufSlot] != 1)
-		{
-#ifdef USE_PER_FRAME_CONSTANT_BUFFER_UPDATES
-			CDeviceManager::Unmap(s_pCurReqCB[eSHData][nCBufSlot], 0, 0, nMaxVecs * sizeof(Vec4), D3D11_MAP_WRITE_PER_FRAME);
-#else
-			s_pCurReqCB[eSHData][nCBufSlot]->EndWrite();
-#endif
-		}
-
-		s_pDataCB[eSHData][nCBufSlot] = NULL;
-	}
-
-	static inline void mfCommitCB(int nCBufSlot, EHWShaderClass eSHData, EHWShaderClass eSH)
-	{
-		if (!s_pDataCB[eSHData][nCBufSlot])
-			return;
-
-		assert(s_pCurReqCB[eSHData][nCBufSlot]);
-
-		if ((INT_PTR)s_pDataCB[eSHData][nCBufSlot] != 1)
-		{
-#ifdef USE_PER_FRAME_CONSTANT_BUFFER_UPDATES
-			CDeviceManager::Unmap(s_pCurReqCB[eSHData][nCBufSlot], 0, 0, nMaxVecs * sizeof(Vec4), D3D11_MAP_WRITE_PER_FRAME);
-#else
-			s_pCurReqCB[eSHData][nCBufSlot]->EndWrite();
-#endif
-		}
-
-		s_pDataCB[eSHData][nCBufSlot] = NULL;
-		mfSetCB(eSH, nCBufSlot, s_pCurReqCB[eSHData][nCBufSlot]);
-	}
-	static inline void mfSetCBConst(int nReg, int nCBufSlot, EHWShaderClass eSH, const float* fData, const int nVecs, int nMaxVecs)
-	{
-		EHWShaderClass eSHOrig = eSH;
-		assert(nCBufSlot >= 0 || nCBufSlot < CB_NUM);
-		assert(s_pCB[eSH][nCBufSlot]);
-		//assert(nReg + nVecs <= nMaxVecs);
-		if (nReg + nVecs > nMaxVecs)
-		{
-			iLog->Log("ERROR: Attempt to modify CB: %d outside of the range (%d+%d > %d) (Shader: %s)", nCBufSlot, nReg, nVecs, nMaxVecs, gRenDev->m_RP.m_pShader ? gRenDev->m_RP.m_pShader->GetName() : "Unknown");
-			return;
-		}
-		if (s_pDataCB[eSH][nCBufSlot] && s_nCurMaxVecs[eSH][nCBufSlot] != nMaxVecs)
-		{
-			mfCommitCB(nCBufSlot, eSH, eSHOrig);
-		}
-		if (!s_pDataCB[eSH][nCBufSlot])
-		{
-			s_nCurMaxVecs[eSH][nCBufSlot] = nMaxVecs;
-
-			{
-				if (!s_pCB[eSH][nCBufSlot][nMaxVecs] && nMaxVecs)
-				{
-#ifdef USE_PER_FRAME_CONSTANT_BUFFER_UPDATES
-					D3D11_BUFFER_DESC desc;
-					desc.Usage = D3D11_USAGE_DYNAMIC;
-					desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-					desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-					desc.ByteWidth = nMaxVecs * sizeof(Vec4);
-					desc.StructureByteStride = sizeof(Vec4);
-					gcpRendD3D->GetDevice().CreateBuffer(&desc, NULL, &s_pCB[eSH][nCBufSlot][nMaxVecs]);
-#else
-					s_pCB[eSH][nCBufSlot][nMaxVecs] = gcpRendD3D->m_DevBufMan.CreateConstantBufferRaw(nMaxVecs * sizeof(Vec4));
-#endif
-					if (s_pCB[eSH][nCBufSlot][nMaxVecs] == NULL)
-					{
-						iLog->Log("ERROR: CBuffer %d Create() failed for shader %s result %d", nCBufSlot, gRenDev->m_RP.m_pShader ? gRenDev->m_RP.m_pShader->GetName() : "Unknown", -1);
-#if !defined(_RELEASE)
-						__debugbreak();
-#endif
-						return;
-					}
-				}
-
-				{
-					s_pCurReqCB[eSH][nCBufSlot] = s_pCB[eSH][nCBufSlot][nMaxVecs];
-					STALL_PROFILER("set const_buffer");
-#ifdef USE_PER_FRAME_CONSTANT_BUFFER_UPDATES
-					s_pDataCB[eSH][nCBufSlot] = (Vec4*)CDeviceManager::Map(s_pCurReqCB[eSH][nCBufSlot], 0, 0, 0, D3D11_MAP_WRITE_PER_FRAME);
-#else
-					s_pDataCB[eSH][nCBufSlot] = (Vec4*)s_pCurReqCB[eSH][nCBufSlot]->BeginWrite();
-#endif
-				}
-			}
-
-#ifdef DO_RENDERLOG
-			if (CD3D9Renderer::CV_d3d11_CBUpdateStats)
-			{
-				static unsigned int s_lastFrame(0);
-				static unsigned int s_numCalls(0);
-				static unsigned int s_minUpdateBytes(0);
-				static unsigned int s_maxUpdateBytes(0);
-				static unsigned int s_totalUpdateBytes(0);
-
-				unsigned int updateBytes = (unsigned int) (nMaxVecs * sizeof(Vec4));
-				unsigned int curFrame = gcpRendD3D->GetFrameID(false);
-				if (s_lastFrame != curFrame)
-				{
-					if (s_lastFrame != 0)
-					{
-						unsigned int avgUpdateBytes = s_totalUpdateBytes / s_numCalls;
-						gEnv->pLog->Log("-------------------------------------------------------");
-						gEnv->pLog->Log("CB update statistics for frame %d:", s_lastFrame);
-						gEnv->pLog->Log("#UpdateSubresource() = %d calls", s_numCalls);
-						gEnv->pLog->Log("SmallestTransfer = %d kb (%d bytes)", (s_minUpdateBytes + 1023) >> 10, s_minUpdateBytes);
-						gEnv->pLog->Log("BiggestTransfer = %d kb (%d bytes)", (s_maxUpdateBytes + 1023) >> 10, s_maxUpdateBytes);
-						gEnv->pLog->Log("AvgTransfer = %d kb (%d bytes)", (avgUpdateBytes + 1023) >> 10, avgUpdateBytes);
-						gEnv->pLog->Log("TotalTransfer = %d kb (%d bytes)", (s_totalUpdateBytes + 1023) >> 10, s_totalUpdateBytes);
-					}
-
-					s_lastFrame = curFrame;
-					s_numCalls = 1;
-					s_minUpdateBytes = updateBytes;
-					s_maxUpdateBytes = updateBytes;
-					s_totalUpdateBytes = updateBytes;
-				}
-				else
-				{
-					++s_numCalls;
-					s_minUpdateBytes = min(updateBytes, s_minUpdateBytes);
-					s_maxUpdateBytes = max(updateBytes, s_maxUpdateBytes);
-					s_totalUpdateBytes += updateBytes;
-				}
-			}
-#endif
-		}
-		else
-		{
-			assert(s_nCurMaxVecs[eSH][nCBufSlot] == nMaxVecs);
-		}
-		const Vec4* vData = (const Vec4*)fData;
-#ifdef DO_RENDERLOG
-		if (CRenderer::CV_r_log >= 3)
-		{
-			for (int i = 0; i < nVecs; i++)
-			{
-				gRenDev->Logv("%d %d - %d: (%.3f, %.3f, %.3f, %.3f)", eSH, nCBufSlot, i + nReg, vData[i][0], vData[i][1], vData[i][2], vData[i][3]);
-			}
-			gRenDev->Logv("\n");
-		}
-#endif
-
-#if CRY_PLATFORM_SSE2
-		if ((((uintptr_t)vData) & 0xf) == 0u)
-		{
-			__m128* const __restrict vDst = (__m128*)&s_pDataCB[eSH][nCBufSlot][nReg];
-			const __m128* const __restrict vSrc = (const __m128*)vData;
-			for (int i = 0; i < nVecs; i++) _mm_stream_ps((float*)&vDst[i], vSrc[i]);
-#if !CRY_PLATFORM_ORBIS // SFENCE implied on command-buffer submit
-			_mm_sfence();
-#endif
-		}
-		else
-#endif
-		{
-			memcpy(&s_pDataCB[eSH][nCBufSlot][nReg], vData, (size_t)nVecs << 4);
-		}
-	}
-	static inline void mfSetGSConst(int nReg, int nCBufSlot, const float* vData, int nParams, int nMaxVecs = 32)
-	{
-		mfSetCBConst(nReg, nCBufSlot, eHWSC_Geometry, vData, nParams, nMaxVecs);
-	}
-
-	static inline void mfSetPSConst(int nReg, int nCBufSlot, const float* vData, int nParams, int nMaxVecs = 32)
-	{
-		mfSetCBConst(nReg, nCBufSlot, eHWSC_Pixel, vData, nParams, nMaxVecs);
-	}
-
-	static inline void mfSetPSConstA(int nReg, int nCBufSlot, const float* vData, int nParams, int nMaxVecs = 32)
-	{
-		mfSetCBConst(nReg, nCBufSlot, eHWSC_Pixel, vData, nParams, nMaxVecs);
-	}
-
-	static inline void mfSetVSConst(int nReg, int nCBufSlot, const float* vData, int nParams, int nMaxVecs = 32)
-	{
-		mfSetCBConst(nReg, nCBufSlot, eHWSC_Vertex, vData, nParams, nMaxVecs);
-	}
-
-	static inline void mfSetVSConstA(int nReg, int nCBufSlot, const float* vData, int nParams, int nMaxVecs = 32)
-	{
-		mfSetCBConst(nReg, nCBufSlot, eHWSC_Vertex, vData, nParams, nMaxVecs);
-	}
-	static inline void mfSetPSConst(int nReg, const float* vData, int nParams, int nMaxVecs = 32)
-	{
-		mfSetPSConst(nReg, CB_PER_BATCH, vData, nParams, nMaxVecs);
-	}
-	static inline void mfSetVSConst(int nReg, const float* vData, int nParams, int nMaxVecs = 32)
-	{
-		mfSetVSConst(nReg, CB_PER_BATCH, vData, nParams, nMaxVecs);
-	}
-
-	static inline void mfSetGSConst(int nReg, const float* vData, int nParams, int nMaxVecs = 32)
-	{
-		mfSetGSConst(nReg, CB_PER_BATCH, vData, nParams, nMaxVecs);
-	}
-
-	static inline void mfParameterReg(int nReg, int nCBufSlot, EHWShaderClass eSH, const float* v, int nComps, int nMaxVecs)
-	{
-		mfSetCBConst(nReg, nCBufSlot, eSH, v, nComps, nMaxVecs);
-	}
-
-	static void ILINE mfParameterf(const SCGBind* ParamBind, const float* v, int nComps, EHWShaderClass eSH, int nMaxVecs)
-	{
-		if (!ParamBind || ParamBind->m_dwBind < 0)
-			return;
-		int nReg = ParamBind->m_dwBind;
-		mfParameterReg(nReg, ParamBind->m_dwCBufSlot, eSH, v, nComps, nMaxVecs);
-	}
-	static void ILINE mfParameterfA(const SCGBind* ParamBind, const float* v, int nComps, EHWShaderClass eSH, int nMaxVecs)
-	{
-		if (!ParamBind || ParamBind->m_dwBind < 0)
-			return;
-		int nReg = ParamBind->m_dwBind;
-		mfParameterReg(nReg, ParamBind->m_dwCBufSlot, eSH, v, nComps, nMaxVecs);
-	}
-
-	static void mfParameterf(const SCGBind* ParamBind, const float* v, EHWShaderClass eSH, int nMaxVecs)
-	{
-		if (!ParamBind || ParamBind->m_dwBind < 0)
-			return;
-		int nReg = ParamBind->m_dwBind;
-		mfParameterReg(nReg, ParamBind->m_dwCBufSlot, eSH, v, ParamBind->m_nParameters, nMaxVecs);
-	}
-	static void mfParameterfA(const SCGBind* ParamBind, const float* v, EHWShaderClass eSH, int nMaxVecs)
-	{
-		if (!ParamBind || ParamBind->m_dwBind < 0)
-			return;
-		int nReg = ParamBind->m_dwBind;
-		mfParameterReg(nReg, ParamBind->m_dwCBufSlot, eSH, v, ParamBind->m_nParameters, nMaxVecs);
-	}
-	static void mfParameteri(const SCGBind* ParamBind, const float* v, EHWShaderClass eSH, int nMaxVecs)
-	{
-		if (!ParamBind)
-			return;
-		int nReg = ParamBind->m_dwBind;
-		mfParameterReg(nReg, ParamBind->m_dwCBufSlot, eSH, v, ParamBind->m_nParameters, nMaxVecs);
-	}
-	static void mfParameterb(const SCGBind* ParamBind, const float* v, EHWShaderClass eSH, int nMaxVecs)
-	{
-		if (!ParamBind)
-			return;
-
-		assert(ParamBind->m_dwBind >= 0 && ParamBind->m_nParameters >= 1);
-		if ((int)ParamBind->m_dwBind < 0)
-			return;
-
-		int nReg = ParamBind->m_dwBind;
-		mfParameterReg(nReg, ParamBind->m_dwCBufSlot, eSH, v, ParamBind->m_nParameters, nMaxVecs);
-	}
-
-	SCGBind* mfGetParameterBind(const CCryNameR& Name)
-	{
-		if (!m_pCurInst)
-			return NULL;
-
-		std::vector<SCGBind>& pBinds = m_pCurInst->m_pBindVars;
-		//if (!pBinds)
-		//  return NULL;
-		int i;
-		int nSize = pBinds.size();
-		for (i = 0; i < nSize; i++)
-		{
-			if (Name == pBinds[i].m_Name)
-				return &pBinds[i];
-		}
-		return NULL;
-	}
-	void mfParameterf(const CCryNameR& Name, const float* v)
-	{
-		SCGBind* pBind = mfGetParameterBind(Name);
-		if (pBind)
-		{
-			mfParameterf(pBind, v, m_eSHClass, m_pCurInst->m_nMaxVecs[CB_PER_BATCH]);
-		}
-	}
-
-	static float* mfSetParametersPI(SCGParam* pParams, const int nParams, float* pDst, EHWShaderClass eSH, int nMaxRegs);                                     // handles only PI and SI parameters
-	static void   mfSetParameters(SCGParam* pParams, const int nParams, EHWShaderClass eSH, int nMaxRegs, float* pOutBuffer = 0, uint32* pOutBufferSize = 0); // handles all the parameter except PI and SI ones
-	static void   mfSetGeneralParametersPI(SCGParam* pParams, const int nParams, EHWShaderClass eSH, int nMaxRegs);                                           // handles only PI and SI parameters
-	static void   mfSetGeneralParameters(SCGParam* pParams, const int nParams, EHWShaderClass eSH, int nMaxRegs);                                             // handles all the parameter except PI and SI ones
-
-	void          GetReflectedShaderParameters(CRenderObject* pForRenderObject, const SShaderItem& shaderItem, SHWSInstance* pShaderInstance, uint8* pOutputBuffer, uint32& nOutputSize);
+	static void mfSetParameters(SCGParam* pParams, const int nParams, EHWShaderClass eSH, int nMaxRegs, Vec4* pOutBuffer, uint32 outBufferSize, const D3DViewPort* pVP, CRenderView* pRenderView);     // handles all the parameter except PI and SI ones
 
 	//============================================================================
 
@@ -1275,190 +646,76 @@ public:
 		pInst->m_Handle.m_nData = nSize;
 	}
 
-	ILINE int mfCheckActivation(CShader* pSH, SHWSInstance*& pInst, uint32 nFlags)
-	{
-		ED3DShError eError = mfIsValid(pInst, true);
-		if (eError == ED3DShError_NotCompiled)
-		{
-			if (!mfActivate(pSH, nFlags))
-			{
-				pInst = m_pCurInst;
-				if (!pInst->IsAsyncCompiling())
-					pInst->m_Handle.SetNonCompilable();
-				else
-				{
-					eError = mfIsValid(pInst, true);
-					if (eError == ED3DShError_CompilingError || pInst->m_bAsyncActivating)
-						return 0;
-					if (m_eSHClass == eHWSC_Vertex)
-						return 1;
-					else
-						return -1;
-				}
-				return 0;
-			}
-			if (gRenDev->m_RP.m_pCurTechnique)
-				mfUpdatePreprocessFlags(gRenDev->m_RP.m_pCurTechnique);
-			pInst = m_pCurInst;
-		}
-		else if (eError == ED3DShError_Fake)
-		{
-			if (pInst->m_Handle.m_pData)
-			{
-				if (gRenDev && !gRenDev->CheckDeviceLost())
-				{
-					mfUploadHW(pInst, pInst->m_Handle.m_pData, pInst->m_Handle.m_nData, pSH, nFlags);
-					SAFE_DELETE_ARRAY(pInst->m_Handle.m_pData);
-					pInst->m_Handle.m_nData = 0;
-				}
-				else
-					eError = ED3DShError_CompilingError;
-			}
-		}
-		if (eError == ED3DShError_CompilingError)
-			return 0;
-		return 1;
-	}
+	bool          PrecacheShader(CShader* pSH, const SShaderCombIdent& cache, uint32 nFlags) override;
 
-	void mfSetForOverdraw(SHWSInstance* pInst, uint32 nFlags, uint64& RTMask);
+	int           CheckActivation(CShader* pSH, SHWSInstance*& pInst, uint32 nFlags);
 
-	void mfSetParametersPI(CRenderObject* pObj, CShader* pFXShader)
-	{
-		if (!m_pCurInst)
-			return;
-		SHWSInstance* pInst = m_pCurInst;
-		if (pInst->m_nParams[1] >= 0)
-		{
-			SCGParamsGroup& Group = CGParamManager::s_Groups[pInst->m_nParams[1]];
-			if (Group.bGeneral)
-				mfSetGeneralParametersPI(Group.pParams, Group.nParams, m_eSHClass, pInst->m_nMaxVecs[1]);
-			else
-				mfSetParametersPI(Group.pParams, Group.nParams, NULL, m_eSHClass, pInst->m_nMaxVecs[1]);
-		}
-	}
-	inline void mfSetParametersPB()
-	{
-		if (!m_pCurInst)
-			return;
-		SHWSInstance* pInst = m_pCurInst;
-		if (pInst->m_nParams[0] >= 0)
-		{
-			SCGParamsGroup& Group = CGParamManager::s_Groups[pInst->m_nParams[0]];
-			if (Group.bGeneral)
-				mfSetGeneralParameters(Group.pParams, Group.nParams, m_eSHClass, pInst->m_nMaxVecs[0]);
-			else
-				mfSetParameters(Group.pParams, Group.nParams, m_eSHClass, pInst->m_nMaxVecs[0]);
-		}
-	}
-	inline void mfSetSamplers(const std::vector<STexSamplerRT>& Samplers, EHWShaderClass eHWClass)
-	{
-		mfSetSamplers_Old(Samplers, eHWClass);
-		if (!m_pCurInst)
-			return;
-		SHWSInstance* pInst = m_pCurInst;
-		mfSetSamplers(pInst->m_Samplers, eHWClass);
-		mfSetTextures(pInst->m_Textures, eHWClass);
-	}
-#if !defined(_RELEASE)
-	static void   LogSamplerTextureMismatch(const CTexture* pTex, const STexSamplerRT* pSampler, EHWShaderClass shaderClass, const char* pMaterialName);
-#endif
-	static bool   mfSetTextures(const std::vector<SCGTexture>& Textures, EHWShaderClass eHWClass);
-	static bool   mfSetSamplers(const std::vector<SCGSampler>& Samplers, EHWShaderClass eHWClass);
-	static bool   mfSetSamplers_Old(const std::vector<STexSamplerRT>& Samplers, EHWShaderClass eHWClass);
-	SHWSInstance* mfGetInstance(CShader* pSH, SShaderCombIdent& Ident, uint32 nFlags);
-	SHWSInstance* mfGetInstance(CShader* pSH, int nHashInstance, SShaderCombIdent& Ident);
-	SHWSInstance* mfGetHashInst(InstContainer *pInstCont, uint32 identHash, SShaderCombIdent& Ident, InstContainerIt& it);
-	static void   mfPrepareShaderDebugInfo(SHWSInstance* pInst, CHWShader_D3D* pSH, const char* szAsm, std::vector<SCGBind>& InstBindVars, void* pBuffer);
+	SHWSInstance* mfGetInstance(SShaderCombIdent& Ident, uint32 nFlags);
+	SHWSInstance* mfGetInstance(int nHashInstance, SShaderCombIdent& Ident);
+	SHWSInstance* mfGetHashInst(InstContainer* pInstCont, uint32 identHash, SShaderCombIdent& Ident, InstContainerIt& it);
+	void          mfPrepareShaderDebugInfo(SHWSInstance* pInst, const char* szAsm, std::vector<SCGBind>& InstBindVars, void* pBuffer);
 	void          mfGetSrcFileName(char* srcName, int nSize);
-	static void   mfGetDstFileName(SHWSInstance* pInst, CHWShader_D3D* pSH, char* dstname, int nSize, byte bType);
+	void          mfGetDstFileName(SHWSInstance* pInst, char* dstname, int nSize, byte bType);
 	static void   mfGenName(SHWSInstance* pInst, char* dstname, int nSize, byte bType);
-	void          CorrectScriptEnums(CParserBin& Parser, SHWSInstance* pInst, std::vector<SCGBind>& InstBindVars, FXShaderToken* Table);
-	bool          ConvertBinScriptToASCII(CParserBin& Parser, SHWSInstance* pInst, std::vector<SCGBind>& InstBindVars, FXShaderToken* Table, TArray<char>& Scr);
+	void          CorrectScriptEnums(CParserBin& Parser, SHWSInstance* pInst, std::vector<SCGBind>& InstBindVars, const FXShaderToken& Table);
+	bool          ConvertBinScriptToASCII(CParserBin& Parser, SHWSInstance* pInst, std::vector<SCGBind>& InstBindVars, const FXShaderToken& Table, TArray<char>& Scr);
+	bool          AddResourceLayoutToScriptHeader(SHWSInstance* pInst, const char* szProfile, const char* pFunCCryName, TArray<char>& Scr);
 	void          RemoveUnaffectedParameters_D3D10(CParserBin& Parser, SHWSInstance* pInst, std::vector<SCGBind>& InstBindVars);
-	bool          mfStoreCacheTokenMap(FXShaderToken*& Table, TArray<uint32>*& pSHData, const char* szName);
-	void          mfGetTokenMap(CResFile* pRes, SDirEntry* pDE, FXShaderToken*& Table, TArray<uint32>*& pSHData);
+	void          AddResourceLayoutToBinScript(CParserBin& Parser, SHWSInstance* pInst, FXShaderToken* Table);
+	bool          mfStoreCacheTokenMap(const FXShaderToken& Table, const TArray<uint32>& pSHData);
 	void          mfSetDefaultRT(uint64& nAndMask, uint64& nOrMask);
-	bool          AutoGenMultiresGS(TArray<char>& sNewScr, CShader *pSH);
+	bool          AutoGenMultiresGS(TArray<char>& sNewScr, CShader* pSH);
 
 public:
-	bool        mfGetCacheTokenMap(FXShaderToken*& Table, TArray<uint32>*& pSHData, uint64 nMaskGen);
-	bool        mfGenerateScript(CShader* pSH, SHWSInstance* pInst, std::vector<SCGBind>& InstBindVars, uint32 nFlags, FXShaderToken* Table, TArray<uint32>* pSHData, TArray<char>& sNewScr);
-	bool        mfActivate(CShader* pSH, uint32 nFlags, FXShaderToken* Table = NULL, TArray<uint32>* pSHData = NULL);
+	bool        mfGetCacheTokenMap(FXShaderToken& Table, TArray<uint32>& pSHData);
+	bool        mfGenerateScript(CShader* pSH, SHWSInstance* pInst, std::vector<SCGBind>& InstBindVars, uint32 nFlags, TArray<char>& sNewScr);
+	bool        mfActivate(CShader* pSH, uint32 nFlags);
 
 	void        SetTokenFlags(uint32 nToken);
 	uint64      CheckToken(uint32 nToken);
-	uint64      CheckIfExpr_r(uint32* pTokens, uint32& nCur, uint32 nSize);
-	void        mfConstructFX_Mask_RT(FXShaderToken* Table, TArray<uint32>* pSHData);
-	void        mfConstructFX(FXShaderToken* Table, TArray<uint32>* pSHData);
+	uint64      CheckIfExpr_r(const uint32* pTokens, uint32& nCur, uint32 nSize);
+	void        mfConstructFX_Mask_RT(const TArray<uint32>& pSHData);
+	void        mfConstructFX(const FXShaderToken& Table, const TArray<uint32>& pSHData);
 
 	static bool mfAddFXSampler(SHWSInstance* pInst, SShaderFXParams& FXParams, SFXSampler* pr, const char* ParamName, SCGBind* pBind, CShader* ef, EHWShaderClass eSHClass);
 	static bool mfAddFXTexture(SHWSInstance* pInst, SShaderFXParams& FXParams, SFXTexture* pr, const char* ParamName, SCGBind* pBind, CShader* ef, EHWShaderClass eSHClass);
 
 	static void mfAddFXParameter(SHWSInstance* pInst, SParamsGroup& OutParams, SShaderFXParams& FXParams, SFXParam* pr, const char* ParamName, SCGBind* pBind, CShader* ef, bool bInstParam, EHWShaderClass eSHClass);
 	static bool mfAddFXParameter(SHWSInstance* pInst, SParamsGroup& OutParams, SShaderFXParams& FXParams, const char* param, SCGBind* bn, bool bInstParam, EHWShaderClass eSHClass, CShader* pFXShader);
-	static void mfGatherFXParameters(SHWSInstance* pInst, std::vector<SCGBind>* BindVars, std::vector<SCGBind>* InstBindVars, CHWShader_D3D* pSH, int nFlags, CShader* pFXShader);
+	static void mfGatherFXParameters(SHWSInstance* pInst, std::vector<SCGBind>& BindVars, CHWShader_D3D* pSH, int nFlags, CShader* pFXShader);
 
-	static void mfCreateBinds(SHWSInstance* pInst, void* pConstantTable, byte* pShader, int nSize);
-	bool        mfUpdateSamplers(CShader* pSH);
-	static void mfPostVertexFormat(SHWSInstance * pInst, CHWShader_D3D * pHWSH, bool bCol, byte bNormal, bool bTC0, bool bTC1[2], bool bPSize, bool bTangent[2], bool bBitangent[2], bool bHWSkin, bool bSH[2], bool bMorphTarget, bool bMorph);
+	static void mfCreateBinds(std::vector<SCGBind>& binds, const void* pConstantTable, std::size_t nSize);
+	static void mfPostVertexFormat(SHWSInstance* pInst, CHWShader_D3D* pHWSH, bool bCol, byte bNormal, bool bTC0, bool bTC1[2], bool bPSize, bool bTangent[2], bool bBitangent[2], bool bHWSkin, bool bSH[2], bool bMorphTarget, bool bMorph);
 	void        mfUpdateFXVertexFormat(SHWSInstance* pInst, CShader* pSH);
 
-	/*EHWSProfile mfGetCurrentProfile()
-	   {
-	   return m_pCurInst->m_eProfileType;
-	   }*/
-	void ModifyLTMask(uint32& nMask);
+	void        ModifyLTMask(uint32& nMask);
 
 public:
 	virtual ~CHWShader_D3D();
-	bool mfSetVS(int nFlags = 0);
-	bool mfSetPS(int nFlags = 0);
-	bool mfSetGS(int nFlags = 0);
-	bool mfSetHS(int nFlags = 0);
-	bool mfSetCS(int nFlags = 0);
-	bool mfSetDS(int nFlags = 0);
-	bool mfSet(int nFlags = 0)
-	{
-		if (m_eSHClass == eHWSC_Vertex)
-			return mfSetVS(nFlags);
-		else if (m_eSHClass == eHWSC_Pixel)
-			return mfSetPS(nFlags);
-		else if (m_eSHClass == eHWSC_Geometry)
-			return mfSetGS(nFlags);
-		else if (m_eSHClass == eHWSC_Compute)
-			return mfSetCS(nFlags);
-		else if (m_eSHClass == eHWSC_Hull)
-			return mfSetHS(nFlags);
-		else if (m_eSHClass == eHWSC_Domain)
-			return mfSetDS(nFlags);
-		return false;
-	}
-	virtual bool        mfAddEmptyCombination(CShader* pSH, uint64 nRT, uint64 nGL, uint32 nLT);
-	virtual bool        mfStoreEmptyCombination(SEmptyCombination& Comb);
-	virtual bool        mfSetV(int nFlags = 0) { return mfSet(nFlags); };
-	virtual void        mfReset(uint32 CRC32);
-	virtual const char* mfGetEntryName()       { return m_EntryFunc.c_str(); }
-	virtual bool        mfFlushCacheFile();
-	virtual bool        Export(SShaderSerializeContext& SC);
-	virtual bool        mfPrecache(SShaderCombination& cmb, bool bForce, bool bFallback, CShader* pSH, CShaderResources* pRes);
+
+	bool                mfAddEmptyCombination(uint64 nRT, uint64 nGL, uint32 nLT, const SCacheCombination& cmbSaved) override;
+	bool                mfStoreEmptyCombination(SEmptyCombination& Comb) override;
+
+	virtual void        mfReset() override;
+	virtual const char* mfGetEntryName() override { return m_EntryFunc.c_str(); }
+	virtual bool        mfFlushCacheFile() override;
+	virtual bool        Export(CShader* pSH, SShaderSerializeContext& SC) override;
+
+	enum class cacheValidationResult { ok, no_lookup, version_mismatch, checksum_mismatch };
+	cacheValidationResult mfValidateCache(const SDiskShaderCache& cache);
+
+	bool                  mfWarmupCache(CShader* pFX);
+	void                  mfPrecacheAllCombinations(CShader* pFX, CResFileOpenScope& rfOpenGuard, SDiskShaderCache& cache);
+	SDeviceShaderEntry    mfShaderEntryFromCache(CShader* pFX, const CDirEntry& de, CResFileOpenScope& rfOpenGuard, SDiskShaderCache& cache);
 
 	// Vertex shader specific functions
-	virtual EVertexFormat mfVertexFormat(bool& bUseTangents, bool& bUseLM, bool& bUseHWSkin);
-	static EVertexFormat  mfVertexFormat(SHWSInstance* pInst, CHWShader_D3D* pSH, LPD3D10BLOB pBuffer);
-	virtual void          mfUpdatePreprocessFlags(SShaderTechnique* pTech);
+	virtual InputLayoutHandle mfVertexFormat(bool& bUseTangents, bool& bUseLM, bool& bUseHWSkin) override;
+	static InputLayoutHandle  mfVertexFormat(SHWSInstance* pInst, CHWShader_D3D* pSH, D3DBlob* pBuffer, void* pConstantTable);
+	virtual void              mfUpdatePreprocessFlags(SShaderTechnique* pTech) override;
 
-	virtual const char*   mfGetActivatedCombinations(bool bForLevel);
+	virtual const char*       mfGetActivatedCombinations(bool bForLevel) override;
 
-	static void           mfSetGlobalParams();
-	static void           mfSetCameraParams();
-	static void           mfSetCM();
-	static void           mfSetPV(const D3DViewPort* pCustomViewport = nullptr);
-	static bool           mfAddGlobalTexture(SCGTexture& Texture);
-	static bool           mfAddGlobalSampler(STexSamplerRT& Sampler);
-
-	static void*          GetVSDataForDecl(const D3D11_INPUT_ELEMENT_DESC* pDecl, int nCount, int& nDataSize);
-
-	static uint16         GetDeclaredVertexStreamMask(void* pHwInstance)
+	static EStreamMasks       GetDeclaredVertexStreamMask(void* pHwInstance)
 	{
 		CRY_ASSERT(pHwInstance && reinterpret_cast<SHWSInstance*>(pHwInstance)->m_eClass == eHWSC_Vertex);
 		return reinterpret_cast<SHWSInstance*>(pHwInstance)->m_VStreamMask_Decl;
@@ -1466,52 +723,17 @@ public:
 
 	static void ShutDown();
 
-	static Vec4 GetVolumetricFogParams();
+	static Vec4 GetVolumetricFogParams(const CCamera& camera);
 	static Vec4 GetVolumetricFogRampParams();
-	static Vec4 GetVolumetricFogSunDir();
+	static Vec4 GetVolumetricFogSunDir(const Vec3& sunDir);
 	static void GetFogColorGradientConstants(Vec4& fogColGradColBase, Vec4& fogColGradColDelta);
-	static Vec4 GetFogColorGradientRadial();
+	static Vec4 GetFogColorGradientRadial(const CCamera& camera);
 
 	// Import/Export
 	bool ExportSamplers(SCHWShader& SHW, SShaderSerializeContext& SC);
 	bool ExportParams(SCHWShader& SHW, SShaderSerializeContext& SC);
 
-	static CRY_ALIGN(16) Vec4 s_CurPSParams[];
-	static CRY_ALIGN(16) Vec4 s_CurVSParams[];
-
-#ifdef USE_PER_FRAME_CONSTANT_BUFFER_UPDATES
-	static D3DBuffer**                  s_pCB[eHWSC_Num][CB_NUM];
-	static D3DBuffer*                   s_pCurReqCB[eHWSC_Num][CB_NUM];
-#else
-	static CConstantBuffer**            s_pCB[eHWSC_Num][CB_NUM];
-	static CConstantBuffer*             s_pCurReqCB[eHWSC_Num][CB_NUM];
-#endif
-	static uint64                       s_pCurDevCB[eHWSC_Num][CB_NUM];
-	static Vec4*                        s_pDataCB[eHWSC_Num][CB_NUM];
-	static int                          s_nCurMaxVecs[eHWSC_Num][CB_NUM];
-	static int                          s_nMax_PF_Vecs[eHWSC_Num];
-	static int                          s_nMax_SG_Vecs[eHWSC_Num];
-	static int                          s_nMax_CM_Vecs[eHWSC_Num];
-
-	static CHWShader_D3D::SHWSInstance* s_pCurInstGS;
-	static bool                         s_bFirstGS;
-	static CHWShader_D3D::SHWSInstance* s_pCurInstDS;
-	static bool                         s_bFirstDS;
-	static CHWShader_D3D::SHWSInstance* s_pCurInstHS;
-	static bool                         s_bFirstHS;
-	static CHWShader_D3D::SHWSInstance* s_pCurInstCS;
-	static bool                         s_bFirstCS;
-	static CHWShader_D3D::SHWSInstance* s_pCurInstVS;
-	static bool                         s_bFirstVS;
-	static CHWShader_D3D::SHWSInstance* s_pCurInstPS;
-	static bool                         s_bFirstPS;
-
 	static int                          s_nActivationFailMask;
-
-	static int                          s_PSParamsToCommit[];
-	static int                          s_NumPSParamsToCommit;
-	static int                          s_VSParamsToCommit[];
-	static int                          s_NumVSParamsToCommit;
 
 	static bool                         s_bInitShaders;
 
@@ -1520,25 +742,4 @@ public:
 
 	static int                          s_nDevicePSDataSize;
 	static int                          s_nDeviceVSDataSize;
-
-	static std::vector<SCGParam>        s_CM_Params[eHWSC_Num]; // Per-frame parameters
-
-	static std::vector<SCGTexture>      s_PF_Textures;   // Per-frame textures
-	static std::vector<STexSamplerRT>   s_PF_Samplers;   // Per-frame samplers
-
-	friend struct SShaderTechniqueStat;
 };
-
-struct SShaderTechniqueStat
-{
-	SShaderTechnique*            pTech;
-	CShader*                     pShader;
-	CHWShader_D3D*               pVS;
-	CHWShader_D3D*               pPS;
-	CHWShader_D3D::SHWSInstance* pVSInst;
-	CHWShader_D3D::SHWSInstance* pPSInst;
-};
-
-extern std::vector<SShaderTechniqueStat> g_SelectedTechs;
-
-#endif  // __D3DHWSHADER_H__

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   Movie.cpp
@@ -28,12 +28,13 @@
 
 #include <CrySystem/ISystem.h>
 #include <CrySystem/ILog.h>
-#include <CrySystem/IConsole.h>
+#include <CrySystem/ConsoleRegistration.h>
 #include <CrySystem/ITimer.h>
 #include <CryRenderer/IRenderer.h>
 #include <CryGame/IGameFramework.h>
 #include <CryMovie/AnimKey_impl.h>
 #include <../CryAction/IViewSystem.h>
+#include <CryRenderer/IRenderAuxGeom.h>
 
 int CMovieSystem::m_mov_NoCutscenes = 0;
 float CMovieSystem::m_mov_cameraPrecacheTime = 1.f;
@@ -126,7 +127,6 @@ void RegisterParamTypes()
 	REGISTER_PARAM_TYPE(Camera)
 	REGISTER_PARAM_TYPE(Animation)
 	REGISTER_PARAM_TYPE(AudioTrigger)
-	REGISTER_PARAM_TYPE(AudioFile)
 	REGISTER_PARAM_TYPE(AudioParameter)
 	REGISTER_PARAM_TYPE(AudioSwitch)
 	REGISTER_PARAM_TYPE(DynamicResponseSignal)
@@ -212,6 +212,7 @@ CMovieSystem::CMovieSystem(ISystem* pSystem)
 	m_captureSeq = NULL;
 	m_bStartCapture = false;
 	m_bEndCapture = false;
+	m_bPreEndCapture = false; // this flag indicates the period of time when "Capture Started" was finished, but "Capture End" has not yet begun.
 	m_bIsInGameCutscene = false;
 	m_fixedTimeStepBackUp = 0;
 	m_cvar_capture_file_format = NULL;
@@ -274,7 +275,7 @@ void CMovieSystem::DoNodeStaticInitialisation()
 bool CMovieSystem::Load(const char* pszFile, const char* pszMission)
 {
 	INDENT_LOG_DURING_SCOPE(true, "Movie system is loading the file '%s' (mission='%s')", pszFile, pszMission);
-	LOADING_TIME_PROFILE_SECTION(GetISystem());
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	XmlNodeRef rootNode = m_pSystem->LoadXmlFromFile(pszFile);
 
@@ -698,6 +699,7 @@ bool CMovieSystem::InternalStopSequence(IAnimSequence* pSequence, bool bAbort, b
 				SAnimContext ac;
 				ac.bSingleFrame = true;
 				ac.time = pSequence->GetTimeRange().end;
+				pSequence->Activate();
 				pSequence->Animate(ac);
 			}
 			else if (m_sequenceStopBehavior == eSSB_GotoStartTime)
@@ -705,6 +707,7 @@ bool CMovieSystem::InternalStopSequence(IAnimSequence* pSequence, bool bAbort, b
 				SAnimContext ac;
 				ac.bSingleFrame = true;
 				ac.time = pSequence->GetTimeRange().start;
+				pSequence->Activate();
 				pSequence->Animate(ac);
 			}
 
@@ -1403,13 +1406,18 @@ void CMovieSystem::StartCapture(IAnimSequence* seq, const SCaptureKey& key)
 {
 	m_bStartCapture = true;
 	m_bEndCapture = false;
+	m_bPreEndCapture = false;
 	m_captureSeq = seq;
 	m_captureKey = key;
 }
 
 void CMovieSystem::EndCapture()
 {
-	m_bEndCapture = true;
+	if (m_bPreEndCapture)
+	{
+		m_bPreEndCapture = false;
+		m_bEndCapture = true;
+	}
 }
 
 void CMovieSystem::ControlCapture()
@@ -1419,8 +1427,7 @@ void CMovieSystem::ControlCapture()
 		return;
 	}
 
-	bool bBothStartAndEnd = m_bStartCapture && m_bEndCapture;
-	assert(!bBothStartAndEnd);
+	assert(!(m_bStartCapture && m_bEndCapture));
 
 	if (m_bStartCapture)
 	{
@@ -1454,6 +1461,7 @@ void CMovieSystem::ControlCapture()
 		m_cvar_capture_frames->Set(m_captureKey.GetStartTimeInFrames() + 1);
 
 		m_bStartCapture = false;
+		m_bPreEndCapture = true;
 
 		if (m_captureSeq)
 		{
@@ -1473,7 +1481,11 @@ void CMovieSystem::ControlCapture()
 	{
 		if (m_cvar_capture_frames->GetIVal() > m_captureKey.GetEndTimeInFrames() + 1)
 		{
-			m_bEndCapture = true;
+			// EndCapture() should be invoked carefully from here, because StartCapture()
+			// invoked from AnimationNode. The flag m_bPreEndCapture should help
+			// to resolve the case when EndCapture() invoked from here and
+			// and AnimationNode twice.
+			EndCapture();
 		}
 	}
 

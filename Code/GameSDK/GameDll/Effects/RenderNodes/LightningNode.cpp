@@ -1,10 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "LightningNode.h"
 #include "Effects/GameEffects/LightningGameEffect.h"
 #include "Utility/Hermite.h"
 #include <CryRenderer/IRenderAuxGeom.h>
+#include <Cry3DEngine/I3DEngine.h>
+#include <CryMath/Random.h>
 
 void CLightningRenderNode::CTriStrip::Reset()
 {
@@ -47,7 +49,7 @@ void CLightningRenderNode::CTriStrip::Draw(const SRendParams& renderParams, cons
 
 	bool nAfterWater = true;
 
-	pRenderObject->m_II.m_Matrix = Matrix34(IDENTITY);
+	pRenderObject->SetMatrix(Matrix34::CreateIdentity(), passInfo);
 	pRenderObject->m_ObjFlags |= FOB_NO_FOG;
 	pRenderObject->m_ObjFlags &= ~FOB_ALLOW_TESSELLATION;
 	pRenderObject->m_nSort = fastround_positive(distanceToCamera * 2.0f);
@@ -170,7 +172,6 @@ void CLightningRenderNode::CSegment::Draw(const SLightningParams& desc, const SP
 		Vec3 up0 = dir0.Cross(front);
 		Vec3 up1 = dir1.Cross(front);
 		Vec3 up = (up0 + up1).GetNormalized();
-		float t = i / float(m_numFuzzyPoints - 1);
 
 		SLightningVertex v;
 		v.color = white;
@@ -232,24 +233,14 @@ CLightningRenderNode::~CLightningRenderNode()
 {
 }
 
-const char* CLightningRenderNode::GetEntityClassName() const
-{
-	return "Lightning";
-}
-
-const char* CLightningRenderNode::GetName() const
-{
-	return "Lightning";
-}
-
 void CLightningRenderNode::Render(const struct SRendParams& rParam, const SRenderingPassInfo& passInfo)
 {
 	if (!m_pMaterial)
 		return;
 
 	IRenderer* pRenderer = gEnv->pRenderer;
-	const CCamera& camera = pRenderer->GetCamera();
-	CRenderObject* pRenderObject = pRenderer->EF_GetObject_Temp(passInfo.ThreadID());
+	const CCamera& camera = GetISystem()->GetViewCamera();
+	CRenderObject* pRenderObject = passInfo.GetIRenderView()->AllocateTemporaryRenderObject();
 	Vec3 cameraPosition = camera.GetPosition();
 	float distanceToCamera = sqrt_tpl(Distance::Point_AABBSq(cameraPosition, GetBBox())) * passInfo.GetZoomFactor();
 
@@ -267,16 +258,6 @@ IPhysicalEntity* CLightningRenderNode::GetPhysics() const
 
 void CLightningRenderNode::SetPhysics(IPhysicalEntity*)
 {
-}
-
-void CLightningRenderNode::SetMaterial(IMaterial* pMat)
-{
-	m_pMaterial = pMat;
-}
-
-IMaterial* CLightningRenderNode::GetMaterialOverride()
-{
-	return m_pMaterial;
 }
 
 void CLightningRenderNode::Precache()
@@ -426,9 +407,7 @@ void CLightningRenderNode::PopSegment()
 
 void CLightningRenderNode::OffsetPosition(const Vec3& delta)
 {
-#ifdef SEG_WORLD
 	m_aabb.Move(delta);
 	m_emmitterPosition += delta;
 	m_receiverPosition += delta;
-#endif
 }

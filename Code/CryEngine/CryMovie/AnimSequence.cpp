@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "AnimSequence.h"
@@ -286,13 +286,12 @@ void CAnimSequence::RemoveNode(IAnimNode* node)
 	{
 		if (node == m_nodes[i])
 		{
-			m_nodes.erase(m_nodes.begin() + i);
-
 			if (node->NeedToRender())
 			{
 				RemoveNodeNeedToRender(node);
 			}
 
+			m_nodes.erase(m_nodes.begin() + i);
 			continue;
 		}
 
@@ -605,7 +604,7 @@ void CAnimSequence::PrecacheDynamic(SAnimTime time)
 
 void CAnimSequence::PrecacheEntity(IEntity* pEntity)
 {
-	if (m_precachedEntitiesSet.find(pEntity) != m_precachedEntitiesSet.end())
+	if (m_precachedEntitiesSet.find(pEntity) == m_precachedEntitiesSet.end())
 	{
 		if (IEntityRender* pIEntityRender = pEntity->GetRenderInterface())
 		{
@@ -736,14 +735,10 @@ void CAnimSequence::Serialize(XmlNodeRef& xmlNode, bool bLoading, bool bLoadEmpt
 
 		if (GetFlags() & IAnimSequence::eSeqFlags_LightAnimationSet)
 		{
-#if !defined(_RELEASE)
-
 			if (CLightAnimWrapper::GetLightAnimSet())
 			{
-				__debugbreak();
+				CRY_ASSERT_MESSAGE(0, "Track Sequence flagged as LightAnimationSet have LightAnimationSet pointer already set");
 			}
-
-#endif
 			CLightAnimWrapper::SetLightAnimSet(this);
 		}
 	}

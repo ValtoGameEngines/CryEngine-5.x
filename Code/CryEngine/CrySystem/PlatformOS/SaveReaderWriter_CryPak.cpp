@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   SaveReaderWriter_CryPak.cpp
@@ -205,7 +205,7 @@ void UpdateFileStats(const char* fileName)
 ////////////////////////////////////////////////////////////////////////////
 
 CSaveReader_CryPak::CSaveReader_CryPak(const char* fileName)
-	: CCryPakFile(fileName, "rbx") // x=don't cache full file
+	: CCryPakFile(fileName, "rb")
 {
 	m_eLastError = m_pFile == NULL ? IPlatformOS::eFOC_ErrorOpenRead : IPlatformOS::eFOC_Success;
 }

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -167,9 +167,8 @@ CRemoteCommandClient::Connection::~Connection()
 	m_pCommands.clear();
 
 	// Release all of the raw messages that were not picked up
-	while (!m_pRawMessages.empty())
+	for (IServiceNetworkMessage* pMessage : m_pRawMessages.pop_all())
 	{
-		IServiceNetworkMessage* pMessage = m_pRawMessages.pop();
 		pMessage->Release();
 	}
 
@@ -419,7 +418,7 @@ bool CRemoteCommandClient::Connection::Update()
 						}
 						else
 						{
-							LOG_VERBOSE(3, "Command ID=%d is to big (%d) to fit packet size limit (%d)",
+							LOG_VERBOSE(3, "Command ID=%d is too big (%d) to fit packet size limit (%d)",
 							            commandRef->m_pCommand->GetCommandId(),
 							            commandDataSize,
 							            kCommandMaxMergePacketSize);
@@ -546,7 +545,9 @@ bool CRemoteCommandClient::Connection::SendRawMessage(IServiceNetworkMessage* pM
 
 IServiceNetworkMessage* CRemoteCommandClient::Connection::ReceiveRawMessage()
 {
-	return m_pRawMessages.pop();
+	IServiceNetworkMessage* pMessage = nullptr;
+	m_pRawMessages.try_pop(pMessage);
+	return pMessage;
 }
 
 void CRemoteCommandClient::Connection::AddRef()

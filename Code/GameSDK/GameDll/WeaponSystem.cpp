@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -130,7 +130,7 @@ struct C##name##Creator : public IGameObjectExtensionCreatorBase	\
 { \
 	IGameObjectExtension* Create(IEntity *pEntity) \
 	{ \
-		return pEntity->CreateComponentClass<T>();\
+		return pEntity->GetOrCreateComponentClass<T>();\
 	} \
 	void GetGameObjectExtensionRMIData( void ** ppRMI, size_t * nCount ) \
 	{ \
@@ -295,9 +295,9 @@ void CWeaponSystem::Reload()
 
 void CWeaponSystem::LoadItemParams(IItemSystem* pItemSystem)
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "WeaponSystem: Load Item Params" );
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "WeaponSystem: Load Item Params" );
 
-	LOADING_TIME_PROFILE_SECTION(gEnv->pSystem);
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY)(gEnv->pSystem);
 	
 	int numItems = pItemSystem->GetItemParamsCount();
 
@@ -593,11 +593,6 @@ CProjectile *CWeaponSystem::DoSpawnAmmo(IEntityClass* pAmmoType, bool isRemote, 
 	spawnParams.pClass = pAmmoType;
 	spawnParams.sName = "ammo";
 	spawnParams.nFlags = pAmmoParams->flags | ENTITY_FLAG_NO_PROXIMITY; // No proximity for this entity.
-	if (pAmmoParams->serverSpawn)
-	{
-		// This projectile is going to be bound to the network, make sure we know it's a dynamic entity
-		spawnParams.nFlags |= ENTITY_FLAG_NEVER_NETWORK_STATIC;
-	}
 	
 	IEntity *pEntity = NULL;
 
@@ -808,8 +803,8 @@ void CWeaponSystem::Scan(const char *folderName)
 //------------------------------------------------------------------------
 bool CWeaponSystem::ScanXML(XmlNodeRef &root, const char *xmlFile)
 {
-	MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "WeaponSystem");
-	MEMSTAT_CONTEXT_FMT(EMemStatContextTypes::MSC_Other, 0, "Weapon xml (%s)", xmlFile);
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "WeaponSystem");
+	MEMSTAT_CONTEXT_FMT(EMemStatContextType::Other, "Weapon xml (%s)", xmlFile);
 
 	if (strcmpi(root->getTag(), "ammo"))
 		return false;
@@ -1059,12 +1054,14 @@ void CWeaponSystem::RemoveFromPool(CProjectile *pProjectile)
 //------------------------------------------------------------------------
 void CWeaponSystem::DumpPoolSizes()
 {
+#if !defined(EXCLUDE_NORMAL_LOG)
 	CryLog("Ammo Pool Statistics:");
 	for (TAmmoPoolMap::iterator it=m_pools.begin(); it!=m_pools.end(); ++it)
 	{
 		int size=it->second.size;
 		CryLog("%s: %d", it->first->GetName(), size);
 	}
+#endif
 }
 
 void CWeaponSystem::FreePools()

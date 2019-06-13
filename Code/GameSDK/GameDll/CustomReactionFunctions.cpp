@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "CustomReactionFunctions.h"
@@ -8,11 +8,6 @@
 #include "GameRules.h"
 #include "Player.h"
 #include "ActorImpulseHandler.h"
-
-namespace
-{
-	float SHOTGUN_HIGH_CALIBER_DISTANCE = 9.0f; // maximum distance where the shotgun shot will be considered "high caliber"
-}
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////

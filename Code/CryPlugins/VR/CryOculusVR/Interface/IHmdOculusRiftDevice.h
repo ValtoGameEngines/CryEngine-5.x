@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -14,6 +14,14 @@ struct ovrMirrorTextureData;
 namespace CryVR
 {
 namespace Oculus {
+
+enum class OculusStatus
+{
+	Success = 0,
+	NotVisible,
+	DeviceLost,
+	UnknownError
+};
 
 struct TextureDesc
 {
@@ -53,10 +61,12 @@ struct STexture
 // This info is passed across DLL boundaries from the renderer to the Hmd device
 struct SHmdSwapChainInfo
 {
+	enum class eye_t : uint8_t { left = 0, right = 1 };
+
 	ovrTextureSwapChainData* pDeviceTextureSwapChain; // data structure wrapping a texture set for a single image
 	Vec2i                    viewportPosition;
 	Vec2i                    viewportSize;
-	uint8                    eye;         // only for Scene3D layer (0 left , 1 right)
+	eye_t                    eye;         // only for Scene3D layer (0 left , 1 right)
 	bool                     bActive;     // should this layer be sent to the Hmd?
 	RenderLayer::ELayerType  layerType;
 	RenderLayer::TLayerId    layerId;
@@ -77,16 +87,18 @@ struct SHmdSubmitFrameData
 struct IOculusDevice : public IHmdDevice
 {
 public:
+	virtual bool CreateSwapTextureSetD3D12(IUnknown* d3d12CommandQueue, TextureDesc desc, STextureSwapChain* set) = 0;
+	virtual bool CreateMirrorTextureD3D12(IUnknown* d3d12CommandQueue, TextureDesc desc, STexture* texture) = 0;
 	virtual bool CreateSwapTextureSetD3D11(IUnknown* d3d11Device, TextureDesc desc, STextureSwapChain* set) = 0;
 	virtual bool CreateMirrorTextureD3D11(IUnknown* d3d11Device, TextureDesc desc, STexture* texture) = 0;
 
-	virtual bool CreateSwapTextureSetD3D12(IUnknown* d3d12CommandQueue, TextureDesc desc, STextureSwapChain* set) = 0;
-	virtual bool CreateMirrorTextureD3D12(IUnknown* d3d12CommandQueue, TextureDesc desc, STexture* texture) = 0;
-
 	virtual void DestroySwapTextureSet(STextureSwapChain* set) = 0;
 	virtual void DestroyMirrorTexture(STexture* texture) = 0;
-	virtual void PrepareTexture(STextureSwapChain* set, uint32 frameIndex) = 0; // deprecated? check HTC Vive and PS VR
-	virtual void SubmitFrame(const SHmdSubmitFrameData pData) = 0;
+
+	virtual OculusStatus BeginFrame(uint64_t frameId) = 0;
+	virtual OculusStatus SubmitFrame(const SHmdSubmitFrameData &pData) = 0;
+	virtual void CreateDevice() = 0;
+
 	virtual int  GetCurrentSwapChainIndex(void* pSwapChain) const = 0;
 protected:
 	virtual ~IOculusDevice() {}

@@ -1,11 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
 #include "QToolWindowManagerCommon.h"
 
 #if defined(WIN32) || defined(WIN64)
-#include <windows.h>
+	#include <windows.h>
 #endif
 
 QMainWindow* mainWindow = nullptr;
@@ -38,7 +38,7 @@ QWidget* windowBelow(QWidget* w)
 		GetWindowThreadProcessId(h, &otherProc);
 		if (thisProc == otherProc)
 		{
-			foreach(QWidget* w, qApp->topLevelWidgets())
+			foreach(QWidget * w, qApp->topLevelWidgets())
 			{
 				if (w->isWindow() && w->isVisible() && (HWND)w->winId() == h && !w->windowState().testFlag(Qt::WindowMinimized))
 					if (w->geometry().contains(QCursor::pos()))

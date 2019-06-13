@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -19,8 +19,10 @@ History:
 # pragma once
 #endif
 
+#include <CryEntitySystem/IEntityBasicTypes.h>
 #include "ItemString.h"
 struct IMaterial;
+struct ICharacterInstance;
 
 class CTeamVisualizationManager 
 {

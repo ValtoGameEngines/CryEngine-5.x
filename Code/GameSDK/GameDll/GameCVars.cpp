@@ -1,4 +1,4 @@
-﻿// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -39,6 +39,7 @@ History:
 #include "UI/Utils/ScreenLayoutManager.h"
 #include "UI/Utils/ILoadingMessageProvider.h"
 #include <CryNetwork/INetworkService.h>
+#include <CrySystem/ConsoleRegistration.h>
 
 #include "LagOMeter.h"
 #include "GameRulesModules/IGameRulesTeamsModule.h"
@@ -565,7 +566,7 @@ void SCVars::InitCVars(IConsole *pConsole)
 	REGISTER_CVAR(cl_controllerYawSnapMax, 0.8f, 0, "Input threshold that must be reached to trigger snapping");
 	REGISTER_CVAR(cl_controllerYawSnapMin, 0.5f, 0, "Input threshold that must be reached to reset snapping");
 
-	REGISTER_CVAR(i_grenade_showTrajectory, 1, 0, "Switches on trajectory display");
+	REGISTER_CVAR(i_grenade_showTrajectory, 0, 0, "Switches on trajectory display");
 	REGISTER_CVAR(i_grenade_trajectory_resolution, 0.03f, 0, "Trajectory display resolution");
 	REGISTER_CVAR(i_grenade_trajectory_dashes, 0.5f, 0, "Trajectory display dashes length");
 	REGISTER_CVAR(i_grenade_trajectory_gaps, 0.3f, 0, "Trajectory gaps length");
@@ -1232,7 +1233,7 @@ void SCVars::InitCVars(IConsole *pConsole)
 	REGISTER_CVAR(pl_movement.mp_slope_speed_multiplier_minHill, 0.f, 0, "Minimum threshold for the slope steepness before speed is affected (in degrees).");
 
 #ifdef STATE_DEBUG
-	pConsole->RegisterString( "pl_state_debug", "", VF_CHEAT, "For PlayerMovement StateMachine Debugging", ChangeDebugState );
+	REGISTER_STRING_CB( "pl_state_debug", "", VF_CHEAT, "For PlayerMovement StateMachine Debugging", ChangeDebugState );
 #endif
 
 	REGISTER_CVAR(mp_ctfParams.carryingFlag_SpeedScale, 0.8f, 0, "Speed multiplier whilst carrying the flag in Capture the Flag game mode.");
@@ -1713,6 +1714,14 @@ void SCVars::InitCVars(IConsole *pConsole)
 
 	REGISTER_CVAR2("ai_ProximityToHostileAlertnessIncrementThresholdDistance", &ai_ProximityToHostileAlertnessIncrementThresholdDistance, 10.0f, VF_CHEAT,
 		"Threshold distance used to calculate the proximity to hostile target alertness increment.");
+
+	REGISTER_CVAR(ai_DebugSignalTimers, 0, VF_CHEAT, "Enable Signal Timers Debug Screen\n");
+	REGISTER_CVAR(ai_DebugRangeSignaling, 0, VF_CHEAT, "Enable Range Signaling Debug Screen\n");
+
+#ifdef AI_LOG_SIGNALS
+	REGISTER_CVAR2("ai_LogSignals", &aiLogSignals, 0, VF_CHEAT, "Maximum radius at which player can interact with other entities");
+	REGISTER_CVAR2("ai_MaxSignalDuration", &aiMaxSignalDuration, 3.f, VF_CHEAT, "Maximum radius at which player can interact with other entities");
+#endif
 
 	REGISTER_CVAR(g_actorViewDistRatio, 127, 0, "Sets the view dist ratio for actors.\n");
 	REGISTER_CVAR(g_playerLodRatio, 80, VF_REQUIRE_LEVEL_RELOAD, "Sets the lod ratio for players.\n");
@@ -2972,8 +2981,11 @@ void SCVars::ReleaseCVars()
 	pConsole->UnregisterVariable("g_kickCarDetachStartTime", true);
 	pConsole->UnregisterVariable("g_kickCarDetachEndTime", true);
 
-#if !defined(_RELEASE)
+#if (USE_DEDICATED_INPUT)
 	pConsole->UnregisterVariable("g_playerUsesDedicatedInput", true);
+#endif
+
+#if !defined(_RELEASE)
 	pConsole->UnregisterVariable("g_DisableScoring", true);
 	pConsole->UnregisterVariable("g_DisableCollisionDamage", true);
 	pConsole->UnregisterVariable("g_MaxSimpleCollisions", true);
@@ -3034,6 +3046,8 @@ void SCVars::ReleaseCVars()
 	pConsole->UnregisterVariable("ai_CompleteCloakDelay", true);
 	pConsole->UnregisterVariable("ai_HazardsDebug", true);
 	pConsole->UnregisterVariable("ai_ProximityToHostileAlertnessIncrementThresholdDistance", true);
+	pConsole->UnregisterVariable("ai_DebugSignalTimers", true);
+	pConsole->UnregisterVariable("ai_DebugRangeSignaling", true);
 
 	pConsole->UnregisterVariable("g_actorViewDistRatio", true);
 	pConsole->UnregisterVariable("g_playerLodRatio", true);
@@ -3481,7 +3495,7 @@ void CmdGoto(IConsoleCmdArgs *pArgs)
 	// * third person game should work by using player position
 	// * level name could be part of the string
 
-	const CCamera &rCam = gEnv->pRenderer->GetCamera();
+	const CCamera &rCam = GetISystem()->GetViewCamera();
 	Matrix33 m = Matrix33(rCam.GetMatrix());
 
 	int iArgCount = pArgs->GetArgCount();
@@ -3507,11 +3521,6 @@ void CmdGoto(IConsoleCmdArgs *pArgs)
 		&& sscanf(pArgs->GetArg(3),"%f",&vPos.z)==1)
 	{
 		Matrix34 tm = pEntity->GetWorldTM();
-
-		if(ISegmentsManager *pSM = gEnv->p3DEngine->GetSegmentsManager())
-		{
-			vPos = pSM->LocalToAbsolutePosition(vPos, -1);
-		}
 
 		tm.SetTranslation(vPos);
 
@@ -3641,7 +3650,9 @@ void CGame::RegisterConsoleCommands()
 	REGISTER_COMMAND("FlyCamSetPoint", CmdFlyCamSetPoint, VF_CHEAT, "Sets a fly cam point");
 	REGISTER_COMMAND("FlyCamPlay", CmdFlyCamPlay, VF_CHEAT, "Plays the flycam path");
 
+#if defined(USE_CRY_ASSERT)
 	REGISTER_COMMAND("IgnoreAllAsserts", CmdIgnoreAllAsserts, VF_CHEAT, "Ignore all asserts");
+#endif
 
 	REGISTER_COMMAND("pl_reload", CmdReloadPlayer, VF_CHEAT, "Reload player's data.");
 	REGISTER_COMMAND("pl_health", CmdSetPlayerHealth, VF_CHEAT, "Sets a player's health.");
@@ -3975,11 +3986,13 @@ void CGame::CmdFlyCamPlay(IConsoleCmdArgs *pArgs)
 	}
 }
 
+#if defined(USE_CRY_ASSERT)
 void CGame::CmdIgnoreAllAsserts(IConsoleCmdArgs *pArgs)
 {
-	gEnv->bIgnoreAllAsserts=true;	
-	gEnv->bTesting=true;
+	Cry::Assert::IgnoreAllAsserts(true);	
+	gEnv->bTesting = true;
 }
+#endif
 
 //------------------------------------------------------------------------
 void CGame::CmdLastInv(IConsoleCmdArgs *pArgs)
@@ -4831,8 +4844,6 @@ void CGame::CmdInspectConnectedStorage(IConsoleCmdArgs* pArgs)
 			dumpToFile = atoi(pArgs->GetArg(4)) != 0;
 		}
 
-		size_t numConverted = 0;
-
 		wstring containerNameW;
 		Unicode::Convert(containerNameW, containerName);
 
@@ -4855,18 +4866,18 @@ void CGame::CmdInspectConnectedStorage(IConsoleCmdArgs* pArgs)
 		{
 			if (dumpToFile)
 			{
-				char path[ICryPak::g_nMaxPath] = "";
+				CryPathString path;
 				gEnv->pCryPak->AdjustFileName(string("%USER%\\ConnectedStorageDump\\") + containerName + "\\", path, ICryPak::FLAGS_PATH_REAL | ICryPak::FLAGS_FOR_WRITING);
 				if (gEnv->pCryPak->MakeDir(path))
 				{
-					cry_strcat(path, blobName);
+					path += blobName;
 
 					if (FILE* pFile = gEnv->pCryPak->FOpen(path, "wt"))
 					{
 						gEnv->pCryPak->FWrite(block[0].pDataBlock, 1, block[0].dataBlockSize, pFile);
 						gEnv->pCryPak->FClose(pFile);
 
-						CryLogAlways("CmdInspectConnectedStorage: Container:%s blob:%s dump to:%s", containerName, blobName, path);
+						CryLogAlways("CmdInspectConnectedStorage: Container:%s blob:%s dump to:%s", containerName, blobName, path.c_str());
 					}
 				}
 			}
@@ -4931,7 +4942,7 @@ void CGame::CmdHideAllDummyPlayers(IConsoleCmdArgs* pCmdArgs)
 									IRenderNode* pRenderNode = pIEntityRender->GetRenderNode();
 									if(pRenderNode)
 									{
-										pRenderNode->Hide(bHidePlayers);
+										pRenderNode->SetRndFlags(ERF_HIDDEN, bHidePlayers);
 									}
 								}
 

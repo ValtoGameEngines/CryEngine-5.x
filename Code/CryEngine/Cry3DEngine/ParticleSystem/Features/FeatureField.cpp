@@ -1,121 +1,33 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-// -------------------------------------------------------------------------
-//  Created:     14/01/2015 by Filipe amim
-//  Description:
-// -------------------------------------------------------------------------
-//
-////////////////////////////////////////////////////////////////////////////
+// Copyright 2015-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
-#include <CrySerialization/SmartPtr.h>
-#include <CrySerialization/Math.h>
-#include "ParticleSystem/ParticleFeature.h"
-#include "ParamMod.h"
-
-#include <CryRenderer/IGpuParticles.h>
-
-CRY_PFX2_DBG
+#include "FeatureCommon.h"
 
 namespace pfx2
 {
 
-EParticleDataType PDT(EPDT_Alpha, float, 1, BHasInit(true));
-
-//////////////////////////////////////////////////////////////////////////
-// CFeatureFieldOpacity
-
-class CFeatureFieldOpacity : public CParticleFeature
-{
-public:
-	CRY_PFX2_DECLARE_FEATURE
-
-	CFeatureFieldOpacity()
-		: m_alphaScale(0, 1)
-		, m_clipLow(0, 0)
-		, m_clipRange(1, 1)
-		, CParticleFeature(gpu_pfx2::eGpuFeatureType_FieldOpacity)
-	{
-	}
-
-	virtual void AddToComponent(CParticleComponent* pComponent, SComponentParams* pParams) override
-	{
-		m_opacity.AddToComponent(pComponent, this, EPDT_Alpha);
-
-		pParams->m_shaderData.m_alphaTest[0][0] = m_alphaScale.x;
-		pParams->m_shaderData.m_alphaTest[1][0] = m_alphaScale.y - m_alphaScale.x;
-		pParams->m_shaderData.m_alphaTest[0][1] = m_clipLow.x;
-		pParams->m_shaderData.m_alphaTest[1][1] = m_clipLow.y - m_clipLow.x;
-		pParams->m_shaderData.m_alphaTest[0][2] = m_clipRange.x;
-		pParams->m_shaderData.m_alphaTest[1][2] = m_clipRange.y - m_clipRange.x;
-
-		if (auto pInt = GetGpuInterface())
-		{
-			const int numSamples = gpu_pfx2::kNumModifierSamples;
-			float samples[numSamples];
-			m_opacity.Sample(samples, numSamples);
-			gpu_pfx2::SFeatureParametersOpacity parameters;
-			parameters.samples = samples;
-			parameters.numSamples = numSamples;
-			parameters.alphaScale = m_alphaScale;
-			parameters.clipLow = m_clipLow;
-			parameters.clipRange = m_clipRange;
-			pInt->SetParameters(parameters);
-		}
-		pComponent->AddToUpdateList(EUL_Update, this);
-	}
-
-	virtual void Serialize(Serialization::IArchive& ar) override
-	{
-		CParticleFeature::Serialize(ar);
-		ar(m_opacity, "value", "Value");
-		ar(m_alphaScale, "AlphaScale", "Alpha Scale");
-		ar(m_clipLow, "ClipLow", "Clip Low");
-		ar(m_clipRange, "ClipRange", "Clip Range");
-	}
-
-	virtual void InitParticles(const SUpdateContext& context) override
-	{
-		CRY_PFX2_PROFILE_DETAIL;
-		m_opacity.InitParticles(context, EPDT_Alpha);
-	}
-
-	virtual void Update(const SUpdateContext& context) override
-	{
-		CRY_PFX2_PROFILE_DETAIL;
-		m_opacity.Update(context, EPDT_Alpha);
-	}
-
-private:
-	CParamMod<SModParticleField, UUnitFloat> m_opacity;
-	Vec2 m_alphaScale;
-	Vec2 m_clipLow, m_clipRange;
-};
-
-CRY_PFX2_IMPLEMENT_FEATURE(CParticleFeature, CFeatureFieldOpacity, "Field", "Opacity", colorField);
+extern TDataType<float> EPDT_Alpha;
 
 //////////////////////////////////////////////////////////////////////////
 // CFeatureFieldSize
 
-EParticleDataType PDT(EPDT_Size, float, 1, BHasInit(true));
+MakeDataType(EPDT_Size, float, EDD_ParticleUpdate);
 
 class CFeatureFieldSize : public CParticleFeature
 {
 public:
 	CRY_PFX2_DECLARE_FEATURE
 
-	CFeatureFieldSize() : CParticleFeature(gpu_pfx2::eGpuFeatureType_FieldSize) {}
-
 	virtual void AddToComponent(CParticleComponent* pComponent, SComponentParams* pParams) override
 	{
 		m_size.AddToComponent(pComponent, this, EPDT_Size);
-		pParams->m_maxParticleSize = max(pParams->m_maxParticleSize, m_size.GetValueRange().end);
+		pParams->m_maxParticleSize = m_size.GetValueRange().end;
 
-		if (auto gpuInt = GetGpuInterface())
+		if (auto gpuInt = MakeGpuInterface(pComponent, gpu_pfx2::eGpuFeatureType_FieldSize))
 		{
-			const int numSamples = gpu_pfx2::kNumModifierSamples;
+			const uint numSamples = gpu_pfx2::kNumModifierSamples;
 			float samples[numSamples];
-			m_size.Sample(samples, numSamples);
+			m_size.Sample({samples, numSamples});
 			gpu_pfx2::SFeatureParametersSizeTable sizeTable;
 			sizeTable.samples = samples;
 			sizeTable.numSamples = numSamples;
@@ -129,25 +41,23 @@ public:
 		ar(m_size, "value", "Value");
 	}
 
-	virtual EFeatureType GetFeatureType() override
-	{
-		return EFT_Size;
-	}
+	virtual EFeatureType GetFeatureType() override { return EFT_Size; }
+	static uint DefaultForType() { return EFT_Size; }
 
-	virtual void InitParticles(const SUpdateContext& context) override
+	virtual void InitParticles(CParticleComponentRuntime& runtime) override
 	{
 		CRY_PFX2_PROFILE_DETAIL;
-		m_size.InitParticles(context, EPDT_Size);
+		m_size.Init(runtime, EPDT_Size);
 	}
 
-	virtual void Update(const SUpdateContext& context) override
+	virtual void UpdateParticles(CParticleComponentRuntime& runtime) override
 	{
 		CRY_PFX2_PROFILE_DETAIL;
-		m_size.Update(context, EPDT_Size);
+		m_size.Update(runtime, EPDT_Size);
 	}
 
 private:
-	CParamMod<SModParticleField, UFloat10> m_size;
+	CParamMod<EDD_ParticleUpdate, UFloat10> m_size;
 };
 
 CRY_PFX2_IMPLEMENT_FEATURE(CParticleFeature, CFeatureFieldSize, "Field", "Size", colorField);
@@ -165,7 +75,7 @@ public:
 		, m_maxSize(0.0f)
 		, m_initAlphas(false)
 		, m_affectOpacity(true)
-		, CParticleFeature(gpu_pfx2::eGpuFeatureType_FieldPixelSize) {}
+	{}
 
 	virtual void AddToComponent(CParticleComponent* pComponent, SComponentParams* pParams) override
 	{
@@ -176,9 +86,9 @@ public:
 			m_initAlphas = !pComponent->UseParticleData(EPDT_Alpha);
 			pComponent->AddParticleData(EPDT_Alpha);
 		}
-		pComponent->AddToUpdateList(EUL_Update, this);
+		pComponent->UpdateParticles.add(this);
 
-		if (auto gpuInt = GetGpuInterface())
+		if (auto gpuInt = MakeGpuInterface(pComponent, gpu_pfx2::eGpuFeatureType_FieldPixelSize))
 		{
 			gpu_pfx2::SFeatureParametersPixelSize params;
 			params.minSize = m_minSize;
@@ -196,7 +106,7 @@ public:
 		ar(m_affectOpacity, "AffectOpacity", "Affect Opacity");
 	}
 
-	virtual void Update(const SUpdateContext& context) override
+	virtual void UpdateParticles(CParticleComponentRuntime& runtime) override
 	{
 		CRY_PFX2_PROFILE_DETAIL;
 
@@ -212,13 +122,13 @@ public:
 		const floatv minDrawPixels = ToFloatv(fov / height * 0.5f);
 		const floatv epsilon = ToFloatv(1.0f / 1024.0f);
 
-		CParticleContainer& container = context.m_container;
+		CParticleContainer& container = runtime.GetContainer();
 		IVec3Stream positions = container.GetIVec3Stream(EPVF_Position);
 		IOFStream sizes = container.GetIOFStream(EPDT_Size);
 		IFStream inputAlphas = m_initAlphas ? IFStream(nullptr, 1.0f) : container.GetIFStream(EPDT_Alpha);
 		IOFStream outputAlphas = container.GetIOFStream(EPDT_Alpha);
 
-		CRY_PFX2_FOR_ACTIVE_PARTICLESGROUP(context)
+		for (auto particleGroupId : runtime.FullRangeV())
 		{
 			const Vec3v position = positions.Load(particleGroupId);
 			const floatv size0 = sizes.Load(particleGroupId);
@@ -235,7 +145,6 @@ public:
 				outputAlphas.Store(particleGroupId, alpha1);
 			}
 		}
-		CRY_PFX2_FOR_END;
 	}
 
 private:

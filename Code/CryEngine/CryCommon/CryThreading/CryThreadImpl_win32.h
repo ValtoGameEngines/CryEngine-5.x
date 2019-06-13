@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -33,6 +33,7 @@ CRY_SRWLOCK::CRY_SRWLOCK()
 
 //////////////////////////////////////////////////////////////////////////
 CRY_CONDITION_VARIABLE::CRY_CONDITION_VARIABLE()
+	: condVar_(0)
 {
 	static_assert(sizeof(condVar_) == sizeof(PCONDITION_VARIABLE), "ConditionVariable-pointer has invalid size");
 	InitializeConditionVariable(reinterpret_cast<PCONDITION_VARIABLE>(&condVar_));
@@ -341,31 +342,21 @@ CryFastSemaphore::~CryFastSemaphore()
 //////////////////////////////////////////////////////////////////////////
 void CryFastSemaphore::Acquire()
 {
-	int nCount = ~0;
-	do
-	{
-		nCount = *const_cast<volatile int*>(&m_nCounter);
-	}
-	while (CryInterlockedCompareExchange(alias_cast<volatile LONG*>(&m_nCounter), nCount - 1, nCount) != nCount);
-
 	// if the count would have been 0 or below, go to kernel semaphore
-	if ((nCount - 1) < 0)
+	if (CryInterlockedDecrement(&m_nCounter) < 0)
+	{
 		m_Semaphore.Acquire();
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CryFastSemaphore::Release()
 {
-	int nCount = ~0;
-	do
-	{
-		nCount = *const_cast<volatile int*>(&m_nCounter);
-	}
-	while (CryInterlockedCompareExchange(alias_cast<volatile LONG*>(&m_nCounter), nCount + 1, nCount) != nCount);
-
 	// wake up kernel semaphore if we have waiter
-	if (nCount < 0)
+	if (CryInterlockedIncrement(&m_nCounter) <= 0)
+	{
 		m_Semaphore.Release();
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////

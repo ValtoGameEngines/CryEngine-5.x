@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -48,7 +48,6 @@ private:
 	std::vector<SpritePoint> m_OrbsList;
 	CRenderPrimitive         m_GlowPrimitive;
 	CRenderPrimitive         m_CameraLensPrimitive;
-	int                      m_samplerPointClamp;
 	float                    m_spriteAspectRatio;
 
 	static const int         MAX_ORBS_NUMBER = 10000;
@@ -67,7 +66,7 @@ public:
 protected:
 	void ApplyOrbFlags(uint64& rtFlags, bool detailShading) const;
 	void ApplyAdvancedShadingFlag(uint64& rtFlags) const;
-	void ApplyAdvancedShadingParams(SShaderParams& shaderParams, CRenderPrimitive& primitive, const ColorF& ambDiffuseRGBK, float absorptance, float transparency, float scattering) const;
+	void ApplyAdvancedShadingParams(CGraphicsPipeline* pGraphicsPipeline, SShaderParams& shaderParams, CRenderPrimitive& primitive, const ColorF& ambDiffuseRGBK, float absorptance, float transparency, float scattering) const;
 
 public:
 

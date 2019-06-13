@@ -1,11 +1,9 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __MNM_HASHCOMPUTER_H
 #define __MNM_HASHCOMPUTER_H
 
 #pragma once
-
-#include "MNM.h"
 
 #if !defined(_MSC_VER) && !defined(_rotl)
 	#define _rotl(x, k) (((x) << (k)) | ((x) >> (32 - (k))))

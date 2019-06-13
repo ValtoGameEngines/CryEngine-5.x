@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -134,7 +134,7 @@ EAITargetThreat GetSoundStimulusThreatForNonPuppetEntities(const int soundType)
 //////////////////////////////////////////////////////////////////////////
 bool ShouldVisualStimulusBeHandled(tAIObjectID objectID, const Vec3 eventPosition)
 {
-	if (gAIEnv.CVars.IgnoreVisualStimulus != 0)
+	if (gAIEnv.CVars.legacyPerception.IgnoreVisualStimulus != 0)
 		return false;
 
 	CWeakRef<CAIObject> refObject = gAIEnv.pObjectContainer->GetWeakRef(objectID);
@@ -159,7 +159,7 @@ bool ShouldVisualStimulusBeHandled(tAIObjectID objectID, const Vec3 eventPositio
 
 bool ShouldSoundStimulusBeHandled(tAIObjectID objectID, const Vec3 eventPosition, const float maxSoundDistanceAllowed)
 {
-	if (gAIEnv.CVars.IgnoreSoundStimulus != 0)
+	if (gAIEnv.CVars.legacyPerception.IgnoreSoundStimulus != 0)
 		return false;
 
 	CWeakRef<CAIObject> refObject = gAIEnv.pObjectContainer->GetWeakRef(objectID);
@@ -188,7 +188,7 @@ bool ShouldSoundStimulusBeHandled(tAIObjectID objectID, const Vec3 eventPosition
 
 bool ShouldBulletRainStimulusBeHandled(tAIObjectID objectID)
 {
-	if (gAIEnv.CVars.IgnoreBulletRainStimulus != 0)
+	if (gAIEnv.CVars.legacyPerception.IgnoreBulletRainStimulus != 0)
 		return false;
 
 	CWeakRef<CAIObject> refObject = gAIEnv.pObjectContainer->GetWeakRef(objectID);
@@ -282,7 +282,7 @@ void CTargetTrackManager::PrepareModifiers()
 bool CTargetTrackManager::IsEnabled() const
 {
 	// Currently based on cvar
-	return (gAIEnv.CVars.TargetTracking != 0);
+	return (gAIEnv.CVars.legacyTargetTracking.TargetTracking != 0);
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -301,7 +301,7 @@ void CTargetTrackManager::ClearTargetTrackThreatModifier()
 //////////////////////////////////////////////////////////////////////////
 void CTargetTrackManager::Init()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (!ReloadConfig())
 	{
@@ -312,7 +312,7 @@ void CTargetTrackManager::Init()
 //////////////////////////////////////////////////////////////////////////
 void CTargetTrackManager::Shutdown()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	DeleteConfigs();
 	DeleteAgents();
@@ -321,7 +321,7 @@ void CTargetTrackManager::Shutdown()
 //////////////////////////////////////////////////////////////////////////
 void CTargetTrackManager::Reset(IAISystem::EResetReason reason)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	switch (reason)
 	{
@@ -466,7 +466,7 @@ void CTargetTrackManager::Serialize_Read(TSerialize ser)
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackManager::RegisterAgent(tAIObjectID aiObjectId, uint32 uConfigHash, int nTargetLimit)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	assert(aiObjectId > 0);
 	assert(uConfigHash > 0);
@@ -504,7 +504,7 @@ bool CTargetTrackManager::RegisterAgent(tAIObjectID aiObjectId, const char* szCo
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackManager::UnregisterAgent(tAIObjectID aiObjectId)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	assert(aiObjectId > 0);
 
@@ -536,7 +536,7 @@ bool CTargetTrackManager::UnregisterAgent(tAIObjectID aiObjectId)
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackManager::ResetAgent(tAIObjectID aiObjectId)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	assert(aiObjectId > 0);
 
@@ -561,7 +561,7 @@ bool CTargetTrackManager::ResetAgent(tAIObjectID aiObjectId)
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackManager::SetAgentEnabled(tAIObjectID aiObjectId, bool bEnable)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	assert(aiObjectId > 0);
 
@@ -586,7 +586,7 @@ bool CTargetTrackManager::SetAgentEnabled(tAIObjectID aiObjectId, bool bEnable)
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackManager::SetTargetClassThreat(tAIObjectID aiObjectId, float fClassThreat)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	assert(aiObjectId > 0);
 
@@ -605,8 +605,6 @@ bool CTargetTrackManager::SetTargetClassThreat(tAIObjectID aiObjectId, float fCl
 //////////////////////////////////////////////////////////////////////////
 float CTargetTrackManager::GetTargetClassThreat(tAIObjectID aiObjectId) const
 {
-	assert(aiObjectId > 0);
-
 	float fResult = 1.0f;
 
 	TClassThreatContainer::const_iterator itValue = m_ClassThreatValues.find(aiObjectId);
@@ -623,7 +621,7 @@ int CTargetTrackManager::GetTargetLimit(tAIObjectID aiObjectId) const
 {
 	assert(aiObjectId > 0);
 
-	int nResult = gAIEnv.CVars.TargetTracks_GlobalTargetLimit;
+	int nResult = gAIEnv.CVars.legacyTargetTracking.TargetTracks_GlobalTargetLimit;
 
 	TAgentContainer::const_iterator itAgent = m_Agents.find(aiObjectId);
 	if (itAgent != m_Agents.end())
@@ -641,7 +639,7 @@ int CTargetTrackManager::GetTargetLimit(tAIObjectID aiObjectId) const
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackManager::HandleStimulusEventInRange(tAIObjectID aiTargetId, const char* szStimulusName, const TargetTrackHelpers::SStimulusEvent& eventInfo, float fRadius)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	bool bResult = false;
 
@@ -681,7 +679,7 @@ bool CTargetTrackManager::HandleStimulusEventInRange(tAIObjectID aiTargetId, con
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackManager::HandleStimulusEventForAgent(tAIObjectID aiAgentId, tAIObjectID aiTargetId, const char* szStimulusName, const TargetTrackHelpers::SStimulusEvent& eventInfo)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	bool bResult = false;
 
@@ -711,7 +709,7 @@ bool CTargetTrackManager::HandleStimulusEventForAgent(tAIObjectID aiAgentId, tAI
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackManager::HandleStimulusFromAIEvent(tAIObjectID aiObjectId, const SAIEVENT* pAIEvent, TargetTrackHelpers::EAIEventStimulusType eType)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	bool bResult = false;
 
@@ -799,8 +797,6 @@ bool CTargetTrackManager::ShouldStimulusBeHandled(tAIObjectID aiObjectID, const 
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackManager::HandleStimulusEvent(CTargetTrackGroup* pGroup, TargetTrackHelpers::STargetTrackStimulusEvent& stimulusEvent)
 {
-	bool bResult = false;
-
 	assert(pGroup);
 
 	if (!pGroup->IsEnabled())
@@ -822,7 +818,7 @@ bool CTargetTrackManager::HandleStimulusEvent(CTargetTrackGroup* pGroup, TargetT
 bool CTargetTrackManager::TriggerPulse(tAIObjectID aiObjectId, tAIObjectID targetId, const char* szStimulusName,
                                        const char* szPulseName)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	bool bResult = false;
 
@@ -1013,7 +1009,7 @@ bool CTargetTrackManager::TranslateBulletRainStimulusIfCanBeHandled(TargetTrackH
 //////////////////////////////////////////////////////////////////////////
 void CTargetTrackManager::Update(tAIObjectID aiObjectId)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	assert(aiObjectId > 0);
 
@@ -1035,7 +1031,7 @@ void CTargetTrackManager::ResetFreshestTargetData()
 // Note that target data updating happens across factions and groups
 void CTargetTrackManager::ShareFreshestTargetData()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	// Find the freshest visual stimulus data for each target
 	m_dataPerTarget.clear();
@@ -1170,7 +1166,7 @@ void CTargetTrackManager::PullDownThreatLevel(const tAIObjectID aiObjectIdForTar
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackManager::GetDesiredTarget(tAIObjectID aiObjectId, uint32 uDesiredTargetMethod, CWeakRef<CAIObject>& outTarget, SAIPotentialTarget*& pOutTargetInfo)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	bool bResult = false;
 
@@ -1193,7 +1189,7 @@ bool CTargetTrackManager::GetDesiredTarget(tAIObjectID aiObjectId, uint32 uDesir
 uint32 CTargetTrackManager::GetBestTargets(tAIObjectID aiObjectId, uint32 uDesiredTargetMethod,
                                            tAIObjectID* bestTargets, uint32 maxCount)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	uint32 count = 0;
 
@@ -1295,7 +1291,7 @@ int CTargetTrackManager::GetPotentialTargetCountFromFaction(tAIObjectID aiTarget
 //////////////////////////////////////////////////////////////////////////
 CTargetTrack* CTargetTrackManager::GetUnusedTargetTrackFromPool()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	CTargetTrack* pTrack = NULL;
 
@@ -1315,7 +1311,7 @@ CTargetTrack* CTargetTrackManager::GetUnusedTargetTrackFromPool()
 //////////////////////////////////////////////////////////////////////////
 void CTargetTrackManager::AddTargetTrackToPool(CTargetTrack* pTrack)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	assert(pTrack);
 
@@ -1401,7 +1397,7 @@ const ITargetTrackModifier* CTargetTrackManager::GetTargetTrackModifier(uint32 u
 //////////////////////////////////////////////////////////////////////////
 void CTargetTrackManager::DeleteConfigs()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	TConfigContainer::iterator itConfig = m_Configs.begin();
 	TConfigContainer::iterator itConfigEnd = m_Configs.end();
@@ -1416,7 +1412,7 @@ void CTargetTrackManager::DeleteConfigs()
 //////////////////////////////////////////////////////////////////////////
 void CTargetTrackManager::DeleteAgents()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	TAgentContainer::iterator itAgent = m_Agents.begin();
 	TAgentContainer::iterator itAgentEnd = m_Agents.end();
@@ -1437,7 +1433,7 @@ void CTargetTrackManager::DeleteAgents()
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackManager::ReloadConfig()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	bool bResult = false;
 
@@ -1466,7 +1462,7 @@ bool CTargetTrackManager::ReloadConfig()
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackManager::LoadConfigs(XmlNodeRef& pRoot)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	bool bResult = true;
 
@@ -1533,7 +1529,7 @@ bool CTargetTrackManager::LoadConfigs(XmlNodeRef& pRoot)
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackManager::LoadConfigStimuli(TargetTrackHelpers::STargetTrackConfig* pConfig, XmlNodeRef& pStimuliElement, bool bHasTemplate)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	assert(pConfig && pStimuliElement);
 
@@ -1643,7 +1639,7 @@ bool CTargetTrackManager::LoadConfigStimuli(TargetTrackHelpers::STargetTrackConf
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackManager::LoadConfigModifiers(TargetTrackHelpers::STargetTrackStimulusConfig* pStimulusConfig, XmlNodeRef& pModifiersElement)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	assert(pStimulusConfig && pModifiersElement);
 
@@ -1710,7 +1706,7 @@ bool CTargetTrackManager::LoadConfigModifiers(TargetTrackHelpers::STargetTrackSt
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackManager::LoadConfigPulses(TargetTrackHelpers::STargetTrackStimulusConfig* pStimulusConfig, XmlNodeRef& pPulsesElement)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	assert(pStimulusConfig && pPulsesElement);
 
@@ -1763,7 +1759,7 @@ bool CTargetTrackManager::LoadConfigPulses(TargetTrackHelpers::STargetTrackStimu
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackManager::LoadConfigReleaseThreatLevels(TargetTrackHelpers::STargetTrackStimulusConfig* pStimulusConfig, XmlNodeRef& pReleaseThreatLevelsElement)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	assert(pStimulusConfig && pReleaseThreatLevelsElement);
 
@@ -1824,7 +1820,7 @@ bool CTargetTrackManager::LoadConfigReleaseThreatLevels(TargetTrackHelpers::STar
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackManager::ApplyStimulusTemplates()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	bool bResult = true;
 
@@ -1877,7 +1873,7 @@ bool CTargetTrackManager::ApplyStimulusTemplates()
 //////////////////////////////////////////////////////////////////////////
 bool CTargetTrackManager::ApplyStimulusTemplate(TargetTrackHelpers::STargetTrackConfig* pConfig, const TargetTrackHelpers::STargetTrackConfig* pParent)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	bool bResult = false;
 
@@ -2005,7 +2001,7 @@ bool CTargetTrackManager::ApplyStimulusTemplate(TargetTrackHelpers::STargetTrack
 //////////////////////////////////////////////////////////////////////////
 uint32 CTargetTrackManager::GetConfigNameHash(const char* sName)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	return CryStringUtils::CalculateHashLowerCase(sName);
 }
@@ -2013,7 +2009,7 @@ uint32 CTargetTrackManager::GetConfigNameHash(const char* sName)
 //////////////////////////////////////////////////////////////////////////
 uint32 CTargetTrackManager::GetStimulusNameHash(const char* sStimulusName)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	return CryStringUtils::CalculateHashLowerCase(sStimulusName);
 }
@@ -2021,7 +2017,7 @@ uint32 CTargetTrackManager::GetStimulusNameHash(const char* sStimulusName)
 //////////////////////////////////////////////////////////////////////////
 uint32 CTargetTrackManager::GetPulseNameHash(const char* sPulseName)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	return CryStringUtils::CalculateHashLowerCase(sPulseName);
 }
@@ -2030,9 +2026,9 @@ uint32 CTargetTrackManager::GetPulseNameHash(const char* sPulseName)
 void CTargetTrackManager::DebugDraw()
 {
 #ifdef TARGET_TRACK_DEBUG
-	const int nConfigMode = gAIEnv.CVars.TargetTracks_ConfigDebugDraw;
-	const int nTargetMode = gAIEnv.CVars.TargetTracks_TargetDebugDraw;
-	const char* szAgentName = gAIEnv.CVars.TargetTracks_AgentDebugDraw;
+	const int nConfigMode = gAIEnv.CVars.legacyTargetTracking.TargetTracks_ConfigDebugDraw;
+	const int nTargetMode = gAIEnv.CVars.legacyTargetTracking.TargetTracks_TargetDebugDraw;
+	const char* szAgentName = gAIEnv.CVars.legacyTargetTracking.TargetTracks_AgentDebugDraw;
 
 	if (szAgentName && szAgentName[0] && (
 	      stricmp(szAgentName, "0") == 0 ||
@@ -2066,7 +2062,7 @@ void CTargetTrackManager::DebugDrawConfig(int nMode)
 	dc->Draw2dLabel(fColumnX, fColumnY, 1.5f, textCol, false, "Target Track Configs: (%" PRISIZE_T ")", m_Configs.size());
 	fColumnY += 20.0f;
 
-	const string sFilterName = gAIEnv.CVars.TargetTracks_ConfigDebugFilter;
+	const string sFilterName = gAIEnv.CVars.legacyTargetTracking.TargetTracks_ConfigDebugFilter;
 
 	TConfigContainer::const_iterator itConfig = m_Configs.begin();
 	TConfigContainer::const_iterator itConfigEnd = m_Configs.end();

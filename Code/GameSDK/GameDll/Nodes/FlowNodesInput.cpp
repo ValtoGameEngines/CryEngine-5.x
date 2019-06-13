@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /************************************************************************
    -------------------------------------------------------------------------
@@ -210,7 +210,7 @@ public:
 
 	int TranslateKey(int nKeyId)
 	{
-		if (nKeyId >= eKI_XI_DPadUp && nKeyId <= eKI_XI_Disconnect)
+		if (nKeyId >= eKI_XI_DPadUp && nKeyId <= eKI_XI_TriggerRBtn)
 			return nKeyId - KI_XINPUT_BASE;
 		return eXBK_Invalid;
 	}

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 
@@ -10,6 +10,8 @@ and be the sole place in the game that loads and unloads localization tags
 #define GAME_LOCALIZATION_MANAGER_H
 
 #pragma once
+
+struct IConsoleCmdArgs;
 
 class CGameLocalizationManager
 {

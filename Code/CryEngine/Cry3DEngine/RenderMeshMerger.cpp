@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -35,14 +35,9 @@ int CRenderMeshMerger::Cmp_Materials(IMaterial* pMat1, IMaterial* pMat2)
 	SShaderItem& shaderItem1 = pMat1->GetShaderItem();
 	SShaderItem& shaderItem2 = pMat2->GetShaderItem();
 
-#ifdef _DEBUG
-	const char* pName1 = shaderItem1.m_pShader->GetName();
-	const char* pName2 = shaderItem2.m_pShader->GetName();
-#endif
-
 	// vert format
-	int nVertFormat1 = shaderItem1.m_pShader->GetVertexFormat();
-	int nVertFormat2 = shaderItem2.m_pShader->GetVertexFormat();
+	InputLayoutHandle nVertFormat1 = shaderItem1.m_pShader->GetVertexFormat();
+	InputLayoutHandle nVertFormat2 = shaderItem2.m_pShader->GetVertexFormat();
 
 	if (nVertFormat1 > nVertFormat2)
 		return 1;
@@ -203,7 +198,7 @@ void CRenderMeshMerger::MakeListOfAllCRenderChunks(SMergeInfo& info)
 
 		// get vertices's
 		{
-			FRAME_PROFILER("CRenderMeshMerger::MakeListOfAllCRenderChunks_GetPosPtr", GetSystem(), PROFILE_3DENGINE);
+			CRY_PROFILE_SECTION(PROFILE_3DENGINE, "CRenderMeshMerger::MakeListOfAllCRenderChunks_GetPosPtr");
 
 			pPos = reinterpret_cast<Vec3*>(pRM->GetPosPtr(nPosStride, FSL_READ));
 			pTex = reinterpret_cast<Vec2*>(pRM->GetUVPtr(nTexStride, FSL_READ));
@@ -219,7 +214,7 @@ void CRenderMeshMerger::MakeListOfAllCRenderChunks(SMergeInfo& info)
 		byte* pNorm = 0;
 		byte* pTangs = 0;
 
-		if (pRM->GetVertexFormat() != eVF_P3S_N4B_C4B_T2S)
+		if (pRM->GetVertexFormat() != EDefaultInputLayouts::P3S_N4B_C4B_T2S)
 		{
 			pTangs = pRM->GetTangentPtr(nTangsStride, FSL_READ);
 		}
@@ -234,8 +229,6 @@ void CRenderMeshMerger::MakeListOfAllCRenderChunks(SMergeInfo& info)
 		Vec3 vMin, vMax;
 		pRM->GetBBox(vMin, vMax);
 
-		// get indices
-		uint32 nIndCount = pRM->GetIndicesCount();
 		vtx_idx* pSrcInds = pRM->GetIndexPtr(FSL_READ);
 
 		Vec3 vOSPos(0, 0, 0);
@@ -259,7 +252,7 @@ void CRenderMeshMerger::MakeListOfAllCRenderChunks(SMergeInfo& info)
 		CRenderChunk Ch = newMatInfo;
 		for (uint32 i = Ch.nFirstIndexId; i < Ch.nFirstIndexId + Ch.nNumIndices; i++)
 		{
-			assert(i >= 0 && i < nIndCount);
+			assert(i >= 0 && i < static_cast<uint32>(pRM->GetIndicesCount()));
 			assert(pSrcInds[i] >= Ch.nFirstVertId && pSrcInds[i] < Ch.nFirstVertId + Ch.nNumVerts);
 			assert((int)pSrcInds[i] < pRM->GetVerticesCount());
 		}
@@ -802,16 +795,16 @@ void CRenderMeshMerger::TryMergingChunks(SMergeInfo& info)
 	lstChunksMerged.clear();
 	lstChunksMerged.reserve(m_lstChunks.size());
 
-	int nCurrVertFormat = -1;
+	InputLayoutHandle nCurrVertFormat = InputLayoutHandle::Unspecified;
 	for (int nChunkId = 0; nChunkId < m_lstChunks.Count(); nChunkId++)
 	{
 		SMergedChunk& mergChunk = m_lstChunks[nChunkId];
 
 		//		IsChunkValid(mergChunk, m_lstVerts, m_lstIndices);
 
-		int nChunkVertFormat;
+		InputLayoutHandle nChunkVertFormat;
 		if (info.pDecalClipInfo || info.bMergeToOneRenderMesh)
-			nChunkVertFormat = -1;
+			nChunkVertFormat = InputLayoutHandle::Unspecified;
 		else
 		{
 			IMaterial* pMat = mergChunk.pMaterial;
@@ -1055,10 +1048,10 @@ _smart_ptr<IRenderMesh> CRenderMeshMerger::MergeRenderMeshes(SRenderMeshInfoInpu
 
 				// detect vert format change
 				SShaderItem& shaderItemCur = mrgChunk.pMaterial->GetShaderItem();
-				EVertexFormat nNextChunkVertFormatCur = shaderItemCur.m_pShader->GetVertexFormat();
+				InputLayoutHandle nNextChunkVertFormatCur = shaderItemCur.m_pShader->GetVertexFormat();
 
 				SShaderItem& shaderItemNext = m_lstChunks[nChunkId].pMaterial->GetShaderItem();
-				EVertexFormat nNextChunkVertFormatNext = shaderItemNext.m_pShader->GetVertexFormat();
+				InputLayoutHandle nNextChunkVertFormatNext = shaderItemNext.m_pShader->GetVertexFormat();
 
 				if (nNextChunkVertFormatNext != nNextChunkVertFormatCur)
 					break;
@@ -1068,7 +1061,7 @@ _smart_ptr<IRenderMesh> CRenderMeshMerger::MergeRenderMeshes(SRenderMeshInfoInpu
 		IRenderMesh::SInitParamerers params;
 		params.pVertBuffer = m_lstNewVerts.GetElements();
 		params.nVertexCount = m_lstNewVerts.Count();
-		params.eVertexFormat = eVF_P3S_C4B_T2S;
+		params.eVertexFormat = EDefaultInputLayouts::P3S_C4B_T2S;
 		params.pIndices = m_lstNewIndices.GetElements();
 		params.nIndexCount = m_lstNewIndices.Count();
 		params.pTangents = m_lstNewTangBasises.GetElements();
@@ -1393,8 +1386,6 @@ void CRenderMeshMerger::MergeBuffersImpl(AABB* pBounds, SMergeBuffersData* _arrM
 		else
 			bMatrixHasRotation = true;
 
-		Vec3 vOffset = rMatrix.GetTranslation();
-
 		IRenderMesh* pRM = pRMI->pMesh;
 
 		// get streams.
@@ -1647,7 +1638,7 @@ _smart_ptr<IRenderMesh> CRenderMeshMerger::MergeRenderMeshes(SRenderMeshInfoInpu
 	IRenderMesh::SInitParamerers params;
 	params.pVertBuffer = &m_lstVerts.front();
 	params.nVertexCount = m_lstVerts.size();
-	params.eVertexFormat = eVF_P3S_C4B_T2S;
+	params.eVertexFormat = EDefaultInputLayouts::P3S_C4B_T2S;
 	params.pIndices = &m_lstNewIndices.front();
 	params.nIndexCount = m_lstNewIndices.size();
 	params.pTangents = &m_lstTangBasises.front();

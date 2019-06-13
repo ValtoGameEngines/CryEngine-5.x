@@ -1,23 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-/*************************************************************************
-   -------------------------------------------------------------------------
-   Description: Entity layer container.
+#pragma once
 
-   -------------------------------------------------------------------------
-   History:
-   - 11:2:2010   10:50 : Created by Sergiy Shaykin
-
-*************************************************************************/
-#ifndef __ENTITYLAYER_H__
-#define __ENTITYLAYER_H__
-
-#if _MSC_VER > 1000
-	#pragma once
-#endif
-
+#include <CryCore/Containers/CryListenerSet.h>
 #include <CryCore/StlUtils.h>
 #include <CryEntitySystem/IEntityLayer.h>
+#include <CryEntitySystem/IEntitySystem.h>
 
 struct SEntityLayerGarbage
 {
@@ -52,15 +40,15 @@ class CEntityLayer : public IEntityLayer
 {
 	struct EntityProp
 	{
-		EntityProp() : m_id(0), m_bIsNoAwake(false), m_bIsHidden(false), m_bIsActive(false)
+		EntityProp() : m_id(0), m_bIsNoAwake(false), m_bIsHidden(false), m_bEnableScriptUpdate(false)
 		{
 		}
 
-		EntityProp(EntityId id, bool bIsNoAwake, bool bIsHidden, bool bIsActive)
+		EntityProp(EntityId id, bool bIsNoAwake, bool bIsHidden, bool bEnableScriptUpdate)
 			: m_id(id)
 			, m_bIsNoAwake(bIsNoAwake)
 			, m_bIsHidden(bIsHidden)
-			, m_bIsActive(bIsActive)
+			, m_bEnableScriptUpdate(bEnableScriptUpdate)
 		{
 		}
 
@@ -70,14 +58,14 @@ class CEntityLayer : public IEntityLayer
 		}
 
 		EntityId m_id;
-		bool     m_bIsNoAwake : 1;
-		bool     m_bIsHidden  : 1;
-		bool     m_bIsActive  : 1;
+		bool     m_bIsNoAwake          : 1;
+		bool     m_bIsHidden           : 1;
+		bool     m_bEnableScriptUpdate : 1;
 	};
 
 	struct EntityPropFindPred
 	{
-		EntityPropFindPred(EntityId _idToFind) : idToFind(_idToFind) {}
+		explicit EntityPropFindPred(EntityId _idToFind) : idToFind(_idToFind) {}
 		bool operator()(const EntityProp& entityProp) { return entityProp.m_id == idToFind; }
 		EntityId idToFind;
 	};
@@ -109,14 +97,20 @@ public:
 	void                  Serialize(TSerialize ser, TLayerActivationOpVec& deferredOps);
 	virtual bool          IsSkippedBySpec() const override;
 
+	void                  AddListener(IEntityLayerListener* pListener)    { m_listeners.Add(pListener); }
+	void                  RemoveListener(IEntityLayerListener* pListener) { m_listeners.Remove(pListener); }
+
 private:
 
 	void EnableBrushes(bool isEnable);
 	void EnableEntities(bool isEnable);
+	void EnableEntity(CEntity& entity, EntityProp& property, bool isEnable);
 	void ReEvalNeedForHeap();
+	void NotifyActivationToListeners(bool bActivated);
 
 private:
 	typedef std::unordered_map<EntityId, EntityProp, stl::hash_uint32> TEntityProps;
+	typedef CListenerSet<IEntityLayerListener*>                        TListenerSet;
 
 	int                        m_specs;
 	string                     m_name;
@@ -130,9 +124,8 @@ private:
 	uint16                     m_id;
 	std::vector<CEntityLayer*> m_childs;
 	TEntityProps               m_entities;
+	TListenerSet               m_listeners;
 
 	TGarbageHeaps*             m_pGarbageHeaps;
 	IGeneralMemoryHeap*        m_pHeap;
 };
-
-#endif //__ENTITYLAYER_H__

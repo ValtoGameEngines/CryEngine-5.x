@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -296,8 +296,6 @@ bool CTracer::Update(float frameTime, const Vec3 &camera, const float fovScale)
 				finalFovScale *= distanceToCameraScale;
 			}
 			
-			const float widthScale = fovScale;
-
 			tm.SetIdentity();
 			tm.SetScale(Vec3(m_scale * finalFovScale, lengthScale, m_scale * finalFovScale));
 			pEntity->SetSlotLocalTM(m_geometrySlot,tm);

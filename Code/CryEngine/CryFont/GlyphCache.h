@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -46,7 +46,7 @@ typedef std::unordered_map<uint32, CCacheSlot*, stl::hash_uint32> CCacheTable;
 typedef std::vector<CCacheSlot*>                                  CCacheSlotList;
 typedef std::vector<CCacheSlot*>::iterator                        CCacheSlotListItor;
 
-#if CRY_PLATFORM_WINDOWS && CRY_PLATFORM_64BIT
+#if CRY_PLATFORM_WINDOWS
 	#undef GetCharWidth
 	#undef GetCharHeight
 #endif

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __MNM_COMPACT_SPAN_GRID_H
 #define __MNM_COMPACT_SPAN_GRID_H
@@ -60,11 +60,15 @@ public:
 			assert(height > 0);
 		}
 
-		uint32 backface : 1;
-		uint32 flags    : 3;
-		uint32 bottom   : 9;
-		uint32 height   : 9;
-		uint32 depth    : 10;   // at surface
+		uint32 backface  : 1;
+		uint32 flags     : 3;
+		uint32 bottom    : 9;
+		uint32 height    : 9;
+		union
+		{
+		uint32 depth     : 10;   // water depth at surface
+		uint32 clearance : 10;   // distance to the bottom of the span above, set after depth check is done
+		};
 	};
 
 	inline CompactSpanGrid()

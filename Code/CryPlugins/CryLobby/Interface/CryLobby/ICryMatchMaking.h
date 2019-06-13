@@ -1,7 +1,8 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 #pragma once
 
 #include <CommonICryMatchMaking.h>
+#include <CryNetwork/INetwork.h>
 
 // Overview of ICryMatchMaking
 // MatchMaking provides a way for gamers to find each other to play multi player game sessions.

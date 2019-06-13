@@ -1,7 +1,8 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "HUDEventDispatcher.h"
+#include <CryGame/GameUtils.h>
 
 //////////////////////////////////////////////////////////////////////////
 namespace
@@ -10,7 +11,9 @@ namespace
 	typedef std::vector<THUDEventListeners>         TEventVector;
 
 	static bool                                     s_safe = true;
-	static bool                                     s_stlSafe = true;
+#if !defined(DEDICATED_SERVER)
+    static bool                                     s_stlSafe = true;
+#endif
 	static TEventVector                             s_eventVec;
 }
 
@@ -470,7 +473,7 @@ static THUDEventLookup s_eventLookUpTable[] = {
 /*static*/ void CHUDEventDispatcher::CallEvent( const SHUDEvent& event )
 {
 #if !defined(DEDICATED_SERVER)
-	FUNCTION_PROFILER(GetISystem(), PROFILE_GAME);
+	CRY_PROFILE_FUNCTION(PROFILE_GAME);
 	CRY_ASSERT_MESSAGE(s_safe, "HUD: Can't send HUDEvent whilst initialising the HUD! i.e. from CHUDObject() or CHUDObject::Init()!" );
 	if(s_safe && !gEnv->pSystem->IsQuitting() && !s_eventVec.empty())
 	{
@@ -551,7 +554,7 @@ string CHUDEventDispatcher::GetEventName(EHUDEventType inputEvent)
 		}
 		CRY_ASSERT_MESSAGE( definedEventFound, string().Format("HUD: A defined event id was not found when looking for it in registered events. ID was %d. /FH", defdEventId).c_str() );
 	}
-
+#if defined(USE_CRY_ASSERT)
 	// Check for dupes
 	for(size_t i=0; i<regdEventCount; ++i )
 	{
@@ -565,6 +568,7 @@ string CHUDEventDispatcher::GetEventName(EHUDEventType inputEvent)
 			CRY_ASSERT_MESSAGE( redgType != checkType, string().Format("HUD: Duplicate event ID entries found names found for ID%d(%s). /FH", redgType, regdName).c_str() );
 		}
 	}
+#endif
 #endif
 }
 

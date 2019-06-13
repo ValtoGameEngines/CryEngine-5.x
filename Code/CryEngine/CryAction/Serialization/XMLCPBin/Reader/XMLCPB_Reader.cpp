@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 *************************************************************************/
@@ -275,8 +275,12 @@ bool CReader::ReadBinaryFile(const char* pFileName)
 
 			if (!m_errorReading)
 			{
+#if defined(USE_CRY_ASSERT)
 				const CNodeLiveReader& root = ActivateLiveNodeFromCompact(m_numNodes - 1);   // the last node is always the root
 				assert(root.GetLiveId() == XMLCPB_ROOTNODE_ID);
+#else
+				ActivateLiveNodeFromCompact(m_numNodes - 1);   // the last node is always the root
+#endif
 
 				pOSSaveReader->TouchFile();
 			}
@@ -405,8 +409,12 @@ bool CReader::ReadBinaryMemory(const uint8* pData, uint32 uSize)
 
 		if (!m_errorReading)
 		{
+#if defined(USE_CRY_ASSERT)
 			const CNodeLiveReader& root = ActivateLiveNodeFromCompact(m_numNodes - 1);   // the last node is always the root
 			assert(root.GetLiveId() == XMLCPB_ROOTNODE_ID);
+#else
+			ActivateLiveNodeFromCompact(m_numNodes - 1);   // the last node is always the root
+#endif
 		}
 	}
 

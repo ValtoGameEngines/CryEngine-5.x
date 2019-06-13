@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -9,7 +9,8 @@
 #include "ObjMan.h"
 #include "MeshCompiler/MeshCompiler.h"
 
-#include "CryCore/TypeInfo_impl.h"
+#include <CryCore/TypeInfo_impl.h>
+#include <Cry3DEngine/ISurfaceType.h>
 
 const float fRoadAreaZRange = 2.5f;
 const float fRoadTerrainZOffset = 0.06f;
@@ -131,19 +132,13 @@ void CRoadRenderNode::SetVertices(const Vec3* pVertsAll, int nVertsNumAll,
 
 void CRoadRenderNode::Compile() PREFAST_SUPPRESS_WARNING(6262) //function uses > 32k stack space
 {
-	LOADING_TIME_PROFILE_SECTION;
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 
 	// free old object and mesh
 	m_pRenderMesh = NULL;
 
 	// Make sure to dephysicalize first
 	Dephysicalize();
-
-	Vec3 segmentOffset(0, 0, 0);
-	if (Get3DEngine()->m_pSegmentsManager)
-	{
-		segmentOffset = GetTerrain()->GetSegmentOrigin(m_nSID);
-	}
 
 	// The process of generating the render mesh is very slow, only perform if the road changed!
 	if (m_bRebuildFull)
@@ -161,7 +156,7 @@ void CRoadRenderNode::Compile() PREFAST_SUPPRESS_WARNING(6262) //function uses >
 		m_serializedData.worldSpaceBBox.Reset();
 		for (int i = 0; i < nVertsNumAll; i++)
 		{
-			Vec3 vTmp(m_arrVerts[i].x, m_arrVerts[i].y, Get3DEngine()->GetTerrainElevation(m_arrVerts[i].x, m_arrVerts[i].y, m_nSID) + fRoadTerrainZOffset);
+			Vec3 vTmp(m_arrVerts[i].x, m_arrVerts[i].y, Get3DEngine()->GetTerrainElevation(m_arrVerts[i].x, m_arrVerts[i].y) + fRoadTerrainZOffset);
 			m_serializedData.worldSpaceBBox.Add(vTmp);
 		}
 
@@ -201,38 +196,28 @@ void CRoadRenderNode::Compile() PREFAST_SUPPRESS_WARNING(6262) //function uses >
 			}
 
 			// make vert array
-			int nUnitSize = GetTerrain()->GetHeightMapUnitSize();
-#ifndef SEG_WORLD
-			int x1 = int(WSBBox.min.x) / nUnitSize * nUnitSize;
-			int x2 = int(WSBBox.max.x) / nUnitSize * nUnitSize + nUnitSize;
-			int y1 = int(WSBBox.min.y) / nUnitSize * nUnitSize;
-			int y2 = int(WSBBox.max.y) / nUnitSize * nUnitSize + nUnitSize;
-#else
-			int x1 = int(WSBBox.min.x + segmentOffset.x) / nUnitSize * nUnitSize;
-			int x2 = int(WSBBox.max.x + segmentOffset.x) / nUnitSize * nUnitSize + nUnitSize;
-			int y1 = int(WSBBox.min.y + segmentOffset.y) / nUnitSize * nUnitSize;
-			int y2 = int(WSBBox.max.y + segmentOffset.y) / nUnitSize * nUnitSize + nUnitSize;
-			x1 -= (int)segmentOffset.x;
-			x2 -= (int)segmentOffset.x;
-			y1 -= (int)segmentOffset.y;
-			y2 -= (int)segmentOffset.y;
-#endif
+			float unitSize = GetTerrain()->GetHeightMapUnitSize();
+
+			float x1 = std::floor(WSBBox.min.x / unitSize) * unitSize;
+			float x2 = std::floor(WSBBox.max.x / unitSize) * unitSize + unitSize;
+			float y1 = std::floor(WSBBox.min.y / unitSize) * unitSize;
+			float y2 = std::floor(WSBBox.max.y / unitSize) * unitSize + unitSize;
 
 			// make arrays of verts and indices used in trapezoid area
 			s_tempVertexPositions.Clear();
 			s_tempIndices.Clear();
 
-			for (int x = x1; x <= x2; x += nUnitSize)
+			for (float x = x1; x <= x2; x += unitSize)
 			{
-				for (int y = y1; y <= y2; y += nUnitSize)
+				for (float y = y1; y <= y2; y += unitSize)
 				{
-					s_tempVertexPositions.Add(Vec3((float)x, (float)y, GetTerrain()->GetZ(x, y, m_nSID, true)));
+					s_tempVertexPositions.Add(Vec3((float)x, (float)y, GetTerrain()->GetZ(x, y, true)));
 				}
 			}
 
 			// make indices
-			int dx = (x2 - x1) / nUnitSize;
-			int dy = (y2 - y1) / nUnitSize;
+			int dx = int((x2 - x1) / unitSize);
+			int dy = int((y2 - y1) / unitSize);
 
 			for (int x = 0; x < dx; x++)
 			{
@@ -243,14 +228,14 @@ void CRoadRenderNode::Compile() PREFAST_SUPPRESS_WARNING(6262) //function uses >
 					int nIdx2 = (x * (dy + 1) + y + 1);
 					int nIdx3 = (x * (dy + 1) + y + 1 + (dy + 1));
 
-					int X_in_meters = x1 + x * nUnitSize;
-					int Y_in_meters = y1 + y * nUnitSize;
+					float X_in_meters = float(x1) + float(x) * unitSize;
+					float Y_in_meters = float(y1) + float(y) * unitSize;
 
 					CTerrain* pTerrain = GetTerrain();
 
-					if (m_bIgnoreTerrainHoles || (pTerrain && !pTerrain->GetHole(X_in_meters, Y_in_meters, m_nSID)))
+					if (m_bIgnoreTerrainHoles || (pTerrain && !pTerrain->GetHole(X_in_meters, Y_in_meters)))
 					{
-						if (pTerrain && pTerrain->IsMeshQuadFlipped(X_in_meters, Y_in_meters, nUnitSize, m_nSID))
+						if (pTerrain && pTerrain->IsMeshQuadFlipped(X_in_meters, Y_in_meters, unitSize))
 						{
 							s_tempIndices.Add(nIdx0);
 							s_tempIndices.Add(nIdx1);
@@ -318,8 +303,6 @@ void CRoadRenderNode::Compile() PREFAST_SUPPRESS_WARNING(6262) //function uses >
 			s_tempTangents.Clear();
 			s_tempTangents.PreAllocate(s_tempVertexPositions.Count(), s_tempVertexPositions.Count());
 
-			int nStep = CTerrain::GetHeightMapUnitSize();
-
 			Vec3 vWSBoxCenter = m_serializedData.worldSpaceBBox.GetCenter(); //vWSBoxCenter.z=0;
 
 			// make real vertex data
@@ -356,7 +339,7 @@ void CRoadRenderNode::Compile() PREFAST_SUPPRESS_WARNING(6262) //function uses >
 
 				s_tempVertices.Add(tmp);
 
-				Vec3 vNormal = GetTerrain()->GetTerrainSurfaceNormal(vWSPos, 0.25f, m_nSID);
+				Vec3 vNormal = GetTerrain()->GetTerrainSurfaceNormal(vWSPos, 0.25f);
 
 				Vec3 vBiTang = pVerts[1] - pVerts[0];
 				vBiTang.Normalize();
@@ -395,7 +378,7 @@ void CRoadRenderNode::Compile() PREFAST_SUPPRESS_WARNING(6262) //function uses >
 	if (m_dynamicData.indices.Count() && GetRenderer())
 	{
 		m_pRenderMesh = GetRenderer()->CreateRenderMeshInitialized(
-		  m_dynamicData.vertices.GetElements(), m_dynamicData.vertices.Count(), eVF_P3F_C4B_T2S,
+		  m_dynamicData.vertices.GetElements(), m_dynamicData.vertices.Count(), EDefaultInputLayouts::P3F_C4B_T2S,
 		  m_dynamicData.indices.GetElements(), m_dynamicData.indices.Count(), prtTriangleList,
 		  "RoadRenderNode", GetName(), eRMT_Static, 1, 0, NULL, NULL, false, true, m_dynamicData.tangents.GetElements());
 
@@ -430,14 +413,13 @@ void CRoadRenderNode::Compile() PREFAST_SUPPRESS_WARNING(6262) //function uses >
 
 		m_pRenderMesh->SetChunk((m_pMaterial != NULL) ? (IMaterial*)m_pMaterial : gEnv->p3DEngine->GetMaterialManager()->GetDefaultMaterial(),
 		                        0, m_dynamicData.vertices.Count(), 0, m_dynamicData.indices.Count(), texelAreaDensity);
-		m_serializedData.worldSpaceBBox.Move(segmentOffset);
 		Vec3 vWSBoxCenter = m_serializedData.worldSpaceBBox.GetCenter(); //vWSBoxCenter.z=0;
 		AABB OSBBox(m_serializedData.worldSpaceBBox.min - vWSBoxCenter, m_serializedData.worldSpaceBBox.max - vWSBoxCenter);
 		m_pRenderMesh->SetBBox(OSBBox.min, OSBBox.max);
 
 		if (m_bPhysicalize)
 		{
-			LOADING_TIME_PROFILE_SECTION_NAMED("RoadPhysicalization");
+			CRY_PROFILE_SECTION(PROFILE_LOADING_ONLY, "RoadPhysicalization");
 
 			IGeomManager* pGeoman = GetPhysicalWorld()->GetGeomManager();
 			primitives::box abox;
@@ -453,7 +435,7 @@ void CRoadRenderNode::Compile() PREFAST_SUPPRESS_WARNING(6262) //function uses >
 
 			if (m_pMaterial && m_pPhysEnt)
 			{
-				LOADING_TIME_PROFILE_SECTION_NAMED("RoadPhysicalizationParts");
+				CRY_PROFILE_SECTION(PROFILE_LOADING_ONLY, "RoadPhysicalizationParts");
 
 				ISurfaceType* psf;
 				if ((psf = m_pMaterial->GetSurfaceType()) || m_pMaterial->GetSubMtl(0) && (psf = m_pMaterial->GetSubMtl(0)->GetSurfaceType()))
@@ -495,28 +477,32 @@ void CRoadRenderNode::Render(const SRendParams& RendParams, const SRenderingPass
 {
 	FUNCTION_PROFILER_3DENGINE;
 
+	DBG_LOCK_TO_THREAD(this);
+
 	if (!passInfo.RenderRoads())
 		return; // false;
 
-	CRenderObject* pObj = 0;
+	// Prepare object model matrix
+	Vec3 vWSBoxCenter = m_serializedData.worldSpaceBBox.GetCenter();
+	vWSBoxCenter.z += 0.01f;
+	const auto objMat = Matrix34::CreateTranslationMat(vWSBoxCenter);
 
-	if (GetObjManager()->AddOrCreatePersistentRenderObject(m_pTempData, pObj, NULL, passInfo))
+	CRenderObject* pObj = nullptr;
+	if (GetObjManager()->AddOrCreatePersistentRenderObject(m_pTempData, pObj, nullptr, objMat, passInfo))
 		return;
 
 	pObj->m_pRenderNode = this;
 	pObj->m_ObjFlags |= RendParams.dwFObjFlags;
-	pObj->m_II.m_AmbColor = RendParams.AmbientColor;
-	Vec3 vWSBoxCenter = m_serializedData.worldSpaceBBox.GetCenter();
+	pObj->SetAmbientColor(RendParams.AmbientColor, passInfo);
 	pObj->m_editorSelectionID = m_nEditorSelectionID;
-	vWSBoxCenter.z += 0.01f;
-	pObj->m_II.m_Matrix.SetTranslation(vWSBoxCenter);
 
 	//RendParams.nRenderList = EFSLIST_DECAL;
 
 	pObj->m_nSort = m_sortPrio;
 
 	//	if (RendParams.pShadowMapCasters)
-	pObj->m_ObjFlags |= (FOB_DECAL | FOB_INSHADOW | FOB_NO_FOG | FOB_TRANS_TRANSLATE);
+	pObj->m_ObjFlags |= FOB_DECAL | FOB_INSHADOW | FOB_NO_FOG | FOB_TRANS_TRANSLATE;
+	pObj->m_ObjFlags |= FOB_ALLOW_TERRAIN_LAYER_BLEND | FOB_ALLOW_DECAL_BLEND;
 
 	if (RendParams.pTerrainTexInfo && (RendParams.dwFObjFlags & (FOB_BLEND_WITH_TERRAIN_COLOR /* | FOB_AMBIENT_OCCLUSION*/)))
 	{
@@ -628,18 +614,12 @@ void CRoadRenderNode::OnTerrainChanged()
 	for (int i = 0, nVertsNum = m_pRenderMesh->GetVerticesCount(); i < nVertsNum; i++)
 	{
 		Vec3& vPos = *(Vec3*)&pPos[i * nPosStride];
-		vPos.z = GetTerrain()->GetZApr(vWSBoxCenter.x + vPos.x, vWSBoxCenter.y + vPos.y, /*m_nSID*/ GetDefSID()) + 0.01f - vWSBoxCenter.z;
+		vPos.z = GetTerrain()->GetZApr(vWSBoxCenter.x + vPos.x, vWSBoxCenter.y + vPos.y) + 0.01f - vWSBoxCenter.z;
 	}
 	m_pRenderMesh->UnlockStream(VSF_GENERAL);
 
 	// Terrain changed, schedule a full rebuild of the road to match
 	ScheduleRebuild(true);
-}
-
-void CRoadRenderNode::OnRenderNodeBecomeVisible(const SRenderingPassInfo& passInfo)
-{
-	assert(m_pTempData);
-	m_pTempData->userData.objMat.SetIdentity();
 }
 
 void CRoadRenderNode::GetTexCoordInfo(float* pTexCoordInfo)
@@ -684,17 +664,7 @@ void CRoadRenderNode::OffsetPosition(const Vec3& delta)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-void CRoadRenderNode::FillBBox(AABB& aabb)
-{
-	aabb = CRoadRenderNode::GetBBox();
-}
-
-EERType CRoadRenderNode::GetRenderNodeType()
-{
-	return eERType_Road;
-}
-
-float CRoadRenderNode::GetMaxViewDist()
+float CRoadRenderNode::GetMaxViewDist() const
 {
 	if (GetMinSpecFromRenderNodeFlags(m_dwRndFlags) == CONFIG_DETAIL_SPEC)
 		return max(GetCVars()->e_ViewDistMin, CRoadRenderNode::GetBBox().GetRadius() * GetCVars()->e_ViewDistRatioDetail * GetViewDistRatioNormilized());
@@ -710,4 +680,9 @@ Vec3 CRoadRenderNode::GetPos(bool) const
 IMaterial* CRoadRenderNode::GetMaterial(Vec3* pHitPos) const
 {
 	return m_pMaterial;
+}
+
+bool CRoadRenderNode::CanExecuteRenderAsJob() const
+{
+	return !gEnv->IsEditor() && GetCVars()->e_ExecuteRenderAsJobMask & BIT(GetRenderNodeType());
 }

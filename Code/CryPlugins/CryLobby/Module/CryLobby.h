@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __CRYLOBBY_H__
 #define __CRYLOBBY_H__
@@ -15,11 +15,7 @@
 #define USE_CRY_FRIENDS              1
 #define USE_CRY_TCPSERVICE           1
 
-#if PC_CONSOLE_NET_COMPATIBLE
-	#define NETWORK_HOST_MIGRATION (1)
-#else
-	#define NETWORK_HOST_MIGRATION (0)
-#endif
+#define NETWORK_HOST_MIGRATION (0)
 
 #if NETWORK_HOST_MIGRATION
 	#if defined(PURE_CLIENT)
@@ -47,11 +43,7 @@
 
 #define RESET_CONNECTED_CONNECTION (0)
 
-#if !PC_CONSOLE_NET_COMPATIBLE
-	#define ENCRYPT_LOBBY_PACKETS (0)
-#else
-	#define ENCRYPT_LOBBY_PACKETS 0
-#endif
+#define ENCRYPT_LOBBY_PACKETS (0)
 
 // USE_CRY_DEDICATED_SERVER_ARBITRATOR
 // When set and game is started in dedicated arbitrator mode CryLobby will also have a CryDedicatedServerArbitrator service.
@@ -83,7 +75,7 @@
 #include <Socket/NetResolver.h>
 
 #if CRY_PLATFORM_ORBIS
-	#define USE_PSN         1
+	#define USE_PSN         0
 	#define USE_NPTITLE_DAT 1
 #else
 	#define USE_PSN         0
@@ -447,8 +439,19 @@ class CCryLobby : public ICryLobbyPrivate, public IDatagramListener
 #endif
 {
 public:
+	CRYINTERFACE_BEGIN()
+		CRYINTERFACE_ADD(ICryLobby)
+		CRYINTERFACE_ADD(Cry::IEnginePlugin)
+	CRYINTERFACE_END()
+
+	CRYGENERATE_SINGLETONCLASS_GUID(CCryLobby, "Plugin_CryLobby", "31A1557A-0DBA-4CF8-AD79-86E97CD47A4B"_cry_guid);
+
 	CCryLobby();
-	~CCryLobby();
+	virtual ~CCryLobby();
+
+	// Cry::IEnginePlugin
+	virtual bool Initialize(SSystemGlobalEnvironment& env, const SSystemInitParams& initParams) override;
+	// ~Cry::IEnginePlugin
 
 	static ICryLobby*                  GetLobby() { return m_pLobby; }
 

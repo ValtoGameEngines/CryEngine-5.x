@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "UDPDatagramSocket.h"
@@ -400,9 +400,10 @@ void CUDPDatagramSocket::LogWinError()
 
 void CUDPDatagramSocket::LogWinError(int error)
 {
-	// ugly
+#if !defined(EXCLUDE_NORMAL_LOG)
 	const char* msg = ((CNetwork*)(gEnv->pNetwork))->EnumerateError(MAKE_NRESULT(NET_FAIL, NET_FACILITY_SOCKET, error));
 	NetWarning("[net] socket error: %s", msg);
+#endif
 }
 
 void CUDPDatagramSocket::GetSocketAddresses(TNetAddressVec& addrs)
@@ -591,10 +592,10 @@ ESocketError CUDPDatagramSocket::SendVoice(const uint8* pBuffer, size_t nLength,
 void CUDPDatagramSocket::OnRecvFromComplete(const TNetAddress& from, const uint8* pData, uint32 len)
 {
 	const uint32 thisRecvBytes = len + UDP_HEADER_SIZE;
-	const uint32 thisRecvBits = thisRecvBytes << 3;
 	g_bytesIn += thisRecvBytes;
 
 #if NET_MINI_PROFILE || NET_PROFILE_ENABLE
+	const uint32 thisRecvBits = thisRecvBytes << 3;
 	g_socketBandwidth.periodStats.m_totalBandwidthRecvd += thisRecvBits;
 	g_socketBandwidth.periodStats.m_totalPacketsRecvd++;
 	g_socketBandwidth.bandwidthStats.m_total.m_totalBandwidthRecvd += thisRecvBits;
@@ -693,7 +694,7 @@ void CUDPDatagramSocket::SendFragmented(const uint8* pBuffer, size_t nLength, co
 
 	while (nLength)
 	{
-		int blkSize = MIN(nLength, FRAG_MAX_MTU_SIZE - fho_FragHeaderSize);
+		int blkSize = std::min(nLength, (size_t) FRAG_MAX_MTU_SIZE - fho_FragHeaderSize);
 
 		m_pUDPFragBuffer[fho_HeaderID] = Frame_IDToHeader[eH_Fragmentation];
 		memcpy(&m_pUDPFragBuffer[fho_PacketID], &m_RollingIndex, sizeof(m_RollingIndex));
@@ -878,9 +879,9 @@ void CUDPDatagramSocket::DiscardStaleEntries()
 			continue;
 
 		int idx = sources_oldest_packets_index[s];
-		SFragmentedPacket& packet = m_pFragmentedPackets[idx];
 
 	#if SHOW_FRAGMENTATION_USAGE
+		SFragmentedPacket& packet = m_pFragmentedPackets[idx];
 		NetQuickLog(true, 10.f, "[Fragmentation]: Dropping stale packet assembly buffer %d from %s, packet id %u", idx, RESOLVER.ToString(packet.m_from).c_str(), packet.m_Id);
 	#endif // SHOW_FRAGMENTATION_USAGE
 

@@ -1,5 +1,4 @@
-// CRYENGINE Source Code File
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 
 // Common vertex shader. Since almost all techniques share a similar vertex shader, a common vertex shader
@@ -8,18 +7,6 @@
 //  Notes:
 //    - When adding new features here, make sure they work with instancing
 
-
-#if !%TEMP_VEGETATION
-
- #define INST_STREAM_CUSTOM                          \
-  #if %_RT_INSTANCING_ATTR													 \
-    float4 InstAmbientOp  : TEXCOORDN;               \
-   #if %_RT_FOG                                      \
-    float4 InstAvgFogVolumeContrib   : TEXCOORDN;    \
-   #endif                                            \
-  #endif                                             \
-  
-#endif
 
 ///////////////// Vertex/texture modifiers //////////////////
 
@@ -30,25 +17,25 @@
 
 struct v2f_sh
 {
-	#if %_DS || %_PS || !ENABLE_TESSELLATION || %_RT_NO_TESSELLATION
-		float4 HPosition  : POSITION;
-	#endif
+#if %_DS || %_PS || %_GS || !ENABLE_TESSELLATION || %_RT_NO_TESSELLATION
+	OUT_HPOS_IN_WPOS_SG
+#endif
 
 	#if ENABLE_TESSELLATION && !%_RT_NO_TESSELLATION
 		float4 vView     : TEXCOORDN;	// For shadow gen this is world position
-		half4 vNormal    : TEXCOORDN;
+		float4 vNormal   : TEXCOORDN;
 	#endif
 
-	#if (ENABLE_TESSELLATION && !%_RT_NO_TESSELLATION) || %_RT_ALPHATEST || %_RT_ALPHABLEND || %_RT_SAMPLE4 || %_RT_DISSOLVE
+	#if (ENABLE_TESSELLATION && !%_RT_NO_TESSELLATION) || %_RT_ALPHATEST || %_RT_ALPHABLEND || %_RT_SAMPLE4
 		float2 baseTC : TEXCOORDN;
-	#endif	
+	#endif
 
-	#if !%_RT_HW_PCF_COMPARE || %_RT_CUBEMAP0 || %_RT_SAMPLE0
+	#if (!%_RT_HW_PCF_COMPARE || %_RT_CUBEMAP0 || %_RT_SAMPLE0) && %_RT_SHADOW_DEPTH_OUTPUT_LINEAR
 		float Depth  : TEXCOORDN;
 	#endif
 
 	#if (!ENABLE_TESSELLATION || %_RT_NO_TESSELLATION) && %_RT_SAMPLE4
-		half3 Normal  : TEXCOORDN;
+		float3 Normal  : TEXCOORDN;
 		float2 Depth2  : TEXCOORDN;
 	#endif
 };
@@ -57,13 +44,11 @@ struct vert2FragGeneral
 {  
 #if %_GS || %_DS || %_PS || !ENABLE_TESSELLATION || %_RT_NO_TESSELLATION
   OUT_HPOS_IN_WPOS
-#endif  
-  float4 baseTC     : TEXCOORDN;
+#endif
 
-#if %_RT_FOG || %ANISO_SPECULAR || %TEMP_EYES || %OFFSET_BUMP_MAPPING || %PARALLAX_OCCLUSION_MAPPING || %SILHOUETTE_PARALLAX_OCCLUSION_MAPPING
+  float4 baseTC     : TEXCOORDN;
   float4 vTangent  : TEXCOORDN;
   float4 vBinormal : TEXCOORDN;
-#endif
 
   float4 vView     : TEXCOORDN;       
   
@@ -73,16 +58,8 @@ struct vert2FragGeneral
   float3 DistAtten : TEXCOORDN;
 #endif  
 
-#if %_RT_FOG && !%_RT_DECAL_TEXGEN_2D
-  float4 AvgFogVolumeContrib : TEXCOORDN;
-#endif
-
-#if %_RT_FOG || %_RT_DECAL_TEXGEN_2D || %DECAL
-  float4 Ambient   : TEXCOORDN;
-#endif
-
 #if ENABLE_TESSELLATION && !%_RT_NO_TESSELLATION
-  half4 vNormal    : TEXCOORDN;
+  float4 vNormal    : TEXCOORDN;
 #endif
 
 #if %VERTCOLORS || %DIRTLAYER || %BLENDLAYER
@@ -117,14 +94,13 @@ struct vert2fragZ
 
 #if (!%GRASS && !%TEMP_TERRAIN) || %_RT_ALPHABLEND 
 	// Every mesh outputs tangent space. Grass and base terrain are particular cases, they just output normal
-	half4 vTangent   : TEXCOORDN;
-	half4 vBinormal  : TEXCOORDN;
+	float4 vTangent   : TEXCOORDN;
+	float4 vBinormal  : TEXCOORDN;
 #endif
-	half4 vNormalWS   : TEXCOORDN;
-
+	float4 vNormalWS   : TEXCOORDN;
 
 #if %VERTCOLORS || %DIRTLAYER || %BLENDLAYER 
-	half4 Color      : COLOR0;
+	float4 Color      : COLOR0;
 #endif
 
 #if %TEMP_TERRAIN || (%TEMP_VEGETATION && %_RT_BLEND_WITH_TERRAIN_COLOR)
@@ -132,17 +108,13 @@ struct vert2fragZ
 #endif
 
 #if %SILHOUETTE_PARALLAX_OCCLUSION_MAPPING || %PARALLAX_OCCLUSION_MAPPING || %OFFSET_BUMP_MAPPING || %_RT_ALPHABLEND || %TEMP_EYES || %LEAVES || %GRASS
-	#if ORBIS
-		half4 viewTS   : TEXCOORDN;
-	#else
-		half3 viewTS   : TEXCOORDN;
-	#endif
+	float3 viewTS   : TEXCOORDN;
 #endif
 
 	// deferred shading tdb: double check tessellation paths if all correct
 #if ENABLE_TESSELLATION && !%_RT_NO_TESSELLATION
 	float4 vView     : TEXCOORDN;
-	float4 vNormal     : TEXCOORDN;
+	float4 vNormal   : TEXCOORDN;
 #endif
 
 #if %_RT_MOTION_BLUR && !%_RT_ALPHABLEND
@@ -151,6 +123,21 @@ struct vert2fragZ
 
 #if !%TEMP_TERRAIN && !%SILHOUETTE_PARALLAX_OCCLUSION_MAPPING
 	FRONT_FACE_PS
+#endif
+};
+
+struct vert2fragZPre
+{
+	OUT_HPOS_IN_WPOS
+
+#if %_RT_ALPHATEST
+	float4 baseTC     : TEXCOORDN;
+#endif
+
+	// deferred shading tdb: double check tessellation paths if all correct
+#if ENABLE_TESSELLATION && !%_RT_NO_TESSELLATION
+	float4 vView      : TEXCOORDN;
+	float4 vNormal    : TEXCOORDN;
 #endif
 };
 
@@ -183,28 +170,22 @@ struct geom2fragZ
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Common motion blur functions
 
-float3x4 MotionBlurData : PI_MotionBlurData;
-
 float4x4 Matrix_Inst_General_Prev(inout streamPos IN)
 {
 	float4x4 matInstPrev;
 
 	// Instancing support
-#if %_RT_PER_INSTANCE_CB_TEMP
-	matInstPrev[0] = PerInstancePrevWorldMatrix[0];
-	matInstPrev[1] = PerInstancePrevWorldMatrix[1];
-	matInstPrev[2] = PerInstancePrevWorldMatrix[2];
-	matInstPrev[3] = float4(0, 0, 0, 1);
-#elif %_RT_INSTANCING_ATTR
-	matInstPrev[0] = IN.InstMotionBlurData[0];
-	matInstPrev[1] = IN.InstMotionBlurData[1];
-	matInstPrev[2] = IN.InstMotionBlurData[2];
+	
+#if !%_RT_ENVIRONMENT_CUBEMAP
+	matInstPrev[0] = CD_PrevWorldMatrix[0];
+	matInstPrev[1] = CD_PrevWorldMatrix[1];
+	matInstPrev[2] = CD_PrevWorldMatrix[2];
 	matInstPrev[3] = float4(0, 0, 0, 1);
 #else
-	matInstPrev[0] = MotionBlurData[0];
-	matInstPrev[1] = MotionBlurData[1];
-	matInstPrev[2] = MotionBlurData[2];
-	matInstPrev[3] = float4(0, 0, 0, 1);
+	matInstPrev[0] = float4(1,0,0,0);
+	matInstPrev[1] = float4(0,1,0,0);
+	matInstPrev[2] = float4(0,0,1,0);
+	matInstPrev[3] = float4(0,0,0,1);
 #endif
 
 	// Compose matrixes
@@ -220,9 +201,9 @@ float4x4 Matrix_Inst_General_Prev(inout streamPos IN)
 // Output previous view space position (If skinning used, position is skinned)
 float4 Pos_Prev_VS_General(float4x4 VPMatrix, inout streamPos IN)
 {
-  float4 HPosition;
+	float4 HPosition;
 
-  static const float4x4 MatrixIdentity =
+	static const float4x4 MatrixIdentity =
 	{
 		float4(1,0,0,0),
 		float4(0,1,0,0),
@@ -230,10 +211,10 @@ float4 Pos_Prev_VS_General(float4x4 VPMatrix, inout streamPos IN)
 		float4(0,0,0,1)
 	};
   
-  Matrix_Inst_General_Prev(IN);	// Apply instanced matrix 
-  HPosition = _pos_Modificators(IN.InstMatrix, MatrixIdentity, IN, true, true, 1.f);
+	Matrix_Inst_General_Prev(IN);	// Apply instanced matrix 
+	HPosition = _pos_Modificators(IN.InstMatrix, MatrixIdentity, IN, true, true, 1.f);
    
-  return HPosition;
+	return HPosition;
 }
 
 ///////////////// Shared vertex shader computations //////////////////
@@ -264,29 +245,15 @@ void vs_shared_output( in app2vertGeneral IN, inout vert2FragGeneral OUT, inout 
 #endif
 
   // Apply texture modifiers
- _TCModify(baseTC, OUT.baseTC, vertPassPos.Position, vNorm, TS_DIFFUSE);
+  _TCModify(baseTC, OUT.baseTC, vertPassPos.Position, vNorm, TS_DIFFUSE);
  
-#if %_RT_FOG || %_RT_DECAL_TEXGEN_2D || %DECAL
-
-  // Output ambient color - for alpha blending, recursive rendering passes, decals also require ambient.w (opacity parameter)
-   OUT.Ambient = AmbientOp;
-
-  #if %_RT_INSTANCING_ATTR
-    #fetchinst (OUT.Ambient = IN.InstAmbientOp, vertPassPos.nInstance);
-  #endif
-
-#endif
-
-#if %_RT_FOG || %ANISO_SPECULAR || %TEMP_EYES || %OFFSET_BUMP_MAPPING || %PARALLAX_OCCLUSION_MAPPING || %SILHOUETTE_PARALLAX_OCCLUSION_MAPPING
-    // Output tangents only for cases that require it - alpha blending, recursive passes and anisotropic specular
-    // Note: Normalization required for normal diffuse map in world space in case scale used - Do not remove
-    float3 worldTangentS = normalize( mul((const float3x3)vertPassPos.InstMatrix, vertPassPos.ObjToTangentSpace[0]) );
-    float3 worldTangentT = normalize( mul((const float3x3)vertPassPos.InstMatrix, vertPassPos.ObjToTangentSpace[1]) );
-    float3 worldTangentN = normalize( mul((const float3x3)vertPassPos.InstMatrix, vertPassPos.ObjToTangentSpace[2]) );
+  // Note: Normalization required for normal diffuse map in world space in case scale used - Do not remove
+  float3 worldTangentS = normalize( mul((const float3x3)vertPassPos.InstMatrix, vertPassPos.ObjToTangentSpace[0]) );
+  float3 worldTangentT = normalize( mul((const float3x3)vertPassPos.InstMatrix, vertPassPos.ObjToTangentSpace[1]) );
+  float3 worldTangentN = normalize( mul((const float3x3)vertPassPos.InstMatrix, vertPassPos.ObjToTangentSpace[2]) );
     
-    OUT.vTangent = float4(worldTangentS, vertPassPos.Tangent.w); 
-    OUT.vBinormal.xyz = worldTangentT;
-#endif
+  OUT.vTangent = float4(worldTangentS, vertPassPos.Tangent.w); 
+  OUT.vBinormal.xyz = worldTangentT;
 
   OUT.vView.xyz = vertPassPos.WorldPos.xyz;
 #if %_RT_OBJ_IDENTITY
@@ -303,29 +270,7 @@ void vs_shared_output( in app2vertGeneral IN, inout vert2FragGeneral OUT, inout 
 
   // Output the screen-space texture coordinates - for shadows and general projections
   OUT.screenProj = HPosToScreenTC(HPosition);
-
-  // Output fog into view-vector W component (to save interpolator)
-#if %_RT_FOG && !%_RT_DECAL_TEXGEN_2D
-#if !%_RT_VOLUMETRIC_FOG
-  OUT.vView.w = GetVolumetricFogDensity(OUT.vView.xyz + g_VS_WorldViewPos.xyz);
-
- #if %_RT_INSTANCING_ATTR
-   #fetchinst (OUT.AvgFogVolumeContrib = IN.InstAvgFogVolumeContrib, vertPassPos.nInstance);  
- #else
-   OUT.AvgFogVolumeContrib = AvgFogVolumeContrib;
- #endif
-
- #if !%_RT_ALPHABLEND
-    // additive blending case
-    OUT.AvgFogVolumeContrib.w *= OUT.vView.w;
-    OUT.AvgFogVolumeContrib.xyz = 0.0;
- #endif
-#else
-	OUT.AvgFogVolumeContrib = GetVolumetricFogAnalyticalColor(OUT.vView.xyz).xyzw;
-#endif
-#else
   OUT.vView.w = vertPassPos.Position.w;
-#endif
 
 #if %VERTCOLORS || %DIRTLAYER || %BLENDLAYER
   OUT.Color = vertPassPos.Color;

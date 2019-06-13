@@ -1,7 +1,13 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __INTERSECTIONASSISTANCEUNIT_H
 #define __INTERSECTIONASSISTANCEUNIT_H
+#include <CryPhysics/IntersectionTestQueue.h>
+
+struct IPhysicalEntity;
+struct IntersectionTestResult;
+
+namespace primitives { struct box; }
 
 #define NUM_TEST_OFFSETS 8
 

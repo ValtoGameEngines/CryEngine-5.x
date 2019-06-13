@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   WinBase.cpp
@@ -1089,25 +1089,6 @@ void adaptFilenameToLinux(string& rAdjustedFilename)
 	}
 }
 
-void replaceDoublePathFilename(char* szFileName)
-{
-	//replace "\.\" by "\"
-	string s(szFileName);
-	string::size_type loc = 0;
-	//remove /./
-	while ((loc = s.find("/./", loc)) != string::npos)
-	{
-		s.replace(loc, 3, "/");
-	}
-	loc = 0;
-	//remove "\.\"
-	while ((loc = s.find("\\.\\", loc)) != string::npos)
-	{
-		s.replace(loc, 3, "\\");
-	}
-	strcpy((char*)szFileName, s.c_str());
-}
-
 const int comparePathNames(const char* cpFirst, const char* cpSecond, unsigned int len)
 {
 	//create two strings and replace the \\ by / and /./ by /
@@ -1365,7 +1346,7 @@ BOOL SetFileTime(const char* lpFileName, const FILETIME* lpLastAccessTime)
 {
 #if CRY_PLATFORM_ORBIS
 	char buf[512];
-	const char* const adjustedFilename = ConvertFileName(buf, sizeof(buf), lpFileName);
+	ConvertFileName(buf, sizeof(buf), lpFileName);
 #else
 	// Craig: can someone get a better impl here?
 	char adjustedFilename[MAX_PATH];
@@ -1833,47 +1814,6 @@ BOOL RemoveDirectory(LPCSTR lpPathName)
 }
 
 //////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////
-
-//////////////////////////////////////////////////////////////////////////
-//////////////////////////////////////////////////////////////////////////
-EQuestionResult CryMessageBox(const char* lpText, const char* lpCaption, EMessageBox uType)
-{
-#if CRY_PLATFORM_WINDOWS
-	#error CRY_PLATFORM_WINDOWS is defined in WinBase.cpp (it is a non-Windows file)
-#elif CRY_PLATFORM_MAC
-	CFStringRef strText = CFStringCreateWithCString(NULL, lpText, strlen(lpText));
-	CFStringRef strCaption = CFStringCreateWithCString(NULL, lpCaption, strlen(lpCaption));
-
-	CFOptionFlags kResult;
-	CFUserNotificationDisplayAlert(
-	  0,                                 // no timeout
-	  kCFUserNotificationNoteAlertLevel, //change it depending message_type flags ( MB_ICONASTERISK.... etc.)
-	  NULL,                              //icon url, use default, you can change it depending message_type flags
-	  NULL,                              //not used
-	  NULL,                              //localization of strings
-	  strText,                           //header text
-	  strCaption,                        //message text
-	  NULL,                              //default "ok" text in button
-	  CFSTR("Cancel"),                   //alternate button title
-	  NULL,                              //other button title, null--> no other button
-	  &kResult                           //response flags
-	  );
-
-	CFRelease(strCaption);
-	CFRelease(strText);
-
-	if (kResult == kCFUserNotificationDefaultResponse)
-		return eQR_Yes;
-	else
-		return eQR_Cancel;
-#else
-	printf("Messagebox: cap: %s  text:%s\n", lpCaption ? lpCaption : " ", lpText ? lpText : " ");
-	return eQR_None;
-#endif
-}
-
-//////////////////////////////////////////////////////////////////////////
 bool CryCreateDirectory(const char* lpPathName)
 {
 	struct stat st_info;
@@ -1900,6 +1840,13 @@ bool CryCreateDirectory(const char* lpPathName)
 	}
 
 	return true;
+}
+
+//////////////////////////////////////////////////////////////////////////
+bool CryDirectoryExists(const char* szPath)
+{
+	struct stat st_info;
+	return (stat(szPath, &st_info) == 0 && S_ISDIR(st_info.st_mode));
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -1954,6 +1901,7 @@ void CryGetExecutableFolder(unsigned int pathSize, char* szPath)
 	{
 		CryFatalError("Unexpected error encountered trying to get executable path. readlink(\"/proc/self/exe\") failed.");
 	}
+	szPath[nLen] = '\0';
 	if (char* strEnd = strrchr(szPath, '/'))
 	{
 		strEnd[1] = '\0';

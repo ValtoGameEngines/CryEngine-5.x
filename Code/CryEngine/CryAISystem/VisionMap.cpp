@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -24,6 +24,8 @@ static const float orientationEpsilon = 0.05f;
 
 CVisionMap::CVisionMap()
 	: m_visionIdCounter(0)
+	, m_frameStartTime(0.0f)
+	, m_frameDeltaTime(0.0f)
 {
 	Reset();
 }
@@ -126,22 +128,22 @@ void CVisionMap::UnregisterObserver(const ObserverID& observerID)
 	m_observers.erase(observerIt);
 }
 
-void CVisionMap::RegisterObservable(const ObservableID& observableID, const ObservableParams& observerParams)
+void CVisionMap::RegisterObservable(const ObservableID& observableID, const ObservableParams& observableParams)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (!observableID)
 		return;
 
-	assert(observerParams.observablePositionsCount > 0);
-	assert(observerParams.observablePositionsCount <= ObservableParams::MaxPositionCount);
+	assert(observableParams.observablePositionsCount > 0);
+	assert(observableParams.observablePositionsCount <= ObservableParams::MaxPositionCount);
 
 	std::pair<Observables::iterator, bool> result = m_observables.insert(Observables::value_type(observableID, ObservableInfo(observableID, ObservableParams())));
 
 	ObservableInfo& insertedObservableInfo = result.first->second;
 	m_observablesGrid.insert(insertedObservableInfo.observableParams.observablePositions[0], &insertedObservableInfo);
 
-	ObservableChanged(observableID, observerParams, eChangedAll);
+	ObservableChanged(observableID, observableParams, eChangedAll);
 
 	for (Observers::iterator observerIt = m_observers.begin(), end = m_observers.end(); observerIt != end; ++observerIt)
 	{
@@ -153,7 +155,7 @@ void CVisionMap::RegisterObservable(const ObservableID& observableID, const Obse
 
 void CVisionMap::UnregisterObservable(const ObservableID& observableID)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	if (!observableID)
 		return;
@@ -196,7 +198,7 @@ void CVisionMap::UnregisterObservable(const ObservableID& observableID)
 
 void CVisionMap::ObserverChanged(const ObserverID& observerID, const ObserverParams& newObserverParams, uint32 hint)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	Observers::iterator it = m_observers.find(observerID);
 	assert(it != m_observers.end());
@@ -323,7 +325,7 @@ void CVisionMap::ObserverChanged(const ObserverID& observerID, const ObserverPar
 
 void CVisionMap::ObservableChanged(const ObservableID& observableID, const ObservableParams& newObservableParams, uint32 hint)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	Observables::iterator observableIt = m_observables.find(observableID);
 	assert(observableIt != m_observables.end());
@@ -345,7 +347,7 @@ void CVisionMap::ObservableChanged(const ObservableID& observableID, const Obser
 
 		if (!IsEquivalent(oldPosition, newObservableParams.observablePositions[0], positionEpsilon))
 		{
-			FRAME_PROFILER("CVisionMap::ObservableChanged_UpdateHashGrid", GetISystem(), PROFILE_AI);
+			CRY_PROFILE_SECTION(PROFILE_AI, "CVisionMap::ObservableChanged_UpdateHashGrid");
 
 			currentObservableParams.observablePositions[0] = newObservableParams.observablePositions[0];
 			m_observablesGrid.move(m_observablesGrid.find(oldPosition, &observableInfo), newObservableParams.observablePositions[0]);
@@ -373,7 +375,7 @@ void CVisionMap::ObservableChanged(const ObservableID& observableID, const Obser
 
 	if (hint & eChangedSkipList)
 	{
-		FRAME_PROFILER("CVisionMap::ObservableChanged_UpdateSkipList", GetISystem(), PROFILE_AI);
+		CRY_PROFILE_SECTION(PROFILE_AI, "CVisionMap::ObservableChanged_UpdateSkipList");
 
 		assert(newObservableParams.skipListSize <= ObserverParams::MaxSkipListSize);
 
@@ -417,11 +419,15 @@ void CVisionMap::ObservableChanged(const ObservableID& observableID, const Obser
 		observableVisibilityPotentiallyChanged = true;
 	}
 
+	if (hint & eChangedObservableMode)
+	{
+		currentObservableParams.mode = newObservableParams.mode;
+		currentObservableParams.collectFullStatisticsOnObservableMaxRange = newObservableParams.collectFullStatisticsOnObservableMaxRange;
+	}
+
 	if (observableVisibilityPotentiallyChanged)
 	{
-		FRAME_PROFILER("CVisionMap::ObservableChanged_VisibilityChanged", GetISystem(), PROFILE_AI);
-
-		CTimeValue now = gEnv->pTimer->GetFrameStartTime();
+		CRY_PROFILE_SECTION(PROFILE_AI, "CVisionMap::ObservableChanged_VisibilityChanged");
 
 		for (Observers::iterator observersIt = m_observers.begin(), end = m_observers.end(); observersIt != end; ++observersIt)
 		{
@@ -484,6 +490,27 @@ bool CVisionMap::IsVisible(const ObserverID& observerID, const ObservableID& obs
 	return pvsIt->second.visible;
 }
 
+float CVisionMap::GetNormalizedVisibiliy(const ObserverID& observerID, const ObservableID& observableID) const
+{
+	Observers::const_iterator observerIt = m_observers.find(observerID);
+	if (observerIt == m_observers.end())
+		return 0.0f;
+
+	const ObserverInfo& observerInfo = observerIt->second;
+	PVS::const_iterator pvsIt = observerInfo.pvs.find(observableID);
+	if (pvsIt == observerInfo.pvs.end())
+		return 0.0f;
+
+	const ObservableInfo& observableInfo = pvsIt->second.observableInfo;
+	if (observableInfo.observableParams.mode == EObservableMode::Statistical && 
+		IsInStatisticalAnalysisSightRange(observerInfo, observableInfo))
+	{
+		return pvsIt->second.lastComputedNormalizedVisibility;
+	}
+
+	return pvsIt->second.visible ? 1.0f : 0.0f;
+}
+
 const ObserverParams* CVisionMap::GetObserverParams(const ObserverID& observerID) const
 {
 	Observers::const_iterator obsIt = m_observers.find(observerID);
@@ -506,18 +533,30 @@ const ObservableParams* CVisionMap::GetObservableParams(const ObservableID& obse
 	return &observableInfo.observableParams;
 }
 
-void CVisionMap::Update(float frameTime)
+void CVisionMap::Update(const CTimeValue frameStartTime, const float frameDeltaTime)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
+
+	m_frameStartTime = frameStartTime;
+	m_frameDeltaTime = frameDeltaTime;
 
 #if VISIONMAP_DEBUG
 	m_numberOfPVSUpdatesThisFrame = 0;
 	m_numberOfVisibilityUpdatesThisFrame = 0;
 	m_numberOfRayCastsSubmittedThisFrame = 0;
-	m_debugTimer += frameTime;
+	m_debugTimer += frameDeltaTime;
 #endif
 
 	UpdateObservers();
+}
+
+bool CVisionMap::IsInStatisticalAnalysisSightRange(const ObserverInfo& observerInfo, const ObservableInfo& observableInfo) const
+{
+	if (observableInfo.observableParams.collectFullStatisticsOnObservableMaxRange <= 0.0f)
+		return true;
+
+	const float distanceSquare = (observableInfo.observableParams.observablePositions[0] - observerInfo.observerParams.eyePosition).len2();
+	return distanceSquare <= sqr(observableInfo.observableParams.collectFullStatisticsOnObservableMaxRange);
 }
 
 bool CVisionMap::IsInSightRange(const ObserverInfo& observerInfo, const ObservableInfo& observableInfo) const
@@ -525,8 +564,8 @@ bool CVisionMap::IsInSightRange(const ObserverInfo& observerInfo, const Observab
 	if (observerInfo.observerParams.sightRange <= 0.0f)
 		return true;
 
-	const float distance = (observableInfo.observableParams.observablePositions[0] - observerInfo.observerParams.eyePosition).len();
-	return distance <= observerInfo.observerParams.sightRange;
+	const float distanceSquare = (observableInfo.observableParams.observablePositions[0] - observerInfo.observerParams.eyePosition).len2();
+	return distanceSquare <= sqr(observerInfo.observerParams.sightRange);
 }
 
 bool CVisionMap::IsInFoV(const ObserverInfo& observerInfo, const ObservableInfo& observableInfo) const
@@ -631,13 +670,18 @@ void CVisionMap::AddToObserverPVS(ObserverInfo& observerInfo, const ObservableIn
 {
 	observerInfo.needsVisibilityUpdate = true;
 	const RayCastRequest::Priority priority = GetRayCastRequestPriority(observerInfo.observerParams, observableInfo.observableParams);
+
+#if defined(USE_CRY_ASSERT)
 	std::pair<PVS::iterator, bool> result = observerInfo.pvs.insert(PVS::value_type(observableInfo.observableID, PVSEntry(observableInfo, priority)));
 	assert(result.second);
+#else
+	observerInfo.pvs.insert(PVS::value_type(observableInfo.observableID, PVSEntry(observableInfo, priority)));
+#endif
 }
 
 void CVisionMap::UpdatePVS(ObserverInfo& observerInfo)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 #if VISIONMAP_DEBUG
 	++m_numberOfPVSUpdatesThisFrame;
@@ -649,11 +693,10 @@ void CVisionMap::UpdatePVS(ObserverInfo& observerInfo)
 	// - Make sure everything in the PVS is in supposed to be there
 	// - Delete what it's not
 	{
-		FRAME_PROFILER("UpdatePVS_Step1", GetISystem(), PROFILE_AI);
+		CRY_PROFILE_SECTION(PROFILE_AI, "UpdatePVS_Step1");
 
 		for (PVS::iterator pvsIt = pvs.begin(), end = pvs.end(); pvsIt != end; )
 		{
-			const ObservableID& observableID = pvsIt->first;
 			const ObservableInfo& observableInfo = pvsIt->second.observableInfo;
 
 			if (!ShouldObserve(observerInfo, observableInfo))
@@ -685,13 +728,13 @@ void CVisionMap::UpdatePVS(ObserverInfo& observerInfo)
 	// - If object is already in the PVS skip it
 	// - Otherwise check if it should be added and add it
 	{
-		FRAME_PROFILER("UpdatePVS_Step2", GetISystem(), PROFILE_AI);
+		CRY_PROFILE_SECTION(PROFILE_AI, "UpdatePVS_Step2");
 
 		if (observerInfo.observerParams.sightRange > 0.0f)
 		{
 			// the sight range is defined query the obsevableGrid
 			m_queryObservables.clear();
-			uint32 observableCount = m_observablesGrid.query_sphere_distance(observerInfo.observerParams.eyePosition, observerInfo.observerParams.sightRange, m_queryObservables);
+			m_observablesGrid.query_sphere_distance(observerInfo.observerParams.eyePosition, observerInfo.observerParams.sightRange, m_queryObservables);
 
 			for (QueryObservables::iterator it = m_queryObservables.begin(), end = m_queryObservables.end(); it != end; ++it)
 			{
@@ -727,19 +770,24 @@ bool CVisionMap::ShouldBeAddedToObserverPVS(const ObserverInfo& observerInfo, co
 
 void CVisionMap::QueueRay(const ObserverInfo& observerInfo, PVSEntry& pvsEntry)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	assert(!pvsEntry.pendingRayID);
 
 	const QueuedRayID queuedRayID = gAIEnv.pRayCaster->Queue(
-	  pvsEntry.priority,
-	  functor(*this, &CVisionMap::RayCastComplete),
-	  functor(*this, &CVisionMap::RayCastSubmit));
+		pvsEntry.priority,
+		functor(*this, &CVisionMap::RayCastComplete),
+		functor(*this, &CVisionMap::RayCastSubmit),
+		AIRayCast::SRequesterDebugInfo("CVisionMap::QueueRay", observerInfo.observerParams.entityId));
 	assert(queuedRayID);
 
+#if defined(USE_CRY_ASSERT)
 	std::pair<PendingRays::iterator, bool> result = m_pendingRays.insert(
 	  PendingRays::value_type(queuedRayID, PendingRayInfo(observerInfo, pvsEntry)));
 	assert(result.second);
+#else
+	m_pendingRays.insert(PendingRays::value_type(queuedRayID, PendingRayInfo(observerInfo, pvsEntry)));
+#endif
 
 #if VISIONMAP_DEBUG
 	if (queuedRayID)
@@ -754,7 +802,7 @@ void CVisionMap::QueueRay(const ObserverInfo& observerInfo, PVSEntry& pvsEntry)
 
 void CVisionMap::DeletePendingRay(PVSEntry& pvsEntry)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION_ARG(PROFILE_AI, stack_string().Format("Total size: %" PRISIZE_T, m_pendingRays.size()));
 
 	if (!pvsEntry.pendingRayID)
 		return;
@@ -770,7 +818,7 @@ void CVisionMap::DeletePendingRay(PVSEntry& pvsEntry)
 
 void CVisionMap::DeletePendingRays(PVS& pvs)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	for (PVS::iterator pvsIt = pvs.begin(), end = pvs.end(); pvsIt != end; ++pvsIt)
 	{
@@ -781,7 +829,7 @@ void CVisionMap::DeletePendingRays(PVS& pvs)
 
 bool CVisionMap::RayCastSubmit(const QueuedRayID& queuedRayID, RayCastRequest& rayCastRequest)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	PendingRays::iterator pendingRayIt = m_pendingRays.find(queuedRayID);
 
@@ -829,7 +877,7 @@ bool CVisionMap::RayCastSubmit(const QueuedRayID& queuedRayID, RayCastRequest& r
 	latencyInfo->buffer[latencyInfo->bufferIndex].latency = latency;
 	latencyInfo->buffer[latencyInfo->bufferIndex].occurred = m_debugTimer;
 	latencyInfo->bufferIndex = (latencyInfo->bufferIndex + 1) % CRY_ARRAY_COUNT(latencyInfo->buffer);
-	latencyInfo->usedBufferSize = MAX(latencyInfo->usedBufferSize, latencyInfo->bufferIndex);
+	latencyInfo->usedBufferSize = std::max(latencyInfo->usedBufferSize, latencyInfo->bufferIndex);
 #endif
 
 	return true;
@@ -837,7 +885,7 @@ bool CVisionMap::RayCastSubmit(const QueuedRayID& queuedRayID, RayCastRequest& r
 
 void CVisionMap::RayCastComplete(const QueuedRayID& queuedRayID, const RayCastResult& rayCastResult)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
 	PendingRays::iterator pendingRayIt = m_pendingRays.find(queuedRayID);
 
@@ -847,28 +895,59 @@ void CVisionMap::RayCastComplete(const QueuedRayID& queuedRayID, const RayCastRe
 
 	PendingRayInfo& pendingRayInfo = pendingRayIt->second;
 	PVSEntry& pvsEntry = pendingRayInfo.pvsEntry;
-
 	pvsEntry.pendingRayID = 0;
 
 #if VISIONMAP_DEBUG
 	m_pendingRayCounts[pvsEntry.priority]--;
 #endif
-
 	bool visible = !rayCastResult;
 
 #if VISIONMAP_DEBUG
 	pvsEntry.lastObserverPositionChecked = pendingRayInfo.observerPosition;
 	pvsEntry.lastObservablePositionChecked = pendingRayInfo.observablePosition;
 #endif
-
 	const ObserverInfo& observerInfo = pendingRayInfo.observerInfo;
 	const ObservableInfo& observableInfo = pvsEntry.observableInfo;
+	const bool requiresStatisticalAnalysis = (observableInfo.observableParams.mode == EObservableMode::Statistical) &&
+		IsInStatisticalAnalysisSightRange(observerInfo, observableInfo);
+	static_assert(static_cast<int>(EObservableMode::Count) == 2, "Enum changed!");
 
 	if (!visible)
 	{
 #if VISIONMAP_DEBUG
 		pvsEntry.obstructionPosition = rayCastResult->pt;
 #endif
+		if (!requiresStatisticalAnalysis)
+		{
+			if (++pvsEntry.currentTestPositionIndex < observableInfo.observableParams.observablePositionsCount)
+			{
+				m_pendingRays.erase(pendingRayIt);
+				QueueRay(observerInfo, pvsEntry);
+				return;
+			}
+		}
+	}
+
+	if (requiresStatisticalAnalysis)
+	{
+		pvsEntry.numberOfSucceededRaycasts += visible ? 1 : 0;
+		pvsEntry.numberOfCompletedRaycasts++;
+
+		const bool isLastRaycast = (pvsEntry.numberOfCompletedRaycasts == observableInfo.observableParams.observablePositionsCount);
+
+		if (visible && !pvsEntry.visible)
+		{
+			pvsEntry.firstVisPos = pvsEntry.currentTestPositionIndex;
+		}
+
+		if (isLastRaycast)
+		{
+			const float newNormalizedVisibility = (float)pvsEntry.numberOfSucceededRaycasts / (float)pvsEntry.numberOfCompletedRaycasts;
+			if (newNormalizedVisibility != pvsEntry.lastComputedNormalizedVisibility)
+			{
+				pvsEntry.lastComputedNormalizedVisibility = newNormalizedVisibility;
+			}
+		}
 
 		if (++pvsEntry.currentTestPositionIndex < observableInfo.observableParams.observablePositionsCount)
 		{
@@ -877,9 +956,21 @@ void CVisionMap::RayCastComplete(const QueuedRayID& queuedRayID, const RayCastRe
 			return;
 		}
 	}
+	else
+	{
+		pvsEntry.currentTestPositionIndex = 0;
+	}
 
-	pvsEntry.currentTestPositionIndex = 0;
-	if (pvsEntry.visible != visible)
+	// at this point a ray has been casted to all observable positions
+	const bool isPartiallyVisible = (pvsEntry.numberOfSucceededRaycasts > 0);
+	const bool isInvisible        = (pvsEntry.numberOfSucceededRaycasts == 0);
+
+	const bool triggersCallback =
+		(!requiresStatisticalAnalysis && pvsEntry.visible != visible) ||              // default mode     - changed visibility
+		(requiresStatisticalAnalysis && (isPartiallyVisible && !pvsEntry.visible)) || // statistical mode - became visible
+		(requiresStatisticalAnalysis && (isInvisible && pvsEntry.visible));           // statistical mode - became invisible
+
+	if (triggersCallback)
 	{
 		pvsEntry.visible = visible;
 
@@ -895,6 +986,14 @@ void CVisionMap::RayCastComplete(const QueuedRayID& queuedRayID, const RayCastRe
 	{
 		m_pendingRays.erase(pendingRayIt);
 	}
+
+	if (requiresStatisticalAnalysis)
+	{
+		pvsEntry.currentTestPositionIndex = 0;
+		pvsEntry.numberOfCompletedRaycasts = 0;
+		pvsEntry.numberOfSucceededRaycasts = 0;
+	}
+
 }
 
 void CVisionMap::AcquireSkipList(IPhysicalEntity** skipList, uint32 skipListSize)
@@ -945,8 +1044,6 @@ void CVisionMap::UpdateVisibilityStatus(ObserverInfo& observerInfo)
 
 void CVisionMap::UpdateObservers()
 {
-	CTimeValue now = gEnv->pTimer->GetFrameStartTime();
-
 	// Update PVS ////////////////////////////////////////////////////////////
 
 	for (Observers::iterator it = m_observers.begin(), end = m_observers.end(); it != end; ++it)
@@ -955,18 +1052,18 @@ void CVisionMap::UpdateObservers()
 
 		assert(observerInfo.observerParams.eyePosition.IsValid());
 
-		if (observerInfo.needsPVSUpdate && !observerInfo.queuedForPVSUpdate && now > observerInfo.nextPVSUpdateTime)
+		if (observerInfo.needsPVSUpdate && !observerInfo.queuedForPVSUpdate && m_frameStartTime > observerInfo.nextPVSUpdateTime)
 		{
 			m_observerPVSUpdateQueue.push_back(observerInfo.observerID);
 			observerInfo.queuedForPVSUpdate = true;
 
 #if VISIONMAP_DEBUG
-			observerInfo.queuedForPVSUpdateTime = now;
+			observerInfo.queuedForPVSUpdateTime = m_frameStartTime;
 #endif
 		}
 	}
 
-	int numberOfPVSUpdatesLeft = gAIEnv.CVars.VisionMapNumberOfPVSUpdatesPerFrame;
+	int numberOfPVSUpdatesLeft = gAIEnv.CVars.visionMap.VisionMapNumberOfPVSUpdatesPerFrame;
 	while (numberOfPVSUpdatesLeft > 0 && m_observerPVSUpdateQueue.size() > 0)
 	{
 		Observers::iterator observerIt = m_observers.find(m_observerPVSUpdateQueue.front());
@@ -981,7 +1078,7 @@ void CVisionMap::UpdateObservers()
 		numberOfPVSUpdatesLeft--;
 
 #if VISIONMAP_DEBUG
-		m_pvsUpdateQueueLatency = now - observerInfo.queuedForPVSUpdateTime;
+		m_pvsUpdateQueueLatency = m_frameStartTime - observerInfo.queuedForPVSUpdateTime;
 #endif
 	}
 
@@ -990,25 +1087,25 @@ void CVisionMap::UpdateObservers()
 	{
 		ObserverInfo& observerInfo = it->second;
 
-		if (observerInfo.needsVisibilityUpdate && !observerInfo.queuedForVisibilityUpdate && now > observerInfo.nextVisibilityUpdateTime)
+		if (observerInfo.needsVisibilityUpdate && !observerInfo.queuedForVisibilityUpdate && m_frameStartTime > observerInfo.nextVisibilityUpdateTime)
 		{
 			m_observerVisibilityUpdateQueue.push_back(observerInfo.observerID);
 			observerInfo.queuedForVisibilityUpdate = true;
 
 #if VISIONMAP_DEBUG
-			observerInfo.queuedForVisibilityUpdateTime = now;
+			observerInfo.queuedForVisibilityUpdateTime = m_frameStartTime;
 #endif
 		}
 	}
 
-	int numberOfVisibilityUpdatesLeft = gAIEnv.CVars.VisionMapNumberOfVisibilityUpdatesPerFrame;
+	int numberOfVisibilityUpdatesLeft = gAIEnv.CVars.visionMap.VisionMapNumberOfVisibilityUpdatesPerFrame;
 	while (numberOfVisibilityUpdatesLeft > 0 && m_observerVisibilityUpdateQueue.size() > 0)
 	{
 		Observers::iterator observerIt = m_observers.find(m_observerVisibilityUpdateQueue.front());
 		ObserverInfo& observerInfo = observerIt->second;
 
 		UpdateVisibilityStatus(observerInfo);
-		observerInfo.nextVisibilityUpdateTime = now + observerInfo.observerParams.updatePeriod;
+		observerInfo.nextVisibilityUpdateTime = m_frameStartTime + observerInfo.observerParams.updatePeriod;
 		observerInfo.needsVisibilityUpdate = false;
 
 		m_observerVisibilityUpdateQueue.pop_front();
@@ -1017,7 +1114,7 @@ void CVisionMap::UpdateObservers()
 		numberOfVisibilityUpdatesLeft--;
 
 #if VISIONMAP_DEBUG
-		m_visibilityUpdateQueueLatency = now - observerInfo.queuedForVisibilityUpdateTime;
+		m_visibilityUpdateQueueLatency = m_frameStartTime - observerInfo.queuedForVisibilityUpdateTime;
 #endif
 	}
 }
@@ -1038,18 +1135,18 @@ void CVisionMap::TriggerObservableCallback(const ObserverInfo& observerInfo, con
 
 void CVisionMap::DebugDraw()
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_AI);
+	CRY_PROFILE_FUNCTION(PROFILE_AI);
 
-	if (gAIEnv.CVars.DebugDrawVisionMap)
+	if (gAIEnv.CVars.visionMap.DebugDrawVisionMap)
 	{
 		UpdateDebugVisionMapObjects();
 
 		DebugDrawObservers();
 
-		if (gAIEnv.CVars.DebugDrawVisionMapObservables)
+		if (gAIEnv.CVars.visionMap.DebugDrawVisionMapObservables)
 			DebugDrawObservables();
 
-		if (gAIEnv.CVars.DebugDrawVisionMapStats)
+		if (gAIEnv.CVars.visionMap.DebugDrawVisionMapStats)
 			DebugDrawVisionMapStats();
 	}
 }
@@ -1080,8 +1177,8 @@ void CVisionMap::DebugDrawVisionMapStats()
 		{
 			if (latencyInfo->buffer[j].occurred >= cutOffTime)
 			{
-				displayInfo->min = MIN(latencyInfo->buffer[j].latency, displayInfo->min);
-				displayInfo->max = MAX(latencyInfo->buffer[j].latency, displayInfo->max);
+				displayInfo->min = std::min(latencyInfo->buffer[j].latency, displayInfo->min);
+				displayInfo->max = std::max(latencyInfo->buffer[j].latency, displayInfo->max);
 				displayInfo->avg += latencyInfo->buffer[j].latency;
 				count++;
 			}
@@ -1236,7 +1333,7 @@ void CVisionMap::DebugDrawObservers()
 
 		// Visibility Checks ///////////////////////////////////////////////////
 
-		if (gAIEnv.CVars.DebugDrawVisionMapVisibilityChecks)
+		if (gAIEnv.CVars.visionMap.DebugDrawVisionMapVisibilityChecks)
 		{
 			for (PVS::const_iterator pvsIt = observerInfo.pvs.begin(), end = observerInfo.pvs.end(); pvsIt != end; ++pvsIt)
 			{
@@ -1274,7 +1371,7 @@ void CVisionMap::DebugDrawObservers()
 			}
 		}
 
-		if (gAIEnv.CVars.DebugDrawVisionMapObservers)
+		if (gAIEnv.CVars.visionMap.DebugDrawVisionMapObservers)
 		{
 			// Stats /////////////////////////////////////////////////////////////////
 			{
@@ -1310,7 +1407,7 @@ void CVisionMap::DebugDrawObservers()
 			}
 
 			// FOVs //////////////////////////////////////////////////////////////////
-			if (gAIEnv.CVars.DebugDrawVisionMapObserversFOV)
+			if (gAIEnv.CVars.visionMap.DebugDrawVisionMapObserversFOV)
 			{
 				const ObserverParams& observerParams = observerInfo.observerParams;
 

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #ifndef __MNM_TILE_H
 #define __MNM_TILE_H
@@ -7,14 +7,13 @@
 
 #include <CryAISystem/NavigationSystem/MNMTile.h>
 
-#include "MNM.h"
-
 namespace MNM
 {
 struct STile
 {
 	// #MNM_TODO pavloi 2016.07.22: CNavMesh is friend for time being, so I don't have to fix data access in lot's of places right now.
 	friend class CNavMesh;
+	friend class CIslands;
 
 	STile();
 
@@ -52,27 +51,7 @@ struct STile
 	void                   Destroy();
 
 	vector3_t::value_type  GetTriangleArea(const TriangleID triangleID) const;
-
-#if MNM_USE_EXPORT_INFORMATION
-	void        ResetConnectivity(uint8 accessible);
-	inline bool IsTriangleAccessible(const uint16 triangleIdx) const
-	{
-		assert((triangleIdx >= 0) && (triangleIdx < connectivity.triangleCount));
-		return (connectivity.trianglesAccessible[triangleIdx] != 0);
-	}
-	inline bool IsTileAccessible() const
-	{
-		return (connectivity.tileAccessible != 0);
-	}
-
-	inline void SetTriangleAccessible(const uint16 triangleIdx)
-	{
-		assert((triangleIdx >= 0) && (triangleIdx < connectivity.triangleCount));
-
-		connectivity.tileAccessible = 1;
-		connectivity.trianglesAccessible[triangleIdx] = 1;
-	}
-#endif
+	vector3_t::value_type  GetTriangleArea(const Tile::STriangle& triangle) const;
 
 	enum DrawFlags
 	{
@@ -89,7 +68,7 @@ struct STile
 		DrawAll               = ~0ul,
 	};
 
-	void Draw(size_t drawFlags, vector3_t origin, TileID tileID, const std::vector<float>& islandAreas) const;
+	void Draw(size_t drawFlags, vector3_t origin, TileID tileID, const std::vector<float>& islandAreas, const ITriangleColorSelector& colorSelector) const;
 
 #if DEBUG_MNM_DATA_CONSISTENCY_ENABLED
 	void ValidateTriangles() const;
@@ -117,32 +96,8 @@ private:
 	uint16           linkCount;
 
 	uint32           hashValue;
-
-#if MNM_USE_EXPORT_INFORMATION
-
-private:
-	struct TileConnectivity
-	{
-		TileConnectivity()
-			: tileAccessible(1)
-			, trianglesAccessible(NULL)
-			, triangleCount(0)
-		{
-		}
-
-		uint8  tileAccessible;
-		uint8* trianglesAccessible;
-		uint16 triangleCount;
-	};
-
-	bool ConsiderExportInformation() const;
-	void InitConnectivity(uint16 oldTriangleCount, uint16 newTriangleCount);
-
-	TileConnectivity connectivity;
-
-#endif
 };
-}
+} // namespace MNM
 
 #if DEBUG_MNM_DATA_CONSISTENCY_ENABLED
 struct CompareLink

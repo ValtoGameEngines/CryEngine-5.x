@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "HUDEventTranslator.h"
@@ -389,7 +389,7 @@ void CHUDEventTranslator::OnVehicleEvent(EVehicleEvent event, const SVehicleEven
 	assert( m_currentVehicle );
 	assert( m_currentActor );
 
-	if(IVehicle* pVehicle = g_pGame->GetIGameFramework()->GetIVehicleSystem()->GetVehicle(m_currentVehicle))
+	if(g_pGame->GetIGameFramework()->GetIVehicleSystem()->GetVehicle(m_currentVehicle) != nullptr)
 	{
 		switch( event )
 		{

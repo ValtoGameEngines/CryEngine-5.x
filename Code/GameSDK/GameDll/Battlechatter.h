@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -82,6 +82,7 @@ AUTOENUM_BUILDENUMWITHTYPE_WITHINVALID_WITHNUM(EBattlechatter, BATTLECHATTER_LIS
 class CActor;
 class CActorManager;
 struct SActorData;
+struct IActor;
 
 class CBattlechatter: public IGameRulesKillListener, public IGameRulesTeamChangedListener
 {

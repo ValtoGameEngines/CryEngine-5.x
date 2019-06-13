@@ -1,11 +1,11 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
 #ifdef INCLUDE_SCALEFORM_SDK
 
 	#include "GFxVideoSoundCrySound.h"
-	#include <CrySystem/IConsole.h>
+	#include <CrySystem/ConsoleRegistration.h>
 
 static float s_sys_flash_video_soundvolume = 1.0f;
 static float s_sys_flash_video_subaudiovolume = 1.0f;
@@ -760,8 +760,8 @@ float GFxVideoCrySound::Update(bool muteMainTrack)
 		}
 		else
 		{
-			const float t = 0.015f;
 		#if defined(ENABLE_VIDEOSOUND_UPDATE_LOGGING)
+			const float t = 0.015f;
 			gEnv->pLog->Log("%s. %d bytes to refill pos. Wait %.2f ms...", prevStarved ? "Still starving" : "Nothing received", distToRefill, t * 1000.0f);
 		#endif
 			return 0.015f;
@@ -1022,7 +1022,7 @@ GFxVideoCrySoundSystem::~GFxVideoCrySoundSystem()
 GFxVideoSound* GFxVideoCrySoundSystem::Create(GFxVideoPlayer::SoundTrack type)
 {
 	VideoSoundTimer::InitFrequency();
-	return m_pImpl ? GHEAP_NEW(GetHeap()) GFxVideoCrySound(GetHeap(), m_pImpl, type) : 0;
+	return m_pImpl ? (GHEAP_NEW(GetHeap()) GFxVideoCrySound(GetHeap(), m_pImpl, type)) : 0;
 }
 
 	#endif // #if defined(USE_GFX_VIDEO)

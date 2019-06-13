@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -20,7 +20,8 @@ History:
 
 
 #include <CryScriptSystem/IScriptSystem.h>
-#include <CryScriptSystem/ScriptHelpers.h>
+#include <CryEntitySystem/IEntityBasicTypes.h>
+#include <CryMemory/CrySizer.h>
 
 
 class CGameRules;

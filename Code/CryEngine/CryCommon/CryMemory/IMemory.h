@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -16,6 +16,7 @@
 
 #include <CryMemory/IDefragAllocator.h>   // <> required for Interfuscator
 #include <CryMemory/IGeneralMemoryHeap.h> // <> required for Interfuscator
+#include <CryCore/smartptr.h>
 
 struct IMemoryBlock : public CMultiThreadRefCount
 {

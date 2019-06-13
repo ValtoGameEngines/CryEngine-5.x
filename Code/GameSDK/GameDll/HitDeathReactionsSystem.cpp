@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -259,7 +259,7 @@ struct CHitDeathReactionsSystem::SPredGetMemoryUsage
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 #ifndef _RELEASE
-struct CHitDeathReactionsSystem::SPredGetAnims : public std::unary_function<void, const ReactionsContainer::value_type&>
+struct CHitDeathReactionsSystem::SPredGetAnims
 {
 	typedef std::set<uint32> AnimCRCsContainer;
 
@@ -388,7 +388,7 @@ public:
 	}
 
 private:
-	struct SPredPrintStreamingStats : public std::unary_function<void, const ProfilesContainersItem&>
+	struct SPredPrintStreamingStats
 	{
 		SPredPrintStreamingStats(CHitDeathReactionsDebugWidget& widget) : m_widget(widget) {}
 
@@ -460,9 +460,9 @@ private:
 									const bool bNotInPoolCorrect = bNotInPool == !pActor->IsPoolEntity();
 
 									m_widget.m_pTable->AddData(eSTC_Name, textColor, "  %s", pActor->GetEntity()->GetName());
-									m_widget.m_pTable->AddData(eSTC_Alive, bAliveCorrect ? textColor : Col_Red, bAlive ? YES : NO);
-									m_widget.m_pTable->AddData(eSTC_AIProxyEnabled, bAIEnabledCorrect ? textColor : Col_Red, bAIEnabled ? YES : NO);
-									m_widget.m_pTable->AddData(eSTC_OutOfEntityPool, bNotInPoolCorrect ? textColor : Col_Red, bNotInPool ? YES : NO);
+									m_widget.m_pTable->AddData(eSTC_Alive, bAliveCorrect ? textColor : ColorB(Col_Red), bAlive ? YES : NO);
+									m_widget.m_pTable->AddData(eSTC_AIProxyEnabled, bAIEnabledCorrect ? textColor : ColorB(Col_Red), bAIEnabled ? YES : NO);
+									m_widget.m_pTable->AddData(eSTC_OutOfEntityPool, bNotInPoolCorrect ? textColor : ColorB(Col_Red), bNotInPool ? YES : NO);
 								}
 								else
 								{
@@ -498,7 +498,7 @@ private:
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
-struct CHitDeathReactionsSystem::SPredRequestAnims : public std::unary_function<void, const ReactionsContainer::value_type&>
+struct CHitDeathReactionsSystem::SPredRequestAnims
 {
 	SPredRequestAnims(bool bRequest, EntityId entityId, const IAnimationDatabase* piAnimDB)
 		: m_bRequest(bRequest)
@@ -692,9 +692,9 @@ ProfileId CHitDeathReactionsSystem::GetReactionParamsForActor(const CActor& acto
 				pActorScriptTable->GetValueAny(ACTOR_PROPERTIES_TABLE, propertiesTable);
 
 				const char* szReactionsDataFilePath = NULL;
-				if (propertiesTable.type == ANY_TTABLE)
+				if (propertiesTable.GetType() == EScriptAnyType::Table)
 				{
-					propertiesTable.table->GetValue(REACTIONS_DATA_FILE_PROPERTY, szReactionsDataFilePath);
+					propertiesTable.GetScriptTable()->GetValue(REACTIONS_DATA_FILE_PROPERTY, szReactionsDataFilePath);
 				}
 
 				if (g_pGameCVars->g_hitDeathReactions_logReactionAnimsOnLoading && szReactionsDataFilePath)
@@ -710,7 +710,7 @@ ProfileId CHitDeathReactionsSystem::GetReactionParamsForActor(const CActor& acto
 			// Seed the random generator with the key obtained for this reaction params instance
 			m_pseudoRandom.seed(gEnv->bNoRandomSeed ? 0 : profileId);
 
-			MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "HitDeathReactions_SharedData");
+			MEMSTAT_CONTEXT(EMemStatContextType::Other, "HitDeathReactions_SharedData");
 
 			// Instantiate the shared reaction containers
 			ReactionsContainerPtr pNewHitReactions(new ReactionsContainer);
@@ -1079,7 +1079,7 @@ ProfileId CHitDeathReactionsSystem::GetActorProfileId(const CActor& actor) const
 			pActorScriptTable->GetValueAny(ACTOR_PROPERTIES_TABLE, propertiesTable);
 
 			const char* szReactionsDataFilePath = NULL;
-			if ((propertiesTable.type == ANY_TTABLE) && propertiesTable.table->GetValue(REACTIONS_DATA_FILE_PROPERTY, szReactionsDataFilePath))
+			if ((propertiesTable.GetType() == EScriptAnyType::Table) && propertiesTable.GetScriptTable()->GetValue(REACTIONS_DATA_FILE_PROPERTY, szReactionsDataFilePath))
 			{
 				CryPathString sReactionsDataFilePath(szReactionsDataFilePath);
 				PathUtil::UnifyFilePath(sReactionsDataFilePath);
@@ -1119,7 +1119,7 @@ ScriptTablePtr CHitDeathReactionsSystem::LoadReactionsScriptTable(const CActor& 
 	pActorScriptTable->GetValueAny(ACTOR_PROPERTIES_TABLE, propertiesTable);
 
 	const char* szReactionsDataFilePath = NULL;
-	if ((propertiesTable.type == ANY_TTABLE) && propertiesTable.table->GetValue(REACTIONS_DATA_FILE_PROPERTY, szReactionsDataFilePath))
+	if ((propertiesTable.GetType() == EScriptAnyType::Table) && propertiesTable.GetScriptTable()->GetValue(REACTIONS_DATA_FILE_PROPERTY, szReactionsDataFilePath))
 	{
 		CryPathString sReactionsDataFile(szReactionsDataFilePath);
 		PathUtil::UnifyFilePath(sReactionsDataFile);
@@ -1146,7 +1146,7 @@ ScriptTablePtr CHitDeathReactionsSystem::LoadReactionsScriptTable(const char* sz
 		if (gEnv->pScriptSystem->GetGlobalValue(HIT_DEATH_REACTIONS_SCRIPT_TABLE, pHitDeathReactionsTable) &&
 		    pHitDeathReactionsTable->GetValue(LOAD_XML_DATA_FUNCTION, loadXMLDataFnc))
 		{
-			MEMSTAT_CONTEXT(EMemStatContextTypes::MSC_Other, 0, "HitDeathReactions_SharedReactionTables");
+			MEMSTAT_CONTEXT(EMemStatContextType::Other, "HitDeathReactions_SharedReactionTables");
 
 			// [*DavidR | 23/Jun/2010] ToDo: We should expose CryAction's XMLLoadScript functionality so it can be used outside
 			// that project. The only way to use it currently is through lua binds, hence the following call
@@ -1226,9 +1226,9 @@ void CHitDeathReactionsSystem::LoadTagMapping(const CActor& actor, ScriptTablePt
 
 		for (; pTagMap->MoveNext(it); )
 		{
-			CRY_ASSERT(it.value.type == ANY_TTABLE);
+			CRY_ASSERT(it.value.GetType() == EScriptAnyType::Table);
 
-			ScriptTablePtr pTags = it.value.table;
+			ScriptTablePtr pTags = it.value.GetScriptTable();
 
 			if (pTags->HaveValue(ALLOWED_PARTS_ARRAY))
 			{
@@ -1414,14 +1414,14 @@ void CHitDeathReactionsSystem::LoadReactionsParams(const CActor& actor, const ST
 
 		for (; pReactionsTable->MoveNext(it); )
 		{
-			CRY_ASSERT(it.value.type == ANY_TTABLE);
+			CRY_ASSERT(it.value.GetType() == EScriptAnyType::Table);
 
 			const ReactionId thisReactionId = (ReactionId(reactions.size() + 1) + baseReactionId) * (bDeathReactions ? -1 : 1);
 
 			SReactionParams reactionParams;
-			GetReactionParamsFromScript(actor, tagMapping, it.value.table, pNewHitDeathReactionsConfig, reactionParams, thisReactionId);
+			GetReactionParamsFromScript(actor, tagMapping, it.value.GetScriptTable(), pNewHitDeathReactionsConfig, reactionParams, thisReactionId);
 
-			it.value.table->SetValue(REACTION_ID, thisReactionId);
+			it.value.GetScriptTable()->SetValue(REACTION_ID, thisReactionId);
 
 			if (reactionParams.mannequinData.actionType != SReactionParams::SMannequinData::EActionType_Invalid)
 			{
@@ -1705,7 +1705,7 @@ void CHitDeathReactionsSystem::GetReactionParamsFromScript(const CActor& actor, 
 			pActorScriptTable->GetValueAny(ACTOR_PROPERTIES_TABLE, propertiesTable);
 
 			const char* szReactionsDataFilePath = NULL;
-			if ((propertiesTable.type == ANY_TTABLE) && propertiesTable.table->GetValue(REACTIONS_DATA_FILE_PROPERTY, szReactionsDataFilePath))
+			if ((propertiesTable.GetType() == EScriptAnyType::Table) && propertiesTable.GetScriptTable()->GetValue(REACTIONS_DATA_FILE_PROPERTY, szReactionsDataFilePath))
 			{
 				Warning("Both %s and %s properties were used in a reaction. Only %s will have any effect! While reading %s", SNAP_ORIENTATION_ANGLE, SNAP_TO_MOVEMENT_DIR, SNAP_TO_MOVEMENT_DIR, szReactionsDataFilePath);
 			}
@@ -2143,9 +2143,9 @@ void CHitDeathReactionsSystem::GetReactionAnimParamsFromScript(const CActor& act
 		if (pScriptTable->HaveValue(REACTION_ANIM_PROPERTY))
 		{
 			ScriptAnyValue reactionAnimTable;
-			if (pScriptTable->GetValueAny(REACTION_ANIM_PROPERTY, reactionAnimTable) && (reactionAnimTable.type == ANY_TTABLE))
+			if (pScriptTable->GetValueAny(REACTION_ANIM_PROPERTY, reactionAnimTable) && (reactionAnimTable.GetType() == EScriptAnyType::Table))
 			{
-				ScriptTablePtr pReactionAnimTable(reactionAnimTable.table);
+				ScriptTablePtr pReactionAnimTable(reactionAnimTable.GetScriptTable());
 
 				// Additive anim?
 				if (pReactionAnimTable->HaveValue(REACTION_ANIM_ADDITIVE_ANIM))
@@ -2231,7 +2231,7 @@ void CHitDeathReactionsSystem::GetReactionAnimParamsFromScript(const CActor& act
 
 					// Shuffle IDs
 					SRandomGeneratorFunct randomFunctor(m_pseudoRandom);
-					std::random_shuffle(reactionAnim.animCRCs.begin(), reactionAnim.animCRCs.end(), randomFunctor);
+					std::shuffle(reactionAnim.animCRCs.begin(), reactionAnim.animCRCs.end(), randomFunctor);
 				}
 			}
 		}

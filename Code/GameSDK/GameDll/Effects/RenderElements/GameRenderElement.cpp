@@ -1,9 +1,14 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // Base class for all game render elements.
 
 // Includes
 #include "StdAfx.h"
+
+// Inclusion must be in this order 
+#include <CryRenderer/IRenderer.h>
+#include <CryRenderer/IShader.h>
+
 #include "GameRenderElement.h"
 
 //--------------------------------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -17,6 +17,8 @@ History:
 
 #ifndef __ENTITY_EFFECTS_CLOAK_H__
 #define __ENTITY_EFFECTS_CLOAK_H__
+
+#include <CryEntitySystem/IEntityBasicTypes.h>
 
 namespace EntityEffects
 {

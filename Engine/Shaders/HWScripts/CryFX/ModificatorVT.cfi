@@ -1,95 +1,89 @@
-// CRYENGINE Source Code File
-// Copyright 2001-2015 Crytek GmbH. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 
 // Note: Unfortunately we couldn't go more atomic with structures as rsx cgc compiler 
 // doesn't allow empty structures (which we might have on certain conditions with defines not existing)
 
 
+PERLIN_NOISE_MAP
 WIND_GRID_MAP
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-cbuffer CBStaticPerInst : register(b12)
+cbuffer CBPerInstance : register(b0)
 {
+#if %_RT_ENVIRONMENT_CUBEMAP
 	struct
 	{
-		float3x4	PerInstanceWorldMatrix;
-		float4		PerInstanceCustomData;   // [x=VegetationBendingVerticalRadius, y=VegetationBendingScale, z=tessellation patch id offset, w=dissolve]
-    } SInstancingData[800];
+		float3x4	CI_WorldMatrix;
+		float4		CI_CustomData;   // [x=VegetationBendingVerticalRadius, y=VegetationBendingScale, z=tessellation patch id offset, w=dissolve]
+	} SInstancingData[800];
+#endif
 };
 
-// TODO: replace by CB definition shared between c++ and hlsl. 
-// TODO: bind to correct slot (probably c0)
-cbuffer CBPerInstanceNewBackend : register(b12)
+cbuffer CBPerDraw : register(b0)
 {
-	float3x4  PerInstanceWorldMatrix;
-	float3x4  PerInstancePrevWorldMatrix;
-	float4    PerInstanceCustomData;       // [x=VegetationBendingVerticalRadius, y=VegetationBendingScale, z=tessellation patch id offset, w=dissolve]
-    // TODO: Should be moved after all the data below
-    float4    PerInstanceCustomData2;      // [x=selectionIDs in debug pass,
-
-#if %TEMP_TERRAIN || %TEMP_VEGETATION
-	float4    PerInstanceBlendTerrainColInfo;
-	float4x4  PerInstanceTerrainLayerInfo;
+ #if !%_RT_ENVIRONMENT_CUBEMAP
+	float3x4  CD_WorldMatrix;
+	float3x4  CD_PrevWorldMatrix;
+	float4    CD_CustomData;       // [x=VegetationBendingVerticalRadius, y=VegetationBendingScale, z=tessellation patch id offset, w=dissolve]
+	float4    CD_CustomData1;      // [xyzw=ShilouetteColor]
+	// TODO: Should be moved after all the data below
+	float4    CD_CustomData2;      // [x=selectionIDs in debug pass, y=AmbientColor, zw=Not used]
+	
+#if %TEMP_TERRAIN || (%TEMP_VEGETATION && %_RT_BLEND_WITH_TERRAIN_COLOR)
+	float4    CD_BlendTerrainColInfo;
+	float4x4  CD_TerrainLayerInfo;
 #elif %WRINKLE_BLENDING || %_RT_SKELETON_SSD_LINEAR || %_RT_SKELETON_SSD
-	float4    PerInstanceSkinningInfo;
-	float4    PerInstanceWrinklesMask0;
-	float4    PerInstanceWrinklesMask1;
-	float4    PerInstanceWrinklesMask2;
+	float4    CD_SkinningInfo;     // Additional offset
+	float4    CD_WrinklesMask0;
+	float4    CD_WrinklesMask1;
+	float4    CD_WrinklesMask2;
+#endif
 #endif
 };
 
-#if %TEMP_VEGETATION || %TEMP_TERRAIN
-	float4 Get_SPI_BlendWithTerrainColInfo()
-	{
- #if %_RT_ENVIRONMENT_CUBEMAP
-	return 1;
- #else
-	#if %_RT_PER_INSTANCE_CB_TEMP
-		return PerInstanceBlendTerrainColInfo;
-	#else
-		return BlendTerrainColInfo;
-	#endif
-#endif
-	}
-#endif
-
-#if %TEMP_TERRAIN
-	float4x4 Get_SPI_TerrainLayerInfo()
-	{
+float4 Get_SPI_BlendWithTerrainColInfo()
+{
+#if %TEMP_TERRAIN || (%TEMP_VEGETATION && %_RT_BLEND_WITH_TERRAIN_COLOR)
 	#if %_RT_ENVIRONMENT_CUBEMAP
-		return float4x4(0);
-	#elif %_RT_PER_INSTANCE_CB_TEMP
-		return PerInstanceTerrainLayerInfo;
+	return 1;
 	#else
-		return LayerTexGen;
+	return CD_BlendTerrainColInfo;
 	#endif
-	}
+#else
+	return (float4)0;
 #endif
+}
+
+float4x4 Get_SPI_TerrainLayerInfo()
+{
+#if %TEMP_TERRAIN
+	#if %_RT_ENVIRONMENT_CUBEMAP
+	return float4x4(0);
+	#else
+	return CD_TerrainLayerInfo;
+	#endif
+#else
+	return float4x4(0);
+#endif
+}
 
 float4 Get_SPI_SkinningInfo()
 {
 #if !%TEMP_TERRAIN && !%TEMP_VEGETATION && (%_RT_SKELETON_SSD || %_RT_SKELETON_SSD_LINEAR)
-	#if %_RT_PER_INSTANCE_CB_TEMP
-		return PerInstanceSkinningInfo;
-	#else
-		return float4(vSkinPrecisionOffset.xyz, fSkinningExtraWeights.x);
-	#endif
+	return CD_SkinningInfo;
 #else
-	return float4(0, 0, 0, 0);
+	return (float4)0;
 #endif
 }
 
 float3x4 Get_SPI_ObjWorldMat(int nIndex)
 {
  #if %_RT_ENVIRONMENT_CUBEMAP
-	return SInstancingData[nIndex].PerInstanceWorldMatrix;
+	return SInstancingData[nIndex].CI_WorldMatrix;
  #else
-  #if %_RT_PER_INSTANCE_CB_TEMP
-	return PerInstanceWorldMatrix;
-  #endif
-	return ObjWorldMatrix;
+	return CD_WorldMatrix;
  #endif
 }
 
@@ -123,13 +117,15 @@ float4 DecodeBending(float3 vPos, float bendingRadius,float bendingScale)
 
 float4 Get_SPI_BendInfo(int nIndex, float3 worldPos)
 {
-#if %_RT_ENVIRONMENT_CUBEMAP
-	return DecodeBending(worldPos, SInstancingData[nIndex].PerInstanceCustomData.x,SInstancingData[nIndex].PerInstanceCustomData.y);
-#elif %_RT_PER_INSTANCE_CB_TEMP
-	return DecodeBending(worldPos, PerInstanceCustomData.x,PerInstanceCustomData.y);
- #else
-	return BendInfo;
- #endif
+#if %_VT_BEND
+	#if %_RT_ENVIRONMENT_CUBEMAP
+	return DecodeBending(worldPos, SInstancingData[nIndex].CI_CustomData.x,SInstancingData[nIndex].CI_CustomData.y);
+	#else
+	return DecodeBending(worldPos, CD_CustomData.x,CD_CustomData.y); 
+	#endif
+#else
+	return (float4)0;
+#endif
 }
 
 float4 Get_SPI_RainLayerParams(int nIndex)
@@ -141,15 +137,10 @@ float4 Get_SPI_VertexAO(int nIndex)
 {
 	return g_VertexAO;
 }
-#include "ComputeSkinningUtils.cfi"
 
 float Get_MaterialAlphaTest()
 {
-#if %_RT_PER_INSTANCE_CB_TEMP
 	return CM_DetailTilingAndAlphaRef.z; // alpha ref value is stored in material CB
-#else
-	return AlphaTest.w;
-#endif
 }
 
 float Get_SPI_Dissolve()
@@ -157,13 +148,9 @@ float Get_SPI_Dissolve()
 #if %_RT_ENVIRONMENT_CUBEMAP
 	// Instancing support
 	// dissolved objects are not instanced, so we always use value from the first object
-	return SInstancingData[0].PerInstanceCustomData.w;
+	return SInstancingData[0].CI_CustomData.w;
 #else 
-	#if %_RT_PER_INSTANCE_CB_TEMP
-		return PerInstanceCustomData.w;
-	#else
-		return 0;
-	#endif
+	return CD_CustomData.w;
 #endif
 }
 
@@ -171,28 +158,16 @@ int Get_PerInstanceTessellationPatchId()
 {
 #if %_RT_ENVIRONMENT_CUBEMAP
 	// Instancing support
-	return asint(SInstancingData[0].PerInstanceCustomData.z);
+	return asint(SInstancingData[0].CI_CustomData.z);
 #else 
-	#if %_RT_PER_INSTANCE_CB_TEMP
-		return asint(PerInstanceCustomData.z);
-	#else
-		return 0;
-	#endif
+	return asint(CD_CustomData.z);
 #endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-// Shared instancing vertex attributes
-
-#define INST_STREAM_POS                                  \
-#if %_RT_INSTANCING_ATTR                                 \
-  float3x4 InstMatrix   : TEXCOORDN;                     \
-#endif                                                   \
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
 // Common vertex attributes
+
+#include "ComputeSkinningUtils.cfi"
 
 // Note: user should #NOT# use directly any app2vert structures for vertex data modifications and
 //	use streamPos instead if any modification required
@@ -200,12 +175,12 @@ int Get_PerInstanceTessellationPatchId()
 // 8 weights skinning. this structure contains the extra 4 weights
 struct SSkinExtraBlendWeights
 {
-	uint  BlendWeights;  // ubyte[4] -> R8G8B8A8_UNORM
-	uint2 BlendIndices;  // short[4] -> R16G16B16A16_SINT
+	uint  BlendWeights;     // ubyte[4] -> R8G8B8A8_UNORM
+	uint  BlendIndices[2];  // short[4] -> R16G16B16A16_SINT
 };
 
-StructuredBuffer<SSkinExtraBlendWeights> sb_SkinExtraBlendWeights[1] : register(t14); // t14 = 15 - size, size is 1, 15 is the tessellation buffer
-StructuredBuffer<CSSkinVertexOut> SkinnedVertices : register(t16);
+StructuredBuffer<SSkinExtraBlendWeights> SkinExtraBlendWeights : register(t14); // !%_RT_COMPUTE_SKINNING
+StructuredBuffer<CSSkinVertexOut>        SkinnedVertices       : register(t14); //  %_RT_COMPUTE_SKINNING
 
 // compact structure to store the input assembler skinning stream + the extra 4 influences decoded in case of 8 weights skinning
 struct SSkinBlendWeightsOut
@@ -216,51 +191,33 @@ struct SSkinBlendWeightsOut
 
 struct app2vertCommon
 {
-  IN_P
+	IN_P
+	float2 baseTC   : TEXCOORDN;
+	IN_C0
 
-  float2 baseTC   : TEXCOORDN;
-
-  IN_C0
-
-		// Tangent stream - shadows dont need this, why is it used
-
+	// Tangent stream - shadows dont need this, why is it used
 #if !%TEMP_TERRAIN
- #if ENABLE_TESSELLATION && !%_RT_NO_TESSELLATION
-  float3 Normal   : NORMAL;
- #endif
-  IN_TANG_STREAM
+	#if ENABLE_TESSELLATION && !%_RT_NO_TESSELLATION
+	float3 Normal   : NORMAL;
+	#endif
+	IN_TANG_STREAM
 #else
-  float4 Normal   : NORMAL;
+	float4 Normal   : NORMAL;
 #endif
 
-	// Instancing stream
-
-  INST_STREAM_POS
-
-#if %_RT_ENVIRONMENT_CUBEMAP
-  uint InstIndex : SV_InstanceID;
-#elif %_RT_INSTANCING_ATTR
- #if %_VT_BEND
-  float4 InstBendInfo : TEXCOORDN;
- #endif
-
- #if %TEMP_VEGETATION
-   #if %_RT_NOZPASS && %_RT_ALPHATEST
-    float4 InstAlphaTest   : TEXCOORDN;
-   #endif
- #endif
-#endif
-
-// Skinning stream related
-
+	// Skinning stream related
 #if %_RT_SKELETON_SSD || %_RT_SKELETON_SSD_LINEAR
-  IN_SKIN_STREAM
+	IN_SKIN_STREAM
 #endif
 #if %_RT_COMPUTE_SKINNING || %_RT_SKELETON_SSD || %_RT_SKELETON_SSD_LINEAR
-  uint VertexID : SV_VertexID;
+	uint VertexID : SV_VertexID;
 #endif  
 #if %_RT_VERTEX_VELOCITY
-  IN_VERTEX_VELOCITY_STREAM 
+	IN_VERTEX_VELOCITY_STREAM 
+#endif
+
+#if %_RT_ENVIRONMENT_CUBEMAP
+	uint InstIndex : SV_InstanceID;
 #endif
 };
 
@@ -269,8 +226,6 @@ struct app2vertCommon
 struct app2vertGeneral
 {  
 	app2vertCommon vertCommon;
-
-  INST_STREAM_CUSTOM
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -278,13 +233,6 @@ struct app2vertGeneral
 struct app2vertZGeneral
 {  
 	app2vertCommon vertCommon;
-
-#if %_RT_INSTANCING_ATTR
-	#if %_RT_ALPHATEST || %_RT_DISSOLVE
-		float4 InstAlphaTest : TEXCOORDN;							 
-	#endif   
-#endif
-
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -292,16 +240,6 @@ struct app2vertZGeneral
 struct app2vertGBuffer
 {  
 	app2vertCommon vertCommon;
-
-#if %_RT_INSTANCING_ATTR
-	#if %_RT_ALPHATEST || %_RT_DISSOLVE
-		float4 InstAlphaTest : TEXCOORDN;							 
-	#endif   
-
-	#if %_RT_MOTION_BLUR && !%_RT_ALPHABLEND
-	  float3x4 InstMotionBlurData   : TEXCOORDN;
-	#endif
-#endif
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -316,11 +254,6 @@ struct app2vertSGGeneral
 struct app2vertMotionBlur
 {  
 	app2vertCommon vertCommon;
-
-#if %_RT_INSTANCING_ATTR
-  float3x4 InstMotionBlurData   : TEXCOORDN;
-  float4 InstAmbientOp  : TEXCOORDN;  
-#endif
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -328,24 +261,13 @@ struct app2vertMotionBlur
 struct app2vertCustomViews
 { 
 	app2vertCommon vertCommon;
-
-  #if %_RT_INSTANCING_ATTR
-    float4 InstVisionParams : TEXCOORDN;
-  #endif
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 struct app2vertRainPass
 { 
-	app2vertCommon vertCommon;
-
-#if %_RT_INSTANCING_ATTR
-  float4 InstMaterialLayersParams : TEXCOORDN;
- #if %_RT_ALPHATEST || %_RT_DISSOLVE
-  float4 InstAlphaTest : TEXCOORDN;							 
- #endif   
-#endif    
+	app2vertCommon vertCommon; 
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -353,7 +275,6 @@ struct app2vertRainPass
 struct app2vertEffectLayer
 { 
 	app2vertCommon vertCommon;
-
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -362,58 +283,45 @@ struct app2vertEffectLayer
 
 struct streamPos
 {
-  float4 Position;	
-  float4 WorldPos;
+	float4 Position;
+	float4 WorldPos;
 
 	float4 PositionCurr;
 	float4 PositionPrev;
 	float4 WorldPosPrev;
 
-  float4 Color;
-  float4 baseTC; 
+	float4 Color;
+	float4 baseTC; 
     
 #if !%TEMP_TERRAIN
-  float4 Tangent;
-  float4 Binormal;
- #if ENABLE_TESSELLATION && !%_RT_NO_TESSELLATION
-  float3 Normal;
- #endif
+	float4 Tangent;
+	float4 Binormal;
+	#if ENABLE_TESSELLATION && !%_RT_NO_TESSELLATION
+	float3 Normal;
+	#endif
 #else
-  float4 Normal;
+	float4 Normal;
 #endif
-  float3x3 ObjToTangentSpace;
-  float4x4 InstMatrix;
-  
-#if %_RT_ENVIRONMENT_CUBEMAP
-  int nInstance;
-#elif %_RT_INSTANCING_ATTR
-  int nInstance;
-  float3x4 InInstMatrix;
-
-  float4 InstAlphaTest;
- 
- float3x4 InstMotionBlurData;
- float4 InstVisionParams;
- float4 InstMaterialLayersParams;
- 
- #if %_VT_BEND
-  float4 InstBendInfo;
- #endif
-#endif
+	float3x3 ObjToTangentSpace;
+	float4x4 InstMatrix;
 
 #if %_RT_SKELETON_SSD || %_RT_SKELETON_SSD_LINEAR
-  SSkinBlendWeightsOut skinBlends[2];
+	SSkinBlendWeightsOut skinBlends[2];
 #endif
 #if %_RT_COMPUTE_SKINNING
-  uint VertexID;
+	uint VertexID;
 #endif
 #if %_RT_VERTEX_VELOCITY
-  float3 VertexVelocity;
+	float3 VertexVelocity;
 #endif
-  
+
+#if %_RT_ENVIRONMENT_CUBEMAP
+	int nInstance;
+#endif
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+// No unified input struct for pixel shaders: pull the instance-ID explicitly
 
 float4 _InstancingParams;
 
@@ -434,7 +342,7 @@ float4 D3DX_R8G8B8A8_UNORM_TO_FLOAT4(uint packedInput)
 	return unpackedOutput;
 }
 
-uint4 D3DX_R16G16B16A16_SINT_TO_UINT4(uint2 packedInput)
+uint4 D3DX_R16G16B16A16_SINT_TO_UINT4(uint packedInput[2])
 {
 	int4 unpackedOutput;
 	unpackedOutput.x =  (packedInput[0]		& 0x0000ffff);
@@ -449,14 +357,16 @@ void vtxStreamUnifySkinning( in app2vertCommon IN, inout streamPos OUT )
 #if %_RT_SKELETON_SSD || %_RT_SKELETON_SSD_LINEAR
 	OUT.skinBlends[0].BlendWeights = IN.BlendWeights; 
 	OUT.skinBlends[0].BlendIndices = IN.BlendIndices;
-  
-  if (Get_SPI_SkinningInfo().w)
-  {
-    SSkinExtraBlendWeights ebw = sb_SkinExtraBlendWeights[0][IN.VertexID];
-    OUT.skinBlends[1].BlendWeights = D3DX_R8G8B8A8_UNORM_TO_FLOAT4(ebw.BlendWeights);
-    OUT.skinBlends[1].BlendIndices = D3DX_R16G16B16A16_SINT_TO_UINT4(ebw.BlendIndices);
-  }
-#endif  
+
+	#if !%_RT_COMPUTE_SKINNING
+	if (Get_SPI_SkinningInfo().w)
+	{
+		SSkinExtraBlendWeights ebw = SkinExtraBlendWeights[IN.VertexID];
+		OUT.skinBlends[1].BlendWeights = D3DX_R8G8B8A8_UNORM_TO_FLOAT4(ebw.BlendWeights);
+		OUT.skinBlends[1].BlendIndices = D3DX_R16G16B16A16_SINT_TO_UINT4(ebw.BlendIndices);
+	}
+	#endif
+#endif
 
 #if %_RT_VERTEX_VELOCITY
 	OUT.VertexVelocity = IN.VertexVelocity;
@@ -527,22 +437,8 @@ void vtxStreamUnifyTangents( in app2vertCommon IN, inout streamPos OUT )
 
 void vtxStreamUnifyCommonInstancing( in app2vertCommon IN, inout streamPos OUT )
 {
-
 #if %_RT_ENVIRONMENT_CUBEMAP
-  OUT.nInstance = IN.InstIndex;
-#elif %_RT_INSTANCING_ATTR
-
-	#fetchinst (OUT.InInstMatrix = IN.InstMatrix, OUT.nInstance);
-
-	#if %TEMP_VEGETATION
-		#if %_RT_NOZPASS && %_RT_ALPHATEST
-			#fetchinst (OUT.InstAlphaTest = IN.InstAlphaTest, OUT.nInstance);
-		#endif
-	#endif
-
-	#if %_VT_BEND
-		#fetchinst (OUT.InstBendInfo = IN.InstBendInfo, OUT.nInstance);
-	#endif
+	OUT.nInstance = IN.InstIndex;
 #endif
 }
 
@@ -560,19 +456,18 @@ ISOLATE
 #endif
 
 	OUT.baseTC = float4(IN.baseTC, 0, 1);
-
 	OUT.Color = GetInputColor(IN.Color);
 	
 #if ENABLE_TESSELLATION && !%_RT_NO_TESSELLATION
 	OUT.Normal = IN.Normal;
 #endif
+
+	// Must be first to initialize
+	vtxStreamUnifyCommonInstancing( IN, OUT );
 	
 	vtxStreamUnifyTangents( IN, OUT );
-
-	vtxStreamUnifyCommonInstancing( IN, OUT );
-
 	vtxStreamUnifySkinning( IN, OUT );
-	}
+}
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -594,12 +489,6 @@ void streamPos_FromZ(in app2vertZGeneral IN, inout streamPos OUT)
 void streamPos_FromGBuffer(in app2vertGBuffer IN, inout streamPos OUT)
 {
 	vtxStreamUnifyCommon( IN.vertCommon, OUT );
-	
-#if %_RT_INSTANCING_ATTR
-	#if %_RT_MOTION_BLUR && !%_RT_ALPHABLEND
-		#fetchinst (OUT.InstMotionBlurData = IN.InstMotionBlurData, OUT.nInstance);
-	#endif
-#endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -614,10 +503,6 @@ void streamPos_FromSG(in app2vertSGGeneral IN, inout streamPos OUT)
 void streamPos_FromMotionBlur(in app2vertMotionBlur IN, inout streamPos OUT)
 {
 	vtxStreamUnifyCommon( IN.vertCommon, OUT );
-
-#if %_RT_INSTANCING_ATTR
-  #fetchinst (OUT.InstMotionBlurData = IN.InstMotionBlurData, OUT.nInstance);
-#endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -632,10 +517,6 @@ void streamPos_FromCustomViews(in app2vertCustomViews IN, inout streamPos OUT)
 void streamPos_FromRainPass(in app2vertRainPass IN, inout streamPos OUT)
 {
 	vtxStreamUnifyCommon( IN.vertCommon, OUT );
-
-#if %_RT_INSTANCING_ATTR
-  #fetchinst (OUT.InstMaterialLayersParams = IN.InstMaterialLayersParams, OUT.nInstance);
-#endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -685,32 +566,32 @@ void streamPos_FromEffectLayer(in app2vertEffectLayer IN, inout streamPos OUT)
 
 float4 SmoothCurve( float4 x )
 {
-  return x * x *( 3.0 - 2.0 * x );                                                          // 3 alu
+  return x * x *( 3.0 - 2.0 * x );
 }  
 
 float4 SinCurve( float4 x )
 {
-  return x * ( 1.0 - x * x / 3.0 );                                                         // 3 alu  
+  return x * ( 1.0 - x * x / 3.0 );
 }  
   
 float4 TriangleWave( float4 x )
 {                           
-  return abs( frac( x + 0.5 ) * 2.0 - 1.0 );                                                    // 4 alu
+  return abs( frac( x + 0.5 ) * 2.0 - 1.0 );
 }
 
 float4 SignedTriangleWave( float4 x )
 {                           
-  return abs( frac( x + 0.5 ) * 2.0 - 1.0 )*2-1;                                                    // 4 alu
+  return abs( frac( x + 0.5 ) * 2.0 - 1.0 )*2-1;
 }
 
 float4 SmoothTriangleWave( float4 x )
 {
-  return SmoothCurve( TriangleWave( x ) ) ;                                                     // 7 alu
+  return SmoothCurve( TriangleWave( x ) ) ;
 } 
 
 float4 SmoothSignedTriangleWave( float4 x )
 {
-  return SmoothCurve( TriangleWave( x ) ) *2-1;                                                     // 7 alu
+  return SmoothCurve( TriangleWave( x ) ) *2-1;
 } 
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -742,6 +623,7 @@ float bendDetailLeafAmplitude
   string Filter = "Vegetation";
 > = 0.2;
 
+#if !%VEGETATION_EXT_BENDING
 float bendDetailBranchAmplitude
 <
   register = REG_PM_PARAM_INCL_0.z;
@@ -753,6 +635,83 @@ float bendDetailBranchAmplitude
   float UIStep = 0.001;
   string Filter = "Vegetation";
 > = -0.5;
+#endif
+
+#if %VEGETATION_EXT_BENDING
+float bendDetailBranchXYAmplitude
+<
+  register = REG_PM_PARAM_INCL_0.w;
+  string UIHelp = "Sets amplitude of branches bending";
+  string UIName = "Bending branch XY amplitude";
+  string UIWidget = "slider";
+  float UIMin = -100.0;
+  float UIMax = 100.0;
+  float UIStep = 0.001;
+  string Filter = "Vegetation";
+> = -0.5;
+
+float bendDetailBranchXYFreq
+<
+  register = REG_PM_PARAM_INCL_1.x;
+  string UIHelp = "Sets frequency of branches bending";
+  string UIName = "Bending branch XY frequency";
+  string UIWidget = "slider";
+  float UIMin = 0.0;
+  float UIMax = 10.0;
+  float UIStep = 0.001;
+  string Filter = "Vegetation";
+> = 1.0;
+
+float bendDetailBranchZAmplitude
+<
+  register = REG_PM_PARAM_INCL_1.y;
+  string UIHelp = "Sets amplitude of branches bending";
+  string UIName = "Bending branch Z amplitude";
+  string UIWidget = "slider";
+  float UIMin = -100.0;
+  float UIMax = 100.0;
+  float UIStep = 0.001;
+  string Filter = "Vegetation";
+> = -0.5;
+
+float bendDetailBranchZFreq
+<
+  register = REG_PM_PARAM_INCL_1.z;
+  string UIHelp = "Sets frequency of branches bending";
+  string UIName = "Bending branch Z frequency";
+  string UIWidget = "slider";
+  float UIMin = 0.0;
+  float UIMax = 10.0;
+  float UIStep = 0.001;
+  string Filter = "Vegetation";
+> = 1.0;
+
+float bendDetailBranchZOffset
+<
+  register = REG_PM_PARAM_INCL_1.w;
+  string UIHelp = "Sets frequency of branches bending";
+  string UIName = "Bending branch Z phase offset";
+  string UIWidget = "slider";
+  float UIMin = 0.0;
+  float UIMax = 10.;
+  float UIStep = 0.001;
+  string Filter = "Vegetation";
+> = 0.0;
+
+float bendTriangleWaveMultiplier
+<
+	register = REG_PM_PARAM_INCL_2.x;
+	string UIHelp = "How much triangle wave is affecting branch bending.";
+	string UIName = "Bending noise multiplier";
+	string UIWidget = "slider";
+	float UIMin = 0.0;
+	float UIMax = 1.;
+	float UIStep = 0.001;
+	string Filter = "Vegetation";
+> = 0.0;
+
+
+#endif
 
 // vBendParams.x = windir x
 // vBendParams.y = windir y
@@ -764,18 +723,18 @@ void _MainBending(inout float3 vPos, half3 vBendParams)
 #if %_VT_TYPE_MODIF || %_VT_TYPE
 	#if %_VT_BEND
 		// Bend factor
-		half fBF = vPos.z * vBendParams.z;                                                                // 1 alu
-		fBF *= fBF;                                                                                       // 1 alu
+		half fBF = vPos.z * vBendParams.z;
+		fBF *= fBF;
 
 		#if %_VT_GRASS
-			vPos.xy += vBendParams.xy * fBF;                                                                // 1 alu
+			vPos.xy += vBendParams.xy * fBF;
 		#else
-			half fLength = length(vPos.xyz);                                                                // 2 alu
+			half fLength = length(vPos.xyz);
 
 			half3 vNewPos = vPos;
-			vNewPos.xy += vBendParams.xy * fBF;                                                             // 1 alu
+			vNewPos.xy += vBendParams.xy * fBF;
 
-			vPos = normalize(vNewPos) * fLength;                                                            // 4 alu  
+			vPos = normalize(vNewPos) * fLength;
 		#endif
 	#endif
 #endif
@@ -799,7 +758,7 @@ void _DetailBending(half3 worldPos, inout float3 vPos, float3 vNormal, half3 vVe
 
 		half fSpeed = vBendDetailParams.w;
 		#if %_VT_GRASS
-			fSpeed *= (vPos.z);                                                                            // 1 alu
+			fSpeed *= (vPos.z);
 		#endif   
 
 		half fDetailFreq = vBendDetailParams.x;
@@ -811,35 +770,101 @@ void _DetailBending(half3 worldPos, inout float3 vPos, float3 vNormal, half3 vVe
 		half fBranchAtten = vVertexInfo.z;
 
 		// Phases (object, vertex, branch)
-		half fObjPhase = ( dot(worldPos.xyz, 2) );                                                       // 1 alu
-		fBranchPhase += fObjPhase;                                                                       // 1 alu 
-		half fVtxPhase = ( dot(vPos, fBranchPhase) );                                                    // 1 alu
+		half fObjPhase = ( dot(worldPos.xyz, 2) );
+		fBranchPhase += fObjPhase;
+		half fVtxPhase = ( dot(vPos, fBranchPhase) );
 
 		// Detail bending for leaves/grass
 		// x: is used for edges, y is used for branch
-		half2 vWavesIn = fTime;               
-		vWavesIn += half2(fVtxPhase, fBranchPhase);                                                      // 1 alu        
+		half2 vWavesIn = fTime;
+		vWavesIn += half2(fVtxPhase, fBranchPhase);
 
-		half4 vWaves = (frac( vWavesIn.xxyy * half4(1.975, 0.793, 0.375,  0.193) ) * 2.0 - 1.0) * fDetailFreq * fSpeed;  //  5 alu
-		vWaves = TriangleWave( vWaves );                                                                 // 4 alu
+		half4 vWaves = (frac( vWavesIn.xxyy * half4(1.975, 0.793, 0.375,  0.193) ) * 2.0 - 1.0) * fDetailFreq * fSpeed;
+		vWaves = TriangleWave( vWaves );
 
 		// x: is used for edges, y is used for branches
-		half2 vWavesSum = ( (vWaves.xz + vWaves.yw)) ;                                                   // 1 alu
+		half2 vWavesSum = ( (vWaves.xz + vWaves.yw)) ;
 
 		// Edge and branch bending (xy is used for edges, z for branches)
-		vPos += vWavesSum.xxy * half3(fEdgeAtten * fDetailLeafAmp * vNormal.xy, fBranchAtten * fDetailBranchAmp); // 4 alu
+		vPos += vWavesSum.xxy * half3(fEdgeAtten * fDetailLeafAmp * vNormal.xy, fBranchAtten * fDetailBranchAmp);
 	#endif
 #endif
 }
 
+
+void _ExtBending(half3 worldPos, inout float3 vPos, float3 vNormal, half3 vVertexInfo, half4 vBendDetailParams, half3 BendInfoLocal)
+{
+#if %_VT_TYPE_MODIF || %_VT_TYPE
+	#if %_VT_DET_BEND
+		const half fTime = g_VS_AnimGenParams.z;
+	#if %LEAVES || %_VT_GRASS
+		half fSpeed = vBendDetailParams.w;
+		#if %_VT_GRASS
+			fSpeed *= (vPos.z);      
+		#endif   
+	#endif   
+		
+		half2 fwindDir = (BendInfoLocal.x || BendInfoLocal.y) ? normalize(BendInfoLocal.xy) : 0;
+		half fBranchPhase = vVertexInfo.y;
+		half fObjPhase = ( dot(worldPos.xyz, 2) );
+		fBranchPhase += fObjPhase;
+		
+		#if %LEAVES || %_VT_GRASS
+			half fDetailFreq = vBendDetailParams.x;
+			half fDetailLeafAmp = vBendDetailParams.y;
+			half noiseMap = GetPerlinNoiseTexLod(perlinNoiseTex, float4((worldPos.xy+(g_VS_AnimGenParams.z)*2)*0.05,0,0)).r * 2 + 0.5 ;
+			fDetailFreq *= (noiseMap);
+			half fEdgeAtten = vVertexInfo.x;
+			half fVtxPhase = ( dot(vPos, fBranchPhase) );
+		#endif	
+		
+
+		// Detail bending for leaves/grass
+		// x: is used for edges, y is used for branch
+		#if %LEAVES || %_VT_GRASS
+			half2 vWavesIn = fTime;
+			vWavesIn += half2(fVtxPhase, fBranchPhase);
+			half4 vWaves = (frac( vWavesIn.xxyy * half4(1.975, 0.793, 0.375,  0.193) ) * 2.0 - 1.0);// * fDetailFreq * fSpeed;
+			vWaves.xy *= fDetailFreq * fSpeed;
+			vWaves = TriangleWave( vWaves );
+			// x: is used for edges, y is used for branches
+			half2 vWavesSum = ( (vWaves.xz + vWaves.yw)) ;
+		#else
+			half vWavesIn = fTime+fBranchPhase;
+			half2 vWaves = (frac( vWavesIn * half2(0.375,  0.193) ) * 2.0 - 1.0);
+			vWaves = abs( frac( vWaves + 0.5 ) * 2.0 - 1.0 );
+			// x: is used for edges, y is used for branches
+			half2 vWavesSum = half2(0,vWaves.x + vWaves.y);
+		#endif	
+		
+		half2 f = half2(fTime*bendDetailBranchXYFreq+fBranchPhase, fTime*bendDetailBranchZFreq+(fBranchPhase+bendDetailBranchZOffset)) * 3.1415926;
+		half2 fWave = sin(f) * half2(bendDetailBranchXYAmplitude, bendDetailBranchZAmplitude);
+		half windStrength = length(BendInfoLocal.xy)*10 ;
+		// branch bending
+		half fTriangleWaveStrength = lerp(1.h, vWavesSum.y, bendTriangleWaveMultiplier);
+		vPos.xyz += half3(fwindDir * fWave.x*windStrength*fTriangleWaveStrength, fWave.y*windStrength*fTriangleWaveStrength)*(vVertexInfo.z);
+	//	vPos.xyz += half3(fwindDir * fWave.x*windStrength, fWave.y*windStrength)*(vVertexInfo.z);
+		// detail bending
+		#if %LEAVES || %_VT_GRASS		
+			vPos += vWavesSum.xxx * half3(fEdgeAtten * fDetailLeafAmp * vNormal.xyz);
+		#endif	
+	#endif
+#endif
+}
+
+
 void _VTBending(inout float3 vPos, half3 BendInfoLocal, inout float3 vNormal, half3 vColor, half3 worldPos, half4 vBendDetailParams)
 {
 #if %_VT_TYPE_MODIF && !%SILHOUETTE_PARALLAX_OCCLUSION_MAPPING
-  half3 vVertexInfo = vColor;
-  vVertexInfo.z = 1-vVertexInfo.z;
-
-	_DetailBending(worldPos, vPos, vNormal.xyz, vVertexInfo, vBendDetailParams);
-  _MainBending(vPos, BendInfoLocal);
+	half3 vVertexInfo = vColor;
+  
+  	#if %VEGETATION_EXT_BENDING
+		_ExtBending(worldPos, vPos, vNormal.xyz, vVertexInfo, vBendDetailParams, BendInfoLocal);
+	#else
+		vVertexInfo.z = 1-vVertexInfo.z;
+		_DetailBending(worldPos, vPos, vNormal.xyz, vVertexInfo, vBendDetailParams);
+		_MainBending(vPos, BendInfoLocal);
+	#endif
 #endif
 }
 
@@ -908,16 +933,16 @@ void pos_wind_General(inout float4 InPos, float3 vNorm, float4 cVtxColors, strea
   float4 vWavesAmp = float4( AnimAmplitudeWav0*0.573, AnimAmplitudeWav0, fAnimAmplitudeWav1, AnimAmplitudeWav2 ) * 0.01;
   const float4 vWavesPhases = float4(0.5 + 0.3799, 0.5 + 0.575, 0.5 + 0.795, 0.5 + 1.099);
 
-  float fAnimPhase = dot( InPos.xyz, AnimPhase );//+WindParams.z;                                    // 2 alu
-  float fSpeed = AnimFrequency; //+WindParams.w                                                     // 1 alu
+  float fAnimPhase = dot( InPos.xyz, AnimPhase );//+WindParams.z;
+  float fSpeed = AnimFrequency; //+WindParams.w                
                                                             
-  float4 vWaves = ( frac( (g_VS_AnimGenParams.z + fAnimPhase) * vWavesPhases ) * 2.0 - 1.0 ) *fSpeed; // 4 alu     
-  vWaves = TriangleWave( vWaves );                                                                    // 4 alu 
-  //vWaves = SmoothTriangleWave( vWaves );                                                              // 7 alu 
+  float4 vWaves = ( frac( (g_VS_AnimGenParams.z + fAnimPhase) * vWavesPhases ) * 2.0 - 1.0 ) *fSpeed;
+  vWaves = TriangleWave( vWaves );
+  //vWaves = SmoothTriangleWave( vWaves );
                   
-  float fWaveSum = dot( vWavesAmp.xyzw, vWaves.xyzw ) ;                                           // 1 alu
+  float fWaveSum = dot( vWavesAmp.xyzw, vWaves.xyzw ) ;      
                 
-  InPos.xyz +=  fWaveSum * cVtxColors.w * vNorm.xyz ;                                         // 2 alu
+  InPos.xyz +=  fWaveSum * cVtxColors.w * vNorm.xyz ;                
   
   // aprox 18 alu
 #endif    
@@ -984,15 +1009,14 @@ void _VTModify(inout float4 inPos, float3 vNorm, float4x4 InstMatrix, streamPos 
    inPos.xyz += vNorm.xyz * CV_DecalZFightingRemedy.z;
  #endif
 
- #if %_VT_DET_BEND
+ #if %_VT_DET_BEND && %_VT_BEND // need check for both bend and detail bending, since just detail bending is not anough and the code was still called
   nType = VTM_BENDING;
  #endif
 
-  int nInstance = 0;
+	int nInstance = 0;
 #if %_RT_ENVIRONMENT_CUBEMAP
-  nInstance = IN.nInstance;
+	nInstance = IN.nInstance;
 #endif
-
 
   if (nType == VTM_BENDING)
   {
@@ -1002,27 +1026,33 @@ void _VTModify(inout float4 inPos, float3 vNorm, float4x4 InstMatrix, streamPos 
 
     half4 vBendingInfo = 0;
  #if %_VT_BEND
-  #if %_RT_INSTANCING_ATTR
-    vBendingInfo = IN.InstBendInfo; 
-  #else
     vBendingInfo  = Get_SPI_BendInfo(nInstance, worldPos.xyz);
-  #endif
  #endif
 
  #if %_VT_DET_BEND
 		const half3 vColor = IN.Color.xyz;
-    const half4 vBendDetailParams = half4( bendDetailFrequency, bendDetailLeafAmplitude, bendDetailBranchAmplitude, vBendingInfo.w);
+		#if !%VEGETATION_EXT_BENDING
+			const half4 vBendDetailParams = half4( bendDetailFrequency, bendDetailLeafAmplitude, bendDetailBranchAmplitude, vBendingInfo.w);
+		#else
+			const half4 vBendDetailParams = half4( bendDetailFrequency, bendDetailLeafAmplitude, 0, vBendingInfo.w);
+		#endif
  #else
 		const half3 vColor = 0;
     const half4 vBendDetailParams = 0;
  #endif
-    
+    // rotate wind vector to object space
+	half fScaleCompensation = 1.0h / length(half3(InstMatrix[0].x, InstMatrix[0].y, InstMatrix[0].z));
+	vBendingInfo.xy = mul(half3(vBendingInfo.xy,0),(const float3x3)InstMatrix) * fScaleCompensation;
     _VTBending(inPos.xyz, vBendingInfo.xyz, vNorm.xyz, vColor, worldPos, vBendDetailParams);
   }
 #endif  
 }
 
-float4 SkinPosition(int4 indices, float4 weights, int4 extraIndices, float4 extraWeights, inout float4 position, inout float3 normal, bool bPrevFrame = false)
+float4 SkinPosition(
+	int4 indices, float4 weights,
+	int4 extraIndices, float4 extraWeights,
+	inout float4 position, inout float3 normal,
+	bool bPrevFrame = false)
 {
 #if %_RT_SKELETON_SSD
 	ISOLATE	
@@ -1291,7 +1321,7 @@ float4 SkinPositionTangent(
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-  
+
 // Vertex shaders for position
 float4x4 GetInstanceMatrix(int nInstance=0)
 {
@@ -1314,20 +1344,13 @@ float4x4 GetInstanceMatrix(int nInstance=0)
 
 void Matrix_Inst_General(inout streamPos IN)
 {
-  // Instancing support
-  int nInstance = 0;
+	// Instancing support
+	int nInstance = 0;
 #if %_RT_ENVIRONMENT_CUBEMAP
-  nInstance = IN.nInstance;
+	nInstance = IN.nInstance;
 #endif
 
-  IN.InstMatrix = GetInstanceMatrix(nInstance);
-
-#if %_RT_INSTANCING_ATTR
-  // Rotated instances use a 3x4 matrix input
-  IN.InstMatrix[0] = IN.InInstMatrix[0]; 
-  IN.InstMatrix[1] = IN.InInstMatrix[1]; 
-  IN.InstMatrix[2] = IN.InInstMatrix[2]; 
-#endif
+	IN.InstMatrix = GetInstanceMatrix(nInstance);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////.
@@ -1342,7 +1365,7 @@ float4 _pos_HPos(float4x4 VPMatrix, float4x4 InstMatrix, float4 InPos)
 
 float4 _pos_Common(float4 InPos)
 {
-  float4x4 InstMatrix = GetInstanceMatrix();
+	float4x4 InstMatrix = GetInstanceMatrix();
 	
 #if !%_RT_OBJ_IDENTITY
 	// Position relative to camera
@@ -1351,7 +1374,7 @@ float4 _pos_Common(float4 InPos)
 	InstMatrix[2][3] -= g_VS_WorldViewPos.z;
 #endif
 
-  return _pos_HPos(g_VS_ViewProjZeroMatr, InstMatrix, InPos);
+	return _pos_HPos(g_VS_ViewProjZeroMatr, InstMatrix, InPos);
 }
 
 float4 _pos_WaterLevel(float4x4 VPMatrix, inout float4 InPos, float _Level)
@@ -1365,23 +1388,23 @@ float4 _pos_WaterLevel(float4x4 VPMatrix, inout float4 InPos, float _Level)
 float4 _pos_Modificators(float4x4 VPMatrix, float4x4 InstMatrix, inout streamPos IN, bool bRelativeToCam=true, bool bPrevFrame=false, float fPrevDelta = 0)
 {
   int nType = 0;
-	float4 InPos = IN.Position;
+  float4 InPos = IN.Position;
 
 #if %_VT_TYPE
   nType = %_VT_TYPE;
 #endif
 
-#if %_RT_SKELETON_SSD || %_RT_SKELETON_SSD_LINEAR
+#if %_RT_SKELETON_SSD || %_RT_SKELETON_SSD_LINEAR || %_RT_COMPUTE_SKINNING
 	#if !%TEMP_TERRAIN
 		#if ENABLE_TESSELLATION && !%_RT_NO_TESSELLATION
 			float3 vNormal = IN.Normal.xyz;
 		#else
 			float3 vNormal = 0;
 		#endif
+
+		InPos.xyz += Get_SPI_SkinningInfo().xyz;
 		
 		#if !%_RT_COMPUTE_SKINNING
-			InPos.xyz += Get_SPI_SkinningInfo().xyz;
-			
 			if (bPrevFrame == false)
 			{
 				SkinPositionTangent(
@@ -1440,7 +1463,7 @@ ISOLATE
 }
 
 // Output view space position (If skinning used, position and tangent space is skinned)
-float4 Pos_VS_General(float4x4 VPMatrix, inout streamPos IN, bool bRelativeToCam=true)
+float4 Pos_VS_General(float4x4 VPMatrix, inout streamPos IN, bool bRelativeToCam=true, bool bInstanceMatToWorld=false)
 {
 ISOLATE
 {
@@ -1457,6 +1480,15 @@ ISOLATE
 
 	// Get instanced matrix
 	Matrix_Inst_General(IN);
+	if(bInstanceMatToWorld)
+	{
+	#if !%_RT_OBJ_IDENTITY
+		IN.InstMatrix[0][3] += g_VS_WorldViewPos.x;
+		IN.InstMatrix[1][3] += g_VS_WorldViewPos.y;
+		IN.InstMatrix[2][3] += g_VS_WorldViewPos.z;
+	#endif
+	}
+	
 	if (bRelativeToCam)
 	{
 	#if !%_RT_OBJ_IDENTITY 
@@ -1524,7 +1556,7 @@ ISOLATE
 			IN.Position.z = IN.Position.z * IN.InstMatrix[0][0] + GetTexture2DLod(terrainElevTex, ssMaterialTrilinearClamp, float4(xy, 0, 0)) + terrainInfo.w;
 			HPosition = _pos_Modificators(VPMatrix, IN.InstMatrix, IN, bRelativeToCam);
 		}
-#endif
+	#endif
 
 		return HPosition;
 	}

@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 	-------------------------------------------------------------------------
@@ -31,6 +31,7 @@
 #include <CrySystem/Profilers/IStatoscope.h>
 #include "DataPatchDownloader.h"
 #include "GameRules.h"
+#include <CrySystem/ConsoleRegistration.h>
 
 #if !defined (_RELEASE)
 #define TELEMETRY_CHECKS_FOR_OLD_ERRORLOGS (1)
@@ -287,10 +288,12 @@ CTelemetryCollector::CTelemetryCollector() :
 	char fileName[] = "%USER%/MiscTelemetry/memory_stats.txt";
 	m_telemetryMemoryLogPath=fileName;
 
-	CDebugAllowFileAccess allowFileAccess;
-	gEnv->pCryPak->RemoveFile(m_telemetryMemoryLogPath.c_str());
-	FILE *file = gEnv->pCryPak->FOpen(m_telemetryMemoryLogPath.c_str(), "at");
-	allowFileAccess.End();
+	FILE* file = nullptr;
+	{
+		SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
+		gEnv->pCryPak->RemoveFile(m_telemetryMemoryLogPath.c_str());
+		file = gEnv->pCryPak->FOpen(m_telemetryMemoryLogPath.c_str(), "at");
+	}
 
 	if (file)
 	{
@@ -324,13 +327,10 @@ CTelemetryCollector::CTelemetryCollector() :
 	UpdateClientName();
 
 #ifdef ENABLE_PROFILING_CODE
-	string	tmpStr = "%USER%/TelemetryTransactions";
-	char path[ICryPak::g_nMaxPath];
-	path[sizeof(path) - 1] = 0;
-	gEnv->pCryPak->AdjustFileName(tmpStr, path, ICryPak::FLAGS_PATH_REAL | ICryPak::FLAGS_FOR_WRITING);
+	CryPathString path;
+	gEnv->pCryPak->AdjustFileName("%USER%/TelemetryTransactions", path, ICryPak::FLAGS_PATH_REAL | ICryPak::FLAGS_FOR_WRITING);
 
-	m_telemetryRecordingPath=path;
-
+	m_telemetryRecordingPath = path;
 	gEnv->pCryPak->MakeDir(m_telemetryRecordingPath.c_str());
 #endif
 }
@@ -375,34 +375,34 @@ CTelemetryCollector::~CTelemetryCollector()
 // outputs the session id to the console
 void CTelemetryCollector::OutputSessionId(IConsoleCmdArgs *inArgs)
 {
-	ITelemetryCollector		*tc=g_pGame->GetITelemetryCollector();
-	CryLogAlways("Telemetry: Session id = '%s'",tc->GetSessionId().c_str());
+#if !defined(EXCLUDE_NORMAL_LOG)
+	ITelemetryCollector* tc = g_pGame->GetITelemetryCollector();
+	CryLogAlways("Telemetry: Session id = '%s'", tc->GetSessionId().c_str());
+#endif
 }
 
 // static
 // test function which uploads the game.log
 void CTelemetryCollector::SubmitGameLog(IConsoleCmdArgs *inArgs)
 {
-	CTelemetryCollector		*tc=static_cast<CTelemetryCollector*>(static_cast<CGame*>(g_pGame)->GetITelemetryCollector());
-	const char				*logFile=gEnv->pSystem->GetILog()->GetFileName();
+	CTelemetryCollector* tc = static_cast<CTelemetryCollector*>(static_cast<CGame*>(g_pGame)->GetITelemetryCollector());
+	const char* logFile = gEnv->pSystem->GetILog()->GetFilePath();
 
 	if (tc)
 	{
-		TTelemetrySubmitFlags		flags=k_tf_none;
+		CryFixedStringT<512> modLogFile(logFile);
 
-
-		CryFixedStringT<512>					modLogFile(logFile);
-
-		if (logFile != NULL && logFile[0]!='.' && logFile[0]!='%')		// if the log file isn't set to write into an alias or the current directory, it will default to writing into the current directory. we need to prepend our path to access it from here
+		// if the log file isn't set to write into an alias or the current directory, it will default to writing into the current directory. we need to prepend our path to access it from here
+		if (logFile != NULL && logFile[0] != '.' && logFile[0] != '%' && PathUtil::IsRelativePath(logFile))
 		{
 			modLogFile.Format(".\\%s",logFile);
 		}
 
-		ITelemetryProducer			*prod=new CTelemetryFileReader(modLogFile,0);
+		ITelemetryProducer* prod = new CTelemetryFileReader(modLogFile,0);
 		if (tc->m_telemetryCompressGameLog->GetIVal())
 		{
-			prod=new CTelemetryCompressor(prod);
-			modLogFile+=".gz";
+			prod = new CTelemetryCompressor(prod);
+			modLogFile += ".gz";
 		}
 
 		tc->SubmitTelemetryProducer(prod,modLogFile.c_str());
@@ -412,8 +412,8 @@ void CTelemetryCollector::SubmitGameLog(IConsoleCmdArgs *inArgs)
 // moves file out of the way, adding a datestamp to the target filename
 // assumes .log extension is needed to be added onto the end of targetFilename
 bool CTelemetryCollector::MoveLogFileOutOfTheWay(
-	const char *inSourceFilename,
-	const char *inTargetFilename)
+	const char* inSourceFilename,
+	const char* inTargetFilename)
 {
 	bool success=false;
 
@@ -427,32 +427,32 @@ bool CTelemetryCollector::MoveLogFileOutOfTheWay(
 		tm *today = localtime( &ltime );
 		strftime(timeStr.m_str, timeStr.MAX_SIZE, "%Y-%m-%d-%H-%M-%S", today);
 
-		CryFixedStringT<128> newTargetFilename;
+		CryPathString newTargetFilename;
 		newTargetFilename.Format("%s_%s.log", inTargetFilename, timeStr.c_str());
 
-		char sourceFullPathBuf[ICryPak::g_nMaxPath];
-		const char *sourceFullPath = gEnv->pCryPak->AdjustFileName(inSourceFilename, sourceFullPathBuf, ICryPak::FOPEN_HINT_QUIET);
-		char targetFullPathBuf[ICryPak::g_nMaxPath];
-		const char *targetFullPath = gEnv->pCryPak->AdjustFileName(newTargetFilename.c_str(), targetFullPathBuf, ICryPak::FOPEN_HINT_QUIET);
+		CryPathString sourceFullPath;
+		gEnv->pCryPak->AdjustFileName(inSourceFilename, sourceFullPath, ICryPak::FOPEN_HINT_QUIET);
+		CryPathString targetFullPath;
+		gEnv->pCryPak->AdjustFileName(newTargetFilename, targetFullPath, ICryPak::FOPEN_HINT_QUIET);
 
-		if (sourceFullPath != NULL && targetFullPath != NULL)
+		if (!sourceFullPath.empty() && !targetFullPath.empty())
 		{
 			// file rename - TRC/TCR failure?
 			// can use crypak's AdjustFileName() ?
 			int result=rename(sourceFullPath, targetFullPath);
 			if (result)
 			{
-				CryLog("CTelemetryCollector::MoveLogFileOutOfTheWay() failed to rename error file from %s to %s return=%d (errno=%d)", sourceFullPath, targetFullPath, result, errno);
+				CryLog("CTelemetryCollector::MoveLogFileOutOfTheWay() failed to rename error file from %s to %s return=%d (errno=%d)", sourceFullPath.c_str(), targetFullPath.c_str(), result, errno);
 			}
 			else
 			{
-				CryLog("CTelemetryCollector::MoveLogFileOutOfTheWay() succeeded in renaming error file from %s to %s", sourceFullPath, targetFullPath);
+				CryLog("CTelemetryCollector::MoveLogFileOutOfTheWay() succeeded in renaming error file from %s to %s", sourceFullPath.c_str(), targetFullPath.c_str());
 				success=true;
 			}
 		}
 		else
 		{
-			CryLog("CTelemetryCollector::MoveLogFileOutOfTheWay() failed to generate full paths for the old (%s (%p)) and new (%s (%p)) error log files", inSourceFilename, sourceFullPath, newTargetFilename.c_str(), targetFullPath);
+			CryLog("CTelemetryCollector::MoveLogFileOutOfTheWay() failed to generate full paths for the old (%s (%p)) and new (%s (%p)) error log files", inSourceFilename, sourceFullPath.c_str(), newTargetFilename.c_str(), targetFullPath.c_str());
 		}
 	}
 	else
@@ -514,9 +514,11 @@ bool CTelemetryCollector::UploadFileForPreviousSession(const char *inFileName, c
 			CryLog("CTelemetryCollector::UploadFileForPreviousSession() %s exists", k_hintFileName);
 			
 			// Get last session details
-			CDebugAllowFileAccess allowFileAccess;
-			FILE *file = gEnv->pCryPak->FOpen(k_hintFileName, "rt");
-			allowFileAccess.End();
+			FILE* file = nullptr;
+			{
+				SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
+				file = gEnv->pCryPak->FOpen(k_hintFileName, "rt");
+			}
 
 			if (file)
 			{
@@ -569,16 +571,16 @@ bool CTelemetryCollector::UploadLargeFileForPreviousSession(const char *inFileNa
 	{
 		CryLogAlways("CTelemetryCollector::UploadLargeFileForPreviousSession() - %s exists", inFileName);
 
-		int fileSize = gEnv->pCryPak->FGetSize(inFileName);
-
 		if (gEnv->pCryPak->IsFileExist(k_hintFileName, ICryPak::eFileLocation_OnDisk))
 		{
 			CryLogAlways("CTelemetryCollector::UploadLargeFileForPreviousSession() %s exists", k_hintFileName);
 			
 			// Get last session details
-			CDebugAllowFileAccess allowFileAccess;
-			FILE *file = gEnv->pCryPak->FOpen(k_hintFileName, "rt");
-			allowFileAccess.End();
+			FILE* file = nullptr;
+			{
+				SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
+				file = gEnv->pCryPak->FOpen(k_hintFileName, "rt");
+			}
 
 			if (file)
 			{
@@ -726,9 +728,11 @@ void CTelemetryCollector::CheckForPreviousSessionCrash()
 	tm *today = localtime( &ltime );
 	strftime(timeStr.m_str, timeStr.MAX_SIZE, "%Y-%m-%d-%H-%M-%S", today);
 
-	CDebugAllowFileAccess allowFileAccess;
-	FILE *crashCheckFile = gEnv->pCryPak->FOpen(crashCheckFileName, "wt");
-	allowFileAccess.End();
+	FILE* crashCheckFile = nullptr;
+	{
+		SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
+		crashCheckFile = gEnv->pCryPak->FOpen(crashCheckFileName, "wt");
+	}
 
 	if (crashCheckFile)
 	{
@@ -887,7 +891,9 @@ string CTelemetryCollector::GetWebSafeClientName()
 
 void CTelemetryCollector::UpdateClientName()
 {
+#if CRY_PLATFORM_WINDOWS
 	const char	*hostName=GetHostName();
+#endif
 	const char	*profileName=GetProfileName();
 	
 	m_websafeClientName.clear();
@@ -1136,16 +1142,14 @@ int CTelemetryCollector::MakePostHeader(
 	// a path on the remote server rather than a path on the local file system
 	destFile += GetIndexOfFirstValidCharInFilePath(destFile, strlen(destFile), true, true);
 
-	char szFullPathBuf[ICryPak::g_nMaxPath];
-
 	// Would be nice to also specify ICryPak::FLAGS_NO_LOWCASE here, but that also stops the expansion of %USER% into the user directory [TF]
-	ICryPak			*pak=gEnv->pCryPak;
-	pak->AdjustFileName(destFile, szFullPathBuf, ICryPak::FLAGS_NO_FULL_PATH);
+	CryPathString fullPath;
+	gEnv->pCryPak->AdjustFileName(destFile, fullPath, ICryPak::FLAGS_NO_FULL_PATH);
 
 	// strip .\ off the beginning of file names
 	// .\ is used to refer to a file in the games root directory but putting .\ at the beginning of file names on the server is not the intention
 	// start with a drive letter? we don't want those on the server either
-	string webSafeFileName(szFullPathBuf + GetIndexOfFirstValidCharInFilePath(szFullPathBuf, strlen(szFullPathBuf), true, true));
+	string webSafeFileName(fullPath.begin() + GetIndexOfFirstValidCharInFilePath(fullPath, fullPath.length(), true, true));
 	CryLog( "webSafeFileName='%s'",webSafeFileName.c_str());
 
 	GameNetworkUtils::WebSafeEscapeString(&webSafeFileName);
@@ -1281,9 +1285,11 @@ bool CTelemetryCollector::SubmitFile(
 	{
 		ICryPak			*pak=gEnv->pCryPak;
 
-		CDebugAllowFileAccess allowFileAccess;
-		FILE			*file=pak->FOpen(inLocalFilePath,"rb",ICryPak::FLAGS_PATH_REAL|ICryPak::FOPEN_ONDISK);
-		allowFileAccess.End();
+		FILE* file = nullptr;
+		{
+			SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
+			file = pak->FOpen(inLocalFilePath, "rb", ICryPak::FLAGS_PATH_REAL | ICryPak::FOPEN_ONDISK);
+		}
 
 		if (!file)
 		{
@@ -1390,7 +1396,7 @@ bool CTelemetryCollector::TrySubmitTelemetryProducer(
 			CTelemetryHTTPPostChunkSplitter *pSplit=new CTelemetryHTTPPostChunkSplitter(pInProducer);
 			pInProducer=pSplit;
 			pLargeSubmitData->m_pProducer=pInProducer;
-			cry_strcpy(pLargeSubmitData->m_remoteFileName,"<telemetry producer>");		// can always extract name from post header later if it is needed
+			cry_fixed_size_strcpy(pLargeSubmitData->m_remoteFileName,"<telemetry producer>");		// can always extract name from post header later if it is needed
 
 			assert(inFlags&k_tf_chunked);		// Telemetry producers must be chunked
 			CRY_ASSERT_MESSAGE(inLen<=int(sizeof(pLargeSubmitData->m_postHeaderContents)),"http post header too long, truncating - message liable to get lost");
@@ -1496,7 +1502,8 @@ CTelemetrySaveToFile::CTelemetrySaveToFile(
 	m_pFile(NULL),
 	m_pSource(pInProducer)
 {
-	CDebugAllowFileAccess allowFileAccess;
+	SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
+
 	m_pFile=gEnv->pCryPak->FOpen(m_fileName.c_str(),"wt");
 	if (!m_pFile)
 	{
@@ -1855,11 +1862,11 @@ ITelemetryProducer::EResult CTelemetryHTTPPostChunkSplitter::ProduceTelemetry(
 
 				footer+="\r\n";
 
-				int			footerLength=footer.length();
+				size_t footerLength = footer.length();
 
-				assert(footerLength<=inBufferSize);			// could fix this by splitting footer over multiple produce() calls, but it is an unnecessary complication for the buffer sizes in use
+				assert(footerLength <= static_cast<size_t>(inBufferSize));			// could fix this by splitting footer over multiple produce() calls, but it is an unnecessary complication for the buffer sizes in use
 
-				footerLength=min(footerLength,inBufferSize);
+				footerLength = std::min<size_t>(footerLength, inBufferSize);
 
 				memcpy(pOutBuffer,footer.c_str(),footerLength);
 
@@ -2022,14 +2029,17 @@ ITelemetryProducer::EResult CTelemetryFileReader::ProduceTelemetry(
 	int					inBufferSize,
 	int					*pOutWritten)
 {
-	CDebugAllowFileAccess		allowFileAccess;			// TODO if this is to be used for production - this will need to move to a streaming API if available. this will probably not be possible for upload of game.log
-	EResult									result=eTS_EndOfStream;
-	ICryPak									*pPak=gEnv->pCryPak;
+	EResult result = eTS_EndOfStream;
+	ICryPak* pPak = gEnv->pCryPak;
 
-	FILE										*pFile=pPak->FOpen(m_localFilePath.c_str(),"rb",ICryPak::FLAGS_PATH_REAL|ICryPak::FOPEN_ONDISK);
-	allowFileAccess.End();
+	FILE* pFile = nullptr;
+	{
+		// TODO if this is to be used for production - this will need to move to a streaming API if available. this will probably not be possible for upload of game.log
+		SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
+		pFile = pPak->FOpen(m_localFilePath.c_str(), "rb", ICryPak::FLAGS_PATH_REAL | ICryPak::FOPEN_ONDISK);
+	}
 
-	*pOutWritten=0;
+	*pOutWritten = 0;
 
 	if (!pFile)
 	{
@@ -2385,12 +2395,10 @@ void CTelemetryCollector::UpdateTransfersInProgress(int inDiff)
 // returns whether or not the upload was queued successfully
 bool CTelemetryCollector::UploadData(
 	STCPServiceDataPtr pData,
-	const char				*inReferenceFileName)
+	const char* inReferenceFileName)
 {
-	bool					success=false;
-	int						recording=m_telemetryTransactionRecordings->GetIVal();
-	int						enabled=m_telemetryEnabled->GetIVal();
-
+	bool success = false;
+	int enabled = m_telemetryEnabled->GetIVal();
 
 	// don't upload data if we're not configured - do queue up if we're trying to configure but are waiting on dns resolving
 	if (enabled && InitService())
@@ -2411,6 +2419,8 @@ bool CTelemetryCollector::UploadData(
 	}
 
 #ifdef ENABLE_PROFILING_CODE
+	int recording = m_telemetryTransactionRecordings->GetIVal();
+
 	if ((!success && recording==k_recording_ifServiceUnavailable) || recording==k_recording_always)
 	{
 		ICryPak		*pak=gEnv->pCryPak;
@@ -2425,9 +2435,11 @@ bool CTelemetryCollector::UploadData(
 
 		path.Format("%s/%s_%d.tel",m_telemetryRecordingPath.c_str(),sessionId.c_str(),m_fileUploadCounter);
 
-		CDebugAllowFileAccess allowFileAccess;
-		FILE		*file=pak->FOpen(path,"wb",ICryPak::FLAGS_PATH_REAL);
-		allowFileAccess.End();
+		FILE* file = nullptr;
+		{
+			SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
+			file = pak->FOpen(path, "wb", ICryPak::FLAGS_PATH_REAL);
+		}
 
 		int			written=0;
 		if (file)
@@ -2514,9 +2526,11 @@ void CTelemetryCollector::OutputTelemetryServerHintFile()
 
 	int headerLen=MakePostHeader("_TelemetryServerDestFile_",-666666,headerMem,k_maxHttpHeaderSize,k_tf_none);
 	
-	CDebugAllowFileAccess allowFileAccess;
-	FILE *file = gEnv->pCryPak->FOpen( k_hintFileName,"wt" );
-	allowFileAccess.End();
+	FILE* file = nullptr;
+	{
+		SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
+		file = gEnv->pCryPak->FOpen(k_hintFileName, "wt");
+	}
 
 	if (file)
 	{
@@ -2549,9 +2563,11 @@ void CTelemetryCollector::OutputMemoryUsage(const char *message, const char *new
 		mapName = "unknown";
 	}
 
-	CDebugAllowFileAccess allowFileAccess;
-	FILE *file = gEnv->pCryPak->FOpen(m_telemetryMemoryLogPath.c_str(), "r+");
-	allowFileAccess.End();
+	FILE* file = nullptr;
+	{
+		SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
+		file = gEnv->pCryPak->FOpen(m_telemetryMemoryLogPath.c_str(), "r+");
+	}
 
 	if (file)
 	{
@@ -2654,8 +2670,6 @@ void CTelemetryCollector::SetNewSessionId( bool includeMatchDetails )
 	tm *today = localtime( &ltime );
 	strftime(timeStr.m_str, timeStr.MAX_SIZE, "%H%M%S", today);
 
-	int	lobbyVersion=GameLobbyData::GetVersion();
-
 	string newId;
 
 	int patchId=0;
@@ -2741,10 +2755,6 @@ void CTelemetryCollector::GetMemoryUsage( ICrySizer* pSizer ) const
 
 	pSizer->AddString(m_curSessionId);
 	pSizer->AddString(m_websafeClientName);
-#ifdef ENABLE_PROFILING_CODE
-	m_telemetryRecordingPath.GetMemoryUsage(pSizer);
-	m_telemetryMemoryLogPath.GetMemoryUsage(pSizer);
-#endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2777,9 +2787,11 @@ void CTelemetryBuffer::DumpToFile(const char *filename)
 #define FIXED_BUFFER_SIZE (10 * 1024)
 	CryFixedStringT<FIXED_BUFFER_SIZE> tempBuffer;
 
-	CDebugAllowFileAccess allowFileAccess;
-	FILE *file = gEnv->pCryPak->FOpen(filename, "wt");
-	allowFileAccess.End();
+	FILE* file = nullptr;
+	{
+		SCOPED_ALLOW_FILE_ACCESS_FROM_THIS_THREAD();
+		file = gEnv->pCryPak->FOpen(filename, "wt");
+	}
 
 	if (file)
 	{

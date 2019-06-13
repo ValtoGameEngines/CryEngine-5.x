@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "VehicleSystem.h"
@@ -43,7 +43,6 @@
 #include "VehicleSeatActionMovement.h"
 #include "VehicleSeatActionPassengerIK.h"
 #include "VehicleSeatActionRotateTurret.h"
-#include "VehicleSeatActionSound.h"
 #include "VehicleSeatActionSteeringWheel.h"
 #include "VehicleSeatActionWeapons.h"
 #include "VehicleSeatActionWeaponsBone.h"
@@ -67,6 +66,7 @@
 //------------------------------------------------------------------------
 void CVehicleSystem::RegisterVehicles(IGameFramework* gameFramework)
 {
+	CRY_PROFILE_FUNCTION(PROFILE_LOADING_ONLY);
 	IEntityClassRegistry::SEntityClassDesc serializerClass;
 	serializerClass.sName = "VehicleSeatSerializer";
 	serializerClass.sScriptFile = "";
@@ -201,7 +201,6 @@ void CVehicleSystem::RegisterVehicles(IGameFramework* gameFramework)
 	REGISTER_VEHICLEOBJECT("Movement", CVehicleSeatActionMovement);
 	REGISTER_VEHICLEOBJECT("PassengerIK", CVehicleSeatActionPassengerIK);
 	REGISTER_VEHICLEOBJECT("RotateTurret", CVehicleSeatActionRotateTurret);
-	REGISTER_VEHICLEOBJECT("Sound", CVehicleSeatActionSound);
 	REGISTER_VEHICLEOBJECT("SteeringWheel", CVehicleSeatActionSteeringWheel);
 	REGISTER_VEHICLEOBJECT("Weapons", CVehicleSeatActionWeapons);
 	REGISTER_VEHICLEOBJECT("WeaponsBone", CVehicleSeatActionWeaponsBone);

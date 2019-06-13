@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // An 'interface' class that assists hazard definitions that utilize a ray-cast in some way.
 
@@ -8,6 +8,7 @@
 #define HazardRayCast_h
 
 #include <CryEntitySystem/IEntity.h>
+#include <CryPhysics/RayCastQueue.h>
 
 #include "HazardShared.h"
 #include "Hazard.h"

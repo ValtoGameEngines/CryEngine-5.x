@@ -1,12 +1,12 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
-namespace uqs
+namespace UQS
 {
-	namespace core
+	namespace Core
 	{
 
 		//===================================================================================
@@ -38,7 +38,7 @@ namespace uqs
 		class CLogger
 		{
 		public:
-			void                       Printf(const char* fmt, ...) PRINTF_PARAMS(2, 3);
+			void                       Printf(const char* szFormat, ...) PRINTF_PARAMS(2, 3);
 		};
 
 	}

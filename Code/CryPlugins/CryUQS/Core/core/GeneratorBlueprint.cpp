@@ -1,13 +1,13 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "GeneratorBlueprint.h"
 
 // *INDENT-OFF* - <hard to read code and declarations due to inconsistent indentation>
 
-namespace uqs
+namespace UQS
 {
-	namespace core
+	namespace Core
 	{
 
 		//===================================================================================
@@ -17,12 +17,18 @@ namespace uqs
 		//===================================================================================
 
 		CTextualGeneratorBlueprint::CTextualGeneratorBlueprint()
+			: m_generatorGUID(CryGUID::Null())
 		{
 		}
 
-		void CTextualGeneratorBlueprint::SetGeneratorName(const char* generatorName)
+		void CTextualGeneratorBlueprint::SetGeneratorName(const char* szGeneratorName)
 		{
-			m_generatorName = generatorName;
+			m_generatorName = szGeneratorName;
+		}
+
+		void CTextualGeneratorBlueprint::SetGeneratorGUID(const CryGUID& generatorGUID)
+		{
+			m_generatorGUID = generatorGUID;
 		}
 
 		ITextualInputBlueprint& CTextualGeneratorBlueprint::GetInputRoot()
@@ -35,17 +41,22 @@ namespace uqs
 			return m_generatorName.c_str();
 		}
 
+		const CryGUID& CTextualGeneratorBlueprint::GetGeneratorGUID() const
+		{
+			return m_generatorGUID;
+		}
+
 		const ITextualInputBlueprint& CTextualGeneratorBlueprint::GetInputRoot() const
 		{
 			return m_rootInput;
 		}
 
-		void CTextualGeneratorBlueprint::SetSyntaxErrorCollector(datasource::SyntaxErrorCollectorUniquePtr ptr)
+		void CTextualGeneratorBlueprint::SetSyntaxErrorCollector(DataSource::SyntaxErrorCollectorUniquePtr pSyntaxErrorCollector)
 		{
-			m_pSyntaxErrorCollector = std::move(ptr);
+			m_pSyntaxErrorCollector = std::move(pSyntaxErrorCollector);
 		}
 
-		datasource::ISyntaxErrorCollector* CTextualGeneratorBlueprint::GetSyntaxErrorCollector() const
+		DataSource::ISyntaxErrorCollector* CTextualGeneratorBlueprint::GetSyntaxErrorCollector() const
 		{
 			return m_pSyntaxErrorCollector.get();
 		}
@@ -62,21 +73,61 @@ namespace uqs
 
 		bool CGeneratorBlueprint::Resolve(const ITextualGeneratorBlueprint& source, const CQueryBlueprint& queryBlueprintForGlobalParamChecking)
 		{
-			const char* generatorName = source.GetGeneratorName();
+			const CryGUID& generatorGUID = source.GetGeneratorGUID();
+			const char* szGeneratorName = source.GetGeneratorName();
 
-			m_pGeneratorFactory = g_hubImpl->GetGeneratorFactoryDatabase().FindFactoryByName(generatorName);
-			if (!m_pGeneratorFactory)
+			//
+			// look up the generator factory: first search by its GUID, then by its name
+			//
+
+			if (!(m_pGeneratorFactory = g_pHub->GetGeneratorFactoryDatabase().FindFactoryByGUID(generatorGUID)))
 			{
-				if (datasource::ISyntaxErrorCollector* pSE = source.GetSyntaxErrorCollector())
+				if (!(m_pGeneratorFactory = g_pHub->GetGeneratorFactoryDatabase().FindFactoryByName(szGeneratorName)))
 				{
-					pSE->AddErrorMessage("Unknown GeneratorFactory '%s'", generatorName);
+					if (DataSource::ISyntaxErrorCollector* pSE = source.GetSyntaxErrorCollector())
+					{
+						Shared::CUqsString guidAsString;
+						Shared::Internal::CGUIDHelper::ToString(generatorGUID, guidAsString);
+						pSE->AddErrorMessage("Unknown GeneratorFactory: GUID = %s, name = '%s'", guidAsString.c_str(), szGeneratorName);
+					}
+					return false;
 				}
-				return false;
 			}
+
+			//
+			// if the generator expects shuttled items of a certain type, then make sure the query will store such items at runtime in the query context
+			//
+
+			if (const Shared::CTypeInfo* pExpectedShuttleType = m_pGeneratorFactory->GetTypeOfShuttledItemsToExpect())
+			{
+				if (const Shared::CTypeInfo* pTypeOfPossiblyShuttledItems = queryBlueprintForGlobalParamChecking.GetTypeOfShuttledItemsToExpect())
+				{
+					if (*pExpectedShuttleType != *pTypeOfPossiblyShuttledItems)
+					{
+						if (DataSource::ISyntaxErrorCollector* pSE = source.GetSyntaxErrorCollector())
+						{
+							pSE->AddErrorMessage("Generator '%s' expects the shuttled items to be of type '%s', but they are actually of type '%s'", szGeneratorName, pExpectedShuttleType->name(), pTypeOfPossiblyShuttledItems->name());
+						}
+						return false;
+					}
+				}
+				else
+				{
+					if (DataSource::ISyntaxErrorCollector* pSE = source.GetSyntaxErrorCollector())
+					{
+						pSE->AddErrorMessage("Generator '%s' expects shuttled items, but the query does not support shuttled items in this context", szGeneratorName);
+					}
+					return false;
+				}
+			}
+
+			//
+			// resolve input parameters
+			//
 
 			CInputBlueprint inputRoot;
 			const ITextualInputBlueprint& textualInputRoot = source.GetInputRoot();
-			const client::IInputParameterRegistry& inputParamsReg = m_pGeneratorFactory->GetInputParameterRegistry();
+			const Client::IInputParameterRegistry& inputParamsReg = m_pGeneratorFactory->GetInputParameterRegistry();
 
 			if (!inputRoot.Resolve(textualInputRoot, inputParamsReg, queryBlueprintForGlobalParamChecking, true))
 			{
@@ -88,21 +139,21 @@ namespace uqs
 			return true;
 		}
 
-		const shared::CTypeInfo& CGeneratorBlueprint::GetTypeOfItemsToGenerate() const
+		const Shared::CTypeInfo& CGeneratorBlueprint::GetTypeOfItemsToGenerate() const
 		{
-			assert(m_pGeneratorFactory);
+			CRY_ASSERT(m_pGeneratorFactory);
 			return m_pGeneratorFactory->GetTypeOfItemsToGenerate();
 		}
 
-		client::GeneratorUniquePtr CGeneratorBlueprint::InstantiateGenerator(const SQueryBlackboard& blackboard, shared::CUqsString& error) const
+		Client::GeneratorUniquePtr CGeneratorBlueprint::InstantiateGenerator(const SQueryContext& queryContext, Shared::CUqsString& error) const
 		{
-			assert(m_pGeneratorFactory);
+			CRY_ASSERT(m_pGeneratorFactory);
 
 			//
 			// create the input parameters (they will get filled by the function calls below)
 			//
 
-			client::ParamsHolderUniquePtr pParamsHolder = m_pGeneratorFactory->GetParamsHolderFactory().CreateParamsHolder();
+			Client::ParamsHolderUniquePtr pParamsHolder = m_pGeneratorFactory->GetParamsHolderFactory().CreateParamsHolder();
 			void* pParams = pParamsHolder->GetParams();
 
 			//
@@ -111,13 +162,13 @@ namespace uqs
 
 			CFunctionCallHierarchy functionCalls;
 
-			if (!InstantiateFunctionCallHierarchy(functionCalls, blackboard, error))    // notice: the blackboard.pItemIterationContext is still a nullptr (we're not iterating on the items yet)
+			if (!InstantiateFunctionCallHierarchy(functionCalls, queryContext, error))    // notice: the queryContext.pItemIterationContext is still a nullptr (we're not iterating on the items yet)
 			{
 				return nullptr;
 			}
 
 			bool bExceptionOccurredDuringFunctionCalls = false;
-			const client::IFunction::SExecuteContext execContext(0, blackboard, error, bExceptionOccurredDuringFunctionCalls);  // currentItemIndex == 0: this is just a dummy, as we're not iterating on items
+			const Client::IFunction::SExecuteContext execContext(0, queryContext, error, bExceptionOccurredDuringFunctionCalls);  // currentItemIndex == 0: this is just a dummy, as we're not iterating on items
 
 			functionCalls.ExecuteAll(execContext, pParams, m_pGeneratorFactory->GetInputParameterRegistry());
 
@@ -130,8 +181,8 @@ namespace uqs
 			// instantiate the generator with the input params
 			//
 
-			client::GeneratorUniquePtr pGenerator = m_pGeneratorFactory->CreateGenerator(pParams);   // never returns NULL
-			assert(pGenerator);
+			Client::GeneratorUniquePtr pGenerator = m_pGeneratorFactory->CreateGenerator(pParams);   // never returns NULL
+			CRY_ASSERT(pGenerator);
 			return pGenerator;
 		}
 

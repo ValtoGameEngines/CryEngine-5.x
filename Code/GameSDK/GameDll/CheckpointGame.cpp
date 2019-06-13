@@ -1,22 +1,10 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-/*************************************************************************
--------------------------------------------------------------------------
-$Id$
-$DateTime$
-Description: Checkpoint Save/Load system for Game04
-
--------------------------------------------------------------------------
-History:
-- 10:07:2008 : Created By Jan Müller
-- 05:02:2009 : Renamed to CheckpointGame for game-specific usage
-
-*************************************************************************/
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "CheckpointGame.h"
 #include "Game.h"
 #include <ICheckPointSystem.h>
+#include <CrySystem/XML/IXml.h>
 
 #include "GameActions.h"
 #include "Player.h"
@@ -25,6 +13,18 @@ CCheckpointGame CCheckpointGame::m_Instance;
 
 const static char* PLAYER_DATA_SECTION			= "PlayerData";
 const static char* INVENTORY_SECTION			= "PlayerInventory";
+
+//get data or log warning
+template<class T>
+static bool CheckpointGetAttrSave(XmlNodeRef source, const char *name, T &data)
+{
+	CRY_ASSERT(source != NULL);
+	CRY_ASSERT(name);
+	bool found = source->getAttr(name, data);
+	if (!found)
+		CryWarning(VALIDATOR_MODULE_GAME, VALIDATOR_ERROR, "Failed reading %s from checkpoint node %s.", name, source->getTag());
+	return found;
+}
 
 //////////////////////////////////////////////////////////////////////////
 CCheckpointGame::CCheckpointGame()
@@ -68,12 +68,7 @@ void CCheckpointGame::OnPreResetEngine()
 //////////////////////////////////////////////////////////////////////////
 void CCheckpointGame::OnPostResetEngine()
 {
-	//send "game start" event
-	SEntityEvent event;
-	event.event = ENTITY_EVENT_START_GAME;
-	event.nParam[0] = 0;
-	gEnv->pEntitySystem->SendEventToAll( event );
-
+	gEnv->pEntitySystem->OnLevelGameplayStart();
 }
 
 //////////////////////////////////////////////////////////////////////////

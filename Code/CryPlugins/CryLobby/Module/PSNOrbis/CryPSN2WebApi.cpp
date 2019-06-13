@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 
@@ -922,7 +922,7 @@ CryWebApiJobId CCryPSNWebApiJobController::AddJob(TCryPSNWebApiThreadJobFunc job
 }
 
 void CCryPSNWebApiJobController::PushEventCallback(int webApiUserCtxId, int callbackId,
-                                                   const SceNpPeerAddress* pTo, const SceNpPeerAddress* pFrom,
+                                                   const SceNpPeerAddressA* pTo, const SceNpPeerAddressA* pFrom,
                                                    const SceNpWebApiPushEventDataType* pDataType,
                                                    const char* pData, size_t dataSize, void* pArg)
 {
@@ -936,7 +936,7 @@ void CCryPSNWebApiJobController::PushEventCallback(int webApiUserCtxId, int call
 }
 
 void CCryPSNWebApiJobController::ServicePushEventCallback(int webApiUserCtxId, int callbackId, const char* pNpServiceName, SceNpServiceLabel npServiceLabel,
-                                                          const SceNpPeerAddress* pTo, const SceNpPeerAddress* pFrom,
+                                                          const SceNpPeerAddressA* pTo, const SceNpPeerAddressA* pFrom,
                                                           const SceNpWebApiPushEventDataType* pDataType,
                                                           const char* pData, size_t dataSize, void* pArg)
 {

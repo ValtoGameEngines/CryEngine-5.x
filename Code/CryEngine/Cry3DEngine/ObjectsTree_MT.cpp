@@ -1,7 +1,8 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "StdAfx.h"
 #include "PolygonClipContext.h"
+#include "CryThreading/IJobManager.h"
 #include "RoadRenderNode.h"
 #include "Brush.h"
 #include "RenderMeshMerger.h"
@@ -10,23 +11,19 @@
 #include <CryAnimation/ICryAnimation.h>
 #include "LightEntity.h"
 
-#ifndef PI
-	#define PI 3.14159f
-#endif
-
 //////////////////////////////////////////////////////////////////////////
-void CObjManager::PrepareCullbufferAsync(const CCamera& rCamera)
+void CObjManager::PrepareCullbufferAsync(const CCamera& rCamera, const SGraphicsPipelineKey& cullGraphicsContextKey)
 {
-	if (!(gEnv->IsDedicated()))
+	if (gEnv->pRenderer)
 	{
-		m_CullThread.PrepareCullbufferAsync(rCamera);
+		m_CullThread.PrepareCullbufferAsync(rCamera, cullGraphicsContextKey);
 	}
 }
 
 //////////////////////////////////////////////////////////////////////////
 void CObjManager::BeginOcclusionCulling(const SRenderingPassInfo& passInfo)
 {
-	if (!gEnv->IsDedicated())
+	if (gEnv->pRenderer)
 	{
 		m_CullThread.CullStart(passInfo);
 	}
@@ -35,24 +32,39 @@ void CObjManager::BeginOcclusionCulling(const SRenderingPassInfo& passInfo)
 //////////////////////////////////////////////////////////////////////////
 void CObjManager::EndOcclusionCulling()
 {
-	if (!gEnv->IsDedicated())
+	if (gEnv->pRenderer)
 	{
 		m_CullThread.CullEnd();
 	}
 }
 
 //////////////////////////////////////////////////////////////////////////
-void CObjManager::RenderBufferedRenderMeshes(const SRenderingPassInfo& passInfo)
+void CObjManager::RenderNonJobObjects(const SRenderingPassInfo& passInfo)
 {
-	CRY_PROFILE_REGION(PROFILE_3DENGINE, "3DEngine: RenderBufferedRenderMeshes");
-	CRYPROFILE_SCOPE_PROFILE_MARKER("RenderBufferedRenderMeshes");
+	CRY_PROFILE_SECTION(PROFILE_3DENGINE, "3DEngine: RenderNonJobObjects");
+	MEMSTAT_CONTEXT(EMemStatContextType::Other, "CObjManager::RenderNonJobObjects");
 
-	SCheckOcclusionOutput outputData;
+	bool hasWaited = false;
 	while (1)
 	{
-		// process till we know that no more procers are working
-		if (!GetObjManager()->PopFromCullOutputQueue(&outputData))
-			break;
+		// Optimization:
+		// First we work off all already queued occlusion job outputs.
+		// Once there is no more output in the queue, we wait on the occlusion jobs to finish which will spawn an extra worker.
+		// Lastly we work off all remaining occlusion job outputs
+		SCheckOcclusionOutput outputData;
+		if (!GetObjManager()->PopFromCullOutputQueue(outputData))
+		{
+			if (!hasWaited)
+			{
+				m_CullThread.WaitOnCheckOcclusionJobs();
+				hasWaited = true;
+				continue;
+			}
+			else if (!GetObjManager()->PopFromCullOutputQueue(outputData))
+			{
+				break;
+			}
+		}
 
 		switch (outputData.type)
 		{
@@ -62,29 +74,61 @@ void CObjManager::RenderBufferedRenderMeshes(const SRenderingPassInfo& passInfo)
 			                                    outputData.vAmbColor,
 			                                    outputData.objBox,
 			                                    outputData.common.fEntDistance,
-			                                    outputData.common.bSunOnly,
 			                                    outputData.common.bCheckPerObjectOcclusion,
 			                                    passInfo);
 			break;
+
 		case SCheckOcclusionOutput::COMMON:
-			GetObjManager()->RenderObject(outputData.common.pObj,
-			                              outputData.common.pAffectingLights,
-			                              outputData.vAmbColor,
-			                              outputData.objBox,
-			                              outputData.common.fEntDistance,
-			                              outputData.common.bSunOnly,
-			                              outputData.common.pObj->GetRenderNodeType(),
-			                              passInfo);
+			{
+				switch (outputData.common.pObj->GetRenderNodeType())
+				{
+				case eERType_Brush:
+				case eERType_MovableBrush:
+					GetObjManager()->RenderBrush((CBrush*)outputData.common.pObj,
+					                             outputData.common.pAffectingLights,
+					                             outputData.common.pTerrainTexInfo,
+					                             outputData.objBox,
+					                             outputData.common.fEntDistance,
+					                             outputData.common.bCheckPerObjectOcclusion,
+					                             passInfo,
+					                             outputData.passCullMask);
+					break;
+
+				case eERType_Vegetation:
+					GetObjManager()->RenderVegetation((CVegetation*)outputData.common.pObj,
+					                                  outputData.common.pAffectingLights,
+					                                  outputData.objBox,
+					                                  outputData.common.fEntDistance,
+					                                  outputData.common.pTerrainTexInfo,
+					                                  outputData.common.bCheckPerObjectOcclusion,
+					                                  passInfo,
+					                                  outputData.passCullMask);
+					break;
+
+				default:
+					GetObjManager()->RenderObject(outputData.common.pObj,
+					                              outputData.common.pAffectingLights,
+					                              outputData.vAmbColor,
+					                              outputData.objBox,
+					                              outputData.common.fEntDistance,
+					                              outputData.common.pObj->GetRenderNodeType(),
+					                              passInfo,
+					                              outputData.passCullMask);
+					break;
+				}
+			}
 			break;
 		case SCheckOcclusionOutput::TERRAIN:
-			GetTerrain()->AddVisSector(outputData.terrain.pTerrainNode);
+			outputData.terrain.pTerrainNode->RenderNodeHeightmap(passInfo, outputData.passCullMask);
 			break;
+
 		case SCheckOcclusionOutput::DEFORMABLE_BRUSH:
 			outputData.deformable_brush.pBrush->m_pDeform->RenderInternalDeform(outputData.deformable_brush.pRenderObject,
 			                                                                    outputData.deformable_brush.nLod,
 			                                                                    outputData.deformable_brush.pBrush->CBrush::GetBBox(),
 			                                                                    passInfo);
 			break;
+
 		default:
 			CryFatalError("Got Unknown Output type from CheckOcclusion");
 			break;
@@ -127,10 +171,4 @@ bool IsValidOccluder(IMaterial* pMat)
 			return false;
 	}
 	return true;
-}
-
-//////////////////////////////////////////////////////////////////////////
-void CObjManager::BeginCulling()
-{
-	m_CheckOcclusionOutputQueue.SetRunningState();
 }

@@ -1,57 +1,70 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #include "stdafx.h"
-#include "AudioImpl.h"
-#include "AudioImplCVars.h"
+#include "Impl.h"
+#include "CVars.h"
 #include <CryAudio/IAudioSystem.h>
 #include <CryCore/Platform/platform_impl.inl>
 #include <CrySystem/IEngineModule.h>
 #include <CryExtension/ClassWeaver.h>
 
-using namespace CryAudio;
-using namespace CryAudio::Impl::PortAudio;
+#if defined(CRY_AUDIO_IMPL_PORTAUDIO_USE_DEBUG_CODE)
+	#include <Logger.h>
+#endif        // CRY_AUDIO_IMPL_PORTAUDIO_USE_DEBUG_CODE
 
+namespace CryAudio
+{
+namespace Impl
+{
+namespace PortAudio
+{
 // Define global objects.
-CAudioLogger g_audioImplLogger;
-CAudioImplCVars CryAudio::Impl::PortAudio::g_audioImplCVars;
+CCVars g_cvars;
 
 //////////////////////////////////////////////////////////////////////////
-class CEngineModule_CryAudioImplPortAudio : public IEngineModule
+class CEngineModule_CryAudioImplPortAudio : public IImplModule
 {
-	CRYINTERFACE_SIMPLE(IEngineModule);
-	CRYGENERATE_SINGLETONCLASS(CEngineModule_CryAudioImplPortAudio, "EngineModule_AudioImpl", 0xef1271ff25c24461, 0x6cea190c93444190);
+	CRYINTERFACE_BEGIN()
+	CRYINTERFACE_ADD(Cry::IDefaultModule)
+	CRYINTERFACE_ADD(IImplModule)
+	CRYINTERFACE_END()
+
+	CRYGENERATE_SINGLETONCLASS_GUID(CEngineModule_CryAudioImplPortAudio, "EngineModule_AudioImpl", "c0c05842-ff77-4a61-96de-43a684515dc8"_cry_guid);
 
 	CEngineModule_CryAudioImplPortAudio();
-	virtual ~CEngineModule_CryAudioImplPortAudio() {}
 
 	//////////////////////////////////////////////////////////////////////////
-	virtual char const* GetName()     { return "CryAudioImplPortAudio"; }
-	virtual char const* GetCategory() { return "CryAudio"; }
+	virtual char const* GetName()  const override    { return "CryAudioImplPortAudio"; }
+	virtual char const* GetCategory() const override { return "CryAudio"; }
 
 	//////////////////////////////////////////////////////////////////////////
-	virtual bool Initialize(SSystemGlobalEnvironment& env, const SSystemInitParams& initParams)
+	virtual bool Initialize(SSystemGlobalEnvironment& env, const SSystemInitParams& initParams) override
 	{
-		gEnv->pAudioSystem->AddRequestListener(&CEngineModule_CryAudioImplPortAudio::OnAudioEvent, nullptr, eSystemEvent_ImplSet);
-		SRequestUserData const data(eRequestFlags_PriorityHigh | eRequestFlags_ExecuteBlocking | eRequestFlags_SyncCallback);
-		gEnv->pAudioSystem->SetImpl(new CAudioImpl, data);
-		gEnv->pAudioSystem->RemoveRequestListener(&CEngineModule_CryAudioImplPortAudio::OnAudioEvent, nullptr);
+		gEnv->pAudioSystem->AddRequestListener(&CEngineModule_CryAudioImplPortAudio::OnEvent, nullptr, ESystemEvents::ImplSet);
+		SRequestUserData const data(ERequestFlags::ExecuteBlocking | ERequestFlags::CallbackOnExternalOrCallingThread);
 
+		MEMSTAT_CONTEXT(EMemStatContextType::AudioImpl, "CryAudio::Impl::PortAudio::CImpl");
+		gEnv->pAudioSystem->SetImpl(new CImpl, data);
+		gEnv->pAudioSystem->RemoveRequestListener(&CEngineModule_CryAudioImplPortAudio::OnEvent, nullptr);
+
+#if defined(CRY_AUDIO_IMPL_PORTAUDIO_USE_DEBUG_CODE)
 		if (m_bSuccess)
 		{
-			g_audioImplLogger.Log(eAudioLogType_Always, "CryAudioImplPortAudio loaded");
+			Cry::Audio::Log(ELogType::Always, "CryAudioImplPortAudio loaded");
 		}
 		else
 		{
-			g_audioImplLogger.Log(eAudioLogType_Error, "CryAudioImplPortAudio failed to load");
+			Cry::Audio::Log(ELogType::Error, "CryAudioImplPortAudio failed to load");
 		}
+#endif        // CRY_AUDIO_IMPL_PORTAUDIO_USE_DEBUG_CODE
 
 		return m_bSuccess;
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	static void OnAudioEvent(SRequestInfo const* const pAudioRequestInfo)
+	static void OnEvent(SRequestInfo const* const pRequestInfo)
 	{
-		m_bSuccess = pAudioRequestInfo->requestResult == eRequestResult_Success;
+		m_bSuccess = pRequestInfo->requestResult == ERequestResult::Success;
 	}
 
 	static bool m_bSuccess;
@@ -62,7 +75,9 @@ bool CEngineModule_CryAudioImplPortAudio::m_bSuccess = false;
 
 CEngineModule_CryAudioImplPortAudio::CEngineModule_CryAudioImplPortAudio()
 {
-	g_audioImplCVars.RegisterVariables();
+	g_cvars.RegisterVariables();
 }
-
+} // namespace PortAudio
+} // namespace Impl
+} // namespace CryAudio
 #include <CryCore/CrtDebugStats.h>

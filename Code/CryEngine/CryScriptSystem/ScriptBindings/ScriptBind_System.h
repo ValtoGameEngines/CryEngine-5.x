@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 // -------------------------------------------------------------------------
 //  File name:   ScriptBind_System.h
@@ -377,10 +377,6 @@ public:
 	//! <description>Gets the amount of the memory for the system.</description>
 	int GetSystemMem(IFunctionHandler* pH);
 
-	//! <code>System.IsPS20Supported()</code>
-	//! <description>Checks if the PS20 is supported.</description>
-	int IsPS20Supported(IFunctionHandler* pH);
-
 	//! <code>System.IsHDRSupported()</code>
 	//! <description>Checks if the HDR is supported.</description>
 	int IsHDRSupported(IFunctionHandler* pH);
@@ -544,21 +540,7 @@ public:
 	//!		<param name="bUseKB">True to use KB, false otherwise.</param>
 	//! <description>Dumps memory statistics.</description>
 	int DumpMemStats(IFunctionHandler* pH);
-
-	//! <code>System.DumpMemoryCoverage( bUseKB )</code>
-	//! <description>Dumps memory coverage.</description>
-	int DumpMemoryCoverage(IFunctionHandler* pH);
-
-	//! <code>System.ApplicationTest( pszParam )</code>
-	//!		<param name="pszParam">Parameters.</param>
-	//! <description>Test the application with the specified parameters.</description>
-	int ApplicationTest(IFunctionHandler* pH);
-
-	//! <code>System.QuitInNSeconds( fInNSeconds )</code>
-	//!		<param name="fInNSeconds">Number of seconds before quitting.</param>
-	//! <description>Quits the application in the specified number of seconds.</description>
-	int QuitInNSeconds(IFunctionHandler* pH);
-
+	
 	//! <code>System.DumpWinHeaps()</code>
 	//! <description>Dumps windows heaps.</description>
 	int DumpWinHeaps(IFunctionHandler* pH);
@@ -705,8 +687,6 @@ private:
 	ITimer*    m_pTimer;
 	I3DEngine* m_p3DEngine;
 
-	//	ICVar *r_hdrrendering;						// the Cvar is created in cry3dengine, this is just a pointer
-
 	//Vlad is too lazy to add this to 3DEngine">so I have to put it here. It should
 	//not be here, but I have to put it somewhere.....
 	float            m_SkyFadeStart; // when fogEnd less">start to fade sky to fog
@@ -714,6 +694,8 @@ private:
 
 	SmartScriptTable m_pScriptTimeTable;
 	SmartScriptTable m_pGetEntitiesCacheTable;
+
+	std::set<string> m_registeredCommands;
 };
 
 #endif // __ScriptBind_System_h__

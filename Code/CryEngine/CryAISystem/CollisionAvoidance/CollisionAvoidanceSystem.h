@@ -1,230 +1,195 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-#ifndef __CollisionAvoidanceSystem_h__
-#define __CollisionAvoidanceSystem_h__
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
-class CollisionAvoidanceSystem
+#include "CryAISystem/ICollisionAvoidance.h"
+
+struct INavMeshQueryFilter;
+
+namespace Cry
+{
+namespace AI
+{
+namespace CollisionAvoidance
+{
+class CCollisionAvoidanceSystem : public ISystem
 {
 public:
-	CollisionAvoidanceSystem();
+    CCollisionAvoidanceSystem();
+    virtual ~CCollisionAvoidanceSystem() override {}
 
-	typedef size_t AgentID;
-	typedef size_t ObstacleID;
+    void Reset();
+	void Clear();
+    void Update(float updateTime);
 
-	struct Agent
-	{
-		Agent()
-			: radius(0.4f)
-			, maxSpeed(4.5f)
-			, maxAcceleration(0.1f)
-			, currentLocation(ZERO)
-			, currentLookDirection(ZERO)
-			, currentVelocity(ZERO)
-			, desiredVelocity(ZERO)
-		{
-		};
+    virtual bool RegisterAgent(IAgent* pAgent) override;
+    virtual bool UnregisterAgent(IAgent* pAgent) override;
 
-		Agent(float _radius, float _maxSpeed, float _maxAcceleration, const Vec2& _currentLocation, const Vec2& _currentVelocity,
-		      const Vec2& _currentLookDirection, const Vec2& _desiredVelocity)
-			: radius(_radius)
-			, maxSpeed(_maxSpeed)
-			, maxAcceleration(_maxAcceleration)
-			, currentLocation(_currentLocation)
-			, currentVelocity(_currentVelocity)
-			, currentLookDirection(_currentLookDirection)
-			, desiredVelocity(_desiredVelocity)
-		{
-		};
-
-		float radius;
-		float maxSpeed;
-		float maxAcceleration;
-
-		Vec3  currentLocation;
-		Vec2  currentVelocity;
-		Vec2  currentLookDirection;
-		Vec2  desiredVelocity;
-	};
-
-	struct Obstacle
-	{
-		Obstacle()
-			: radius(1.0f)
-			, currentLocation(ZERO)
-		{
-		}
-
-		float radius;
-
-		Vec3  currentLocation;
-		Vec2  currentVelocity;
-	};
-
-	AgentID         CreateAgent(tAIObjectID objectID);
-	ObstacleID      CreateObstable();
-
-	void            RemoveAgent(AgentID agentID);
-	void            RemoveObstacle(ObstacleID obstacleID);
-
-	void            SetAgent(AgentID agentID, const Agent& params);
-	const Agent&    GetAgent(AgentID agentID) const;
-
-	void            SetObstacle(ObstacleID obstacleID, const Obstacle& params);
-	const Obstacle& GetObstacle(ObstacleID obstacleID) const;
-
-	const Vec2&     GetAvoidanceVelocity(AgentID agentID);
-
-	void            Reset(bool bUnload = false);
-	void            Update(float updateTime);
-
-	void            DebugDraw();
+    void DebugDraw();
 private:
-	ILINE float     LeftOf(const Vec2& line, const Vec2& point) const
-	{
-		return line.Cross(point);
-	}
+    static const size_t kMaxAvoidingAgents = 512;
 
-	struct ConstraintLine
-	{
-		enum EOrigin
-		{
-			AgentConstraint    = 0,
-			ObstacleConstraint = 1,
-		};
+    typedef size_t AgentID;
+    typedef size_t ObstacleID;
 
-		Vec2   direction;
-		Vec2   point;
+    void                  PopulateState();
+    void                  ApplyResults(float updateTime);
 
-		uint16 flags;
-		uint16 objectID; // debug only
-	};
+    AgentID               CreateAgent(NavigationAgentTypeID navigationTypeID, const INavMeshQueryFilter* pFilter);
+    ObstacleID            CreateObstable();
 
-	struct NearbyAgent
-	{
-		NearbyAgent()
-		{
-		};
+    void                  SetAgent(AgentID agentID, const SAgentParams& params);
+    const SAgentParams&    GetAgent(AgentID agentID) const;
 
-		NearbyAgent(float _distanceSq, uint16 _agentID, uint16 _flags = 0)
-			: distanceSq(_distanceSq)
-			, agentID(_agentID)
-			, flags(_flags)
-		{
-		};
+    void                  SetObstacle(ObstacleID obstacleID, const SObstacleParams& params);
+    const SObstacleParams& GetObstacle(ObstacleID obstacleID) const;
 
-		enum EFlags
-		{
-			CanSeeMe = 1 << 0,
-			IsMoving = 1 << 1,
-		};
+    const Vec2&           GetAvoidanceVelocity(AgentID agentID);
 
-		bool operator<(const NearbyAgent& other) const
-		{
-			return distanceSq < other.distanceSq;
-		};
+    ILINE float           LeftOf(const Vec2& line, const Vec2& point) const
+    {
+        return line.Cross(point);
+    }
 
-		float  distanceSq;
-		uint16 agentID;
-		uint16 flags;
-	};
+    struct SConstraintLine
+    {
+        enum EOrigin
+        {
+            AgentConstraint = 0,
+            ObstacleConstraint = 1,
+        };
 
-	struct NearbyObstacle
-	{
-		NearbyObstacle()
-			: distanceSq(0)
-			, obstacleID(0)
-			, flags(0)
-		{
-		};
+        Vec2   direction;
+        Vec2   point;
 
-		NearbyObstacle(float _distanceSq, uint16 _agentID, uint16 _flags = 0)
-			: distanceSq(_distanceSq)
-			, obstacleID(_agentID)
-			, flags(_flags)
-		{
-		};
+        uint16 flags;
+        uint16 objectID; // debug only
+    };
 
-		enum EFlags
-		{
-			CanSeeMe = 1 << 0,
-			IsMoving = 1 << 1,
-		};
+    struct SNearbyAgent
+    {
+        SNearbyAgent() {}
 
-		ILINE bool operator<(const NearbyObstacle& other) const
-		{
-			return distanceSq < other.distanceSq;
-		};
+        SNearbyAgent(float _distanceSq, uint16 _agentID, uint16 _flags = 0)
+            : distanceSq(_distanceSq)
+            , agentID(_agentID)
+            , flags(_flags)
+        {}
 
-		float  distanceSq;
-		uint16 obstacleID;
-		uint16 flags;
-	};
+        enum EFlags
+        {
+            CanSeeMe = 1 << 0,
+            IsMoving = 1 << 1,
+        };
 
-	enum { FeasibleAreaMaxVertexCount = 64, };
+        bool operator<(const SNearbyAgent& other) const
+        {
+            return distanceSq < other.distanceSq;
+        };
 
-	typedef std::vector<NearbyAgent>    NearbyAgents;
-	typedef std::vector<NearbyObstacle> NearbyObstacles;
-	typedef std::vector<ConstraintLine> ConstraintLines;
+        float  distanceSq;
+        uint16 agentID;
+        uint16 flags;
+    };
 
-	size_t ComputeNearbyAgents(const Agent& agent, size_t agentIndex, float range, NearbyAgents& nearbyAgents) const;
-	size_t ComputeNearbyObstacles(const Agent& agent, size_t agentIndex, float range, NearbyObstacles& nearbyObstacles) const;
+    struct SNearbyObstacle
+    {
+        SNearbyObstacle()
+            : distanceSq(0)
+            , obstacleID(0)
+            , flags(0)
+        {}
 
-	size_t ComputeConstraintLinesForAgent(const Agent& agent, size_t agentIndex, float timeHorizonScale,
-	                                      NearbyAgents& nearbyAgents, size_t maxAgentsConsidered, NearbyObstacles& nearbyObstacles, ConstraintLines& lines) const;
-	void   ComputeAgentConstraintLine(const Agent& agent, const Agent& obstacleAgent, bool reciprocal, float timeHorizonScale,
-	                                  ConstraintLine& line) const;
-	void   ComputeObstacleConstraintLine(const Agent& agent, const Obstacle& obstacle, float timeHorizonScale,
-	                                     ConstraintLine& line) const;
+        SNearbyObstacle(float _distanceSq, uint16 _agentID, uint16 _flags = 0)
+            : distanceSq(_distanceSq)
+            , obstacleID(_agentID)
+            , flags(_flags)
+        {}
 
-	bool   ClipPolygon(const Vec2* polygon, size_t vertexCount, const ConstraintLine& line, Vec2* output,
-	                   size_t* outputVertexCount) const;
-	size_t ComputeFeasibleArea(const ConstraintLine* lines, size_t lineCount, float radius, Vec2* feasibleArea) const;
-	bool   ClipVelocityByFeasibleArea(const Vec2& velocity, Vec2* feasibleArea, size_t vertexCount, Vec2& output) const;
+        enum EFlags
+        {
+            CanSeeMe = 1 << 0,
+            IsMoving = 1 << 1,
+        };
 
-	struct CandidateVelocity
-	{
-		float distanceSq;
-		Vec2  velocity;
+        ILINE bool operator<(const SNearbyObstacle& other) const
+        {
+            return distanceSq < other.distanceSq;
+        };
 
-		ILINE bool operator<(const CandidateVelocity& other) const
-		{
-			return distanceSq < other.distanceSq;
-		}
-	};
+        float  distanceSq;
+        uint16 obstacleID;
+        uint16 flags;
+    };
 
-	size_t ComputeOptimalAvoidanceVelocity(Vec2* feasibleArea, size_t vertexCount, const Agent& agent,
-	                                       const float minSpeed, const float maxSpeed, CandidateVelocity* output) const;
+    struct SCandidateVelocity
+    {
+        float distanceSq;
+        Vec2  velocity;
 
-	Vec2 ClampSpeedWithNavigationMesh(const NavigationAgentTypeID agentTypeID, const Vec3 agentPosition, const Vec2& currentVelocity, const Vec2& velocityToClamp) const;
-	bool FindFirstWalkableVelocity(AgentID agentID, CandidateVelocity* candidates, size_t candidateCount,
-	                               Vec2& output) const;
+        ILINE bool operator<(const SCandidateVelocity& other) const
+        {
+            return distanceSq < other.distanceSq;
+        }
+    };
 
-	bool FindLineCandidate(const ConstraintLine* lines, size_t lineCount, size_t lineNumber, float radius, const Vec2& velocity,
-	                       Vec2& candidate) const;
-	bool FindCandidate(const ConstraintLine* lines, size_t lineCount, float radius, const Vec2& velocity, Vec2& candidate) const;
+    struct SNavigationProperties
+    {
+        NavigationAgentTypeID agentTypeId;
+        const INavMeshQueryFilter* pQueryFilter;
+    };
 
-	void DebugDrawConstraintLine(const Vec3& agentLocation, const ConstraintLine& line, const ColorB& color);
+    enum { FeasibleAreaMaxVertexCount = 64, };
 
-	typedef std::vector<Agent> Agents;
-	Agents m_agents;
+    typedef std::vector<SNearbyAgent>    NearbyAgents;
+    typedef std::vector<SNearbyObstacle> NearbyObstacles;
+    typedef std::vector<SConstraintLine> ConstraintLines;
 
-	typedef std::vector<Vec2> AgentAvoidanceVelocities;
-	AgentAvoidanceVelocities m_agentAvoidanceVelocities;
+    size_t ComputeNearbyAgents(const SAgentParams& agent, size_t agentIndex, float range, NearbyAgents& nearbyAgents) const;
+    void   ComputeNearbyAgents(const SAgentParams& agent, size_t agentIndex, size_t fromIndex, size_t toIndex, float range, NearbyAgents& nearbyAgents) const;
 
-	typedef std::vector<Obstacle> Obstacles;
-	Obstacles       m_obstacles;
+    size_t ComputeNearbyObstacles(const SAgentParams& agent, size_t agentIndex, float range, NearbyObstacles& nearbyObstacles) const;
 
-	NearbyAgents    m_nearbyAgents;
-	NearbyObstacles m_nearbyObstacles;
-	ConstraintLines m_constraintLines;
+    size_t ComputeConstraintLinesForAgent(const SAgentParams& agent, size_t agentIndex, float timeHorizonScale,
+        NearbyAgents& nearbyAgents, size_t maxAgentsConsidered, NearbyObstacles& nearbyObstacles, ConstraintLines& lines) const;
+    void   ComputeAgentConstraintLine(const SAgentParams& agent, const SAgentParams& obstacleAgent, bool reciprocal, float timeHorizonScale,
+        SConstraintLine& line) const;
+    void   ComputeObstacleConstraintLine(const SAgentParams& agent, const SObstacleParams& obstacle, float timeHorizonScale,
+        SConstraintLine& line) const;
 
-	typedef std::vector<tAIObjectID> AgentObjectIDs;
-	AgentObjectIDs m_agentObjectIDs;
+    bool   ClipPolygon(const Vec2* polygon, size_t vertexCount, const SConstraintLine& line, Vec2* output,
+        size_t* outputVertexCount) const;
+    size_t ComputeFeasibleArea(const SConstraintLine* lines, size_t lineCount, float radius, Vec2* feasibleArea) const;
+    bool   ClipVelocityByFeasibleArea(const Vec2& velocity, Vec2* feasibleArea, size_t vertexCount, Vec2& output) const;
 
-	typedef std::vector<string> AgentNames;
-	AgentNames m_agentNames;
+    size_t ComputeOptimalAvoidanceVelocity(Vec2* feasibleArea, size_t vertexCount, const SAgentParams& agent,
+        const float minSpeed, const float maxSpeed, SCandidateVelocity* output) const;
+
+    Vec2 ClampSpeedWithNavigationMesh(const SNavigationProperties& agentNavProperties, const Vec3& agentPosition, const Vec3& currentVelocity, const Vec2& velocityToClamp) const;
+    bool FindFirstWalkableVelocity(AgentID agentID, SCandidateVelocity* candidates, size_t candidateCount,
+        Vec2& output) const;
+
+    bool FindLineCandidate(const SConstraintLine* lines, size_t lineCount, size_t lineNumber, float radius, const Vec2& velocity,
+        Vec2& candidate) const;
+    bool FindCandidate(const SConstraintLine* lines, size_t lineCount, float radius, const Vec2& velocity, Vec2& candidate) const;
+
+    void DebugDrawConstraintLine(const Vec3& agentLocation, const SConstraintLine& line, const ColorB& color);
+
+    std::vector<IAgent*> m_registeredAgentsPtrs;
+    CryFixedArray<IAgent*, kMaxAvoidingAgents> m_avoidingAgentsPtrs;
+    std::vector<SAgentParams> m_agents;
+    std::vector<Vec2> m_agentAvoidanceVelocities;
+    std::vector<SObstacleParams> m_obstacles;
+
+    NearbyAgents    m_nearbyAgents;
+    NearbyObstacles m_nearbyObstacles;
+    ConstraintLines m_constraintLines;
+
+    std::vector<SNavigationProperties> m_agentsNavigationProperties;
+
+    bool m_isUpdating;
 };
+}
+}
+} // Cry
 
-#endif //__CollisionAvoidanceSystem_h__

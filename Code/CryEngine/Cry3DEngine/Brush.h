@@ -1,7 +1,6 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
-#ifndef _3DENGINE_BRUSH_H_
-#define _3DENGINE_BRUSH_H_
+#pragma once
 
 #include "ObjMan.h"
 #include "DeformableNode.h"
@@ -10,9 +9,7 @@
 	#include <CryCore/Platform/platform.h>
 #endif
 
-class CBrush
-	: public IBrush
-	  , public Cry3DEngineBase
+class CBrush : public IBrush, public Cry3DEngineBase
 {
 	friend class COctreeNode;
 
@@ -22,26 +19,26 @@ public:
 
 	virtual const char*         GetEntityClassName() const final;
 	virtual Vec3                GetPos(bool bWorldOnly = true) const final;
-	virtual float               GetScale() const;
+	virtual float               GetScale() const final;
 	virtual const char*         GetName() const final;
 	virtual bool                HasChanged();
 	virtual void                Render(const struct SRendParams& EntDrawParams, const SRenderingPassInfo& passInfo) final;
 	virtual CLodValue           ComputeLod(int wantedLod, const SRenderingPassInfo& passInfo) final;
-	void                        Render(const CLodValue& lodValue, const SRenderingPassInfo& passInfo, SSectorTextureSet* pTerrainTexInfo, PodArray<CDLight*>* pAffectingLights);
+	void                        Render(const CLodValue& lodValue, const SRenderingPassInfo& passInfo, SSectorTextureSet* pTerrainTexInfo, PodArray<SRenderLight*>* pAffectingLights);
 
-	virtual struct IStatObj*    GetEntityStatObj(unsigned int nPartId = 0, unsigned int nSubPartId = 0, Matrix34A* pMatrix = NULL, bool bReturnOnlyVisible = false) final;
+	virtual struct IStatObj*    GetEntityStatObj(unsigned int nSubPartId = 0, Matrix34A* pMatrix = NULL, bool bReturnOnlyVisible = false) final;
 
 	virtual bool                GetLodDistances(const SFrameLodInfo& frameLodInfo, float* distances) const final;
 
-	virtual void                SetEntityStatObj(unsigned int nSlot, IStatObj* pStatObj, const Matrix34A* pMatrix = NULL) final;
+	virtual void                SetEntityStatObj(IStatObj* pStatObj, const Matrix34A* pMatrix = NULL) final;
 
 	virtual IRenderNode*        Clone() const final;
 
 	virtual void                SetCollisionClassIndex(int tableIndex) final { m_collisionClassIdx = tableIndex; }
 
 	virtual void                SetLayerId(uint16 nLayerId) final;
-	virtual uint16              GetLayerId() final                           { return m_nLayerId; }
-	virtual struct IRenderMesh* GetRenderMesh(int nLod) final;
+	virtual uint16              GetLayerId() const final { return m_nLayerId; }
+	virtual struct IRenderMesh* GetRenderMesh(int nLod) const final;
 
 	virtual IPhysicalEntity*    GetPhysics() const final;
 	virtual void                SetPhysics(IPhysicalEntity* pPhys) final;
@@ -56,12 +53,12 @@ public:
 	//! Assign final material to this entity.
 	virtual void       SetMaterial(IMaterial* pMat) final;
 	virtual IMaterial* GetMaterial(Vec3* pHitPos = NULL) const final;
-	virtual IMaterial* GetMaterialOverride() final { return m_pMaterial; };
+	virtual IMaterial* GetMaterialOverride() const final { return m_pMaterial; }
 	virtual void       CheckPhysicalized() final;
 
-	virtual float      GetMaxViewDist() final;
+	virtual float      GetMaxViewDist() const final;
 
-	virtual EERType    GetRenderNodeType() final;
+	virtual EERType    GetRenderNodeType() const override { return eERType_Brush; }
 
 	void               SetStatObj(IStatObj* pStatObj);
 
@@ -76,13 +73,15 @@ public:
 
 	virtual const AABB GetBBox() const final;
 	virtual void       SetBBox(const AABB& WSBBox) final { m_WSBBox = WSBBox; }
-	virtual void       FillBBox(AABB& aabb) final;
+	virtual void       FillBBox(AABB& aabb) const final { aabb = GetBBox(); }
 	virtual void       OffsetPosition(const Vec3& delta) final;
 
-	virtual void SetCameraSpacePos( Vec3* pCameraSpacePos ) final;
+	virtual void SetCameraSpaceParams(stl::optional<SCameraSpaceParams> cameraSpaceParams) override;
+	virtual stl::optional<SCameraSpaceParams> GetCameraSpaceParams() const override;
+
 	virtual void SetSubObjectHideMask( hidemask subObjHideMask ) final;
 
-	virtual bool       CanExecuteRenderAsJob() final;
+	virtual bool       CanExecuteRenderAsJob() const final;
 	
 	virtual void       DisablePhysicalization(bool bDisable) final;
 
@@ -90,8 +89,7 @@ public:
 	void CalcBBox();
 	void UpdatePhysicalMaterials(int bThreadSafe = 0);
 
-	void OnRenderNodeBecomeVisible(const SRenderingPassInfo& passInfo) final;
-	void OnRenderNodeBecomeInvisible() final;
+	virtual void OnRenderNodeBecomeVisibleAsync(SRenderNodeTempData* pTempData, const SRenderingPassInfo& passInfo) final;
 
 	bool HasDeformableData() const { return m_pDeform != NULL; }
 
@@ -131,7 +129,7 @@ public:
 	// Hide mask disable individual sub-objects rendering in the compound static objects
 	hidemask m_nSubObjHideMask;
 
-	Vec3*    m_pCameraSpacePos = nullptr;
+	stl::optional<SCameraSpaceParams> m_cameraSpaceParams = stl::nullopt;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -140,4 +138,15 @@ inline const AABB CBrush::GetBBox() const
 	return m_WSBBox;
 }
 
-#endif // _3DENGINE_BRUSH_H_
+///////////////////////////////////////////////////////////////////////////////
+class CMovableBrush final : public CBrush
+{
+	virtual void     SetOwnerEntity(struct IEntity* pEntity) final { m_pOwnerEntity = pEntity; }
+	virtual IEntity* GetOwnerEntity() const final                  { return m_pOwnerEntity; }
+	virtual EERType  GetRenderNodeType() const final               { return eERType_MovableBrush; }
+	virtual bool     IsAllocatedOutsideOf3DEngineDLL()             { return GetOwnerEntity() != nullptr; }
+
+private:
+	// When render node is created by the entity, pointer to the owner entity.
+	IEntity* m_pOwnerEntity = 0;
+};

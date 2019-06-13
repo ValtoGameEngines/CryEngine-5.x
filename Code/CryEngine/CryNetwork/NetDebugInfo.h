@@ -1,7 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
-
-#ifndef __NETDEBUGINFO_H__
-#define __NETDEBUGINFO_H__
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 #pragma once
 
@@ -204,5 +201,3 @@ private:
 };
 
 #endif // ENABLE_NET_DEBUG_INFO
-
-#endif

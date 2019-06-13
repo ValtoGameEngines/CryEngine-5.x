@@ -1,16 +1,23 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
+
+//! \cond INTERNAL
 
 #pragma once
 
+#include <CryCore/CryVariant.h>
 #include <CryCore/functor.h>
+#include <CryCore/AlignmentTools.h>
+#include <CrySystem/ISystem.h>
+#include <CrySystem/IEngineModule.h>
 
 class ICrySizer;
-struct IWeakScriptObject;
-struct IScriptTable;
-struct ISystem;
-struct IFunctionHandler;
 class SmartScriptTable;
+
+struct IFunctionHandler;
+struct IScriptTable;
 struct ISerialize;
+struct ISystem;
+struct IWeakScriptObject;
 
 //! Script function reference.
 struct SScriptFuncHandle {};
@@ -23,16 +30,11 @@ union ScriptHandle
 	UINT_PTR n;
 	void*    ptr;
 
-	ScriptHandle() : ptr(0)
-	{
-	};
-	ScriptHandle(int i) : n(i)
-	{
-	};
+	ScriptHandle() : ptr(0) {}
+	ScriptHandle(int i) : n(i) {}
+	ScriptHandle(void* p) : ptr(p) {}
 
-	ScriptHandle(void* p) : ptr(p)
-	{
-	};
+	bool operator==(const ScriptHandle& rhs) const { return ptr == rhs.ptr; }
 };
 
 //! Template to wrap an int into a ScriptHandle (to guarantee the proper handling of full-range ints).
@@ -48,7 +50,10 @@ struct ScriptUserData
 	void* ptr;
 	int   nRef;
 
-	ScriptUserData() { ptr = 0; nRef = 0; }
+	ScriptUserData() : ptr(nullptr), nRef(0) {}
+	ScriptUserData(void* const _ptr, int ref) : ptr(_ptr), nRef(ref) {}
+
+	bool operator==(const ScriptUserData& rhs) const { return ptr == rhs.ptr && nRef == rhs.nRef; }
 };
 
 typedef int HBREAKPOINT;
@@ -83,51 +88,36 @@ enum ScriptVarType
 };
 
 //! Any Script value.
-enum ScriptAnyType
+enum class EScriptAnyType
 {
-	ANY_ANY = 0,
-	ANY_TNIL,
-	ANY_TBOOLEAN,
-	ANY_THANDLE,
-	ANY_TNUMBER,
-	ANY_TSTRING,
-	ANY_TTABLE,
-	ANY_TFUNCTION,
-	ANY_TUSERDATA,
-	ANY_TVECTOR,
-	ANY_COUNT,
+	Any = 0,
+	Nil,
+	Boolean,
+	Handle,
+	Number,
+	String,
+	Table,
+	Function,
+	UserData,
+	Vector,
 };
 
 struct ScriptAnyValue
 {
-	ScriptAnyType type;
-	union
-	{
-		bool                            b;
-		float                           number;
-		const char*                     str;
-		IScriptTable*                   table;
-		const void*                     ptr;
-		HSCRIPTFUNCTION                 function;
-		struct { float x, y, z; }       vec3;
-		struct { void* ptr; int nRef; } ud;
-	};
-
 	~ScriptAnyValue();  // Implemented at the end of header.
 
-	ScriptAnyValue() : type(ANY_ANY) { table = 0; };
-	ScriptAnyValue(ScriptAnyType _type) : type(_type) { table = 0; };
-	ScriptAnyValue(bool value) : type(ANY_TBOOLEAN) { b = value; };
-	ScriptAnyValue(int value) : type(ANY_TNUMBER) { number = (float)value; };
-	ScriptAnyValue(unsigned int value) : type(ANY_TNUMBER) { number = (float)value; };
-	ScriptAnyValue(float value) : type(ANY_TNUMBER) { number = value; };
-	ScriptAnyValue(const char* value) : type(ANY_TSTRING) { str = value; };
-	ScriptAnyValue(ScriptHandle value) : type(ANY_THANDLE) { ptr = value.ptr; };
+	ScriptAnyValue() {}
+	ScriptAnyValue(EScriptAnyType type); // Implemented at the end of header.
+	ScriptAnyValue(bool bValue) : m_data(bValue) {}
+	ScriptAnyValue(int value) : m_data(static_cast<float>(value)) {}
+	ScriptAnyValue(unsigned int value) : m_data(static_cast<float>(value)) {}
+	ScriptAnyValue(float value) : m_data(value) {}
+	ScriptAnyValue(const char* value) : m_data(value) {}
+	ScriptAnyValue(ScriptHandle value) : m_data(value) {}
 	ScriptAnyValue(HSCRIPTFUNCTION value);
-	ScriptAnyValue(const Vec3& value) : type(ANY_TVECTOR) { vec3.x = value.x; vec3.y = value.y; vec3.z = value.z; };
-	ScriptAnyValue(const Ang3& value) : type(ANY_TVECTOR) { vec3.x = value.x; vec3.y = value.y; vec3.z = value.z; };
-	//ScriptAnyValue( const ScriptUserData &value ) : type(ANY_TUSERDATA) { ud.ptr = value.ptr; ud.nRef = value.nRef; };
-	//ScriptAnyValue( USER_DATA value ) : type(ANY_TUSERDATA) { ud.nRef=(int)value;ud.nCookie=0;ud.nVal=0; }; // To Remove.
+	ScriptAnyValue(const Vec3& value) : m_data(value) {}
+	ScriptAnyValue(const Ang3& value) : m_data(static_cast<Vec3>(value)) {}
+	ScriptAnyValue(const ScriptUserData& value) : m_data(value) {}
 	ScriptAnyValue(IScriptTable* value);            // Implemented at the end of header.
 	ScriptAnyValue(const SmartScriptTable& value);  // Implemented at the end of header.
 
@@ -143,69 +133,67 @@ struct ScriptAnyValue
 
 	//! Compares 2 values.
 	bool operator==(const ScriptAnyValue& rhs) const;
-	bool operator!=(const ScriptAnyValue& rhs) const { return !(*this == rhs); };
+	bool operator!=(const ScriptAnyValue& rhs) const { return !(*this == rhs); }
 
-	bool CopyTo(bool& value) const                   { if (type == ANY_TBOOLEAN) { value = b; return true; }; return false; };
-	bool CopyTo(int& value) const                    { if (type == ANY_TNUMBER) { value = (int)number; return true; }; return false; };
-	bool CopyTo(unsigned int& value) const           { if (type == ANY_TNUMBER) { value = (unsigned int)number; return true; }; return false; };
-	bool CopyTo(float& value) const                  { if (type == ANY_TNUMBER) { value = number; return true; }; return false; };
-	bool CopyTo(const char*& value) const            { if (type == ANY_TSTRING) { value = str; return true; }; return false; };
-	bool CopyTo(char*& value) const                  { if (type == ANY_TSTRING) { value = (char*)str; return true; }; return false; };
-	bool CopyTo(string& value) const                 { if (type == ANY_TSTRING) { value = str; return true; }; return false; };
-	bool CopyTo(ScriptHandle& value) const           { if (type == ANY_THANDLE) { value.ptr = const_cast<void*>(ptr); return true; }; return false; };
+	bool CopyTo(bool& value) const             { if (GetType() == EScriptAnyType::Boolean)  { value = GetBool(); return true; } return false; }
+	bool CopyTo(int& value) const              { if (GetType() == EScriptAnyType::Number)   { value = static_cast<int>(GetNumber()); return true; } return false; }
+	bool CopyTo(unsigned int& value) const     { if (GetType() == EScriptAnyType::Number)   { value = static_cast<unsigned int>(GetNumber()); return true; } return false; }
+	bool CopyTo(float& value) const            { if (GetType() == EScriptAnyType::Number)   { value = GetNumber(); return true; } return false; }
+	bool CopyTo(const char*& value) const      { if (GetType() == EScriptAnyType::String)   { value = GetString(); return true; } return false; }
+	bool CopyTo(char*& value) const            { if (GetType() == EScriptAnyType::String)   { value = const_cast<char*>(GetString()); return true; } return false; }
+	bool CopyTo(string& value) const           { if (GetType() == EScriptAnyType::String)   { value = GetString(); return true; } return false; }
+	bool CopyTo(ScriptHandle& value) const     { if (GetType() == EScriptAnyType::Handle)   { value = GetScriptHandle(); return true; } return false; }
 	bool CopyTo(HSCRIPTFUNCTION& value) const;
-	bool CopyTo(Vec3& value) const                   { if (type == ANY_TVECTOR) { value.x = vec3.x; value.y = vec3.y; value.z = vec3.z; return true; }; return false; };
-	bool CopyTo(Ang3& value) const                   { if (type == ANY_TVECTOR) { value.x = vec3.x; value.y = vec3.y; value.z = vec3.z; return true; }; return false; };
-	//	bool CopyTo( ScriptUserData &value ) { if (type==ANY_TUSERDATA) { value.ptr = ud.ptr; value.nRef = ud.nRef; return true; }; return false; };
-	//	bool CopyTo( USER_DATA &value ) { if (type==ANY_TUSERDATA) { value = (USER_DATA)ud.nRef; return true; }; return false; };
+	bool CopyTo(Vec3& value) const             { if (GetType() == EScriptAnyType::Vector)   { value = GetVector(); return true; } return false; }
+	bool CopyTo(Ang3& value) const             { if (GetType() == EScriptAnyType::Vector)   { value = GetVector(); return true; } return false; }
+	bool CopyTo(ScriptUserData &value)         { if (GetType() == EScriptAnyType::UserData) { value = GetUserData(); return true; } return false; }
 	bool CopyTo(IScriptTable*& value) const;    // Implemented at the end of header.
 	bool CopyTo(SmartScriptTable& value) const; // Implemented at the end of header.
 	bool CopyFromTableToXYZ(float& x, float& y, float& z) const;
-	bool CopyFromTableTo(Vec3& value) const { return CopyFromTableToXYZ(value.x, value.y, value.z); }
-	bool CopyFromTableTo(Ang3& value) const { return CopyFromTableToXYZ(value.x, value.y, value.z); }
+	bool CopyFromTableTo(Vec3& value) const    { return CopyFromTableToXYZ(value.x, value.y, value.z); }
+	bool CopyFromTableTo(Ang3& value) const    { return CopyFromTableToXYZ(value.x, value.y, value.z); }
 
 	//! Clears any variable to uninitialized state.
 	// Implemented at the end of header.
 	void Clear();
 
 	//! Only initialize type.
-	ScriptAnyValue(bool, int) : type(ANY_TBOOLEAN) {};
-	ScriptAnyValue(int, int) : type(ANY_TNUMBER) {};
-	ScriptAnyValue(unsigned int, int) : type(ANY_TNUMBER) {};
-	ScriptAnyValue(float&, int) : type(ANY_TNUMBER) {};
-	ScriptAnyValue(const char*, int) : type(ANY_TSTRING) {};
-	ScriptAnyValue(ScriptHandle, int) : type(ANY_THANDLE) {};
-	ScriptAnyValue(HSCRIPTFUNCTION, int) : type(ANY_TFUNCTION) { function = 0; };
-	ScriptAnyValue(Vec3&, int) : type(ANY_TVECTOR) {};
-	ScriptAnyValue(Ang3&, int) : type(ANY_TVECTOR) {};
-	ScriptAnyValue(ScriptUserData, int) : type(ANY_TUSERDATA) {};
-	//ScriptAnyValue( USER_DATA,int ) : type(ANY_TUSERDATA) {};
+	ScriptAnyValue(bool, int) { m_data.emplace<bool>(); }
+	ScriptAnyValue(int, int) { m_data.emplace<float>(); }
+	ScriptAnyValue(unsigned int, int) { m_data.emplace<float>(); }
+	ScriptAnyValue(float&, int) { m_data.emplace<float>(); }
+	ScriptAnyValue(const char*, int) { m_data.emplace<const char*>(); }
+	ScriptAnyValue(ScriptHandle, int) { m_data.emplace<ScriptHandle>(); }
+	ScriptAnyValue(HSCRIPTFUNCTION, int) { m_data.emplace<HSCRIPTFUNCTION>(); }
+	ScriptAnyValue(Vec3&, int) { m_data.emplace<Vec3>(); }
+	ScriptAnyValue(Ang3&, int) { m_data.emplace<Vec3>(); }
+	ScriptAnyValue(ScriptUserData, int) { m_data.emplace<ScriptUserData>(); }
 	ScriptAnyValue(IScriptTable* _table, int);
 	ScriptAnyValue(const SmartScriptTable& value, int);
 
 	ScriptVarType GetVarType() const
 	{
-		switch (type)
+		switch (GetType())
 		{
-		case ANY_ANY:
+		case EScriptAnyType::Any:
 			return svtNull;
-		case ANY_TNIL:
+		case EScriptAnyType::Nil:
 			return svtNull;
-		case ANY_TBOOLEAN:
+		case EScriptAnyType::Boolean:
 			return svtBool;
-		case ANY_THANDLE:
+		case EScriptAnyType::Handle:
 			return svtPointer;
-		case ANY_TNUMBER:
+		case EScriptAnyType::Number:
 			return svtNumber;
-		case ANY_TSTRING:
+		case EScriptAnyType::String:
 			return svtString;
-		case ANY_TTABLE:
+		case EScriptAnyType::Table:
 			return svtObject;
-		case ANY_TFUNCTION:
+		case EScriptAnyType::Function:
 			return svtFunction;
-		case ANY_TUSERDATA:
+		case EScriptAnyType::UserData:
 			return svtUserData;
-		case ANY_TVECTOR:
+		case EScriptAnyType::Vector:
 			return svtObject;
 		default:
 			return svtNull;
@@ -213,6 +201,140 @@ struct ScriptAnyValue
 	}
 
 	void GetMemoryUsage(ICrySizer* pSizer) const {}
+
+	EScriptAnyType GetType() const
+	{
+		return static_cast<EScriptAnyType>(m_data.index());;
+	}
+
+	void SetAny()
+	{
+		m_data.emplace<static_cast<size_t>(EScriptAnyType::Any)>(nullptr);
+	}
+
+	void SetNil()
+	{
+		m_data.emplace<static_cast<size_t>(EScriptAnyType::Nil)>(nullptr);
+	}
+
+	bool GetBool() const
+	{
+		CRY_ASSERT(GetType() == EScriptAnyType::Boolean && stl::holds_alternative<bool>(m_data));
+		return stl::get<bool>(m_data);
+	}
+	void SetBool(bool bValue)
+	{
+		m_data = bValue;
+	}
+
+	ScriptHandle GetScriptHandle() const
+	{
+		CRY_ASSERT(GetType() == EScriptAnyType::Handle && stl::holds_alternative<ScriptHandle>(m_data));
+		return stl::get<ScriptHandle>(m_data);
+	}
+	void SetScriptHandle(ScriptHandle value)
+	{
+		m_data = value;
+	}
+
+	float GetNumber() const
+	{
+		CRY_ASSERT(GetType() == EScriptAnyType::Number && stl::holds_alternative<float>(m_data));
+		return stl::get<float>(m_data);
+	}
+	void SetNumber(float value)
+	{
+		m_data = value;
+	}
+
+	const char* GetString() const
+	{
+		CRY_ASSERT(GetType() == EScriptAnyType::String && stl::holds_alternative<const char*>(m_data));
+		return stl::get<const char*>(m_data);
+	}
+	void SetString(const char* szValue)
+	{
+		m_data = szValue;
+	}
+
+	IScriptTable* GetScriptTable()
+	{
+		CRY_ASSERT(GetType() == EScriptAnyType::Table && stl::holds_alternative<IScriptTable*>(m_data));
+		return stl::get<IScriptTable*>(m_data);
+	}
+	IScriptTable* GetScriptTable() const
+	{
+		return const_cast<ScriptAnyValue*>(this)->GetScriptTable();
+	}
+	void SetScriptTable(IScriptTable* const pValue)
+	{
+		m_data = pValue;
+	}
+
+	HSCRIPTFUNCTION GetScriptFunction()
+	{
+		CRY_ASSERT(GetType() == EScriptAnyType::Function && stl::holds_alternative<HSCRIPTFUNCTION>(m_data));
+		return stl::get<HSCRIPTFUNCTION>(m_data);
+	}
+	const HSCRIPTFUNCTION GetScriptFunction() const
+	{
+		return const_cast<ScriptAnyValue*>(this)->GetScriptFunction();
+	}
+	void SetScriptFunction(HSCRIPTFUNCTION value)
+	{
+		m_data = value;
+	}
+
+	const ScriptUserData& GetUserData() const
+	{
+		CRY_ASSERT(GetType() == EScriptAnyType::UserData && stl::holds_alternative<ScriptUserData>(m_data));
+		return stl::get<ScriptUserData>(m_data);
+	}
+	void SetUserData(const ScriptUserData& value)
+	{
+		m_data = value;
+	}
+
+	const Vec3& GetVector() const
+	{
+		CRY_ASSERT(GetType() == EScriptAnyType::Vector && stl::holds_alternative<Vec3>(m_data));
+		return stl::get<Vec3>(m_data);
+	}
+	void SetVector(const Vec3& value)
+	{
+		m_data = value;
+	}
+
+	private:
+		typedef CryVariant<
+			void*,
+			std::nullptr_t,
+			bool,
+			ScriptHandle,
+			float,
+			const char*,
+			IScriptTable*,
+			HSCRIPTFUNCTION,
+			ScriptUserData,
+			Vec3
+		> TScriptVariant;
+
+		static_assert(std::is_same<stl::variant_alternative<static_cast<size_t>(EScriptAnyType::Any), TScriptVariant>::type, void*>::value, "Enum value and variant index do not match!");
+		static_assert(std::is_same<stl::variant_alternative<static_cast<size_t>(EScriptAnyType::Nil), TScriptVariant>::type, std::nullptr_t>::value, "Enum value and variant index do not match!");
+		static_assert(std::is_same<stl::variant_alternative<static_cast<size_t>(EScriptAnyType::Boolean), TScriptVariant>::type, bool>::value, "Enum value and variant index do not match!");
+		static_assert(std::is_same<stl::variant_alternative<static_cast<size_t>(EScriptAnyType::Number), TScriptVariant>::type, float>::value, "Enum value and variant index do not match!");
+		static_assert(std::is_same<stl::variant_alternative<static_cast<size_t>(EScriptAnyType::String), TScriptVariant>::type, const char*>::value, "Enum value and variant index do not match!");
+		static_assert(std::is_same<stl::variant_alternative<static_cast<size_t>(EScriptAnyType::Table), TScriptVariant>::type, IScriptTable*>::value, "Enum value and variant index do not match!");
+		static_assert(std::is_same<stl::variant_alternative<static_cast<size_t>(EScriptAnyType::Function), TScriptVariant>::type, HSCRIPTFUNCTION>::value, "Enum value and variant index do not match!");
+		static_assert(std::is_same<stl::variant_alternative<static_cast<size_t>(EScriptAnyType::UserData), TScriptVariant>::type, ScriptUserData>::value, "Enum value and variant index do not match!");
+		static_assert(std::is_same<stl::variant_alternative<static_cast<size_t>(EScriptAnyType::Vector), TScriptVariant>::type, Vec3>::value, "Enum value and variant index do not match!");
+
+		TScriptVariant m_data;
+};
+
+struct IScriptSystemEngineModule : public Cry::IDefaultModule
+{
+	CRYINTERFACE_DECLARE_GUID(IScriptSystemEngineModule, "39b5373f-b298-4aa1-b691-88ed53cf5f9d"_cry_guid);
 };
 
 //! Scripting Engine interface.
@@ -345,7 +467,7 @@ struct IScriptSystem
 	virtual bool GetGlobalAny(const char* sKey, ScriptAnyValue& any) = 0;
 
 	//! Set Global value to Null.
-	virtual void          SetGlobalToNull(const char* sKey) { SetGlobalAny(sKey, ScriptAnyValue(ANY_TNIL)); }
+	virtual void          SetGlobalToNull(const char* sKey) { SetGlobalAny(sKey, ScriptAnyValue(EScriptAnyType::Nil)); }
 
 	virtual IScriptTable* CreateUserData(void* ptr, size_t size) = 0;
 
@@ -630,30 +752,30 @@ struct IScriptTable
 		ScriptAnyValue any;
 		GetValueAny(sKey, any);
 
-		switch (any.type)
+		switch (any.GetType())
 		{
-		case ANY_TTABLE:
-			if (any.table)
+		case EScriptAnyType::Table:
+			if (any.GetScriptTable())
 			{
-				any.table->Release();
-				any.table = 0;
+				any.GetScriptTable()->Release();
+				any.SetScriptTable(nullptr);
 			}
 			return true;
-		case ANY_TFUNCTION:
-			if (any.function)
+		case EScriptAnyType::Function:
+			if (any.GetScriptFunction())
 			{
-				gEnv->pScriptSystem->ReleaseFunc(any.function);
-				any.function = 0;
+				gEnv->pScriptSystem->ReleaseFunc(any.GetScriptFunction());
+				any.SetScriptFunction(nullptr);
 			}
 			return true;
-		case ANY_TNIL:
+		case EScriptAnyType::Nil:
 			return false;
 		default:
 			return true;
 		}
 	}
 	//! Set member value to nil.
-	void SetToNull(const char* sKey) { SetValueAny(sKey, ScriptAnyValue(ANY_TNIL)); }
+	void SetToNull(const char* sKey) { SetValueAny(sKey, ScriptAnyValue(EScriptAnyType::Nil)); }
 
 	//! Set value of a table member.
 	template<class T> void SetValueChain(const char* sKey, const T& value) { SetValueAny(sKey, value, true); }
@@ -664,7 +786,7 @@ struct IScriptTable
 		ScriptAnyValue any(value, 0);
 		return GetValueAny(sKey, any, true) && any.CopyTo(value);
 	}
-	void SetToNullChain(const char* sKey) { SetValueChain(sKey, ScriptAnyValue(ANY_TNIL)); }
+	void SetToNullChain(const char* sKey) { SetValueChain(sKey, ScriptAnyValue(EScriptAnyType::Nil)); }
 
 	//! Set the value of a member variable at the specified index.
 	template<class T> void SetAt(int nIndex, const T& value) { SetAtAny(nIndex, value); }
@@ -679,10 +801,10 @@ struct IScriptTable
 	{
 		ScriptAnyValue any;
 		GetAtAny(elem, any);
-		return any.type != ANY_TNIL;
+		return any.GetType() != EScriptAnyType::Nil;
 	}
 	//! Set the value of a member variable to nil at the specified index.
-	void SetNullAt(int nIndex) { SetAtAny(nIndex, ScriptAnyValue(ANY_TNIL)); }
+	void SetNullAt(int nIndex) { SetAtAny(nIndex, ScriptAnyValue(EScriptAnyType::Nil)); }
 
 	//! Add value at next available index.
 	template<class T> void PushBack(const T& value)
@@ -838,7 +960,7 @@ struct IFunctionHandler
 	}
 
 	//////////////////////////////////////////////////////////////////////////
-	// To be removed later (FC Compatability).
+	// To be removed later (FC Compatibility).
 	//////////////////////////////////////////////////////////////////////////
 	/*
 	   bool GetParamUDVal(int nIdx,ULONG_PTR &nValue,int &nCookie)
@@ -900,52 +1022,930 @@ private:
 	IScriptTable* m_pTable;
 };
 
-#include "ScriptHelpers.h"
+#ifdef CRYSCRIPTSYSTEM_EXPORTS
+	#define CRYSCRIPTSYSTEM_API DLL_EXPORT
+#else // CRYSCRIPTSYSTEM_EXPORTS
+	#define CRYSCRIPTSYSTEM_API DLL_IMPORT
+#endif // CRYSCRIPTSYSTEM_EXPORTS
+
+extern "C"
+{
+	CRYSCRIPTSYSTEM_API IScriptSystem* CreateScriptSystem(ISystem* pSystem, bool bStdLibs);
+}
+typedef IScriptSystem*(* CREATESCRIPTSYSTEM_FNCPTR)(ISystem* pSystem, bool bStdLibs);
+
+//! Helper template class.
+//! Handles dispatching of Lua to C script function callbacks to the specified
+//! member functions of the CScriptableBase.
+// See Also: CScriptableBase::RegisterTemplateFunction
+struct ScriptTemplateCallHelper
+{
+	template<typename Callee>
+	static int Call(Callee* callee, int (Callee::* func)(IFunctionHandler*), IFunctionHandler* pH)
+	{
+		return (callee->*func)(pH);
+	}
+	template<typename Callee, typename P1>
+	static int Call(Callee* callee, int (Callee::* func)(IFunctionHandler*, P1), IFunctionHandler* pH)
+	{
+		P1 p1;
+		if (!pH->GetParams(p1))
+			return pH->EndFunction();
+		return (callee->*func)(pH, p1);
+	}
+	template<typename Callee, typename P1, typename P2>
+	static int Call(Callee* callee, int (Callee::* func)(IFunctionHandler*, P1, P2), IFunctionHandler* pH)
+	{
+		P1 p1;
+		P2 p2;
+		if (!pH->GetParams(p1, p2))
+			return pH->EndFunction();
+		return (callee->*func)(pH, p1, p2);
+	}
+	template<typename Callee, typename P1, typename P2, typename P3>
+	static int Call(Callee* callee, int (Callee::* func)(IFunctionHandler*, P1, P2, P3), IFunctionHandler* pH)
+	{
+		P1 p1;
+		P2 p2;
+		P3 p3;
+		if (!pH->GetParams(p1, p2, p3))
+			return pH->EndFunction();
+		return (callee->*func)(pH, p1, p2, p3);
+	}
+	template<typename Callee, typename P1, typename P2, typename P3, typename P4>
+	static int Call(Callee* callee, int (Callee::* func)(IFunctionHandler*, P1, P2, P3, P4), IFunctionHandler* pH)
+	{
+		P1 p1;
+		P2 p2;
+		P3 p3;
+		P4 p4;
+		if (!pH->GetParams(p1, p2, p3, p4))
+			return pH->EndFunction();
+		return (callee->*func)(pH, p1, p2, p3, p4);
+	}
+	template<typename Callee, typename P1, typename P2, typename P3, typename P4, typename P5>
+	static int Call(Callee* callee, int (Callee::* func)(IFunctionHandler*, P1, P2, P3, P4, P5), IFunctionHandler* pH)
+	{
+		P1 p1;
+		P2 p2;
+		P3 p3;
+		P4 p4;
+		P5 p5;
+		if (!pH->GetParams(p1, p2, p3, p4, p5))
+			return pH->EndFunction();
+		return (callee->*func)(pH, p1, p2, p3, p4, p5);
+	}
+	template<typename Callee, typename P1, typename P2, typename P3, typename P4, typename P5, typename P6>
+	static int Call(Callee* callee, int (Callee::* func)(IFunctionHandler*, P1, P2, P3, P4, P5, P6), IFunctionHandler* pH)
+	{
+		P1 p1;
+		P2 p2;
+		P3 p3;
+		P4 p4;
+		P5 p5;
+		P6 p6;
+		if (!pH->GetParams(p1, p2, p3, p4, p5, p6))
+			return pH->EndFunction();
+		return (callee->*func)(pH, p1, p2, p3, p4, p5, p6);
+	}
+	template<typename Callee, typename P1, typename P2, typename P3, typename P4, typename P5, typename P6, typename P7>
+	static int Call(Callee* callee, int (Callee::* func)(IFunctionHandler*, P1, P2, P3, P4, P5, P6, P7), IFunctionHandler* pH)
+	{
+		P1 p1;
+		P2 p2;
+		P3 p3;
+		P4 p4;
+		P5 p5;
+		P6 p6;
+		P7 p7;
+		if (!pH->GetParams(p1, p2, p3, p4, p5, p6, p7))
+			return pH->EndFunction();
+		return (callee->*func)(pH, p1, p2, p3, p4, p5, p6, p7);
+	}
+	template<typename Callee, typename P1, typename P2, typename P3, typename P4, typename P5, typename P6, typename P7, typename P8>
+	static int Call(Callee* callee, int (Callee::* func)(IFunctionHandler*, P1, P2, P3, P4, P5, P6, P7, P8), IFunctionHandler* pH)
+	{
+		P1 p1;
+		P2 p2;
+		P3 p3;
+		P4 p4;
+		P5 p5;
+		P6 p6;
+		P7 p7;
+		P8 p8;
+		if (!pH->GetParams(p1, p2, p3, p4, p5, p6, p7, p8))
+			return pH->EndFunction();
+		return (callee->*func)(pH, p1, p2, p3, p4, p5, p6, p7, p8);
+	}
+	template<typename Callee, typename P1, typename P2, typename P3, typename P4, typename P5, typename P6, typename P7, typename P8, typename P9>
+	static int Call(Callee* callee, int (Callee::* func)(IFunctionHandler*, P1, P2, P3, P4, P5, P6, P7, P8, P9), IFunctionHandler* pH)
+	{
+		P1 p1;
+		P2 p2;
+		P3 p3;
+		P4 p4;
+		P5 p5;
+		P6 p6;
+		P7 p7;
+		P8 p8;
+		P9 p9;
+		if (!pH->GetParams(p1, p2, p3, p4, p5, p6, p7, p8, p9))
+			return pH->EndFunction();
+		return (callee->*func)(pH, p1, p2, p3, p4, p5, p6, p7, p8, p9);
+	}
+	template<typename Callee, typename P1, typename P2, typename P3, typename P4, typename P5, typename P6, typename P7, typename P8, typename P9, typename P10>
+	static int Call(Callee* callee, int (Callee::* func)(IFunctionHandler*, P1, P2, P3, P4, P5, P6, P7, P8, P9, P10), IFunctionHandler* pH)
+	{
+		P1 p1;
+		P2 p2;
+		P3 p3;
+		P4 p4;
+		P5 p5;
+		P6 p6;
+		P7 p7;
+		P8 p8;
+		P9 p9;
+		P10 p10;
+		if (!pH->GetParams(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10))
+			return pH->EndFunction();
+		return (callee->*func)(pH, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10);
+	}
+
+	template<typename Callee, typename Func>
+	struct CallDispatcher
+	{
+		static int Dispatch(IFunctionHandler* pH, void* pBuffer, int nSize)
+		{
+			unsigned char* buffer = (unsigned char*)pBuffer;
+			Callee* pCallee;
+			Func func;
+			LoadUnaligned(buffer, pCallee);
+			LoadUnaligned(buffer + sizeof(Callee*), func);
+			return ScriptTemplateCallHelper::Call(pCallee, func, pH);
+		}
+	};
+};
+
+//! Classes that want to register functions to the script must derive from this interface.
+class CScriptableBase
+{
+public:
+	friend class CScriptBind_GameStatistics;
+
+	virtual ~CScriptableBase() { Done(); }
+	virtual void Init(IScriptSystem* pSS, ISystem* pSystem, int nParamIdOffset = 0)
+	{
+		m_pSS = pSS;
+		m_pMethodsTable = m_pSS->CreateTable();
+		m_pMethodsTable->AddRef();
+		m_nParamIdOffset = nParamIdOffset;
+	}
+	void Done()
+	{
+		if (*m_sGlobalName != 0 && m_pSS)
+			m_pSS->SetGlobalToNull(m_sGlobalName);
+		SAFE_RELEASE(m_pMethodsTable);
+	}
+	virtual void GetMemoryStatistics(ICrySizer* pSizer) {}
+
+	void SetGlobalName(const char* sGlobalName)
+	{
+		const size_t length = strlen(sGlobalName);
+		CRY_ASSERT(length < sizeof(m_sGlobalName));
+		cry_strcpy(m_sGlobalName, sGlobalName, length + 1);
+		if (m_pMethodsTable)
+			m_pSS->SetGlobalValue(sGlobalName, m_pMethodsTable);
+	}
+
+	IScriptTable* GetMethodsTable() const { return m_pMethodsTable; }
+
+protected:
+	CScriptableBase() { m_pSS = NULL; m_pMethodsTable = NULL; m_sGlobalName[0] = 0; }
+
+	void RegisterFunction(const char* sFuncName, IScriptTable::FunctionFunctor function)
+	{
+		if (m_pMethodsTable)
+		{
+			IScriptTable::SUserFunctionDesc fd;
+			fd.sGlobalName = m_sGlobalName;
+			fd.sFunctionName = sFuncName;
+			fd.pFunctor = function;
+			fd.nParamIdOffset = m_nParamIdOffset;
+			m_pMethodsTable->AddFunction(fd);
+		}
+	}
+	template<typename Callee, typename Func>
+	void RegisterTemplateFunction(const char* sFuncName, const char* sFuncParams, Callee& callee, const Func& func)
+	{
+		typedef Callee* Callee_pointer;
+		if (m_pMethodsTable)
+		{
+			Callee_pointer pCalleePtr = &callee;
+			unsigned char pBuffer[sizeof(Callee_pointer) + sizeof(func)];
+			memcpy(pBuffer, &pCalleePtr, sizeof(Callee_pointer));
+			memcpy(pBuffer + sizeof(Callee_pointer), &func, sizeof(func));
+
+			IScriptTable::SUserFunctionDesc fd;
+			fd.sGlobalName = m_sGlobalName;
+			fd.sFunctionName = sFuncName;
+			fd.sFunctionParams = sFuncParams;
+			fd.pUserDataFunc = ScriptTemplateCallHelper::CallDispatcher<Callee, Func>::Dispatch;
+			fd.nDataSize = sizeof(Callee_pointer) + sizeof(func);
+			fd.pDataBuffer = pBuffer;
+			fd.nParamIdOffset = m_nParamIdOffset;
+
+			m_pMethodsTable->AddFunction(fd);
+		}
+	}
+
+protected:
+	//////////////////////////////////////////////////////////////////////////
+	char           m_sGlobalName[64];
+	IScriptTable*  m_pMethodsTable;
+	IScriptSystem* m_pSS;
+	int            m_nParamIdOffset;
+	//////////////////////////////////////////////////////////////////////////
+};
+
+#define SCRIPT_REG_CLASSNAME
+#define SCRIPT_REG_FUNC(func)                   RegisterFunction( # func, functor_ret(*this, SCRIPT_REG_CLASSNAME func));
+#define SCRIPT_REG_GLOBAL(var)                  gEnv->pScriptSystem->SetGlobalValue( # var, var);
+#define SCRIPT_REG_TEMPLFUNC(func, sFuncParams) RegisterTemplateFunction( # func, sFuncParams, *this, SCRIPT_REG_CLASSNAME func);
+
+#define SCRIPT_CHECK_PARAMETERS(_n)                                                                                                                  \
+  if (pH->GetParamCount() != _n)                                                                                                                     \
+  { CryWarning(VALIDATOR_MODULE_SCRIPTSYSTEM, VALIDATOR_WARNING, "[%s] %d arguments passed, " # _n " expected)", __FUNCTION__, pH->GetParamCount()); \
+    return pH->EndFunction(); }
+
+#define SCRIPT_CHECK_PARAMETERS_MIN(_n)                                                                                                                       \
+  if (pH->GetParamCount() < _n)                                                                                                                               \
+  { CryWarning(VALIDATOR_MODULE_SCRIPTSYSTEM, VALIDATOR_WARNING, "[%s] %d arguments passed, at least " # _n " expected)", __FUNCTION__, pH->GetParamCount()); \
+    return pH->EndFunction(); }
+
+#define SCRIPT_CHECK_PARAMETERS2(_n, _n2)                                                                                                                         \
+  if ((pH->GetParamCount() != _n) && (pH->GetParamCount() != _n2))                                                                                                \
+  { CryWarning(VALIDATOR_MODULE_SCRIPTSYSTEM, VALIDATOR_WARNING, "[%s] %d arguments passed, " # _n " or " # _n2 " expected)", __FUNCTION__, pH->GetParamCount()); \
+    return pH->EndFunction(); }
+
+#define SCRIPT_CHECK_PARAMETERS3(_n, _n2, _n3)                                                                                                                               \
+  if ((pH->GetParamCount() != _n) && (pH->GetParamCount() != _n2) && (pH->GetParamCount() != _n3))                                                                           \
+  { CryWarning(VALIDATOR_MODULE_SCRIPTSYSTEM, VALIDATOR_WARNING, "[%s] %d arguments passed, " # _n ", " # _n2 " or " # _n3 " expected)", __FUNCTION__, pH->GetParamCount()); \
+    return pH->EndFunction(); }
+
+//! Auto Wrapper on IScriptTable interface, will destroy table when exiting scope.
+class SmartScriptTable
+{
+public:
+	SmartScriptTable() : p(NULL) {}
+	SmartScriptTable(const SmartScriptTable& st)
+	{
+		p = st.p;
+		if (p) p->AddRef();
+	}
+	SmartScriptTable(IScriptTable* newp)
+	{
+		if (newp) newp->AddRef();
+		p = newp;
+	}
+
+	//! Copy operator.
+	SmartScriptTable& operator=(IScriptTable* newp)
+	{
+		if (newp) newp->AddRef();
+		if (p) p->Release();
+		p = newp;
+		return *this;
+	}
+	//! Copy operator.
+	SmartScriptTable& operator=(const SmartScriptTable& st)
+	{
+		if (st.p) st.p->AddRef();
+		if (p) p->Release();
+		p = st.p;
+		return *this;
+	}
+
+	explicit SmartScriptTable(IScriptSystem* pSS, bool bCreateEmpty = false)
+	{
+		p = pSS->CreateTable(bCreateEmpty);
+		p->AddRef();
+	}
+	~SmartScriptTable() { if (p) p->Release(); }
+
+	// Casts
+	IScriptTable* operator->() const { return p; }
+	IScriptTable* operator*() const { return p; }
+	operator const IScriptTable*() const { return p; }
+	operator IScriptTable*() const { return p; }
+	operator bool() const { return (p != NULL); }
+
+	// Boolean comparisons.
+	bool operator!() const { return p == NULL; }
+	bool operator==(const IScriptTable* p2) const { return p == p2; }
+	bool operator==(IScriptTable* p2) const { return p == p2; }
+	bool operator!=(const IScriptTable* p2) const { return p != p2; }
+	bool operator!=(IScriptTable* p2) const { return p != p2; }
+	bool operator<(const IScriptTable* p2) const { return p < p2; }
+	bool operator>(const IScriptTable* p2) const { return p > p2; }
+
+	//////////////////////////////////////////////////////////////////////////
+	IScriptTable* GetPtr() const { return p; }
+	//////////////////////////////////////////////////////////////////////////
+
+	bool Create(IScriptSystem* pSS, bool bCreateEmpty = false)
+	{
+		SAFE_RELEASE(p);
+		p = pSS->CreateTable(bCreateEmpty);
+		if (p == NULL)
+			return false;
+
+		p->AddRef();
+		return true;
+	}
+
+private:
+	IScriptTable* p;
+};
+
+// Smart wrapper on top of script function handle.
+class SmartScriptFunction
+{
+public:
+	SmartScriptFunction()
+		: m_func(0)
+		, m_pSS(0)
+	{
+	};
+
+	SmartScriptFunction(IScriptSystem* pSS, HSCRIPTFUNCTION func)
+		: m_func(func)
+		, m_pSS(pSS)
+	{
+	}
+
+	SmartScriptFunction(const SmartScriptFunction& other)
+		: m_func(0)
+		, m_pSS(0)
+	{
+		if (other.m_func)
+		{
+			ScriptAnyValue func(
+				other.m_pSS->CloneAny(ScriptAnyValue((HSCRIPTFUNCTION)other.m_func)));
+			func.CopyTo(m_func);
+			m_pSS = other.m_pSS;
+		}
+	}
+
+	~SmartScriptFunction()
+	{
+		if (m_func)
+			m_pSS->ReleaseFunc(m_func);
+
+		m_func = 0;
+		m_pSS = 0;
+	}
+
+	SmartScriptFunction& operator=(const SmartScriptFunction& other)
+	{
+		SmartScriptFunction(other).swap(*this);
+
+		return *this;
+	}
+
+	operator HSCRIPTFUNCTION() const
+	{
+		return m_func;
+	}
+
+	HSCRIPTFUNCTION get() const
+	{
+		return m_func;
+	}
+
+	void swap(SmartScriptFunction& other)
+	{
+		HSCRIPTFUNCTION otherFunc = other.m_func;
+		IScriptSystem* otherSS = other.m_pSS;
+		other.m_func = m_func;
+		other.m_pSS = m_pSS;
+		m_func = otherFunc;
+		m_pSS = otherSS;
+	}
+
+	void reset()
+	{
+		SmartScriptFunction().swap(*this);
+	}
+
+	void reset(IScriptSystem* pSS, HSCRIPTFUNCTION func)
+	{
+		SmartScriptFunction(pSS, func).swap(*this);
+	}
+
+private:
+	HSCRIPTFUNCTION m_func;
+	IScriptSystem*  m_pSS;
+};
+
+// Description:
+//		This class map an 3d vector to a LUA table with x,y,z members.
+class CScriptVector : public SmartScriptTable
+{
+public:
+	CScriptVector() {}
+	CScriptVector(IScriptSystem* pSS, bool bCreateEmpty = false) : SmartScriptTable(pSS, bCreateEmpty) {}
+	void Set(const Vec3& v)
+	{
+		CScriptSetGetChain chain(*this);
+		chain.SetValue("x", v.x);
+		chain.SetValue("y", v.y);
+		chain.SetValue("z", v.z);
+	}
+	Vec3 Get()
+	{
+		Vec3 v(0, 0, 0);
+		CScriptSetGetChain chain(*this);
+		chain.GetValue("x", v.x);
+		chain.GetValue("y", v.y);
+		chain.GetValue("z", v.z);
+		return v;
+	}
+	CScriptVector& operator=(const Vec3& v3) { Set(v3); return *this; }
+};
+
+//! This class map an "color" to a LUA table with indexed 3 numbers [1],[2],[3] members.
+class CScriptColor : public SmartScriptTable
+{
+public:
+	CScriptColor() {}
+	CScriptColor(IScriptSystem* pSS, bool bCreateEmpty = false) : SmartScriptTable(pSS, bCreateEmpty) {}
+	void Set(const Vec3& v)
+	{
+		IScriptTable* pTable = *this;
+		pTable->SetAt(1, v.x);
+		pTable->SetAt(2, v.y);
+		pTable->SetAt(3, v.z);
+	}
+	Vec3 Get()
+	{
+		IScriptTable* pTable = *this;
+		Vec3 v(0, 0, 0);
+		pTable->GetAt(1, v.x);
+		pTable->GetAt(2, v.y);
+		pTable->GetAt(3, v.z);
+		return v;
+	}
+	CScriptColor& operator=(const Vec3& v3) { Set(v3); return *this; }
+};
+
+//! Script call helper.
+struct Script
+{
+	static SmartScriptTable GetCachedTable(IFunctionHandler* pH, int funcParam)
+	{
+		SmartScriptTable out;
+		if (pH->GetParamCount() >= funcParam && pH->GetParamType(funcParam) == svtObject)
+			pH->GetParam(funcParam, out);
+		if (!out.GetPtr())
+			out = SmartScriptTable(gEnv->pScriptSystem);
+		return out;
+	}
+
+	static SmartScriptTable SetCachedVector(const Vec3& value, IFunctionHandler* pH, int funcParam)
+	{
+		SmartScriptTable out = GetCachedTable(pH, funcParam);
+		{
+			CScriptSetGetChain chain(out);
+			chain.SetValue("x", value.x);
+			chain.SetValue("y", value.y);
+			chain.SetValue("z", value.z);
+		}
+		return out;
+	}
+
+	static SmartScriptTable GetCachedTable(SmartScriptTable& table, const char* fieldName)
+	{
+		SmartScriptTable out;
+
+		if (table->GetValue(fieldName, out))
+			return out;
+
+		out = SmartScriptTable(gEnv->pScriptSystem);
+		table->SetValue(fieldName, out);
+		return out;
+	}
+
+	static SmartScriptTable SetCachedVector(const Vec3& value, SmartScriptTable& table, const char* fieldName)
+	{
+		SmartScriptTable out = GetCachedTable(table, fieldName);
+		{
+			CScriptSetGetChain chain(out);
+			chain.SetValue("x", value.x);
+			chain.SetValue("y", value.y);
+			chain.SetValue("z", value.z);
+		}
+		return out;
+	}
+
+	static SmartScriptTable GetCachedTable(CScriptSetGetChain& chain, const char* fieldName)
+	{
+		SmartScriptTable out;
+
+		if (chain.GetValue(fieldName, out))
+			return out;
+
+		out = SmartScriptTable(gEnv->pScriptSystem);
+		chain.SetValue(fieldName, out);
+
+		return out;
+	}
+
+	static SmartScriptTable SetCachedVector(const Vec3& value, CScriptSetGetChain& chain, const char* fieldName)
+	{
+		SmartScriptTable out = GetCachedTable(chain, fieldName);
+		{
+			CScriptSetGetChain vecChain(out);
+			vecChain.SetValue("x", value.x);
+			vecChain.SetValue("y", value.y);
+			vecChain.SetValue("z", value.z);
+		}
+		return out;
+	}
+
+	//////////////////////////////////////////////////////////////////////////
+	static bool Call(IScriptSystem* pSS, HSCRIPTFUNCTION func)
+	{
+		if (!pSS->BeginCall(func)) return false;
+		return pSS->EndCall();
+	}
+	//////////////////////////////////////////////////////////////////////////
+	static bool Call(IScriptSystem* pSS, const char* funcName)
+	{
+		if (!pSS->BeginCall(funcName)) return false;
+		return pSS->EndCall();
+	}
+	//////////////////////////////////////////////////////////////////////////
+	template<class P1>
+	static bool Call(IScriptSystem* pSS, HSCRIPTFUNCTION func, const P1& p1)
+	{
+		if (!pSS->BeginCall(func)) return false;
+		PushParams(pSS, p1);
+		return pSS->EndCall();
+	}
+	//////////////////////////////////////////////////////////////////////////
+	template<class P1, class P2>
+	static bool Call(IScriptSystem* pSS, HSCRIPTFUNCTION func, const P1& p1, const P2& p2)
+	{
+		if (!pSS->BeginCall(func)) return false;
+		PushParams(pSS, p1, p2);
+		return pSS->EndCall();
+	}
+	//////////////////////////////////////////////////////////////////////////
+	template<class P1, class P2, class P3>
+	static bool Call(IScriptSystem* pSS, HSCRIPTFUNCTION func, const P1& p1, const P2& p2, const P3& p3)
+	{
+		if (!pSS->BeginCall(func)) return false;
+		PushParams(pSS, p1, p2, p3);
+		return pSS->EndCall();
+	}
+	//////////////////////////////////////////////////////////////////////////
+	template<class P1, class P2, class P3, class P4>
+	static bool Call(IScriptSystem* pSS, HSCRIPTFUNCTION func, const P1& p1, const P2& p2, const P3& p3, const P4& p4)
+	{
+		if (!pSS->BeginCall(func)) return false;
+		PushParams(pSS, p1, p2, p3, p4);
+		return pSS->EndCall();
+	}
+
+	template<class P1, class P2, class P3, class P4, class P5>
+	static bool Call(IScriptSystem* pSS, HSCRIPTFUNCTION func, const P1& p1, const P2& p2, const P3& p3, const P4& p4, const P5& p5)
+	{
+		if (!pSS->BeginCall(func)) return false;
+		PushParams(pSS, p1, p2, p3, p4, p5);
+		return pSS->EndCall();
+	}
+
+	template<class P1, class P2, class P3, class P4, class P5, class P6>
+	static bool Call(IScriptSystem* pSS, HSCRIPTFUNCTION func, const P1& p1, const P2& p2, const P3& p3, const P4& p4, const P5& p5, const P6& p6)
+	{
+		if (!pSS->BeginCall(func)) return false;
+		PushParams(pSS, p1, p2, p3, p4, p5, p6);
+		return pSS->EndCall();
+	}
+
+	//! Call to table.
+	//! \param pTable Must not be 0.
+	static bool CallMethod(IScriptTable* pTable, const char* sMethod)
+	{
+		MEMSTAT_CONTEXT_FMT(EMemStatContextType::ScriptCall, "LUA call (%s)", sMethod);
+
+		assert(pTable);
+		IScriptSystem* pSS = pTable->GetScriptSystem();
+		if (!pSS->BeginCall(pTable, sMethod)) return false;
+		PushParams(pSS, pTable);
+		return pSS->EndCall();
+	}
+	//! \param pTable Must not be 0.
+	template<class P1>
+	static bool CallMethod(IScriptTable* pTable, const char* sMethod, const P1& p1)
+	{
+		MEMSTAT_CONTEXT_FMT(EMemStatContextType::ScriptCall, "LUA call (%s)", sMethod);
+
+		assert(pTable);
+		IScriptSystem* pSS = pTable->GetScriptSystem();
+		if (!pSS->BeginCall(pTable, sMethod)) return false;
+		PushParams(pSS, pTable, p1);
+		return pSS->EndCall();
+	}
+	//////////////////////////////////////////////////////////////////////////
+	template<class P1, class P2>
+	static bool CallMethod(IScriptTable* pTable, const char* sMethod, const P1& p1, const P2& p2)
+	{
+		MEMSTAT_CONTEXT_FMT(EMemStatContextType::ScriptCall, "LUA call (%s)", sMethod);
+
+		IScriptSystem* pSS = pTable->GetScriptSystem();
+		if (!pSS->BeginCall(pTable, sMethod)) return false;
+		PushParams(pSS, pTable, p1, p2);
+		return pSS->EndCall();
+	}
+	//////////////////////////////////////////////////////////////////////////
+	template<class P1, class P2, class P3>
+	static bool CallMethod(IScriptTable* pTable, const char* sMethod, const P1& p1, const P2& p2, const P3& p3)
+	{
+		MEMSTAT_CONTEXT_FMT(EMemStatContextType::ScriptCall, "LUA call (%s)", sMethod);
+
+		IScriptSystem* pSS = pTable->GetScriptSystem();
+		if (!pSS->BeginCall(pTable, sMethod)) return false;
+		PushParams(pSS, pTable, p1, p2, p3);
+		return pSS->EndCall();
+	}
+	//////////////////////////////////////////////////////////////////////////
+	template<class P1, class P2, class P3, class P4>
+	static bool CallMethod(IScriptTable* pTable, const char* sMethod, const P1& p1, const P2& p2, const P3& p3, const P4& p4)
+	{
+		MEMSTAT_CONTEXT_FMT(EMemStatContextType::ScriptCall, "LUA call (%s)", sMethod);
+
+		IScriptSystem* pSS = pTable->GetScriptSystem();
+		if (!pSS->BeginCall(pTable, sMethod)) return false;
+		PushParams(pSS, pTable, p1, p2, p3, p4);
+		return pSS->EndCall();
+	}
+	//////////////////////////////////////////////////////////////////////////
+	template<class P1, class P2, class P3, class P4, class P5>
+	static bool CallMethod(IScriptTable* pTable, const char* sMethod, const P1& p1, const P2& p2, const P3& p3, const P4& p4,
+		const P5& p5)
+	{
+		MEMSTAT_CONTEXT_FMT(EMemStatContextType::ScriptCall, "LUA call (%s)", sMethod);
+
+		IScriptSystem* pSS = pTable->GetScriptSystem();
+		if (!pSS->BeginCall(pTable, sMethod)) return false;
+		PushParams(pSS, pTable, p1, p2, p3, p4, p5);
+		return pSS->EndCall();
+	}
+
+	//! Call to table.
+	static bool CallMethod(IScriptTable* pTable, HSCRIPTFUNCTION func)
+	{
+		IScriptSystem* pSS = pTable->GetScriptSystem();
+		if (!pSS->BeginCall(func)) return false;
+		PushParams(pSS, pTable);
+		return pSS->EndCall();
+	}
+	//////////////////////////////////////////////////////////////////////////
+	template<class P1>
+	static bool CallMethod(IScriptTable* pTable, HSCRIPTFUNCTION func, const P1& p1)
+	{
+		IScriptSystem* pSS = pTable->GetScriptSystem();
+		if (!pSS->BeginCall(func)) return false;
+		PushParams(pSS, pTable, p1);
+		return pSS->EndCall();
+	}
+	//////////////////////////////////////////////////////////////////////////
+	template<class P1, class P2>
+	static bool CallMethod(IScriptTable* pTable, HSCRIPTFUNCTION func, const P1& p1, const P2& p2)
+	{
+		IScriptSystem* pSS = pTable->GetScriptSystem();
+		if (!pSS->BeginCall(func)) return false;
+		PushParams(pSS, pTable, p1, p2);
+		return pSS->EndCall();
+	}
+	//////////////////////////////////////////////////////////////////////////
+	template<class P1, class P2, class P3>
+	static bool CallMethod(IScriptTable* pTable, HSCRIPTFUNCTION func, const P1& p1, const P2& p2, const P3& p3)
+	{
+		IScriptSystem* pSS = pTable->GetScriptSystem();
+		if (!pSS->BeginCall(func)) return false;
+		PushParams(pSS, pTable, p1, p2, p3);
+		return pSS->EndCall();
+	}
+	//////////////////////////////////////////////////////////////////////////
+	template<class P1, class P2, class P3, class P4>
+	static bool CallMethod(IScriptTable* pTable, HSCRIPTFUNCTION func, const P1& p1, const P2& p2, const P3& p3, const P4& p4)
+	{
+		IScriptSystem* pSS = pTable->GetScriptSystem();
+		if (!pSS->BeginCall(func)) return false;
+		PushParams(pSS, pTable, p1, p2, p3, p4);
+		return pSS->EndCall();
+	}
+	//////////////////////////////////////////////////////////////////////////
+	template<class P1, class P2, class P3, class P4, class P5>
+	static bool CallMethod(IScriptTable* pTable, HSCRIPTFUNCTION func, const P1& p1, const P2& p2, const P3& p3, const P4& p4,
+		const P5& p5)
+	{
+		IScriptSystem* pSS = pTable->GetScriptSystem();
+		if (!pSS->BeginCall(func)) return false;
+		PushParams(pSS, pTable, p1, p2, p3, p4, p5);
+		return pSS->EndCall();
+	}
+
+	//////////////////////////////////////////////////////////////////////////
+	template<class Ret>
+	static bool CallReturn(IScriptSystem* pSS, HSCRIPTFUNCTION func, Ret& ret)
+	{
+		if (!pSS->BeginCall(func)) return false;
+		return pSS->EndCall(ret);
+	}
+	//////////////////////////////////////////////////////////////////////////
+	template<class P1, class Ret>
+	static bool CallReturn(IScriptSystem* pSS, HSCRIPTFUNCTION func, const P1& p1, Ret& ret)
+	{
+		if (!pSS->BeginCall(func)) return false;
+		PushParams(pSS, p1);
+		return pSS->EndCall(ret);
+	}
+	//////////////////////////////////////////////////////////////////////////
+	template<class P1, class P2, class Ret>
+	static bool CallReturn(IScriptSystem* pSS, HSCRIPTFUNCTION func, const P1& p1, const P2& p2, Ret& ret)
+	{
+		if (!pSS->BeginCall(func)) return false;
+		PushParams(pSS, p1, p2);
+		return pSS->EndCall(ret);
+	}
+	//////////////////////////////////////////////////////////////////////////
+	template<class P1, class P2, class P3, class Ret>
+	static bool CallReturn(IScriptSystem* pSS, HSCRIPTFUNCTION func, const P1& p1, const P2& p2, const P3& p3, Ret& ret)
+	{
+		if (!pSS->BeginCall(func)) return false;
+		PushParams(pSS, p1, p2, p3);
+		return pSS->EndCall(ret);
+	}
+	//////////////////////////////////////////////////////////////////////////
+	template<class P1, class P2, class P3, class P4, class Ret>
+	static bool CallReturn(IScriptSystem* pSS, HSCRIPTFUNCTION func, const P1& p1, const P2& p2, const P3& p3, const P4& p4, Ret& ret)
+	{
+		if (!pSS->BeginCall(func)) return false;
+		PushParams(pSS, p1, p2, p3, p4);
+		return pSS->EndCall(ret);
+	}
+	template<class P1, class P2, class P3, class P4, class P5, class Ret>
+	static bool CallReturn(IScriptSystem* pSS, HSCRIPTFUNCTION func, const P1& p1, const P2& p2, const P3& p3, const P4& p4, const P5& p5, Ret& ret)
+	{
+		if (!pSS->BeginCall(func)) return false;
+		PushParams(pSS, p1, p2, p3, p4, p5);
+		return pSS->EndCall(ret);
+	}
+
+	//////////////////////////////////////////////////////////////////////////
+private:
+	template<class P1>
+	static void PushParams(IScriptSystem* pSS, const P1& p1)
+	{
+		pSS->PushFuncParam(p1);
+	}
+	template<class P1, class P2>
+	static void PushParams(IScriptSystem* pSS, const P1& p1, const P2& p2)
+	{
+		pSS->PushFuncParam(p1);
+		pSS->PushFuncParam(p2);
+	}
+	template<class P1, class P2, class P3>
+	static void PushParams(IScriptSystem* pSS, const P1& p1, const P2& p2, const P3& p3)
+	{
+		pSS->PushFuncParam(p1);
+		pSS->PushFuncParam(p2);
+		pSS->PushFuncParam(p3);
+	}
+	template<class P1, class P2, class P3, class P4>
+	static void PushParams(IScriptSystem* pSS, const P1& p1, const P2& p2, const P3& p3, const P4& p4)
+	{
+		pSS->PushFuncParam(p1);
+		pSS->PushFuncParam(p2);
+		pSS->PushFuncParam(p3);
+		pSS->PushFuncParam(p4);
+	}
+	template<class P1, class P2, class P3, class P4, class P5>
+	static void PushParams(IScriptSystem* pSS, const P1& p1, const P2& p2, const P3& p3, const P4& p4, const P5& p5)
+	{
+		pSS->PushFuncParam(p1);
+		pSS->PushFuncParam(p2);
+		pSS->PushFuncParam(p3);
+		pSS->PushFuncParam(p4);
+		pSS->PushFuncParam(p5);
+	}
+	template<class P1, class P2, class P3, class P4, class P5, class P6>
+	static void PushParams(IScriptSystem* pSS, const P1& p1, const P2& p2, const P3& p3, const P4& p4, const P5& p5, const P6& p6)
+	{
+		pSS->PushFuncParam(p1);
+		pSS->PushFuncParam(p2);
+		pSS->PushFuncParam(p3);
+		pSS->PushFuncParam(p4);
+		pSS->PushFuncParam(p5);
+		pSS->PushFuncParam(p6);
+	}
+};
+
+inline ScriptAnyValue::ScriptAnyValue(EScriptAnyType type)
+{
+	switch (type)
+	{
+	case EScriptAnyType::Any:
+		SetAny();
+		break;
+	case EScriptAnyType::Nil:
+		SetNil();
+		break;
+	case EScriptAnyType::Boolean:
+		m_data.emplace<bool>();
+		break;
+	case EScriptAnyType::Handle:
+		m_data.emplace<ScriptHandle>();
+		break;
+	case EScriptAnyType::Number:
+		m_data.emplace<float>();
+		break;
+	case EScriptAnyType::String:
+		m_data.emplace<const char*>();
+		break;
+	case EScriptAnyType::Table:
+		m_data.emplace<IScriptTable*>();
+		break;
+	case EScriptAnyType::Function:
+		m_data.emplace<HSCRIPTFUNCTION>();
+		break;
+	case EScriptAnyType::UserData:
+		m_data.emplace<ScriptUserData>();
+		break;
+	case EScriptAnyType::Vector:
+		m_data.emplace<Vec3>();
+		break;
+	default:
+		CRY_ASSERT(false);
+		break;
+	}
+}
 
 //! After SmartScriptTable defined, now implement ScriptAnyValue constructor for it.
-inline ScriptAnyValue::ScriptAnyValue(IScriptTable* value) : type(ANY_TTABLE)
+inline ScriptAnyValue::ScriptAnyValue(IScriptTable* value)
 {
-	table = value;
-	if (table)
-		table->AddRef();
+	if (value)
+		value->AddRef();
+	SetScriptTable(value);
 };
 
-inline ScriptAnyValue::ScriptAnyValue(const SmartScriptTable& value) : type(ANY_TTABLE)
+inline ScriptAnyValue::ScriptAnyValue(const SmartScriptTable& value)
 {
-	table = value;
-	if (table)
-		table->AddRef();
+	if (value)
+		value->AddRef();
+	SetScriptTable(value);
 };
 
-inline ScriptAnyValue::ScriptAnyValue(IScriptTable* _table, int) : type(ANY_TTABLE)
+inline ScriptAnyValue::ScriptAnyValue(IScriptTable* _table, int)
 {
-	table = _table;
-	if (table)
-		table->AddRef();
+	if (_table)
+		_table->AddRef();
+	SetScriptTable(_table);
 };
 
-inline ScriptAnyValue::ScriptAnyValue(const SmartScriptTable& value, int) : type(ANY_TTABLE)
+inline ScriptAnyValue::ScriptAnyValue(const SmartScriptTable& value, int)
 {
-	table = value;
-	if (table)
-		table->AddRef();
+	if (value)
+		value->AddRef();
+	SetScriptTable(value);
 };
 
 inline bool ScriptAnyValue::CopyTo(IScriptTable*& value) const
 {
-	if (type == ANY_TTABLE) { value = table; return true; };
+	if (GetType() == EScriptAnyType::Table)
+	{
+		value = GetScriptTable();
+		return true;
+	}
 	return false;
 };
 
 inline bool ScriptAnyValue::CopyTo(SmartScriptTable& value) const
 {
-	if (type == ANY_TTABLE) { value = table; return true; };
+	if (GetType() == EScriptAnyType::Table)
+	{
+		value = GetScriptTable();
+		return true;
+	}
 	return false;
 };
 
 inline bool ScriptAnyValue::CopyFromTableToXYZ(float& x, float& y, float& z) const
 {
-	if (type == ANY_TTABLE)
+	if (GetType() == EScriptAnyType::Table)
 	{
 		const char* const coords[3] = { "x", "y", "z" };
 		float xyz[3];
@@ -953,7 +1953,7 @@ inline bool ScriptAnyValue::CopyFromTableToXYZ(float& x, float& y, float& z) con
 
 		for (size_t i = 0; i < 3; ++i)
 		{
-			if (table->GetValueAny(coords[i], anyValue) && anyValue.type == ANY_TNUMBER)
+			if (GetScriptTable()->GetValueAny(coords[i], anyValue) && anyValue.GetType() == EScriptAnyType::Number)
 			{
 				anyValue.CopyTo(xyz[i]);
 			}
@@ -972,17 +1972,15 @@ inline bool ScriptAnyValue::CopyFromTableToXYZ(float& x, float& y, float& z) con
 
 inline void ScriptAnyValue::Clear()
 {
-	if (type == ANY_TTABLE && table)
+	if (GetType() == EScriptAnyType::Table && GetScriptTable())
 	{
-		table->Release();
+		GetScriptTable()->Release();
 	}
-	else if (type == ANY_TFUNCTION && function)
+	else if (GetType() == EScriptAnyType::Function && GetScriptFunction())
 	{
-		gEnv->pScriptSystem->ReleaseFunc(function);
+		gEnv->pScriptSystem->ReleaseFunc(GetScriptFunction());
 	}
-	function = 0;
-	table = 0;
-	type = ANY_ANY;
+	SetAny();
 }
 
 inline ScriptAnyValue::~ScriptAnyValue()
@@ -992,41 +1990,37 @@ inline ScriptAnyValue::~ScriptAnyValue()
 
 inline ScriptAnyValue::ScriptAnyValue(const ScriptAnyValue& rhs)
 {
-	type = rhs.type;
-	switch (type)
+	switch (rhs.GetType())
 	{
-	case ANY_ANY:
-		table = 0;
+	case EScriptAnyType::Any:
 		break;
-	case ANY_TBOOLEAN:
-		b = rhs.b;
+	case EScriptAnyType::Boolean:
+		SetBool(rhs.GetBool());
 		break;
-	case ANY_TFUNCTION:
-		function = gEnv->pScriptSystem->AddFuncRef(rhs.function);
+	case EScriptAnyType::Function:
+		SetScriptFunction(gEnv->pScriptSystem->AddFuncRef(rhs.GetScriptFunction()));
 		break;
-	case ANY_THANDLE:
-		ptr = rhs.ptr;
+	case EScriptAnyType::Handle:
+		SetScriptHandle(rhs.GetScriptHandle());
 		break;
-	case ANY_TNIL:
-		table = 0;
+	case EScriptAnyType::Nil:
+		SetNil();
 		break;
-	case ANY_TNUMBER:
-		number = rhs.number;
+	case EScriptAnyType::Number:
+		SetNumber(rhs.GetNumber());
 		break;
-	case ANY_TSTRING:
-		str = rhs.str;
+	case EScriptAnyType::String:
+		SetString(rhs.GetString());
 		break;
-	case ANY_TTABLE:
-		table = rhs.table;
-		if (table)
-			table->AddRef();
+	case EScriptAnyType::Table:
+		SetScriptTable(rhs.GetScriptTable());
+		if (GetScriptTable())
+			GetScriptTable()->AddRef();
 		break;
-	case ANY_TUSERDATA:
+	case EScriptAnyType::UserData:
 		break;
-	case ANY_TVECTOR:
-		vec3.x = rhs.vec3.x;
-		vec3.y = rhs.vec3.y;
-		vec3.z = rhs.vec3.z;
+	case EScriptAnyType::Vector:
+		SetVector(rhs.GetVector());
 		break;
 	}
 }
@@ -1038,67 +2032,50 @@ inline void ScriptAnyValue::Swap(ScriptAnyValue& value)
 	memcpy(&value, temp, sizeof(ScriptAnyValue));
 }
 
-inline ScriptAnyValue::ScriptAnyValue(HSCRIPTFUNCTION value) : type(ANY_TFUNCTION)
+inline ScriptAnyValue::ScriptAnyValue(HSCRIPTFUNCTION value)
 {
-	function = gEnv->pScriptSystem->AddFuncRef(value);
+	SetScriptFunction(gEnv->pScriptSystem->AddFuncRef(value));
 }
 
 inline bool ScriptAnyValue::CopyTo(HSCRIPTFUNCTION& value) const
 {
-	if (type == ANY_TFUNCTION)
+	if (GetType() == EScriptAnyType::Function)
 	{
-		value = gEnv->pScriptSystem->AddFuncRef(function);
+		value = gEnv->pScriptSystem->AddFuncRef(GetScriptFunction());
 		return true;
 	}
-	;
+
 	return false;
 }
 
 inline bool ScriptAnyValue::operator==(const ScriptAnyValue& rhs) const
 {
 	// Comparing memory of union is a bad idea.
-	bool result = type == rhs.type;
+	bool result = GetType() == rhs.GetType();
 	if (result)
 	{
-		switch (type)
+		switch (GetType())
 		{
-		case ANY_TBOOLEAN:
-			result = b == rhs.b;
+		case EScriptAnyType::Boolean:
+		case EScriptAnyType::Number:
+		case EScriptAnyType::String:
+		case EScriptAnyType::Vector:
+		case EScriptAnyType::Handle:
+		case EScriptAnyType::Table:
+		case EScriptAnyType::UserData:
+			result = (m_data == rhs.m_data);
 			break;
-		case ANY_TNUMBER:
-			result = number == rhs.number;
+
+		case EScriptAnyType::Function:
+			result = gEnv->pScriptSystem->CompareFuncRef(GetScriptFunction(), rhs.GetScriptFunction());
 			break;
-		case ANY_TSTRING:
-			result = str == rhs.str;
-			break;
-		case ANY_TVECTOR:
-			result = vec3.x == rhs.vec3.x && vec3.y == rhs.vec3.y && vec3.z == rhs.vec3.z;
-			break;
-		case ANY_TTABLE:
-			result = table == rhs.table;
-			break;
-		case ANY_THANDLE:
-			result = ptr == rhs.ptr;
-			break;
-		case ANY_TFUNCTION:
-			result = gEnv->pScriptSystem->CompareFuncRef(function, rhs.function);
-			break;
-		case ANY_TUSERDATA:
-			result = ud.nRef == rhs.ud.nRef && ud.ptr == rhs.ud.ptr;
+
+		default:
+			CRY_ASSERT(false);
 			break;
 		}
 	}
 	return result;
 }
 
-#ifdef CRYSCRIPTSYSTEM_EXPORTS
-	#define CRYSCRIPTSYSTEM_API DLL_EXPORT
-#else // CRYSCRIPTSYSTEM_EXPORTS
-	#define CRYSCRIPTSYSTEM_API DLL_IMPORT
-#endif // CRYSCRIPTSYSTEM_EXPORTS
-
-extern "C"
-{
-	CRYSCRIPTSYSTEM_API IScriptSystem* CreateScriptSystem(ISystem* pSystem, bool bStdLibs);
-}
-typedef IScriptSystem*(* CREATESCRIPTSYSTEM_FNCPTR)(ISystem* pSystem, bool bStdLibs);
+//! \endcond

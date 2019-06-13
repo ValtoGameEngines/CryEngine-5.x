@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
    -------------------------------------------------------------------------
@@ -12,10 +12,11 @@
 
 #include "StdAfx.h"
 #include "Keyboard.h"
+#include <CrySystem/ConsoleRegistration.h>
 
 #ifdef USE_DXINPUT
 
-int CKeyboard::s_disableWinKeys = 1;
+int CKeyboard::s_disableWinKeys = 0;
 CKeyboard* CKeyboard::s_instance = NULL;
 
 //////////////////////////////////////////////////////////////////////
@@ -28,6 +29,7 @@ CKeyboard::CKeyboard(CDXInput& input) :
 	CDXInputDevice(input, "keyboard", GUID_SysKeyboard)
 {
 	m_deviceType = eIDT_Keyboard;
+	m_baseflags = DISCL_NONEXCLUSIVE | DISCL_FOREGROUND;
 	s_instance = this;
 }
 
@@ -97,13 +99,10 @@ bool CKeyboard::SetExclusiveMode(bool value)
 
 	HRESULT hr;
 
-	// Enable Windows keys if we are not in game mode - to always leave enabled, set to 0
-	DWORD winKeyFlags = (!gEnv->IsEditor() || gEnv->IsEditorGameMode() ? DISCL_NOWINKEY : 0);
-
 	if (value)
 	{
 		m_baseflags = DISCL_EXCLUSIVE | DISCL_FOREGROUND;
-		hr = GetDirectInputDevice()->SetCooperativeLevel(GetDXInput().GetHWnd(), GetDeviceFlags());
+		hr = GetDirectInputDevice()->SetCooperativeLevel((HWND)GetDXInput().GetHWnd(), GetDeviceFlags());
 
 		if (FAILED(hr))
 		{
@@ -114,7 +113,7 @@ bool CKeyboard::SetExclusiveMode(bool value)
 	else
 	{
 		m_baseflags = DISCL_NONEXCLUSIVE | DISCL_FOREGROUND;
-		hr = GetDirectInputDevice()->SetCooperativeLevel(GetDXInput().GetHWnd(), GetDeviceFlags());
+		hr = GetDirectInputDevice()->SetCooperativeLevel((HWND)GetDXInput().GetHWnd(), GetDeviceFlags());
 		if (FAILED(hr))
 		{
 			gEnv->pLog->LogToFile("Cannot Set Keyboard Non-Exclusive Mode\n");
@@ -133,7 +132,7 @@ void CKeyboard::ChangeDisableWinKeys(ICVar* pVar)
 	Unacquire();
 	s_disableWinKeys = pVar->GetIVal();
 	HRESULT hr;
-	hr = GetDirectInputDevice()->SetCooperativeLevel(GetDXInput().GetHWnd(), GetDeviceFlags());
+	hr = GetDirectInputDevice()->SetCooperativeLevel((HWND)GetDXInput().GetHWnd(), GetDeviceFlags());
 	if (FAILED(hr))
 	{
 		gEnv->pLog->LogToFile("Error changing enabled state of windows keys\n");
@@ -505,7 +504,7 @@ void CKeyboard::ProcessKey(uint32 devSpecId, bool pressed)
 //////////////////////////////////////////////////////////////////////////
 void CKeyboard::Update(bool bFocus)
 {
-	FUNCTION_PROFILER(GetISystem(), PROFILE_INPUT);
+	CRY_PROFILE_FUNCTION(PROFILE_INPUT);
 	HRESULT hr;
 	DIDEVICEOBJECTDATA rgdod[256];
 	DWORD dwItems = 256;

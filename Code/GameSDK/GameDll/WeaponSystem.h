@@ -1,4 +1,4 @@
-// Copyright 2001-2016 Crytek GmbH / Crytek Group. All rights reserved.
+// Copyright 2001-2018 Crytek GmbH / Crytek Group. All rights reserved.
 
 /*************************************************************************
 -------------------------------------------------------------------------
@@ -32,6 +32,7 @@ History:
 #include "WeaponAlias.h"
 #include "FireModePluginParams.h"
 #include "GameTypeInfo.h"
+#include <queue>
 
 class CGame;
 class CProjectile;
